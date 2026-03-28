@@ -8,9 +8,6 @@ const dynamodb = new AWS.DynamoDB.DocumentClient({
   region: 'us-east-2'
 });
 
-const COGNITO_USER_POOL_ID = 'us-east-1_PETovl6rf';
-const COGNITO_CLIENT_ID = '6frd2mgr45hjv5nit883p6f62f';
-
 // Função auxiliar para resposta CORS
 const response = (statusCode, body) => ({
   statusCode,
@@ -25,7 +22,7 @@ const response = (statusCode, body) => ({
 
 // Handler principal
 exports.handler = async (event) => {
-  console.log('Raw Event:', JSON.stringify(event, null, 2));
+  console.log('Event:', JSON.stringify(event, null, 2));
 
   try {
     const httpMethod = event.requestContext?.http?.method || event.httpMethod || 'GET';
@@ -40,7 +37,7 @@ exports.handler = async (event) => {
       return response(200, { ok: true });
     }
 
-    // LOGIN
+    // LOGIN com Cognito
     if ((rawPath === '/auth/login' || rawPath.includes('/auth/login')) && httpMethod === 'POST') {
       const { email, password } = body;
 
@@ -50,23 +47,28 @@ exports.handler = async (event) => {
 
       try {
         const result = await cognito.adminInitiateAuth({
-          UserPoolId: COGNITO_USER_POOL_ID,
-          ClientId: COGNITO_CLIENT_ID,
-          AuthFlow: 'ADMIN_NO_SRP_AUTH',
+          UserPoolId: 'us-east-1_PETovl6rf',
+          ClientId: '6frd2mgr45hjv5nit883p6f62f',
+          AuthFlow: 'ADMIN_USER_PASSWORD_AUTH',
           AuthParameters: {
             USERNAME: email,
             PASSWORD: password
           }
         }).promise();
 
-        return response(200, {
-          success: true,
-          token: result.AuthenticationResult.IdToken,
-          refreshToken: result.AuthenticationResult.RefreshToken,
-          user: { email }
-        });
+        if (result.AuthenticationResult) {
+          return response(200, {
+            success: true,
+            token: result.AuthenticationResult.IdToken,
+            accessToken: result.AuthenticationResult.AccessToken,
+            refreshToken: result.AuthenticationResult.RefreshToken,
+            user: { email }
+          });
+        } else {
+          return response(401, { error: 'Credenciais inválidas' });
+        }
       } catch (error) {
-        console.error('Cognito error:', error);
+        console.error('Cognito error:', error.message);
         return response(401, { error: 'Credenciais inválidas' });
       }
     }
