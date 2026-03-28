@@ -1,8 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios'
 import { ApiResponse } from '@/types'
 
-const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT || 'http://localhost:3000/api'
-const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT || '30000')
+const API_ENDPOINT = (import.meta.env.VITE_API_ENDPOINT as string) || 'http://localhost:3000/api'
+const API_TIMEOUT = parseInt((import.meta.env.VITE_API_TIMEOUT as string) || '30000')
 
 class ApiService {
   private client: AxiosInstance
