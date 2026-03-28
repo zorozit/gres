@@ -1,0 +1,37 @@
+{
+  "project": "gres",
+  "environment": "prod",
+  "region": "us-east-1",
+  "accountId": "841344319831",
+  "cognito": {
+    "userPoolId": "us-east-1_PETovl6rf",
+    "appClientId": "6frd2mgr45hjv5nit883p6f62f",
+    "domain": "gres-prod"
+  },
+  "dynamodb": {
+    "prefix": "gres-prod",
+    "tables": [
+      "gres-prod-unidades",
+      "gres-prod-usuarios",
+      "gres-prod-colaboradores",
+      "gres-prod-escalas",
+      "gres-prod-caixa",
+      "gres-prod-saidas",
+      "gres-prod-motoboys"
+    ]
+  },
+  "lambda": {
+    "roleArn": "arn:aws:iam::841344319831:role/gres-lambda-role",
+    "roleName": "gres-lambda-role"
+  },
+  "s3": {
+    "bucket": "gres-prod-uploads-1774726332",
+    "region": "us-east-1"
+  },
+  "testUser": {
+    "email": "admin@gres.com",
+    "password": "GresAdmin123!@#",
+    "group": "admin"
+  },
+  "createdAt": "2026-03-28T19:32:41Z"
+}
