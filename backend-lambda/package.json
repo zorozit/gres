@@ -1,0 +1,9 @@
+{
+  "name": "gres-lambda",
+  "version": "1.0.0",
+  "description": "GRES Backend Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1200.0"
+  }
+}

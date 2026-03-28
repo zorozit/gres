@@ -5,6 +5,9 @@ interface AuthContextType {
   user: { email: string } | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  loading: boolean;
+  error: string | null;
+  email?: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -12,6 +15,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<{ email: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem('user');
@@ -22,24 +27,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, password: string) => {
-    if (email === 'admin@gres.com' && password === 'GresAdmin123!@#') {
+    setLoading(true);
+    setError(null);
+    try {
+      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      const response = await fetch(`${apiEndpoint}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha na autenticação');
+      }
+
+      const data = await response.json();
       const userData = { email };
       setUser(userData);
       setIsAuthenticated(true);
       localStorage.setItem('user', JSON.stringify(userData));
-    } else {
-      throw new Error('Credenciais inválidas');
+      localStorage.setItem('token', data.token);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
+      setError(errorMsg);
+      console.error('Login error:', err);
+      throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
   const logout = () => {
     setUser(null);
     setIsAuthenticated(false);
+    setError(null);
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
   };
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, login, logout }}>
+    <AuthContext.Provider value={{ 
+      isAuthenticated, 
+      user, 
+      login, 
+      logout,
+      loading,
+      error,
+      email: user?.email
+    }}>
       {children}
     </AuthContext.Provider>
   );
