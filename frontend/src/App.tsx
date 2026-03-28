@@ -1,31 +1,29 @@
-import './App.css'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { Login } from './pages/Login';
+import { Dashboard } from './pages/Dashboard';
+import './App.css';
 
 function App() {
   return (
-    <div className="container">
-      <h1>🍽️ GRES - Gestão de Restaurantes</h1>
-      <p>Sistema de Gestão Operacional para Redes de Restaurantes</p>
-      
-      <div className="features">
-        <h2>Funcionalidades</h2>
-        <ul>
-          <li>📊 Dashboard Operacional</li>
-          <li>💰 Controle de Caixa</li>
-          <li>📅 Gestão de Escalas</li>
-          <li>💸 Registro de Saídas</li>
-          <li>🏍️ Gestão de Motoboys</li>
-          <li>👥 Gestão de Colaboradores</li>
-        </ul>
-      </div>
-
-      <div className="info">
-        <h3>Informações da API</h3>
-        <p>API Endpoint: <code>{import.meta.env.VITE_API_ENDPOINT}</code></p>
-        <p>Cognito User Pool: <code>{import.meta.env.VITE_COGNITO_USER_POOL_ID}</code></p>
-        <p>Ambiente: <code>{import.meta.env.VITE_ENVIRONMENT}</code></p>
-      </div>
-    </div>
-  )
+    <Router>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </AuthProvider>
+    </Router>
+  );
 }
 
-export default App
+export default App;
