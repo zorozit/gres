@@ -31,22 +31,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      console.log('Tentando login com API:', apiEndpoint);
+      
       const response = await fetch(`${apiEndpoint}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
 
-      if (!response.ok) {
-        throw new Error('Falha na autenticação');
-      }
+      console.log('Resposta da API:', response.status, response.statusText);
 
       const data = await response.json();
+      console.log('Dados recebidos:', data);
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Falha na autenticação');
+      }
+
       const userData = { email };
       setUser(userData);
       setIsAuthenticated(true);
       localStorage.setItem('user', JSON.stringify(userData));
       localStorage.setItem('token', data.token);
+      console.log('Login bem-sucedido!');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
       setError(errorMsg);
