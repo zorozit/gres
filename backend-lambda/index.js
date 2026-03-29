@@ -494,6 +494,39 @@ exports.handler = async (event) => {
       }
     }
 
+    // PUT CAIXA (atualizar movimento)
+    if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'PUT') {
+      const caixaId = rawPath.split('/').pop();
+      const { valor, descricao, saldoAtual } = body;
+
+      if (!caixaId) {
+        return response(400, { error: 'ID do movimento é obrigatório' });
+      }
+
+      try {
+        const updateExpression = 'SET #valor = :valor, #descricao = :descricao, saldoAtual = :saldoAtual';
+        const expressionAttributeNames = { '#valor': 'valor', '#descricao': 'descricao' };
+        const expressionAttributeValues = {
+          ':valor': parseFloat(valor),
+          ':descricao': descricao || '',
+          ':saldoAtual': parseFloat(saldoAtual)
+        };
+
+        await dynamodb.update({
+          TableName: 'gres-prod-caixa',
+          Key: { id: caixaId },
+          UpdateExpression: updateExpression,
+          ExpressionAttributeNames: expressionAttributeNames,
+          ExpressionAttributeValues: expressionAttributeValues
+        }).promise();
+
+        return response(200, { success: true, message: 'Movimento atualizado' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar movimento' });
+      }
+    }
+
     // PUT USUARIOS (atualizar)
     if ((rawPath.includes('/usuarios/') || rawPath === '/usuarios') && httpMethod === 'PUT') {
       const usuarioId = rawPath.split('/').pop();

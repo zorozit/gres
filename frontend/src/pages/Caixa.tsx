@@ -40,6 +40,7 @@ export const Caixa: React.FC = () => {
   const [turnoAtivo, setTurnoAtivo] = useState('manhã');
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<CaixaMovimento>>({});
+  const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
   const [formData, setFormData] = useState({
     tipo: 'recebimento',
     tipoRecebimento: 'dinheiro',
@@ -51,7 +52,7 @@ export const Caixa: React.FC = () => {
     if (token && activeUnit) {
       fetchMovimentos();
     }
-  }, [activeUnit, token]);
+  }, [activeUnit, token, dataSelecionada]);
 
   const fetchMovimentos = async () => {
     if (!token || !activeUnit) return;
@@ -70,29 +71,32 @@ export const Caixa: React.FC = () => {
       const data = await response.json();
       console.log('Dados recebidos:', data);
       
-      // Verificar se data é um objeto com propriedade data ou um array direto
       let movs: CaixaMovimento[] = [];
       if (Array.isArray(data)) {
         movs = data;
       } else if (data && Array.isArray(data.data)) {
         movs = data.data;
       } else if (data && typeof data === 'object') {
-        // Tentar extrair array de qualquer propriedade
         const valores = Object.values(data);
         if (Array.isArray(valores[0])) {
           movs = valores[0];
         }
       }
 
-      console.log('Movimentos processados:', movs);
-      setMovimentos(movs);
+      // Filtrar por data selecionada
+      const movsFiltrados = movs.filter(m => m.data === dataSelecionada);
+      console.log('Movimentos filtrados:', movsFiltrados);
+      setMovimentos(movsFiltrados);
       
       // Calcular saldo atual
-      if (movs.length > 0) {
-        const ultimoMovimento = movs[movs.length - 1];
+      if (movsFiltrados.length > 0) {
+        const ultimoMovimento = movsFiltrados[movsFiltrados.length - 1];
         setSaldoAtual(ultimoMovimento.saldoAtual || 0);
         setCaixaAberto(ultimoMovimento.tipo !== 'fechamento');
         setTurnoAtivo(ultimoMovimento.turno || 'manhã');
+      } else {
+        setCaixaAberto(false);
+        setSaldoAtual(0);
       }
     } catch (error) {
       console.error('Erro ao buscar movimentos:', error);
@@ -118,7 +122,6 @@ export const Caixa: React.FC = () => {
 
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const agora = new Date();
       const response = await fetch(`${apiEndpoint}/caixa`, {
         method: 'POST',
         headers: {
@@ -130,7 +133,7 @@ export const Caixa: React.FC = () => {
           valor: valor,
           descricao: 'Abertura de caixa',
           unitId: activeUnit.id,
-          data: agora.toISOString().split('T')[0],
+          data: dataSelecionada,
           turno: turnoAtivo,
           saldoAnterior: 0,
           saldoAtual: valor
@@ -166,7 +169,6 @@ export const Caixa: React.FC = () => {
 
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const agora = new Date();
       
       // Calcular novo saldo
       let novoSaldo = saldoAtual;
@@ -195,7 +197,7 @@ export const Caixa: React.FC = () => {
           valor: valor,
           descricao: descricao,
           unitId: activeUnit.id,
-          data: agora.toISOString().split('T')[0],
+          data: dataSelecionada,
           turno: turnoAtivo,
           saldoAnterior: saldoAtual,
           saldoAtual: novoSaldo
@@ -240,7 +242,6 @@ export const Caixa: React.FC = () => {
 
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const agora = new Date();
       const response = await fetch(`${apiEndpoint}/caixa`, {
         method: 'POST',
         headers: {
@@ -252,7 +253,7 @@ export const Caixa: React.FC = () => {
           valor: valor,
           descricao: `Fechamento de caixa - Diferença: R$ ${diferenca.toFixed(2)}`,
           unitId: activeUnit.id,
-          data: agora.toISOString().split('T')[0],
+          data: dataSelecionada,
           turno: turnoAtivo,
           saldoAnterior: saldoAtual,
           saldoAtual: valor
@@ -289,7 +290,11 @@ export const Caixa: React.FC = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(editData)
+        body: JSON.stringify({
+          valor: editData.valor,
+          descricao: editData.descricao,
+          saldoAtual: editData.saldoAtual
+        })
       });
 
       if (response.ok) {
@@ -298,7 +303,9 @@ export const Caixa: React.FC = () => {
         fetchMovimentos();
         alert('Movimento atualizado com sucesso!');
       } else {
-        alert('Erro ao atualizar movimento');
+        const errorData = await response.json();
+        console.error('Erro:', errorData);
+        alert('Erro ao atualizar movimento: ' + (errorData.error || 'Desconhecido'));
       }
     } catch (error) {
       console.error('Erro ao salvar edição:', error);
@@ -346,6 +353,17 @@ export const Caixa: React.FC = () => {
 
       <main className="module-main">
         <div className="module-content">
+          {/* Seletor de Data */}
+          <section className="date-selector">
+            <label>Selecione a Data:</label>
+            <input
+              type="date"
+              value={dataSelecionada}
+              onChange={(e) => setDataSelecionada(e.target.value)}
+              className="date-input"
+            />
+          </section>
+
           {/* Status do Caixa */}
           <section className="status-section">
             <div className="status-card">
@@ -476,11 +494,11 @@ export const Caixa: React.FC = () => {
 
           {/* Grid de Movimentos */}
           <section className="list-section">
-            <h2>Movimentos do Dia ({movimentos.length})</h2>
+            <h2>Movimentos de {dataSelecionada} ({movimentos.length})</h2>
             {loading ? (
               <p>Carregando...</p>
             ) : movimentos.length === 0 ? (
-              <p>Nenhum movimento registrado</p>
+              <p>Nenhum movimento registrado para esta data</p>
             ) : (
               <table className="data-table">
                 <thead>
@@ -578,6 +596,24 @@ export const Caixa: React.FC = () => {
       </main>
 
       <style>{`
+        .date-selector {
+          background: white;
+          border-radius: 8px;
+          padding: 15px;
+          margin-bottom: 20px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .date-input {
+          padding: 8px 12px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          font-size: 14px;
+        }
+
         .status-section {
           display: grid;
           grid-template-columns: 1fr 1fr;
