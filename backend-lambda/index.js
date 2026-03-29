@@ -5,7 +5,7 @@ const cognito = new AWS.CognitoIdentityServiceProvider({
 });
 
 const dynamodb = new AWS.DynamoDB.DocumentClient({
-  region: 'us-east-2'
+  region: 'us-east-1'
 });
 
 // Função auxiliar para resposta CORS
