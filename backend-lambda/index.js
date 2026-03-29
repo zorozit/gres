@@ -320,21 +320,35 @@ exports.handler = async (event) => {
       }
     }
 
-    // POST CAIXA
+    // POST CAIXA - Registro único por dia/turno
     if ((rawPath === '/caixa' || rawPath.includes('/caixa')) && httpMethod === 'POST') {
-      const { unidadeId, data, valor, descricao } = body;
+      const { unitId, data, periodo, abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistema, diferenca } = body;
 
-      if (!unidadeId || !data || !valor) {
-        return response(400, { error: 'Campos obrigatórios faltando' });
+      if (!unitId || !data || !periodo) {
+        return response(400, { error: 'unitId, data e periodo são obrigatórios' });
       }
 
       try {
         const item = {
-          id: `${unidadeId}-${Date.now()}`,
-          unidadeId,
+          id: `${unitId}-${data}-${periodo}`,
+          unitId,
           data,
-          valor: parseFloat(valor),
-          descricao: descricao || '',
+          periodo,
+          abertura: parseFloat(abertura) || 0,
+          maq1: parseFloat(maq1) || 0,
+          maq2: parseFloat(maq2) || 0,
+          maq3: parseFloat(maq3) || 0,
+          maq4: parseFloat(maq4) || 0,
+          maq5: parseFloat(maq5) || 0,
+          maq6: parseFloat(maq6) || 0,
+          ifood: parseFloat(ifood) || 0,
+          dinheiro: parseFloat(dinheiro) || 0,
+          pix: parseFloat(pix) || 0,
+          fiado: parseFloat(fiado) || 0,
+          sangria: parseFloat(sangria) || 0,
+          total: parseFloat(total) || 0,
+          sistema: parseFloat(sistema) || 0,
+          diferenca: parseFloat(diferenca) || 0,
           timestamp: new Date().toISOString()
         };
 
@@ -350,19 +364,33 @@ exports.handler = async (event) => {
       }
     }
 
-    // GET CAIXA
+    // GET CAIXA - Filtrar por unitId e data
     if ((rawPath === '/caixa' || rawPath.includes('/caixa')) && httpMethod === 'GET') {
-      const unidadeId = queryParams.unidadeId;
+      const unitId = queryParams.unitId;
+      const data = queryParams.data;
 
       try {
         let result;
-        if (unidadeId) {
+        if (unitId && data) {
+          // Buscar registros de uma unidade em uma data específica
           result = await dynamodb.query({
             TableName: 'gres-prod-caixa',
-            IndexName: 'unidadeId-timestamp-index',
-            KeyConditionExpression: 'unidadeId = :uid',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: 'unitId = :uid AND #d = :data',
+            ExpressionAttributeNames: { '#d': 'data' },
             ExpressionAttributeValues: {
-              ':uid': unidadeId
+              ':uid': unitId,
+              ':data': data
+            }
+          }).promise();
+        } else if (unitId) {
+          // Buscar todos os registros de uma unidade
+          result = await dynamodb.query({
+            TableName: 'gres-prod-caixa',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: 'unitId = :uid',
+            ExpressionAttributeValues: {
+              ':uid': unitId
             }
           }).promise();
         } else {
@@ -495,21 +523,35 @@ exports.handler = async (event) => {
     }
 
     // PUT CAIXA (atualizar movimento)
+    // PUT CAIXA - Atualizar registro
     if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'PUT') {
       const caixaId = rawPath.split('/').pop();
-      const { valor, descricao, saldoAtual } = body;
+      const { abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistema, diferenca, periodo } = body;
 
       if (!caixaId) {
         return response(400, { error: 'ID do movimento é obrigatório' });
       }
 
       try {
-        const updateExpression = 'SET #valor = :valor, #descricao = :descricao, saldoAtual = :saldoAtual';
-        const expressionAttributeNames = { '#valor': 'valor', '#descricao': 'descricao' };
+        const updateExpression = 'SET abertura = :abertura, maq1 = :maq1, maq2 = :maq2, maq3 = :maq3, maq4 = :maq4, maq5 = :maq5, maq6 = :maq6, ifood = :ifood, dinheiro = :dinheiro, #pix = :pix, fiado = :fiado, sangria = :sangria, #total = :total, sistema = :sistema, diferenca = :diferenca, #periodo = :periodo';
+        const expressionAttributeNames = { '#pix': 'pix', '#total': 'total', '#periodo': 'periodo' };
         const expressionAttributeValues = {
-          ':valor': parseFloat(valor),
-          ':descricao': descricao || '',
-          ':saldoAtual': parseFloat(saldoAtual)
+          ':abertura': parseFloat(abertura) || 0,
+          ':maq1': parseFloat(maq1) || 0,
+          ':maq2': parseFloat(maq2) || 0,
+          ':maq3': parseFloat(maq3) || 0,
+          ':maq4': parseFloat(maq4) || 0,
+          ':maq5': parseFloat(maq5) || 0,
+          ':maq6': parseFloat(maq6) || 0,
+          ':ifood': parseFloat(ifood) || 0,
+          ':dinheiro': parseFloat(dinheiro) || 0,
+          ':pix': parseFloat(pix) || 0,
+          ':fiado': parseFloat(fiado) || 0,
+          ':sangria': parseFloat(sangria) || 0,
+          ':total': parseFloat(total) || 0,
+          ':sistema': parseFloat(sistema) || 0,
+          ':diferenca': parseFloat(diferenca) || 0,
+          ':periodo': periodo
         };
 
         await dynamodb.update({
@@ -520,10 +562,10 @@ exports.handler = async (event) => {
           ExpressionAttributeValues: expressionAttributeValues
         }).promise();
 
-        return response(200, { success: true, message: 'Movimento atualizado' });
+        return response(200, { success: true, message: 'Registro atualizado' });
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao atualizar movimento' });
+        return response(500, { error: 'Erro ao atualizar registro' });
       }
     }
 
