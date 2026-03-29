@@ -331,21 +331,20 @@ export default function Caixa() {
 
         {abaSelecionada === 'movimentos' && <MovimentosCaixa />}
         {abaSelecionada === 'novo' && (
-        <>
-        
-        {/* FILTRO DE DATA */}
-        <div style={styles.filtroSection}>
-          <label style={styles.label}>📅 Data:</label>
-          <input 
-            type="date" 
-            value={dataSelecionada}
-            onChange={(e) => setDataSelecionada(e.target.value)}
-            style={styles.inputData}
-          />
-        </div>
+          <>
+            {/* FILTRO DE DATA */}
+            <div style={styles.filtroSection}>
+              <label style={styles.label}>📅 Data:</label>
+              <input 
+                type="date" 
+                value={dataSelecionada}
+                onChange={(e) => setDataSelecionada(e.target.value)}
+                style={styles.inputData}
+              />
+            </div>
 
-        {/* LAYOUT 2 COLUNAS: FORMULÁRIO | REGISTROS */}
-        <div style={styles.mainLayout}>
+            {/* LAYOUT 2 COLUNAS: FORMULÁRIO | REGISTROS */}
+            <div style={styles.mainLayout}>
           
           {/* COLUNA 1: FORMULÁRIO */}
           <div style={styles.coluna1}>
@@ -613,9 +612,8 @@ export default function Caixa() {
               }} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
             </div>
           </div>
-        </div>
-      )}
-        </>
+          </div>
+          </>
         )}
       </div>
       <Footer showLinks={true} />
