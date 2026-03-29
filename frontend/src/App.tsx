@@ -4,6 +4,9 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Modules } from './pages/Modules';
+import { Caixa } from './pages/Caixa';
+import { Escalas } from './pages/Escalas';
+import { Saidas } from './pages/Saidas';
 import './App.css';
 
 function App() {
@@ -29,10 +32,26 @@ function App() {
             }
           />
           <Route
-            path="/modulos/:moduloId"
+            path="/modulos/caixa"
             element={
               <ProtectedRoute>
-                <Modules />
+                <Caixa />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/escalas"
+            element={
+              <ProtectedRoute>
+                <Escalas />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/saidas"
+            element={
+              <ProtectedRoute>
+                <Saidas />
               </ProtectedRoute>
             }
           />
