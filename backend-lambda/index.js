@@ -77,6 +77,38 @@ exports.handler = async (event) => {
       }
     }
 
+    // POST UNIDADES
+    if ((rawPath === '/unidades' || rawPath.includes('/unidades')) && httpMethod === 'POST') {
+      const { nome, endereco, telefone, email, cnpj, gerente } = body;
+
+      if (!nome) {
+        return response(400, { error: 'Nome é obrigatório' });
+      }
+
+      try {
+        const item = {
+          id: `${cnpj || nome}-${Date.now()}`,
+          nome,
+          endereco: endereco || '',
+          telefone: telefone || '',
+          email: email || '',
+          cnpj: cnpj || '',
+          gerente: gerente || '',
+          timestamp: new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-unidades',
+          Item: item
+        }).promise();
+
+        return response(201, { success: true, id: item.id });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao salvar unidade' });
+      }
+    }
+
     // GET UNIDADES
     if ((rawPath === '/unidades' || rawPath.includes('/unidades')) && httpMethod === 'GET') {
       try {
@@ -88,6 +120,148 @@ exports.handler = async (event) => {
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar unidades' });
+      }
+    }
+
+    // POST USUARIOS
+    if ((rawPath === '/usuarios' || rawPath.includes('/usuarios')) && httpMethod === 'POST') {
+      const { email, nome, perfil, unidadeId, ativo } = body;
+
+      if (!email || !nome) {
+        return response(400, { error: 'Email e nome são obrigatórios' });
+      }
+
+      try {
+        const item = {
+          id: `${email}-${Date.now()}`,
+          email,
+          nome,
+          perfil: perfil || 'operador',
+          unidadeId: unidadeId || '',
+          ativo: ativo !== false,
+          timestamp: new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-usuarios',
+          Item: item
+        }).promise();
+
+        return response(201, { success: true, id: item.id });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao salvar usuário' });
+      }
+    }
+
+    // GET USUARIOS
+    if ((rawPath === '/usuarios' || rawPath.includes('/usuarios')) && httpMethod === 'GET') {
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-usuarios'
+        }).promise();
+
+        return response(200, result.Items || []);
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao buscar usuários' });
+      }
+    }
+
+    // POST COLABORADORES
+    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
+      const { nome, email, telefone, cpf, dataAdmissao, salario, chavePixe, cargo, unidadeId } = body;
+
+      if (!nome || !cpf) {
+        return response(400, { error: 'Nome e CPF são obrigatórios' });
+      }
+
+      try {
+        const item = {
+          id: `${cpf}-${Date.now()}`,
+          nome,
+          email: email || '',
+          telefone: telefone || '',
+          cpf,
+          dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
+          salario: parseFloat(salario || 0),
+          chavePixe: chavePixe || '',
+          cargo: cargo || '',
+          unidadeId: unidadeId || '',
+          timestamp: new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-colaboradores',
+          Item: item
+        }).promise();
+
+        return response(201, { success: true, id: item.id });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao salvar colaborador' });
+      }
+    }
+
+    // GET COLABORADORES
+    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'GET') {
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-colaboradores'
+        }).promise();
+
+        return response(200, result.Items || []);
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao buscar colaboradores' });
+      }
+    }
+
+    // POST MOTOBOYS
+    if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'POST') {
+      const { nome, telefone, cpf, placa, dataAdmissao, comissao, chavePixe, unidadeId } = body;
+
+      if (!nome || !cpf) {
+        return response(400, { error: 'Nome e CPF são obrigatórios' });
+      }
+
+      try {
+        const item = {
+          id: `${cpf}-${Date.now()}`,
+          nome,
+          telefone: telefone || '',
+          cpf,
+          placa: placa || '',
+          dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
+          comissao: parseFloat(comissao || 10),
+          chavePixe: chavePixe || '',
+          unidadeId: unidadeId || '',
+          timestamp: new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-motoboys',
+          Item: item
+        }).promise();
+
+        return response(201, { success: true, id: item.id });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao salvar motoboy' });
+      }
+    }
+
+    // GET MOTOBOYS
+    if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'GET') {
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-motoboys'
+        }).promise();
+
+        return response(200, result.Items || []);
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao buscar motoboys' });
       }
     }
 
