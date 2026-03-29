@@ -71,7 +71,7 @@ export default function Caixa() {
 
   // Listener para mudança de unidade
   useEffect(() => {
-    const handleUnitChange = (event: Event) => {
+    const handleUnitChange = () => {
       carregarRegistros();
     };
     
