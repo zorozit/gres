@@ -10,7 +10,7 @@ import { Escalas } from './pages/Escalas';
 import { Saidas } from './pages/Saidas';
 import { Unidades } from './pages/Unidades';
 import { Usuarios } from './pages/Usuarios';
-import { Colaboradores } from './pages/Colaboradores';
+import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { UsuariosEdicao } from './pages/UsuariosEdicao';
 import './App.css';
