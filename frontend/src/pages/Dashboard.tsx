@@ -31,6 +31,13 @@ export const Dashboard: React.FC = () => {
     const unitId = e.target.value;
     setSelectedUnit(unitId);
     localStorage.setItem('user_unit', unitId);
+    
+    // Atualizar UnitContext também
+    const selectedUnitData = unidades.find(u => u.id === unitId);
+    if (selectedUnitData) {
+      // Precisamos acessar o UnitContext aqui
+      window.dispatchEvent(new CustomEvent('unitChanged', { detail: selectedUnitData }));
+    }
   };
 
   const modules = [

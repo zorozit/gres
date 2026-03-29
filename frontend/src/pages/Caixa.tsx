@@ -69,6 +69,16 @@ export default function Caixa() {
 
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
 
+  // Listener para mudança de unidade
+  useEffect(() => {
+    const handleUnitChange = (event: Event) => {
+      carregarRegistros();
+    };
+    
+    window.addEventListener('unitChanged', handleUnitChange);
+    return () => window.removeEventListener('unitChanged', handleUnitChange);
+  }, [unitId]);
+
   // Carregar usuários da unidade
   useEffect(() => {
     if (unitId) {
@@ -243,7 +253,7 @@ export default function Caixa() {
           sangria: 0,
           sistemaPdv: 0,
           referencia: 0,
-          responsavel: user?.email || '',
+          responsavel: (user as any)?.id || '',
         });
         carregarRegistros();
       } else {
@@ -477,6 +487,19 @@ export default function Caixa() {
           <div style={styles.modalContent}>
             <h2>Editar Registro</h2>
             <div style={styles.grid2Col}>
+              <div style={styles.formGroup}>
+                <label>Responsável:</label>
+                <select 
+                  value={registroEditando.responsavel || ''}
+                  onChange={(e) => setRegistroEditando({...registroEditando, responsavel: e.target.value})}
+                  style={styles.input}
+                >
+                  <option value="">Selecione um responsável</option>
+                  {usuarios.map(u => (
+                    <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+                </select>
+              </div>
               <div style={styles.formGroup}>
                 <label>Abertura (R$):</label>
                 <input type="number" value={registroEditando.abertura || 0} onChange={(e) => setRegistroEditando({...registroEditando, abertura: parseFloat(e.target.value) || 0})} style={styles.input} />
