@@ -23,7 +23,7 @@ interface Colaborador {
   tipoContrato: 'CLT' | 'Freelancer';
   valorDia: number;
   valorNoite: number;
-  valorTransporteDia: number;
+  valorTransporte: number;
   valeAlimentacao: boolean;
   
   // Função
@@ -84,7 +84,7 @@ export default function Colaboradores() {
     tipoContrato: 'CLT',
     valorDia: 0,
     valorNoite: 0,
-    valorTransporteDia: 0,
+    valorTransporte: 0,
     valeAlimentacao: false,
     tipo: 'Garçom',
     diasDisponiveis: ['segunda', 'terça', 'quarta', 'quinta', 'sexta'],
@@ -119,8 +119,8 @@ export default function Colaboradores() {
   };
 
   const handleCriarColaborador = async () => {
-    if (!novoColaborador.nome || !novoColaborador.email || !novoColaborador.tipo) {
-      alert('Preencha os campos obrigatórios!');
+    if (!novoColaborador.cpf || !novoColaborador.telefone || !novoColaborador.tipo) {
+      alert('CPF, Celular e Tipo são obrigatórios!');
       return;
     }
 
@@ -141,7 +141,7 @@ export default function Colaboradores() {
       tipoContrato: novoColaborador.tipoContrato as 'CLT' | 'Freelancer',
       valorDia: novoColaborador.valorDia || 0,
       valorNoite: novoColaborador.valorNoite || 0,
-      valorTransporteDia: novoColaborador.valorTransporteDia || 0,
+      valorTransporte: novoColaborador.valorTransporte || 0,
       valeAlimentacao: novoColaborador.valeAlimentacao || false,
       tipo: novoColaborador.tipo || '',
       diasDisponiveis: novoColaborador.diasDisponiveis || [],
@@ -168,7 +168,7 @@ export default function Colaboradores() {
           tipoContrato: 'CLT',
           valorDia: 0,
           valorNoite: 0,
-          valorTransporteDia: 0,
+          valorTransporte: 0,
           valeAlimentacao: false,
           tipo: 'Garçom',
           diasDisponiveis: ['segunda', 'terça', 'quarta', 'quinta', 'sexta'],
@@ -340,7 +340,7 @@ export default function Colaboradores() {
                       <p><strong>Telefone:</strong> {colab.telefone}</p>
                       <p><strong>Valor Dia:</strong> {formatarMoeda(colab.valorDia)}</p>
                       <p><strong>Valor Noite:</strong> {formatarMoeda(colab.valorNoite)}</p>
-                      <p><strong>Transporte Dia:</strong> {formatarMoeda(colab.valorTransporteDia)}</p>
+                      <p><strong>Transporte (Ida e Volta):</strong> {formatarMoeda(colab.valorTransporte)}</p>
                       <p><strong>Vale Alimentação:</strong> {colab.valeAlimentacao ? 'Sim' : 'Não'}</p>
                       <p><strong>Dias Disponíveis:</strong> {colab.diasDisponiveis.join(', ')}</p>
                       <p><strong>Dia:</strong> {colab.podeTrabalharDia ? '✅' : '❌'} | <strong>Noite:</strong> {colab.podeTrabalharNoite ? '✅' : '❌'}</p>
@@ -519,12 +519,12 @@ export default function Colaboradores() {
                   />
                 </div>
                 <div style={styles.formGroup}>
-                  <label>Valor Transporte Dia (R$)</label>
+                  <label>Valor Transporte (Ida e Volta) (R$)</label>
                   <input 
                     type="number"
                     step="0.01"
-                    value={novoColaborador.valorTransporteDia || 0}
-                    onChange={(e) => setNovoColaborador({...novoColaborador, valorTransporteDia: parseFloat(e.target.value) || 0})}
+                    value={novoColaborador.valorTransporte || 0}
+                    onChange={(e) => setNovoColaborador({...novoColaborador, valorTransporte: parseFloat(e.target.value) || 0})}
                     style={styles.input}
                   />
                 </div>
@@ -644,12 +644,12 @@ export default function Colaboradores() {
                     </select>
                   </div>
                   <div style={styles.formGroup}>
-                    <label>Valor Dia (R$)</label>
+                    <label>Valor Transporte (Ida e Volta) (R$)</label>
                     <input 
                       type="number"
                       step="0.01"
-                      value={colaboradorEditando.valorDia || 0}
-                      onChange={(e) => setColaboradorEditando({...colaboradorEditando, valorDia: parseFloat(e.target.value) || 0})}
+                      value={colaboradorEditando.valorTransporte || 0}
+                      onChange={(e) => setColaboradorEditando({...colaboradorEditando, valorTransporte: parseFloat(e.target.value) || 0})}
                       style={styles.input}
                     />
                   </div>
