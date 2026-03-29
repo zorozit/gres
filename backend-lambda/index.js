@@ -375,38 +375,19 @@ exports.handler = async (event) => {
 
       try {
         let result;
-        if (unitId && data) {
-          // Buscar registros de uma unidade em uma data específica
-          result = await dynamodb.query({
-            TableName: 'gres-prod-caixa',
-            IndexName: 'unitId-data-index',
-            KeyConditionExpression: 'unitId = :uid AND #d = :data',
-            ExpressionAttributeNames: { '#d': 'data' },
-            ExpressionAttributeValues: {
-              ':uid': unitId,
-              ':data': data
-            }
-          }).promise();
-        } else if (unitId) {
-          // Buscar todos os registros de uma unidade
-          result = await dynamodb.query({
-            TableName: 'gres-prod-caixa',
-            IndexName: 'unitId-data-index',
-            KeyConditionExpression: 'unitId = :uid',
-            ExpressionAttributeValues: {
-              ':uid': unitId
-            }
-          }).promise();
-        } else {
-          result = await dynamodb.scan({
-            TableName: 'gres-prod-caixa'
-          }).promise();
-        }
+        
+        // Usar scan para filtrar, pois o índice pode não existir
+        result = await dynamodb.scan({
+          TableName: 'gres-prod-caixa',
+          FilterExpression: unitId && data ? 'unitId = :uid AND #d = :data' : (unitId ? 'unitId = :uid' : undefined),
+          ExpressionAttributeNames: unitId && data ? { '#d': 'data' } : (unitId ? {} : undefined),
+          ExpressionAttributeValues: unitId && data ? { ':uid': unitId, ':data': data } : (unitId ? { ':uid': unitId } : undefined)
+        }).promise();
 
         return response(200, result.Items || []);
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao buscar caixa' });
+        return response(500, { error: 'Erro ao buscar caixa: ' + error.message });
       }
     }
 

@@ -101,17 +101,29 @@ export default function Caixa() {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/caixa?unitId=${unitId}&data=${dataSelecionada}`, {
+      const url = `${apiUrl}/caixa?unitId=${unitId}&data=${dataSelecionada}`;
+      console.log('Carregando registros de:', url);
+      
+      const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
+      console.log('Status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Dados recebidos:', data);
         const registrosArray = (Array.isArray(data) ? data : data.registros || []) as RegistroCaixa[];
+        console.log('Registros:', registrosArray);
         setRegistros(registrosArray);
+      } else {
+        const erro = await response.json();
+        console.error('Erro:', erro);
+        setRegistros([]);
       }
     } catch (error) {
       console.error('Erro ao carregar registros:', error);
+      setRegistros([]);
     } finally {
       setLoading(false);
     }
