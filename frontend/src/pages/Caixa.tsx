@@ -38,6 +38,8 @@ export const Caixa: React.FC = () => {
   const [caixaAberto, setCaixaAberto] = useState(false);
   const [saldoAtual, setSaldoAtual] = useState(0);
   const [turnoAtivo, setTurnoAtivo] = useState('manhã');
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<Partial<CaixaMovimento>>({});
   const [formData, setFormData] = useState({
     tipo: 'recebimento',
     tipoRecebimento: 'dinheiro',
@@ -48,7 +50,6 @@ export const Caixa: React.FC = () => {
   useEffect(() => {
     if (token && activeUnit) {
       fetchMovimentos();
-      verificarCaixaAberto();
     }
   }, [activeUnit, token]);
 
@@ -60,8 +61,30 @@ export const Caixa: React.FC = () => {
       const response = await fetch(`${apiEndpoint}/caixa?unitId=${activeUnit.id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      
+      if (!response.ok) {
+        console.error('Erro na resposta:', response.status);
+        return;
+      }
+
       const data = await response.json();
-      const movs = Array.isArray(data) ? data : [];
+      console.log('Dados recebidos:', data);
+      
+      // Verificar se data é um objeto com propriedade data ou um array direto
+      let movs: CaixaMovimento[] = [];
+      if (Array.isArray(data)) {
+        movs = data;
+      } else if (data && Array.isArray(data.data)) {
+        movs = data.data;
+      } else if (data && typeof data === 'object') {
+        // Tentar extrair array de qualquer propriedade
+        const valores = Object.values(data);
+        if (Array.isArray(valores[0])) {
+          movs = valores[0];
+        }
+      }
+
+      console.log('Movimentos processados:', movs);
       setMovimentos(movs);
       
       // Calcular saldo atual
@@ -75,26 +98,6 @@ export const Caixa: React.FC = () => {
       console.error('Erro ao buscar movimentos:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const verificarCaixaAberto = async () => {
-    if (!token || !activeUnit) return;
-    try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/caixa?unitId=${activeUnit.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      const movs = Array.isArray(data) ? data : [];
-      
-      if (movs.length > 0) {
-        const ultimoMovimento = movs[movs.length - 1];
-        setCaixaAberto(ultimoMovimento.tipo !== 'fechamento');
-        setTurnoAtivo(ultimoMovimento.turno || 'manhã');
-      }
-    } catch (error) {
-      console.error('Erro ao verificar caixa:', error);
     }
   };
 
@@ -270,11 +273,49 @@ export const Caixa: React.FC = () => {
     }
   };
 
+  const handleEditar = (movimento: CaixaMovimento) => {
+    setEditandoId(movimento.id);
+    setEditData({ ...movimento });
+  };
+
+  const handleSalvarEdicao = async () => {
+    if (!token || !editandoId) return;
+
+    try {
+      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      const response = await fetch(`${apiEndpoint}/caixa/${editandoId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editData)
+      });
+
+      if (response.ok) {
+        setEditandoId(null);
+        setEditData({});
+        fetchMovimentos();
+        alert('Movimento atualizado com sucesso!');
+      } else {
+        alert('Erro ao atualizar movimento');
+      }
+    } catch (error) {
+      console.error('Erro ao salvar edição:', error);
+      alert('Erro ao atualizar movimento');
+    }
+  };
+
+  const handleCancelarEdicao = () => {
+    setEditandoId(null);
+    setEditData({});
+  };
+
   // Calcular totais por tipo de recebimento
   const totaisPorTipo = movimentos
     .filter(m => m.tipo === 'recebimento')
     .reduce((acc, mov) => {
-      const tipo = (mov as any).tipoRecebimento || 'outros';
+      const tipo = mov.tipoRecebimento || 'outros';
       acc[tipo] = (acc[tipo] || 0) + mov.valor;
       return acc;
     }, {} as Record<string, number>);
@@ -395,7 +436,7 @@ export const Caixa: React.FC = () => {
                     <label>Tipo de Recebimento *</label>
                     <select
                       value={formData.tipoRecebimento}
-                      onChange={(e) => setFormData({...formData, tipoRecebimento: e.target.value as any})}
+                      onChange={(e) => setFormData({...formData, tipoRecebimento: e.target.value})}
                     >
                       {TIPOS_RECEBIMENTO.map(tipo => (
                         <option key={tipo.value} value={tipo.value}>
@@ -435,7 +476,7 @@ export const Caixa: React.FC = () => {
 
           {/* Grid de Movimentos */}
           <section className="list-section">
-            <h2>Movimentos do Dia</h2>
+            <h2>Movimentos do Dia ({movimentos.length})</h2>
             {loading ? (
               <p>Carregando...</p>
             ) : movimentos.length === 0 ? (
@@ -449,26 +490,84 @@ export const Caixa: React.FC = () => {
                     <th>Valor</th>
                     <th>Saldo Anterior</th>
                     <th>Saldo Atual</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {movimentos.map((mov) => (
                     <tr key={mov.id} className={`tipo-${mov.tipo}`}>
-                      <td>
-                        <span className={`tipo-badge ${mov.tipo}`}>
-                          {mov.tipo === 'abertura' && '🟢 Abertura'}
-                          {mov.tipo === 'recebimento' && '⬆️ Recebimento'}
-                          {mov.tipo === 'sangria' && '⬇️ Sangria'}
-                          {mov.tipo === 'reforço' && '⬆️ Reforço'}
-                          {mov.tipo === 'fechamento' && '🔴 Fechamento'}
-                        </span>
-                      </td>
-                      <td>{mov.descricao}</td>
-                      <td className={mov.tipo === 'sangria' ? 'valor-negativo' : 'valor-positivo'}>
-                        {mov.tipo === 'sangria' ? '-' : '+'} R$ {mov.valor.toFixed(2)}
-                      </td>
-                      <td>R$ {(mov.saldoAnterior || 0).toFixed(2)}</td>
-                      <td><strong>R$ {(mov.saldoAtual || 0).toFixed(2)}</strong></td>
+                      {editandoId === mov.id ? (
+                        <>
+                          <td>
+                            <input
+                              type="text"
+                              value={editData.tipo || ''}
+                              disabled
+                              className="edit-input"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={editData.descricao || ''}
+                              onChange={(e) => setEditData({...editData, descricao: e.target.value})}
+                              className="edit-input"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editData.valor || ''}
+                              onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})}
+                              className="edit-input"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editData.saldoAnterior || ''}
+                              disabled
+                              className="edit-input"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editData.saldoAtual || ''}
+                              onChange={(e) => setEditData({...editData, saldoAtual: parseFloat(e.target.value)})}
+                              className="edit-input"
+                            />
+                          </td>
+                          <td className="acoes">
+                            <button onClick={handleSalvarEdicao} className="btn-salvar">✓</button>
+                            <button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>
+                            <span className={`tipo-badge ${mov.tipo}`}>
+                              {mov.tipo === 'abertura' && '🟢 Abertura'}
+                              {mov.tipo === 'recebimento' && '⬆️ Recebimento'}
+                              {mov.tipo === 'sangria' && '⬇️ Sangria'}
+                              {mov.tipo === 'reforço' && '⬆️ Reforço'}
+                              {mov.tipo === 'fechamento' && '🔴 Fechamento'}
+                            </span>
+                          </td>
+                          <td>{mov.descricao}</td>
+                          <td className={mov.tipo === 'sangria' ? 'valor-negativo' : 'valor-positivo'}>
+                            {mov.tipo === 'sangria' ? '-' : '+'} R$ {mov.valor.toFixed(2)}
+                          </td>
+                          <td>R$ {(mov.saldoAnterior || 0).toFixed(2)}</td>
+                          <td><strong>R$ {(mov.saldoAtual || 0).toFixed(2)}</strong></td>
+                          <td className="acoes">
+                            <button onClick={() => handleEditar(mov)} className="btn-editar">✏️ Editar</button>
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -620,12 +719,57 @@ export const Caixa: React.FC = () => {
         .valor-positivo { color: #28a745; font-weight: bold; }
         .valor-negativo { color: #dc3545; font-weight: bold; }
 
+        .acoes {
+          display: flex;
+          gap: 5px;
+        }
+
+        .btn-editar, .btn-salvar, .btn-cancelar {
+          padding: 5px 10px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: bold;
+        }
+
+        .btn-editar {
+          background: #007bff;
+          color: white;
+        }
+
+        .btn-salvar {
+          background: #28a745;
+          color: white;
+        }
+
+        .btn-cancelar {
+          background: #dc3545;
+          color: white;
+        }
+
+        .edit-input {
+          width: 100%;
+          padding: 5px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          font-size: 12px;
+        }
+
+        .edit-input:disabled {
+          background: #f5f5f5;
+          cursor: not-allowed;
+        }
+
         @media (max-width: 768px) {
           .status-section {
             grid-template-columns: 1fr;
           }
           .tipos-grid {
             grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          }
+          .data-table {
+            font-size: 12px;
           }
         }
       `}</style>
