@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnit } from '../contexts/UnitContext';
 import '../styles/ModuleDetail.css';
 
 export const Unidades: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
+  const { activeUnit } = useUnit();
   const [unidades, setUnidades] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
@@ -75,6 +77,7 @@ export const Unidades: React.FC = () => {
         <div className="header-left">
           <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
           <h1>🏢 Cadastro de Unidades</h1>
+          {activeUnit && <p className="active-unit">Unidade: {activeUnit.nome}</p>}
         </div>
         <div className="header-right">
           <span className="user-info">👤 {email}</span>

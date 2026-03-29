@@ -8,6 +8,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   email?: string;
+  token?: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -72,6 +73,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('token');
   };
 
+  const token = localStorage.getItem('token') || undefined;
+
   return (
     <AuthContext.Provider value={{ 
       isAuthenticated, 
@@ -80,7 +83,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout,
       loading,
       error,
-      email: user?.email
+      email: user?.email,
+      token
     }}>
       {children}
     </AuthContext.Provider>

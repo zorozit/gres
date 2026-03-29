@@ -1,6 +1,6 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { UnitSelector } from '../components/UnitSelector';
 import '../styles/Modules.css';
 
 export const Modules: React.FC = () => {
@@ -77,44 +77,32 @@ export const Modules: React.FC = () => {
   return (
     <div className="modules-container">
       <header className="modules-header">
-        <div className="header-left">
-          <h1>🍽️ GRES</h1>
-          <p>Gestão de Restaurantes</p>
-        </div>
-        <div className="header-right">
-          <span className="user-info">👤 {email}</span>
-          <button onClick={logout} className="logout-button">Sair</button>
+        <div className="header-content">
+          <h1>GRES - Gestão de Restaurantes</h1>
+          <div className="user-info">
+            <span>{email}</span>
+            <button onClick={logout} className="logout-btn">Sair</button>
+          </div>
         </div>
       </header>
 
       <main className="modules-main">
-        <div className="modules-header-section">
-          <h2>Módulos do Sistema</h2>
-          <p>Selecione um módulo para começar</p>
-        </div>
+        <UnitSelector />
 
         <div className="modules-grid">
-          {modules.map((module) => (
+          {modules.map(module => (
             <div
               key={module.id}
               className="module-card"
-              onClick={() => navigate(module.path)}
               style={{ borderTopColor: module.color }}
+              onClick={() => navigate(module.path)}
             >
-              <div className="module-icon" style={{ color: module.color }}>
-                {module.icon}
-              </div>
+              <div className="module-icon">{module.icon}</div>
               <h3>{module.title}</h3>
               <p>{module.description}</p>
-              <button className="module-button" style={{ backgroundColor: module.color }}>
-                Acessar →
-              </button>
+              <button className="module-btn">Acessar →</button>
             </div>
           ))}
-        </div>
-
-        <div className="modules-footer">
-          <p>💡 Dica: Clique em qualquer módulo para começar</p>
         </div>
       </main>
     </div>

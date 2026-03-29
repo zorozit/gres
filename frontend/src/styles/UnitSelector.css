@@ -1,0 +1,87 @@
+.unit-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.unit-selector label {
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.unit-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.95);
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.unit-select:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  background-color: white;
+}
+
+.unit-select:focus {
+  outline: none;
+  border-color: white;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+}
+
+.unit-select option {
+  background-color: white;
+  color: #333;
+  padding: 8px;
+}
+
+.unit-selector.single {
+  justify-content: space-between;
+}
+
+.unit-name {
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 8px 12px;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  flex: 1;
+  text-align: right;
+}
+
+.unit-selector.loading,
+.unit-selector.empty {
+  color: white;
+  font-size: 14px;
+  justify-content: center;
+  padding: 12px 16px;
+}
+
+@media (max-width: 768px) {
+  .unit-selector {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .unit-select {
+    width: 100%;
+  }
+
+  .unit-name {
+    width: 100%;
+    text-align: left;
+  }
+}
