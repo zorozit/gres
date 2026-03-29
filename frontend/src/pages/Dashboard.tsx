@@ -1,95 +1,189 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import '../styles/Dashboard.css';
+import { Header } from '../components/Header';
+import { Footer } from '../components/Footer';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout } = useAuth();
+
+  const modules = [
+    { icon: '💰', title: 'Controle de Caixa', desc: 'Gerencie aberturas, recebimentos e fechamentos', path: '/modulos/caixa' },
+    { icon: '📅', title: 'Gestão de Escalas', desc: 'Organize turnos e presenças de colaboradores', path: '/modulos/escalas' },
+    { icon: '💸', title: 'Registro de Saídas', desc: 'Controle despesas e saídas operacionais', path: '/modulos/saidas' },
+    { icon: '👥', title: 'Gestão de Colaboradores', desc: 'Gerencie dados e históricos de funcionários', path: '/modulos/colaboradores' },
+    { icon: '🏍️', title: 'Gestão de Motoboys', desc: 'Administre entregas e comissões', path: '/modulos/motoboys' },
+    { icon: '🏢', title: 'Gestão de Unidades', desc: 'Administre as unidades do restaurante', path: '/modulos/unidades' },
+    { icon: '👨‍💼', title: 'Gestão de Usuários', desc: 'Gerencie usuários e permissões do sistema', path: '/modulos/usuarios' },
+  ];
 
   return (
-    <div className="dashboard-container">
-      <header className="dashboard-header">
-        <div className="header-left">
-          <h1>🍽️ GRES</h1>
-          <p>Gestão de Restaurantes</p>
-        </div>
-        <div className="header-right">
-          <span className="user-info">👤 {email}</span>
-          <button onClick={logout} className="logout-button">Sair</button>
-        </div>
-      </header>
-
-      <main className="dashboard-main">
-        <div className="welcome-section">
-          <h2>Bem-vindo ao GRES! 👋</h2>
-          <p>Sistema de Gestão Operacional para Redes de Restaurantes</p>
+    <div style={styles.pageWrapper}>
+      <Header title="🍽️ GRES - Gestão de Restaurantes" showBack={false} />
+      
+      <main style={styles.container}>
+        <div style={styles.welcomeSection}>
+          <h2 style={styles.welcomeTitle}>Bem-vindo ao GRES! 👋</h2>
+          <p style={styles.welcomeText}>Sistema de Gestão Operacional para Redes de Restaurantes</p>
         </div>
 
-        <button onClick={() => navigate('/modulos')} className="view-modules-button">
-          Ver Todos os Módulos →
-        </button>
-
-        <div className="features-grid">
-          <div className="feature-card" onClick={() => navigate('/modulos')}>
-            <div className="feature-icon">📊</div>
-            <h3>Dashboard Operacional</h3>
-            <p>Visualize métricas e indicadores em tempo real</p>
-          </div>
-
-          <div className="feature-card" onClick={() => navigate('/modulos/caixa')}>
-            <div className="feature-icon">💰</div>
-            <h3>Controle de Caixa</h3>
-            <p>Gerencie aberturas, recebimentos e fechamentos</p>
-          </div>
-
-          <div className="feature-card" onClick={() => navigate('/modulos/escalas')}>
-            <div className="feature-icon">📅</div>
-            <h3>Gestão de Escalas</h3>
-            <p>Organize turnos e presenças de colaboradores</p>
-          </div>
-
-          <div className="feature-card" onClick={() => navigate('/modulos/saidas')}>
-            <div className="feature-icon">💸</div>
-            <h3>Registro de Saídas</h3>
-            <p>Controle despesas e saídas operacionais</p>
-          </div>
-
-          <div className="feature-card" onClick={() => navigate('/modulos/motoboys')}>
-            <div className="feature-icon">🏍️</div>
-            <h3>Gestão de Motoboys</h3>
-            <p>Administre entregas e comissões</p>
-          </div>
-
-          <div className="feature-card" onClick={() => navigate('/modulos/colaboradores')}>
-            <div className="feature-icon">👥</div>
-            <h3>Gestão de Colaboradores</h3>
-            <p>Gerencie dados e históricos de funcionários</p>
+        <div style={styles.modulesSection}>
+          <h3 style={styles.sectionTitle}>📋 Módulos Disponíveis</h3>
+          <div style={styles.modulesGrid}>
+            {modules.map((module) => (
+              <div 
+                key={module.path}
+                style={styles.moduleCard}
+                onClick={() => navigate(module.path)}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+                }}
+              >
+                <div style={styles.moduleIcon}>{module.icon}</div>
+                <h4 style={styles.moduleTitle}>{module.title}</h4>
+                <p style={styles.moduleDesc}>{module.desc}</p>
+                <div style={styles.moduleArrow}>→</div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="status-section">
-          <h3>Status do Sistema</h3>
-          <div className="status-grid">
-            <div className="status-item">
-              <span className="status-dot online"></span>
+        <div style={styles.statusSection}>
+          <h3 style={styles.sectionTitle}>✅ Status do Sistema</h3>
+          <div style={styles.statusGrid}>
+            <div style={styles.statusItem}>
+              <span style={styles.statusDot}></span>
               <span>API: Conectada</span>
             </div>
-            <div className="status-item">
-              <span className="status-dot online"></span>
+            <div style={styles.statusItem}>
+              <span style={styles.statusDot}></span>
               <span>Banco de Dados: Ativo</span>
             </div>
-            <div className="status-item">
-              <span className="status-dot online"></span>
+            <div style={styles.statusItem}>
+              <span style={styles.statusDot}></span>
               <span>Autenticação: Ativa</span>
             </div>
-            <div className="status-item">
-              <span className="status-dot online"></span>
+            <div style={styles.statusItem}>
+              <span style={styles.statusDot}></span>
               <span>Armazenamento: Disponível</span>
             </div>
           </div>
         </div>
       </main>
+
+      <Footer showLinks={true} />
     </div>
   );
+};
+
+const styles = {
+  pageWrapper: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    minHeight: '100vh',
+  },
+  container: {
+    padding: '40px 20px',
+    maxWidth: '1400px',
+    margin: '0 auto',
+    width: '100%',
+    flex: 1,
+  },
+  welcomeSection: {
+    textAlign: 'center' as const,
+    marginBottom: '40px',
+  },
+  welcomeTitle: {
+    fontSize: '32px',
+    fontWeight: 'bold',
+    color: '#333',
+    margin: '0 0 10px 0',
+  },
+  welcomeText: {
+    fontSize: '16px',
+    color: '#666',
+    margin: 0,
+  },
+  modulesSection: {
+    marginBottom: '40px',
+  },
+  sectionTitle: {
+    fontSize: '20px',
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: '20px',
+    borderBottom: '2px solid #3498db',
+    paddingBottom: '10px',
+  },
+  modulesGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+    gap: '20px',
+  } as React.CSSProperties,
+  moduleCard: {
+    backgroundColor: 'white',
+    border: '1px solid #e0e0e0',
+    borderRadius: '8px',
+    padding: '24px',
+    cursor: 'pointer',
+    transition: 'all 0.3s ease',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+    position: 'relative',
+    overflow: 'hidden',
+  } as React.CSSProperties,
+  moduleIcon: {
+    fontSize: '40px',
+    marginBottom: '12px',
+    display: 'block',
+  },
+  moduleTitle: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#333',
+    margin: '0 0 8px 0',
+  },
+  moduleDesc: {
+    fontSize: '13px',
+    color: '#666',
+    margin: 0,
+    lineHeight: '1.4',
+  },
+  moduleArrow: {
+    position: 'absolute' as const,
+    bottom: '12px',
+    right: '12px',
+    fontSize: '20px',
+    color: '#3498db',
+    fontWeight: 'bold',
+  } as React.CSSProperties,
+  statusSection: {
+    marginTop: '40px',
+  },
+  statusGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: '15px',
+  } as React.CSSProperties,
+  statusItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '12px',
+    backgroundColor: '#f5f5f5',
+    borderRadius: '6px',
+    fontSize: '14px',
+    color: '#333',
+  } as React.CSSProperties,
+  statusDot: {
+    display: 'inline-block',
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    backgroundColor: '#4CAF50',
+    boxShadow: '0 0 5px rgba(76, 175, 80, 0.5)',
+  },
 };

@@ -28,7 +28,6 @@ interface RegistroCaixa {
   sistemaPdv: number;
   diferenca: number;
   referencia: number;
-  conferencia?: string;
   editando?: boolean;
 }
 
@@ -119,14 +118,12 @@ export default function Caixa() {
   };
 
   const calcularTotais = (registro: Partial<RegistroCaixa>) => {
-    // Total = Abertura + Maq1-6 + iFood + Dinheiro + PIX + Fiado (SEM Sangria)
     const total = (registro.abertura || 0) + 
                   (registro.maq1 || 0) + (registro.maq2 || 0) + (registro.maq3 || 0) + 
                   (registro.maq4 || 0) + (registro.maq5 || 0) + (registro.maq6 || 0) +
                   (registro.ifood || 0) + (registro.dinheiro || 0) + (registro.pix || 0) + 
                   (registro.fiado || 0);
     
-    // Diferença = Sistema PDV - Total
     const diferenca = (registro.sistemaPdv || 0) - total;
 
     return { total, diferenca };
@@ -145,7 +142,7 @@ export default function Caixa() {
 
     const { total, diferenca } = calcularTotais(novoRegistro);
     const agora = new Date();
-    const hora = agora.toTimeString().split(' ')[0]; // HH:MM:SS
+    const hora = agora.toTimeString().split(' ')[0];
     
     const responsavelNome = usuarios.find(u => u.id === novoRegistro.responsavel)?.nome || '';
     
@@ -208,63 +205,13 @@ export default function Caixa() {
         });
         carregarRegistros();
       } else {
-        alert('Erro ao salvar registro');
+        const erro = await response.json();
+        alert(`Erro ao salvar: ${erro.error}`);
       }
     } catch (error) {
       console.error('Erro ao criar registro:', error);
       alert('Erro ao salvar registro');
     }
-  };
-
-  const handleEditarRegistro = (registro: RegistroCaixa) => {
-    setRegistros(registros.map(r => 
-      r.id === registro.id ? { ...r, editando: true } : r
-    ));
-  };
-
-  const handleSalvarEdicao = async (registro: RegistroCaixa) => {
-    const { total, diferenca } = calcularTotais(registro);
-    
-    const registroAtualizado = {
-      ...registro,
-      total,
-      diferenca,
-      editando: false
-    };
-
-    try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/caixa/${registro.id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(registroAtualizado)
-      });
-
-      if (response.ok) {
-        alert('Registro atualizado com sucesso!');
-        setRegistros(registros.map(r => 
-          r.id === registro.id ? registroAtualizado : r
-        ));
-      }
-    } catch (error) {
-      console.error('Erro ao salvar edição:', error);
-      alert('Erro ao atualizar registro');
-    }
-  };
-
-  const handleCancelarEdicao = (id: string) => {
-    setRegistros(registros.map(r => 
-      r.id === id ? { ...r, editando: false } : r
-    ));
-  };
-
-  const handleMudarCampo = (registro: RegistroCaixa, campo: string, valor: any) => {
-    setRegistros(registros.map(r => 
-      r.id === registro.id ? { ...r, [campo]: valor } : r
-    ));
   };
 
   const handleMudarCampoNovo = (campo: string, valor: any) => {
@@ -273,7 +220,6 @@ export default function Caixa() {
       [campo]: valor
     };
     
-    // Recalcular total se mudou um campo de valor
     if (['abertura', 'maq1', 'maq2', 'maq3', 'maq4', 'maq5', 'maq6', 'ifood', 'dinheiro', 'pix', 'fiado', 'sistemaPdv'].includes(campo)) {
       const { total, diferenca } = calcularTotais(novoValor);
       novoValor.total = total;
@@ -290,373 +236,193 @@ export default function Caixa() {
     }).format(valor);
   };
 
-  const formatarData = (data: string) => {
-    return new Date(data + 'T00:00:00').toLocaleDateString('pt-BR');
-  };
+
 
   return (
     <div style={styles.pageWrapper}>
       <Header title="💰 Controle de Caixa" showBack={true} />
       <div style={styles.container}>
-
-      <div style={styles.filtro}>
-        <label>
-          Data:
+        
+        {/* FILTRO DE DATA */}
+        <div style={styles.filtroSection}>
+          <label style={styles.label}>📅 Data:</label>
           <input 
             type="date" 
             value={dataSelecionada}
             onChange={(e) => setDataSelecionada(e.target.value)}
-            style={styles.input}
+            style={styles.inputData}
           />
-        </label>
-      </div>
-
-      <div style={styles.formulario}>
-        <h3>📝 Novo Registro</h3>
-        <div style={styles.grid}>
-          <div>
-            <label>Responsável:</label>
-            <select 
-              value={novoRegistro.responsavel || ''}
-              onChange={(e) => handleMudarCampoNovo('responsavel', e.target.value)}
-              style={styles.input}
-            >
-              <option value="">Selecione um responsável</option>
-              {usuarios.map(u => (
-                <option key={u.id} value={u.id}>{u.nome}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>Período:</label>
-            <select 
-              value={novoRegistro.periodo}
-              onChange={(e) => handleMudarCampoNovo('periodo', e.target.value)}
-              style={styles.input}
-            >
-              <option>Dia</option>
-              <option>Noite</option>
-            </select>
-          </div>
-          <div>
-            <label>Abertura (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.abertura || 0}
-              onChange={(e) => handleMudarCampoNovo('abertura', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 1 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq1 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq1', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 2 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq2 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq2', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 3 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq3 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq3', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 4 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq4 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq4', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 5 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq5 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq5', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Maq 6 (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.maq6 || 0}
-              onChange={(e) => handleMudarCampoNovo('maq6', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>iFood (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.ifood || 0}
-              onChange={(e) => handleMudarCampoNovo('ifood', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Dinheiro (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.dinheiro || 0}
-              onChange={(e) => handleMudarCampoNovo('dinheiro', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>PIX (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.pix || 0}
-              onChange={(e) => handleMudarCampoNovo('pix', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Fiado (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.fiado || 0}
-              onChange={(e) => handleMudarCampoNovo('fiado', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Sangria (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.sangria || 0}
-              onChange={(e) => handleMudarCampoNovo('sangria', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Sistema PDV (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.sistemaPdv || 0}
-              onChange={(e) => handleMudarCampoNovo('sistemaPdv', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
-          <div>
-            <label>Referência (R$):</label>
-            <input 
-              type="number" 
-              step="0.01"
-              value={novoRegistro.referencia || 0}
-              onChange={(e) => handleMudarCampoNovo('referencia', parseFloat(e.target.value))}
-              style={styles.input}
-            />
-          </div>
         </div>
 
-        <div style={styles.resumo}>
-          <div style={styles.resumoItem}>
-            <strong>Total:</strong> {formatarMoeda(novoRegistro.total || 0)}
-          </div>
-          <div style={styles.resumoItem}>
-            <strong>Diferença:</strong> {formatarMoeda(novoRegistro.diferenca || 0)}
-          </div>
-        </div>
+        {/* LAYOUT 2 COLUNAS: FORMULÁRIO | REGISTROS */}
+        <div style={styles.mainLayout}>
+          
+          {/* COLUNA 1: FORMULÁRIO */}
+          <div style={styles.coluna1}>
+            <div style={styles.formulario}>
+              <h2 style={styles.h2}>📝 Novo Registro</h2>
+              
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Responsável:</label>
+                <select 
+                  value={novoRegistro.responsavel || ''}
+                  onChange={(e) => handleMudarCampoNovo('responsavel', e.target.value)}
+                  style={styles.input}
+                >
+                  <option value="">Selecione um responsável</option>
+                  {usuarios.map(u => (
+                    <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+                </select>
+              </div>
 
-        <button onClick={handleCriarRegistro} style={styles.botao}>
-          💾 Salvar Registro
-        </button>
-      </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Período:</label>
+                <select 
+                  value={novoRegistro.periodo}
+                  onChange={(e) => handleMudarCampoNovo('periodo', e.target.value)}
+                  style={styles.input}
+                >
+                  <option>Dia</option>
+                  <option>Noite</option>
+                </select>
+              </div>
 
-      {loading ? (
-        <p>Carregando...</p>
-      ) : registros.length === 0 ? (
-        <p>Nenhum registro para esta data</p>
-      ) : (
-        <div style={styles.tabelaContainer}>
-          <table style={styles.tabela}>
-            <thead>
-              <tr>
-                <th>Data/Hora</th>
-                <th>Período</th>
-                <th>Responsável</th>
-                <th>Abertura</th>
-                <th>Maq1-6</th>
-                <th>iFood</th>
-                <th>Dinheiro</th>
-                <th>PIX</th>
-                <th>Fiado</th>
-                <th>Total</th>
-                <th>Sangria</th>
-                <th>PDV</th>
-                <th>Diferença</th>
-                <th>Referência</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {registros.map(registro => (
-                <tr key={registro.id} style={registro.editando ? styles.linhaEditando : {}}>
-                  <td>{formatarData(registro.data)} {registro.hora}</td>
-                  <td>{registro.periodo}</td>
-                  <td>{registro.responsavelNome || registro.responsavel}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.abertura}
-                      onChange={(e) => handleMudarCampo(registro, 'abertura', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.abertura)}</td>
-                  <td>{registro.editando ? (
-                    <div style={styles.maqContainer}>
-                      {[1,2,3,4,5,6].map(i => (
-                        <input 
-                          key={i}
-                          type="number" 
-                          step="0.01"
-                          value={String(registro[`maq${i}` as keyof RegistroCaixa] || 0)}
-                          onChange={(e) => handleMudarCampo(registro, `maq${i}`, parseFloat(e.target.value))}
-                          style={styles.inputMaq}
-                          placeholder={`M${i}`}
-                        />
-                      ))}
-                    </div>
-                  ) : `${formatarMoeda(registro.maq1)} + ${formatarMoeda(registro.maq2)} + ${formatarMoeda(registro.maq3)} + ${formatarMoeda(registro.maq4)} + ${formatarMoeda(registro.maq5)} + ${formatarMoeda(registro.maq6)}`}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.ifood}
-                      onChange={(e) => handleMudarCampo(registro, 'ifood', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.ifood)}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.dinheiro}
-                      onChange={(e) => handleMudarCampo(registro, 'dinheiro', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.dinheiro)}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.pix}
-                      onChange={(e) => handleMudarCampo(registro, 'pix', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.pix)}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.fiado}
-                      onChange={(e) => handleMudarCampo(registro, 'fiado', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.fiado)}</td>
-                  <td style={styles.totalCell}><strong>{formatarMoeda(registro.total)}</strong></td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.sangria}
-                      onChange={(e) => handleMudarCampo(registro, 'sangria', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.sangria)}</td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.sistemaPdv}
-                      onChange={(e) => handleMudarCampo(registro, 'sistemaPdv', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.sistemaPdv)}</td>
-                  <td style={registro.diferenca !== 0 ? styles.diferencaNegativa : styles.diferencaPositiva}>
-                    {registro.editando ? (
-                  <input 
-                    type="number" 
-                    step="0.01"
-                    value={registro.diferenca}
-                    onChange={(e) => handleMudarCampo(registro, 'diferenca', parseFloat(e.target.value))}
-                    style={styles.inputTabela}
-                    disabled={true}
-                  />
-                    ) : formatarMoeda(registro.diferenca)}
-                  </td>
-                  <td>{registro.editando ? (
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={registro.referencia}
-                      onChange={(e) => handleMudarCampo(registro, 'referencia', parseFloat(e.target.value))}
-                      style={styles.inputTabela}
-                    />
-                  ) : formatarMoeda(registro.referencia)}</td>
-                  <td>
-                    {registro.editando ? (
-                      <div style={styles.acoes}>
-                        <button 
-                          onClick={() => handleSalvarEdicao(registro)}
-                          style={styles.botaoSalvar}
-                        >
-                          ✓
-                        </button>
-                        <button 
-                          onClick={() => handleCancelarEdicao(registro.id)}
-                          style={styles.botaoCancelar}
-                        >
-                          ✗
-                        </button>
+              <h3 style={styles.h3}>💵 Valores</h3>
+
+              <div style={styles.grid2Col}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Abertura (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.abertura || 0} onChange={(e) => handleMudarCampoNovo('abertura', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 1 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq1 || 0} onChange={(e) => handleMudarCampoNovo('maq1', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 2 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq2 || 0} onChange={(e) => handleMudarCampoNovo('maq2', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 3 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq3 || 0} onChange={(e) => handleMudarCampoNovo('maq3', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 4 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq4 || 0} onChange={(e) => handleMudarCampoNovo('maq4', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 5 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq5 || 0} onChange={(e) => handleMudarCampoNovo('maq5', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Maq 6 (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.maq6 || 0} onChange={(e) => handleMudarCampoNovo('maq6', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>iFood (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.ifood || 0} onChange={(e) => handleMudarCampoNovo('ifood', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Dinheiro (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.dinheiro || 0} onChange={(e) => handleMudarCampoNovo('dinheiro', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>PIX (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.pix || 0} onChange={(e) => handleMudarCampoNovo('pix', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Fiado (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.fiado || 0} onChange={(e) => handleMudarCampoNovo('fiado', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Sangria (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.sangria || 0} onChange={(e) => handleMudarCampoNovo('sangria', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+              </div>
+
+              <h3 style={styles.h3}>📊 Sistema</h3>
+
+              <div style={styles.grid2Col}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Sistema PDV (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.sistemaPdv || 0} onChange={(e) => handleMudarCampoNovo('sistemaPdv', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Referência (R$):</label>
+                  <input type="number" step="0.01" value={novoRegistro.referencia || 0} onChange={(e) => handleMudarCampoNovo('referencia', parseFloat(e.target.value))} style={styles.input} />
+                </div>
+              </div>
+
+              {/* RESUMO */}
+              <div style={styles.resumo}>
+                <div style={styles.resumoItem}>
+                  <span style={styles.resumoLabel}>Total:</span>
+                  <span style={styles.resumoValor}>{formatarMoeda(novoRegistro.total || 0)}</span>
+                </div>
+                <div style={styles.resumoItem}>
+                  <span style={styles.resumoLabel}>Diferença:</span>
+                  <span style={{...styles.resumoValor, color: (novoRegistro.diferenca || 0) !== 0 ? '#d32f2f' : '#388e3c'}}>{formatarMoeda(novoRegistro.diferenca || 0)}</span>
+                </div>
+              </div>
+
+              <button onClick={handleCriarRegistro} style={styles.botaoSalvar}>
+                💾 Salvar Registro
+              </button>
+            </div>
+          </div>
+
+          {/* COLUNA 2: REGISTROS HISTÓRICOS */}
+          <div style={styles.coluna2}>
+            <div style={styles.registrosBox}>
+              <h2 style={styles.h2}>📋 Registros do Dia</h2>
+              
+              {loading ? (
+                <p style={styles.mensagem}>Carregando...</p>
+              ) : registros.length === 0 ? (
+                <p style={styles.mensagem}>Nenhum registro para esta data</p>
+              ) : (
+                <div style={styles.registrosList}>
+                  {registros.map((registro, idx) => (
+                    <div key={registro.id} style={styles.registroCard}>
+                      <div style={styles.registroHeader}>
+                        <span style={styles.registroIndex}>#{idx + 1}</span>
+                        <span style={styles.registroPeriodo}>{registro.periodo}</span>
+                        <span style={styles.registroHora}>{registro.hora}</span>
                       </div>
-                    ) : (
-                      <button 
-                        onClick={() => handleEditarRegistro(registro)}
-                        style={styles.botaoEditar}
-                      >
-                        ✏️
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <div style={styles.registroContent}>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Responsável:</span>
+                          <span style={styles.registroValue}>{registro.responsavelNome || registro.responsavel}</span>
+                        </div>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Total:</span>
+                          <span style={{...styles.registroValue, fontWeight: 'bold', color: '#1976d2'}}>{formatarMoeda(registro.total)}</span>
+                        </div>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Sistema PDV:</span>
+                          <span style={styles.registroValue}>{formatarMoeda(registro.sistemaPdv)}</span>
+                        </div>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Diferença:</span>
+                          <span style={{...styles.registroValue, color: registro.diferenca !== 0 ? '#d32f2f' : '#388e3c', fontWeight: 'bold'}}>{formatarMoeda(registro.diferenca)}</span>
+                        </div>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Referência:</span>
+                          <span style={styles.registroValue}>{formatarMoeda(registro.referencia)}</span>
+                        </div>
+                        <div style={styles.registroRow}>
+                          <span style={styles.registroLabel}>Sangria:</span>
+                          <span style={styles.registroValue}>{formatarMoeda(registro.sangria)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      )}
       </div>
       <Footer showLinks={true} />
     </div>
@@ -671,131 +437,186 @@ const styles = {
   },
   container: {
     padding: '20px',
-    maxWidth: '1400px',
+    maxWidth: '1600px',
     margin: '0 auto',
+    width: '100%',
     flex: 1,
   },
-  filtro: {
+  filtroSection: {
     marginBottom: '20px',
     display: 'flex',
-    gap: '10px',
     alignItems: 'center',
-    flexWrap: 'wrap' as const,
+    gap: '10px',
+  },
+  label: {
+    fontWeight: 'bold' as const,
+    fontSize: '14px',
+    color: '#333',
+  },
+  inputData: {
+    padding: '10px',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    fontSize: '14px',
+    minWidth: '150px',
+  },
+  mainLayout: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '20px',
+    marginBottom: '20px',
+    '@media (max-width: 1024px)': {
+      gridTemplateColumns: '1fr',
+    },
+  } as React.CSSProperties,
+  coluna1: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  coluna2: {
+    display: 'flex',
+    flexDirection: 'column' as const,
   },
   formulario: {
     backgroundColor: '#f5f5f5',
     padding: '20px',
     borderRadius: '8px',
-    marginBottom: '20px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
   },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-    gap: '15px',
-    marginBottom: '15px',
-  } as React.CSSProperties,
+  h2: {
+    margin: '0 0 15px 0',
+    fontSize: '18px',
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  h3: {
+    margin: '15px 0 10px 0',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    color: '#666',
+    borderBottom: '1px solid #ddd',
+    paddingBottom: '5px',
+  },
+  formGroup: {
+    marginBottom: '12px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '5px',
+  },
   input: {
-    width: '100%',
     padding: '8px',
     border: '1px solid #ccc',
     borderRadius: '4px',
     fontSize: '14px',
   },
-  inputTabela: {
-    width: '100%',
-    padding: '4px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    fontSize: '12px',
-  },
-  inputMaq: {
-    width: '100%',
-    padding: '4px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    fontSize: '11px',
-  },
-  maqContainer: {
+  grid2Col: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '4px',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '10px',
   } as React.CSSProperties,
   resumo: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: '15px',
-    marginBottom: '15px',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '10px',
     padding: '15px',
     backgroundColor: '#e8f5e9',
     borderRadius: '4px',
+    marginTop: '15px',
+    marginBottom: '15px',
   } as React.CSSProperties,
   resumoItem: {
-    fontSize: '16px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '5px',
+  },
+  resumoLabel: {
+    fontSize: '12px',
+    color: '#666',
     fontWeight: 'bold',
   },
-  botao: {
-    padding: '10px 20px',
+  resumoValor: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#388e3c',
+  },
+  botaoSalvar: {
+    padding: '12px 20px',
     backgroundColor: '#4CAF50',
     color: 'white',
     border: 'none',
     borderRadius: '4px',
     cursor: 'pointer',
     fontSize: '14px',
+    fontWeight: 'bold',
+    transition: 'background-color 0.3s',
   },
-  tabelaContainer: {
-    overflowX: 'auto' as const,
-    marginTop: '20px',
-  } as React.CSSProperties,
-  tabela: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-    backgroundColor: 'white',
+  registrosBox: {
+    backgroundColor: '#f5f5f5',
+    padding: '20px',
+    borderRadius: '8px',
     boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    height: 'fit-content',
+  },
+  registrosList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '12px',
+    maxHeight: '800px',
+    overflowY: 'auto' as const,
+  },
+  registroCard: {
+    backgroundColor: 'white',
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    padding: '12px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+  },
+  registroHeader: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '10px',
+    paddingBottom: '10px',
+    borderBottom: '1px solid #eee',
   } as React.CSSProperties,
-  totalCell: {
+  registroIndex: {
+    fontWeight: 'bold',
+    color: '#1976d2',
+    fontSize: '12px',
+  },
+  registroPeriodo: {
     backgroundColor: '#fff3cd',
+    padding: '2px 8px',
+    borderRadius: '3px',
+    fontSize: '12px',
     fontWeight: 'bold',
   },
-  diferencaPositiva: {
-    backgroundColor: '#d4edda',
-    color: '#155724',
+  registroHora: {
+    color: '#666',
+    fontSize: '12px',
+    marginLeft: 'auto',
   },
-  diferencaNegativa: {
-    backgroundColor: '#f8d7da',
-    color: '#721c24',
-  },
-  linhaEditando: {
-    backgroundColor: '#e3f2fd',
-  },
-  acoes: {
+  registroContent: {
     display: 'flex',
-    gap: '5px',
+    flexDirection: 'column' as const,
+    gap: '6px',
+  },
+  registroRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '13px',
   } as React.CSSProperties,
-  botaoEditar: {
-    padding: '5px 10px',
-    backgroundColor: '#2196F3',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '12px',
+  registroLabel: {
+    color: '#666',
+    fontWeight: '600',
   },
-  botaoSalvar: {
-    padding: '5px 10px',
-    backgroundColor: '#4CAF50',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '12px',
+  registroValue: {
+    color: '#333',
+    fontWeight: '500',
   },
-  botaoCancelar: {
-    padding: '5px 10px',
-    backgroundColor: '#f44336',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '12px',
+  mensagem: {
+    textAlign: 'center' as const,
+    color: '#999',
+    padding: '20px',
+    fontSize: '14px',
   },
 };
