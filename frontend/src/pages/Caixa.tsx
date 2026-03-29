@@ -40,7 +40,8 @@ interface Usuario {
 export default function Caixa() {
   const { activeUnit } = useUnit();
   const { user } = useAuth();
-  const unitId = activeUnit?.id || '';
+  const userUnitId = (user as any)?.unitId || '';
+  const unitId = activeUnit?.id || userUnitId || '';
   
   const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
   const [registros, setRegistros] = useState<RegistroCaixa[]>([]);

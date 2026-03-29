@@ -11,14 +11,14 @@ export const Dashboard: React.FC = () => {
   React.useEffect(() => {
     const carregarUnidades = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_ENDPOINT;
-        const token = localStorage.getItem('token');
+        const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+        const token = localStorage.getItem('auth_token');
         const response = await fetch(`${apiUrl}/unidades`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
-        if (data.success) {
-          setUnidades(data.unidades || []);
+        if (Array.isArray(data)) {
+          setUnidades(data);
         }
       } catch (error) {
         console.error('Erro ao carregar unidades:', error);
