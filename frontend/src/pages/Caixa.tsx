@@ -3,6 +3,7 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { MovimentosCaixa } from './MovimentosCaixa';
 
 interface RegistroCaixa {
   id: string;
@@ -48,6 +49,7 @@ export default function Caixa() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(false);
   const [registroEditando, setRegistroEditando] = useState<Partial<RegistroCaixa> | null>(null);
+  const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
   const [novoRegistro, setNovoRegistro] = useState<Partial<RegistroCaixa>>({
     periodo: 'Dia',
     abertura: 0,
@@ -294,6 +296,42 @@ export default function Caixa() {
     <div style={styles.pageWrapper}>
       <Header title="💰 Controle de Caixa" showBack={true} />
       <div style={styles.container}>
+        
+        {/* ABAS */}
+        <div style={{display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #ddd'}}>
+          <button 
+            onClick={() => setAbaSelecionada('novo')}
+            style={{
+              padding: '10px 20px',
+              border: 'none',
+              backgroundColor: abaSelecionada === 'novo' ? '#007bff' : '#f0f0f0',
+              color: abaSelecionada === 'novo' ? 'white' : '#333',
+              cursor: 'pointer',
+              borderRadius: '4px 4px 0 0',
+              fontWeight: 'bold',
+            }}
+          >
+            📝 Novo Registro
+          </button>
+          <button 
+            onClick={() => setAbaSelecionada('movimentos')}
+            style={{
+              padding: '10px 20px',
+              border: 'none',
+              backgroundColor: abaSelecionada === 'movimentos' ? '#007bff' : '#f0f0f0',
+              color: abaSelecionada === 'movimentos' ? 'white' : '#333',
+              cursor: 'pointer',
+              borderRadius: '4px 4px 0 0',
+              fontWeight: 'bold',
+            }}
+          >
+            📊 Movimentos
+          </button>
+        </div>
+
+        {abaSelecionada === 'movimentos' && <MovimentosCaixa />}
+        {abaSelecionada === 'novo' && (
+        <>
         
         {/* FILTRO DE DATA */}
         <div style={styles.filtroSection}>
@@ -577,6 +615,9 @@ export default function Caixa() {
           </div>
         </div>
       )}
+        </>
+        )}
+      </div>
       <Footer showLinks={true} />
     </div>
   );
