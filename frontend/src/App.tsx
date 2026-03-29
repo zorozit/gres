@@ -7,6 +7,10 @@ import { Modules } from './pages/Modules';
 import { Caixa } from './pages/Caixa';
 import { Escalas } from './pages/Escalas';
 import { Saidas } from './pages/Saidas';
+import { Unidades } from './pages/Unidades';
+import { Usuarios } from './pages/Usuarios';
+import { Colaboradores } from './pages/Colaboradores';
+import { Motoboys } from './pages/Motoboys';
 import './App.css';
 
 function App() {
@@ -52,6 +56,38 @@ function App() {
             element={
               <ProtectedRoute>
                 <Saidas />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/unidades"
+            element={
+              <ProtectedRoute>
+                <Unidades />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/usuarios"
+            element={
+              <ProtectedRoute>
+                <Usuarios />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/colaboradores"
+            element={
+              <ProtectedRoute>
+                <Colaboradores />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/modulos/motoboys"
+            element={
+              <ProtectedRoute>
+                <Motoboys />
               </ProtectedRoute>
             }
           />

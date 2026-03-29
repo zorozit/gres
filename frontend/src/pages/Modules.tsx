@@ -55,6 +55,22 @@ export const Modules: React.FC = () => {
       description: 'Gerencie dados e históricos de funcionários',
       path: '/modulos/colaboradores',
       color: '#30cfd0'
+    },
+    {
+      id: 'unidades',
+      icon: '🏢',
+      title: 'Cadastro de Unidades',
+      description: 'Gerencie as unidades de restaurante',
+      path: '/modulos/unidades',
+      color: '#ff6b9d'
+    },
+    {
+      id: 'usuarios',
+      icon: '🔐',
+      title: 'Gestão de Usuários',
+      description: 'Controle de acesso e permissões',
+      path: '/modulos/usuarios',
+      color: '#c44569'
     }
   ];
 
