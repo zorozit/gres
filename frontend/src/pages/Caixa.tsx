@@ -46,6 +46,7 @@ export default function Caixa() {
   const [registros, setRegistros] = useState<RegistroCaixa[]>([]);
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(false);
+  const [registroEditando, setRegistroEditando] = useState<Partial<RegistroCaixa> | null>(null);
   const [novoRegistro, setNovoRegistro] = useState<Partial<RegistroCaixa>>({
     periodo: 'Dia',
     abertura: 0,
@@ -126,6 +127,34 @@ export default function Caixa() {
       setRegistros([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEditarRegistro = (registro: RegistroCaixa) => {
+    setRegistroEditando(registro);
+    console.log('Editando registro:', registro);
+    // TODO: Implementar modal de edição
+  };
+
+
+
+
+
+  const handleDeletarRegistro = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja deletar este registro?')) return;
+    
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/caixa/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        carregarRegistros();
+      }
+    } catch (error) {
+      console.error('Erro ao deletar:', error);
     }
   };
 
@@ -425,8 +454,14 @@ export default function Caixa() {
                         </div>
                         <div style={styles.registroRow}>
                           <span style={styles.registroLabel}>Sangria:</span>
-                          <span style={styles.registroValue}>{formatarMoeda(registro.sangria)}</span>
+                          <span style={styles.registroValue}>{formatarMoeda(registro.sangria || 0)}</span>
                         </div>
+                      </div>
+                      <div style={styles.registroActions}>
+                        <button onClick={() => handleEditarRegistro(registro)} style={styles.botaoEditar}>✏️ Editar</button>
+                        {localStorage.getItem('user_role') === 'Admin' && (
+                          <button onClick={() => handleDeletarRegistro(registro.id)} style={styles.botaoDeletar}>🗑️ Deletar</button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -436,6 +471,15 @@ export default function Caixa() {
           </div>
         </div>
       </div>
+      {registroEditando && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <h2>Editar Registro</h2>
+            <p>Modal de edição em desenvolvimento...</p>
+            <button onClick={() => setRegistroEditando(null)}>Fechar</button>
+          </div>
+        </div>
+      )}
       <Footer showLinks={true} />
     </div>
   );
@@ -611,7 +655,36 @@ const styles = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: '6px',
+    marginBottom: '10px',
   },
+  registroActions: {
+    display: 'flex',
+    gap: '8px',
+    paddingTop: '10px',
+    borderTop: '1px solid #eee',
+  } as React.CSSProperties,
+  botaoEditar: {
+    flex: 1,
+    padding: '6px 10px',
+    backgroundColor: '#2196F3',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+  } as React.CSSProperties,
+  botaoDeletar: {
+    flex: 1,
+    padding: '6px 10px',
+    backgroundColor: '#f44336',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+  } as React.CSSProperties,
   registroRow: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -631,4 +704,24 @@ const styles = {
     padding: '20px',
     fontSize: '14px',
   },
+  modal: {
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  } as React.CSSProperties,
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    padding: '20px',
+    maxWidth: '600px',
+    width: '90%',
+    boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
+  } as React.CSSProperties,
 };

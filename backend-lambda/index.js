@@ -511,6 +511,27 @@ exports.handler = async (event) => {
       }
     }
 
+    // DELETE CAIXA - Deletar registro (apenas admin)
+    if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'DELETE') {
+      const caixaId = rawPath.split('/').pop();
+
+      if (!caixaId) {
+        return response(400, { error: 'ID do registro é obrigatório' });
+      }
+
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-caixa',
+          Key: { id: caixaId }
+        }).promise();
+
+        return response(200, { success: true, message: 'Registro deletado com sucesso' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar registro: ' + error.message });
+      }
+    }
+
     // PUT CAIXA - Atualizar registro
     if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'PUT') {
       const caixaId = rawPath.split('/').pop();
