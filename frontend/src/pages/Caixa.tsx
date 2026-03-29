@@ -1,20 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import { useUnit } from '../contexts/UnitContext';
-import '../styles/ModuleDetail.css';
-
-interface CaixaMovimento {
-  id: string;
-  tipo: 'abertura' | 'recebimento' | 'sangria' | 'reforço' | 'fechamento';
-  tipoRecebimento?: string;
-  valor: number;
-  descricao: string;
-  data: string;
-  turno: string;
-  saldoAnterior?: number;
-  saldoAtual: number;
-}
 
 const TIPOS_RECEBIMENTO = [
   { value: 'dinheiro', label: '💵 Dinheiro' },
@@ -26,103 +11,79 @@ const TIPOS_RECEBIMENTO = [
   { value: 'cartao_4', label: '💳 Máquina 4' },
   { value: 'cartao_5', label: '💳 Máquina 5' },
   { value: 'cartao_6', label: '💳 Máquina 6' },
-  { value: 'outros', label: '📦 Outros' }
+  { value: 'outros', label: '📦 Outros' },
 ];
 
-export const Caixa: React.FC = () => {
-  const navigate = useNavigate();
-  const { email, logout, token } = useAuth();
+interface Movimento {
+  id: string;
+  tipo: 'abertura' | 'recebimento' | 'sangria' | 'reforço' | 'fechamento';
+  tipoRecebimento?: string;
+  descricao: string;
+  valor: number;
+  saldoAnterior: number;
+  saldoAtual: number;
+  data: string;
+  unitId: string;
+}
+
+export default function Caixa() {
   const { activeUnit } = useUnit();
-  const [movimentos, setMovimentos] = useState<CaixaMovimento[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [caixaAberto, setCaixaAberto] = useState(false);
-  const [saldoAtual, setSaldoAtual] = useState(0);
-  const [turnoAtivo, setTurnoAtivo] = useState('manhã');
-  const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [editData, setEditData] = useState<Partial<CaixaMovimento>>({});
+  const unitId = activeUnit?.id || '';
+  const unitName = activeUnit?.nome || 'Unidade não selecionada';
   const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
+  const [caixaAberto, setCaixaAberto] = useState(false);
+  const [movimentos, setMovimentos] = useState<Movimento[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<Partial<Movimento>>({});
+  
   const [formData, setFormData] = useState({
-    tipo: 'recebimento',
+    tipoLancamento: 'recebimento',
     tipoRecebimento: 'dinheiro',
     valor: '',
-    descricao: ''
+    descricao: '',
   });
 
-  useEffect(() => {
-    if (token && activeUnit) {
-      fetchMovimentos();
-    }
-  }, [activeUnit, token, dataSelecionada]);
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
 
-  const fetchMovimentos = async () => {
-    if (!token || !activeUnit) return;
+  // Carregar movimentos ao mudar data ou unidade
+  useEffect(() => {
+    if (unitId) {
+      carregarMovimentos();
+    }
+  }, [dataSelecionada, unitId]);
+
+  const carregarMovimentos = async () => {
     setLoading(true);
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/caixa?unitId=${activeUnit.id}`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/caixa?unitId=${unitId}&data=${dataSelecionada}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
-      if (!response.ok) {
-        console.error('Erro na resposta:', response.status);
-        return;
-      }
-
-      const data = await response.json();
-      console.log('Dados recebidos:', data);
-      
-      let movs: CaixaMovimento[] = [];
-      if (Array.isArray(data)) {
-        movs = data;
-      } else if (data && Array.isArray(data.data)) {
-        movs = data.data;
-      } else if (data && typeof data === 'object') {
-        const valores = Object.values(data);
-        if (Array.isArray(valores[0])) {
-          movs = valores[0];
-        }
-      }
-
-      // Filtrar por data selecionada
-      const movsFiltrados = movs.filter(m => m.data === dataSelecionada);
-      console.log('Movimentos filtrados:', movsFiltrados);
-      setMovimentos(movsFiltrados);
-      
-      // Calcular saldo atual
-      if (movsFiltrados.length > 0) {
-        const ultimoMovimento = movsFiltrados[movsFiltrados.length - 1];
-        setSaldoAtual(ultimoMovimento.saldoAtual || 0);
-        setCaixaAberto(ultimoMovimento.tipo !== 'fechamento');
-        setTurnoAtivo(ultimoMovimento.turno || 'manhã');
-      } else {
-        setCaixaAberto(false);
-        setSaldoAtual(0);
+      if (response.ok) {
+        const data = await response.json();
+        const movimentosArray = (Array.isArray(data) ? data : data.movimentos || []) as Movimento[];
+        setMovimentos(movimentosArray);
+        
+        // Verificar se caixa está aberto
+        const abertura = movimentosArray.find(m => m.tipo === 'abertura');
+        const fechamento = movimentosArray.find(m => m.tipo === 'fechamento');
+        setCaixaAberto(!!abertura && !fechamento);
       }
     } catch (error) {
-      console.error('Erro ao buscar movimentos:', error);
-    } finally {
-      setLoading(false);
+      console.error('Erro ao carregar movimentos:', error);
     }
+    setLoading(false);
   };
 
-  const handleAbertura = async () => {
-    if (!token || !activeUnit) {
-      alert('Selecione uma unidade primeiro');
-      return;
-    }
-
-    const saldoInicial = prompt('Informe o saldo inicial do caixa:');
-    if (saldoInicial === null) return;
-
-    const valor = parseFloat(saldoInicial);
-    if (isNaN(valor)) {
-      alert('Valor inválido');
-      return;
-    }
+  const abrirCaixa = async () => {
+    const valor = prompt('Informe o saldo inicial do caixa:');
+    if (!valor) return;
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/caixa`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/caixa`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -130,23 +91,18 @@ export const Caixa: React.FC = () => {
         },
         body: JSON.stringify({
           tipo: 'abertura',
-          valor: valor,
           descricao: 'Abertura de caixa',
-          unitId: activeUnit.id,
-          data: dataSelecionada,
-          turno: turnoAtivo,
+          valor: parseFloat(valor),
           saldoAnterior: 0,
-          saldoAtual: valor
+          saldoAtual: parseFloat(valor),
+          data: dataSelecionada,
+          unitId
         })
       });
 
       if (response.ok) {
-        setCaixaAberto(true);
-        setSaldoAtual(valor);
-        fetchMovimentos();
+        await carregarMovimentos();
         alert('Caixa aberto com sucesso!');
-      } else {
-        alert('Erro ao abrir caixa');
       }
     } catch (error) {
       console.error('Erro ao abrir caixa:', error);
@@ -154,95 +110,58 @@ export const Caixa: React.FC = () => {
     }
   };
 
-  const handleLancamento = async (e: React.FormEvent) => {
+  const registrarLancamento = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !activeUnit || !caixaAberto) {
-      alert('Abra o caixa primeiro');
-      return;
-    }
-
-    const valor = parseFloat(formData.valor);
-    if (isNaN(valor) || valor <= 0) {
-      alert('Valor inválido');
-      return;
-    }
+    if (!formData.valor) return;
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      
-      // Calcular novo saldo
-      let novoSaldo = saldoAtual;
-      if (formData.tipo === 'recebimento' || formData.tipo === 'reforço') {
-        novoSaldo += valor;
-      } else if (formData.tipo === 'sangria') {
-        novoSaldo -= valor;
-      }
+      const token = localStorage.getItem('auth_token');
+      const saldoAtualAnterior = movimentos.length > 0 
+        ? movimentos[movimentos.length - 1].saldoAtual 
+        : 0;
 
-      // Preparar descrição
-      let descricao = formData.descricao;
-      if (formData.tipo === 'recebimento') {
-        const tipoLabel = TIPOS_RECEBIMENTO.find(t => t.value === formData.tipoRecebimento)?.label || formData.tipoRecebimento;
-        descricao = `${tipoLabel} - ${formData.descricao}`;
-      }
+      const novoSaldo = formData.tipoLancamento === 'sangria'
+        ? saldoAtualAnterior - parseFloat(formData.valor)
+        : saldoAtualAnterior + parseFloat(formData.valor);
 
-      const response = await fetch(`${apiEndpoint}/caixa`, {
+      const response = await fetch(`${apiUrl}/caixa`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          tipo: formData.tipo,
-          tipoRecebimento: formData.tipo === 'recebimento' ? formData.tipoRecebimento : undefined,
-          valor: valor,
-          descricao: descricao,
-          unitId: activeUnit.id,
+          tipo: formData.tipoLancamento,
+          tipoRecebimento: formData.tipoRecebimento,
+          descricao: formData.descricao,
+          valor: parseFloat(formData.valor),
+          saldoAnterior: saldoAtualAnterior,
+          saldoAtual: novoSaldo,
           data: dataSelecionada,
-          turno: turnoAtivo,
-          saldoAnterior: saldoAtual,
-          saldoAtual: novoSaldo
+          unitId
         })
       });
 
       if (response.ok) {
-        setSaldoAtual(novoSaldo);
-        setFormData({
-          tipo: 'recebimento',
-          tipoRecebimento: 'dinheiro',
-          valor: '',
-          descricao: ''
-        });
-        fetchMovimentos();
-        alert('Lançamento registrado com sucesso!');
-      } else {
-        alert('Erro ao registrar lançamento');
+        setFormData({ tipoLancamento: 'recebimento', tipoRecebimento: 'dinheiro', valor: '', descricao: '' });
+        await carregarMovimentos();
       }
     } catch (error) {
-      console.error('Erro ao lançar:', error);
-      alert('Erro ao registrar lançamento');
+      console.error('Erro ao registrar lançamento:', error);
     }
   };
 
-  const handleFechamento = async () => {
-    if (!token || !activeUnit || !caixaAberto) {
-      alert('Caixa não está aberto');
-      return;
-    }
-
-    const saldoFinal = prompt('Informe o saldo final do caixa:');
-    if (saldoFinal === null) return;
-
-    const valor = parseFloat(saldoFinal);
-    if (isNaN(valor)) {
-      alert('Valor inválido');
-      return;
-    }
-
-    const diferenca = valor - saldoAtual;
+  const fecharCaixa = async () => {
+    const valor = prompt('Informe o saldo final do caixa:');
+    if (!valor) return;
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/caixa`, {
+      const token = localStorage.getItem('auth_token');
+      const saldoFinal = parseFloat(valor);
+      const saldoCalculado = movimentos.length > 0 ? movimentos[movimentos.length - 1].saldoAtual : 0;
+      const diferenca = saldoFinal - saldoCalculado;
+
+      const response = await fetch(`${apiUrl}/caixa`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -250,66 +169,49 @@ export const Caixa: React.FC = () => {
         },
         body: JSON.stringify({
           tipo: 'fechamento',
-          valor: valor,
-          descricao: `Fechamento de caixa - Diferença: R$ ${diferenca.toFixed(2)}`,
-          unitId: activeUnit.id,
+          descricao: `Fechamento - Diferença: R$ ${diferenca.toFixed(2)}`,
+          valor: saldoFinal,
+          saldoAnterior: saldoCalculado,
+          saldoAtual: saldoFinal,
           data: dataSelecionada,
-          turno: turnoAtivo,
-          saldoAnterior: saldoAtual,
-          saldoAtual: valor
+          unitId
         })
       });
 
       if (response.ok) {
-        setCaixaAberto(false);
-        setSaldoAtual(0);
-        fetchMovimentos();
-        alert(`Caixa fechado com sucesso!\nDiferença: R$ ${diferenca.toFixed(2)}`);
-      } else {
-        alert('Erro ao fechar caixa');
+        await carregarMovimentos();
+        alert(`Caixa fechado! Diferença: R$ ${diferenca.toFixed(2)}`);
       }
     } catch (error) {
       console.error('Erro ao fechar caixa:', error);
-      alert('Erro ao fechar caixa');
     }
   };
 
-  const handleEditar = (movimento: CaixaMovimento) => {
-    setEditandoId(movimento.id);
-    setEditData({ ...movimento });
+  const handleEditar = (mov: Movimento) => {
+    setEditandoId(mov.id);
+    setEditData(mov);
   };
 
   const handleSalvarEdicao = async () => {
-    if (!token || !editandoId) return;
+    if (!editandoId) return;
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/caixa/${editandoId}`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/caixa/${editandoId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          valor: editData.valor,
-          descricao: editData.descricao,
-          saldoAtual: editData.saldoAtual
-        })
+        body: JSON.stringify(editData)
       });
 
       if (response.ok) {
         setEditandoId(null);
-        setEditData({});
-        fetchMovimentos();
-        alert('Movimento atualizado com sucesso!');
-      } else {
-        const errorData = await response.json();
-        console.error('Erro:', errorData);
-        alert('Erro ao atualizar movimento: ' + (errorData.error || 'Desconhecido'));
+        await carregarMovimentos();
       }
     } catch (error) {
       console.error('Erro ao salvar edição:', error);
-      alert('Erro ao atualizar movimento');
     }
   };
 
@@ -318,344 +220,318 @@ export const Caixa: React.FC = () => {
     setEditData({});
   };
 
-  // Calcular totais por tipo de recebimento
-  const totaisPorTipo = movimentos
-    .filter(m => m.tipo === 'recebimento')
-    .reduce((acc, mov) => {
-      const tipo = mov.tipoRecebimento || 'outros';
-      acc[tipo] = (acc[tipo] || 0) + mov.valor;
-      return acc;
-    }, {} as Record<string, number>);
+  const saldoAtual = movimentos.length > 0 ? movimentos[movimentos.length - 1].saldoAtual : 0;
 
-  // Calcular totais gerais
-  const totais = movimentos.reduce((acc, mov) => {
-    if (mov.tipo === 'recebimento' || mov.tipo === 'reforço') {
-      acc.entradas += mov.valor;
-    } else if (mov.tipo === 'sangria') {
-      acc.saidas += mov.valor;
+  // Agrupar movimentos por tipo
+  const movimentosPorTipo: { [key: string]: Movimento[] } = {};
+  movimentos.forEach((mov: Movimento) => {
+    if (mov.tipo === 'recebimento') {
+      const chave = mov.tipoRecebimento || 'outros';
+      if (!movimentosPorTipo[chave]) movimentosPorTipo[chave] = [];
+      movimentosPorTipo[chave].push(mov);
+    } else {
+      if (!movimentosPorTipo[mov.tipo]) movimentosPorTipo[mov.tipo] = [];
+      movimentosPorTipo[mov.tipo].push(mov);
     }
-    return acc;
-  }, { entradas: 0, saidas: 0 });
+  });
 
   return (
-    <div className="module-detail-container">
-      <header className="module-header">
-        <div className="header-left">
-          <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
-          <h1>💰 Controle de Caixa</h1>
-          {activeUnit && <span className="unit-badge">Unidade: {activeUnit.nome}</span>}
+    <div className="caixa-container">
+      <main className="main-content">
+        <h1>💰 Controle de Caixa - {unitName}</h1>
+
+        {/* Seletor de Data */}
+        <div className="date-selector">
+          <label>Data:</label>
+          <input
+            type="date"
+            value={dataSelecionada}
+            onChange={(e) => setDataSelecionada(e.target.value)}
+            className="date-input"
+          />
         </div>
-        <div className="header-right">
-          <span className="user-info">👤 {email}</span>
-          <button onClick={logout} className="logout-button">Sair</button>
+
+        {/* Status do Caixa */}
+        <div className="status-section">
+          <div className="status-card">
+            <h3>Status do Caixa</h3>
+            <div className={`status-badge ${caixaAberto ? 'aberto' : 'fechado'}`}>
+              {caixaAberto ? '🟢 ABERTO' : '🔴 FECHADO'}
+            </div>
+            <div className="saldo">
+              <strong>Saldo Atual:</strong> R$ {saldoAtual.toFixed(2)}
+            </div>
+            <div className="button-group">
+              <button onClick={abrirCaixa} disabled={caixaAberto} className="open-button">
+                Abrir Caixa
+              </button>
+              <button onClick={fecharCaixa} disabled={!caixaAberto} className="close-button">
+                Fechar Caixa
+              </button>
+            </div>
+          </div>
         </div>
-      </header>
 
-      <main className="module-main">
-        <div className="module-content">
-          {/* Seletor de Data */}
-          <section className="date-selector">
-            <label>Selecione a Data:</label>
-            <input
-              type="date"
-              value={dataSelecionada}
-              onChange={(e) => setDataSelecionada(e.target.value)}
-              className="date-input"
-            />
-          </section>
-
-          {/* Status do Caixa */}
-          <section className="status-section">
-            <div className="status-card">
-              <h3>Status do Caixa</h3>
-              <p className={`status-badge ${caixaAberto ? 'aberto' : 'fechado'}`}>
-                {caixaAberto ? '🟢 ABERTO' : '🔴 FECHADO'}
-              </p>
-              <p className="turno">Turno: <strong>{turnoAtivo.toUpperCase()}</strong></p>
-              <p className="saldo">Saldo Atual: <strong>R$ {saldoAtual.toFixed(2)}</strong></p>
-              <div className="button-group">
-                <button 
-                  onClick={handleAbertura} 
-                  disabled={caixaAberto}
-                  className="open-button"
+        {/* Formulário de Lançamento */}
+        {caixaAberto && (
+          <section className="form-section">
+            <h2>Registrar Lançamento</h2>
+            <form onSubmit={registrarLancamento}>
+              <div className="form-group">
+                <label>Tipo de Lançamento *</label>
+                <select
+                  value={formData.tipoLancamento}
+                  onChange={(e) => setFormData({...formData, tipoLancamento: e.target.value})}
                 >
-                  Abrir Caixa
-                </button>
-                <button 
-                  onClick={handleFechamento} 
-                  disabled={!caixaAberto}
-                  className="close-button"
-                >
-                  Fechar Caixa
-                </button>
+                  <option value="recebimento">Recebimento</option>
+                  <option value="sangria">Sangria</option>
+                  <option value="reforço">Reforço</option>
+                </select>
               </div>
-            </div>
 
-            <div className="totais-card">
-              <h3>Resumo do Dia</h3>
-              <div className="totais-grid">
-                <div className="total-item">
-                  <span>Entradas:</span>
-                  <strong className="entrada">R$ {totais.entradas.toFixed(2)}</strong>
-                </div>
-                <div className="total-item">
-                  <span>Saídas:</span>
-                  <strong className="saida">R$ {totais.saidas.toFixed(2)}</strong>
-                </div>
-                <div className="total-item">
-                  <span>Líquido:</span>
-                  <strong className="liquido">R$ {(totais.entradas - totais.saidas).toFixed(2)}</strong>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Resumo por Tipo de Recebimento */}
-          {Object.keys(totaisPorTipo).length > 0 && (
-            <section className="resumo-tipos">
-              <h3>Recebimentos por Tipo</h3>
-              <div className="tipos-grid">
-                {TIPOS_RECEBIMENTO.map(tipo => (
-                  totaisPorTipo[tipo.value] && (
-                    <div key={tipo.value} className="tipo-item">
-                      <span>{tipo.label}</span>
-                      <strong>R$ {totaisPorTipo[tipo.value].toFixed(2)}</strong>
-                    </div>
-                  )
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Formulário de Lançamento */}
-          {caixaAberto && (
-            <section className="form-section">
-              <h2>Registrar Lançamento</h2>
-              <form onSubmit={handleLancamento} className="data-form">
+              {formData.tipoLancamento === 'recebimento' && (
                 <div className="form-group">
-                  <label>Tipo de Lançamento *</label>
+                  <label>Tipo de Recebimento *</label>
                   <select
-                    value={formData.tipo}
-                    onChange={(e) => {
-                      setFormData({...formData, tipo: e.target.value});
-                      if (e.target.value !== 'recebimento') {
-                        setFormData(prev => ({...prev, tipoRecebimento: 'dinheiro'}));
-                      }
-                    }}
+                    value={formData.tipoRecebimento}
+                    onChange={(e) => setFormData({...formData, tipoRecebimento: e.target.value})}
                   >
-                    <option value="recebimento">Recebimento</option>
-                    <option value="sangria">Sangria</option>
-                    <option value="reforço">Reforço</option>
+                    {TIPOS_RECEBIMENTO.map(tipo => (
+                      <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
+                    ))}
                   </select>
                 </div>
+              )}
 
-                {formData.tipo === 'recebimento' && (
-                  <div className="form-group">
-                    <label>Tipo de Recebimento *</label>
-                    <select
-                      value={formData.tipoRecebimento}
-                      onChange={(e) => setFormData({...formData, tipoRecebimento: e.target.value})}
-                    >
-                      {TIPOS_RECEBIMENTO.map(tipo => (
-                        <option key={tipo.value} value={tipo.value}>
-                          {tipo.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+              <div className="form-group">
+                <label>Valor *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={formData.valor}
+                  onChange={(e) => setFormData({...formData, valor: e.target.value})}
+                  placeholder="0.00"
+                  required
+                />
+              </div>
 
-                <div className="form-group">
-                  <label>Valor *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.valor}
-                    onChange={(e) => setFormData({...formData, valor: e.target.value})}
-                    placeholder="0.00"
-                    required
-                  />
-                </div>
+              <div className="form-group">
+                <label>Descrição</label>
+                <input
+                  type="text"
+                  value={formData.descricao}
+                  onChange={(e) => setFormData({...formData, descricao: e.target.value})}
+                  placeholder="Descrição do lançamento"
+                />
+              </div>
 
-                <div className="form-group">
-                  <label>Descrição</label>
-                  <input
-                    type="text"
-                    value={formData.descricao}
-                    onChange={(e) => setFormData({...formData, descricao: e.target.value})}
-                    placeholder="Descrição do lançamento"
-                  />
-                </div>
-
-                <button type="submit" className="submit-button">Registrar Lançamento</button>
-              </form>
-            </section>
-          )}
-
-          {/* Grid de Movimentos */}
-          <section className="list-section">
-            <h2>Movimentos de {dataSelecionada} ({movimentos.length})</h2>
-            {loading ? (
-              <p>Carregando...</p>
-            ) : movimentos.length === 0 ? (
-              <p>Nenhum movimento registrado para esta data</p>
-            ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Tipo</th>
-                    <th>Descrição</th>
-                    <th>Valor</th>
-                    <th>Saldo Anterior</th>
-                    <th>Saldo Atual</th>
-                    <th>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {movimentos.map((mov) => (
-                    <tr key={mov.id} className={`tipo-${mov.tipo}`}>
-                      {editandoId === mov.id ? (
-                        <>
-                          <td>
-                            <input
-                              type="text"
-                              value={editData.tipo || ''}
-                              disabled
-                              className="edit-input"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={editData.descricao || ''}
-                              onChange={(e) => setEditData({...editData, descricao: e.target.value})}
-                              className="edit-input"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editData.valor || ''}
-                              onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})}
-                              className="edit-input"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editData.saldoAnterior || ''}
-                              disabled
-                              className="edit-input"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editData.saldoAtual || ''}
-                              onChange={(e) => setEditData({...editData, saldoAtual: parseFloat(e.target.value)})}
-                              className="edit-input"
-                            />
-                          </td>
-                          <td className="acoes">
-                            <button onClick={handleSalvarEdicao} className="btn-salvar">✓</button>
-                            <button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td>
-                            <span className={`tipo-badge ${mov.tipo}`}>
-                              {mov.tipo === 'abertura' && '🟢 Abertura'}
-                              {mov.tipo === 'recebimento' && '⬆️ Recebimento'}
-                              {mov.tipo === 'sangria' && '⬇️ Sangria'}
-                              {mov.tipo === 'reforço' && '⬆️ Reforço'}
-                              {mov.tipo === 'fechamento' && '🔴 Fechamento'}
-                            </span>
-                          </td>
-                          <td>{mov.descricao}</td>
-                          <td className={mov.tipo === 'sangria' ? 'valor-negativo' : 'valor-positivo'}>
-                            {mov.tipo === 'sangria' ? '-' : '+'} R$ {mov.valor.toFixed(2)}
-                          </td>
-                          <td>R$ {(mov.saldoAnterior || 0).toFixed(2)}</td>
-                          <td><strong>R$ {(mov.saldoAtual || 0).toFixed(2)}</strong></td>
-                          <td className="acoes">
-                            <button onClick={() => handleEditar(mov)} className="btn-editar">✏️ Editar</button>
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+              <button type="submit" className="submit-button">Registrar Lançamento</button>
+            </form>
           </section>
-        </div>
+        )}
+
+        {/* Grid de Movimentos Agrupados por Tipo */}
+        <section className="list-section">
+          <h2>Movimentos de {dataSelecionada} ({movimentos.length})</h2>
+          {loading ? (
+            <p>Carregando...</p>
+          ) : movimentos.length === 0 ? (
+            <p>Nenhum movimento registrado para esta data</p>
+          ) : (
+            <div className="movimentos-agrupados">
+              {/* Abertura */}
+              {movimentosPorTipo['abertura'] && (
+                <div className="grupo-movimento">
+                  <h4 className="grupo-titulo">🟢 Abertura de Caixa</h4>
+                  <table className="data-table">
+                    <tbody>
+                      {movimentosPorTipo['abertura'].map(mov => (
+                        <tr key={mov.id} className="tipo-abertura">
+                          {editandoId === mov.id ? (
+                            <>
+                              <td><input type="text" value={editData.descricao} onChange={(e) => setEditData({...editData, descricao: e.target.value})} className="edit-input" /></td>
+                              <td><input type="number" step="0.01" value={editData.valor} onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})} className="edit-input" /></td>
+                              <td><button onClick={handleSalvarEdicao} className="btn-salvar">✓</button><button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button></td>
+                            </>
+                          ) : (
+                            <>
+                              <td>{mov.descricao}</td>
+                              <td className="valor-positivo">R$ {mov.valor.toFixed(2)}</td>
+                              <td><button onClick={() => handleEditar(mov)} className="btn-editar">✏️</button></td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Recebimentos por Tipo */}
+              {TIPOS_RECEBIMENTO.map(tipo => {
+                const recebimentos = movimentosPorTipo[tipo.value];
+                if (!recebimentos || recebimentos.length === 0) return null;
+                const total = recebimentos.reduce((sum, m) => sum + m.valor, 0);
+                return (
+                  <div key={tipo.value} className="grupo-movimento">
+                    <h4 className="grupo-titulo">{tipo.label} - Total: R$ {total.toFixed(2)}</h4>
+                    <table className="data-table">
+                      <tbody>
+                        {recebimentos.map(mov => (
+                          <tr key={mov.id} className="tipo-recebimento">
+                            {editandoId === mov.id ? (
+                              <>
+                                <td><input type="text" value={editData.descricao} onChange={(e) => setEditData({...editData, descricao: e.target.value})} className="edit-input" /></td>
+                                <td><input type="number" step="0.01" value={editData.valor} onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})} className="edit-input" /></td>
+                                <td><button onClick={handleSalvarEdicao} className="btn-salvar">✓</button><button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button></td>
+                              </>
+                            ) : (
+                              <>
+                                <td>{mov.descricao}</td>
+                                <td className="valor-positivo">R$ {mov.valor.toFixed(2)}</td>
+                                <td><button onClick={() => handleEditar(mov)} className="btn-editar">✏️</button></td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+
+              {/* Sangrias */}
+              {movimentosPorTipo['sangria'] && (
+                <div className="grupo-movimento">
+                  <h4 className="grupo-titulo">⬇️ Sangrias - Total: R$ {movimentosPorTipo['sangria'].reduce((sum, m) => sum + m.valor, 0).toFixed(2)}</h4>
+                  <table className="data-table">
+                    <tbody>
+                      {movimentosPorTipo['sangria'].map(mov => (
+                        <tr key={mov.id} className="tipo-sangria">
+                          {editandoId === mov.id ? (
+                            <>
+                              <td><input type="text" value={editData.descricao} onChange={(e) => setEditData({...editData, descricao: e.target.value})} className="edit-input" /></td>
+                              <td><input type="number" step="0.01" value={editData.valor} onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})} className="edit-input" /></td>
+                              <td><button onClick={handleSalvarEdicao} className="btn-salvar">✓</button><button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button></td>
+                            </>
+                          ) : (
+                            <>
+                              <td>{mov.descricao}</td>
+                              <td className="valor-negativo">R$ {mov.valor.toFixed(2)}</td>
+                              <td><button onClick={() => handleEditar(mov)} className="btn-editar">✏️</button></td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Reforços */}
+              {movimentosPorTipo['reforço'] && (
+                <div className="grupo-movimento">
+                  <h4 className="grupo-titulo">⬆️ Reforços - Total: R$ {movimentosPorTipo['reforço'].reduce((sum, m) => sum + m.valor, 0).toFixed(2)}</h4>
+                  <table className="data-table">
+                    <tbody>
+                      {movimentosPorTipo['reforço'].map(mov => (
+                        <tr key={mov.id} className="tipo-reforço">
+                          {editandoId === mov.id ? (
+                            <>
+                              <td><input type="text" value={editData.descricao} onChange={(e) => setEditData({...editData, descricao: e.target.value})} className="edit-input" /></td>
+                              <td><input type="number" step="0.01" value={editData.valor} onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})} className="edit-input" /></td>
+                              <td><button onClick={handleSalvarEdicao} className="btn-salvar">✓</button><button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button></td>
+                            </>
+                          ) : (
+                            <>
+                              <td>{mov.descricao}</td>
+                              <td className="valor-positivo">R$ {mov.valor.toFixed(2)}</td>
+                              <td><button onClick={() => handleEditar(mov)} className="btn-editar">✏️</button></td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Fechamento */}
+              {movimentosPorTipo['fechamento'] && (
+                <div className="grupo-movimento">
+                  <h4 className="grupo-titulo">🔴 Fechamento de Caixa</h4>
+                  <table className="data-table">
+                    <tbody>
+                      {movimentosPorTipo['fechamento'].map(mov => (
+                        <tr key={mov.id} className="tipo-fechamento">
+                          {editandoId === mov.id ? (
+                            <>
+                              <td><input type="text" value={editData.descricao} onChange={(e) => setEditData({...editData, descricao: e.target.value})} className="edit-input" /></td>
+                              <td><input type="number" step="0.01" value={editData.valor} onChange={(e) => setEditData({...editData, valor: parseFloat(e.target.value)})} className="edit-input" /></td>
+                              <td><button onClick={handleSalvarEdicao} className="btn-salvar">✓</button><button onClick={handleCancelarEdicao} className="btn-cancelar">✗</button></td>
+                            </>
+                          ) : (
+                            <>
+                              <td>{mov.descricao}</td>
+                              <td className="valor-positivo">R$ {mov.valor.toFixed(2)}</td>
+                              <td><button onClick={() => handleEditar(mov)} className="btn-editar">✏️</button></td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       </main>
 
       <style>{`
+        .caixa-container {
+          padding: 20px;
+          max-width: 1200px;
+          margin: 0 auto;
+        }
+
+        .main-content h1 {
+          color: #333;
+          margin-bottom: 20px;
+        }
+
         .date-selector {
           background: white;
-          border-radius: 8px;
           padding: 15px;
+          border-radius: 8px;
           margin-bottom: 20px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
           display: flex;
-          align-items: center;
           gap: 10px;
+          align-items: center;
         }
 
         .date-input {
           padding: 8px 12px;
           border: 1px solid #ddd;
           border-radius: 4px;
-          font-size: 14px;
         }
 
         .status-section {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr;
           gap: 20px;
           margin-bottom: 30px;
         }
 
-        .status-card, .totais-card, .resumo-tipos {
+        .status-card {
           background: white;
-          border-radius: 8px;
           padding: 20px;
+          border-radius: 8px;
           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
-        .resumo-tipos {
-          grid-column: 1 / -1;
-          margin-bottom: 30px;
-        }
-
-        .tipos-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-          gap: 10px;
-          margin-top: 15px;
-        }
-
-        .tipo-item {
-          background: #f5f5f5;
-          padding: 10px;
-          border-radius: 4px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .tipo-item strong {
-          color: #007bff;
-          font-weight: bold;
-        }
-
         .status-badge {
-          font-size: 18px;
+          font-size: 20px;
           font-weight: bold;
           padding: 10px;
           border-radius: 4px;
@@ -671,12 +547,6 @@ export const Caixa: React.FC = () => {
         .status-badge.fechado {
           background: #f8d7da;
           color: #721c24;
-        }
-
-        .turno {
-          font-size: 14px;
-          margin: 10px 0;
-          color: #666;
         }
 
         .saldo {
@@ -697,7 +567,6 @@ export const Caixa: React.FC = () => {
           border-radius: 4px;
           cursor: pointer;
           font-weight: bold;
-          transition: opacity 0.3s;
         }
 
         .open-button {
@@ -720,53 +589,113 @@ export const Caixa: React.FC = () => {
           cursor: not-allowed;
         }
 
-        .totais-grid {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 10px;
+        .form-section {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          margin-bottom: 30px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
-        .total-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 10px;
-          background: #f5f5f5;
-          border-radius: 4px;
+        .form-group {
+          margin-bottom: 15px;
         }
 
-        .entrada { color: #28a745; }
-        .saida { color: #dc3545; }
-        .liquido { color: #007bff; }
-
-        .tipo-badge {
-          display: inline-block;
-          padding: 5px 10px;
-          border-radius: 4px;
-          font-size: 12px;
+        .form-group label {
+          display: block;
+          margin-bottom: 5px;
           font-weight: bold;
+          color: #333;
         }
 
-        .tipo-badge.abertura { background: #d4edda; color: #155724; }
-        .tipo-badge.recebimento { background: #cfe2ff; color: #084298; }
-        .tipo-badge.sangria { background: #f8d7da; color: #721c24; }
-        .tipo-badge.reforço { background: #fff3cd; color: #664d03; }
-        .tipo-badge.fechamento { background: #e2e3e5; color: #383d41; }
+        .form-group input, .form-group select {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          font-size: 14px;
+        }
+
+        .submit-button {
+          background: #007bff;
+          color: white;
+          padding: 12px 20px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: bold;
+          width: 100%;
+        }
+
+        .submit-button:hover {
+          background: #0056b3;
+        }
+
+        .list-section {
+          background: white;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .movimentos-agrupados {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .grupo-movimento {
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          padding: 15px;
+          background: #f9f9f9;
+        }
+
+        .grupo-titulo {
+          margin: 0 0 15px 0;
+          padding: 10px;
+          background: white;
+          border-radius: 4px;
+          font-size: 14px;
+          font-weight: bold;
+          color: #333;
+        }
+
+        .data-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+
+        .data-table tbody tr {
+          border-bottom: 1px solid #eee;
+        }
+
+        .data-table tbody tr:hover {
+          background: #f5f5f5;
+        }
+
+        .data-table td {
+          padding: 10px;
+        }
+
+        .tipo-abertura { background: #d4edda; }
+        .tipo-recebimento { background: #cfe2ff; }
+        .tipo-sangria { background: #f8d7da; }
+        .tipo-reforço { background: #fff3cd; }
+        .tipo-fechamento { background: #e2e3e5; }
 
         .valor-positivo { color: #28a745; font-weight: bold; }
         .valor-negativo { color: #dc3545; font-weight: bold; }
-
-        .acoes {
-          display: flex;
-          gap: 5px;
-        }
 
         .btn-editar, .btn-salvar, .btn-cancelar {
           padding: 5px 10px;
           border: none;
           border-radius: 4px;
           cursor: pointer;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: bold;
+          margin-right: 5px;
         }
 
         .btn-editar {
@@ -792,23 +721,12 @@ export const Caixa: React.FC = () => {
           font-size: 12px;
         }
 
-        .edit-input:disabled {
-          background: #f5f5f5;
-          cursor: not-allowed;
-        }
-
         @media (max-width: 768px) {
-          .status-section {
-            grid-template-columns: 1fr;
-          }
-          .tipos-grid {
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-          }
-          .data-table {
-            font-size: 12px;
+          .button-group {
+            flex-direction: column;
           }
         }
       `}</style>
     </div>
   );
-};
+}
