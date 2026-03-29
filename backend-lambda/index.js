@@ -61,6 +61,46 @@ exports.handler = async (event) => {
         }).promise();
 
         if (result.AuthenticationResult) {
+          // Verificar se o usuário existe no DynamoDB
+          try {
+            const userResult = await dynamodb.query({
+              TableName: 'gres-prod-usuarios',
+              IndexName: 'email-index',
+              KeyConditionExpression: 'email = :email',
+              ExpressionAttributeValues: { ':email': email }
+            }).promise();
+
+            // Se não existe, criar automaticamente
+            if (!userResult.Items || userResult.Items.length === 0) {
+              // Buscar primeira unidade
+              const unidadesResult = await dynamodb.scan({
+                TableName: 'gres-prod-unidades',
+                Limit: 1
+              }).promise();
+
+              const unitId = unidadesResult.Items && unidadesResult.Items.length > 0 
+                ? unidadesResult.Items[0].id 
+                : 'default';
+
+              // Criar usuário
+              await dynamodb.put({
+                TableName: 'gres-prod-usuarios',
+                Item: {
+                  id: `${email}-${Date.now()}`,
+                  email: email,
+                  nome: email.split('@')[0],
+                  perfil: 'operador',
+                  unitId: unitId,
+                  ativo: true,
+                  timestamp: new Date().toISOString()
+                }
+              }).promise();
+            }
+          } catch (dbError) {
+            console.error('Erro ao verificar/criar usuário:', dbError.message);
+            // Continuar mesmo se houver erro
+          }
+
           return response(200, {
             success: true,
             token: result.AuthenticationResult.IdToken,
