@@ -518,6 +518,8 @@ export default function Caixa() {
             </div>
           </div>
         </div>
+        </>
+        )}
       </div>
       {registroEditando && (
         <div style={styles.modal}>
@@ -612,10 +614,8 @@ export default function Caixa() {
               }} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
             </div>
           </div>
-          </div>
-          </>
-        )}
-      </div>
+        </div>
+      )}
       <Footer showLinks={true} />
     </div>
   );

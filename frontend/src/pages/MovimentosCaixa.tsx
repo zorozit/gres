@@ -160,15 +160,12 @@ export const MovimentosCaixa: React.FC = () => {
   
   // User info
   const [userRole, setUserRole] = useState('');
-  const [userEmail, setUserEmail] = useState('');
 
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
 
   // Carregar informações do usuário
   useEffect(() => {
-    const email = localStorage.getItem('user_email') || '';
     const role = localStorage.getItem('user_role') || '';
-    setUserEmail(email);
     setUserRole(role);
   }, []);
 
@@ -480,7 +477,7 @@ export const MovimentosCaixa: React.FC = () => {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="data" />
               <YAxis />
-              <Tooltip formatter={(value) => `R$ ${value.toFixed(2)}`} />
+              <Tooltip formatter={(value: any) => `R$ ${value.toFixed(2)}`} />
               <Legend />
               <Line 
                 type="monotone" 
@@ -502,7 +499,7 @@ export const MovimentosCaixa: React.FC = () => {
       )}
 
       {/* Grid */}
-      <div style={styles.gridContainer}>
+      <div style={styles.gridContainer as React.CSSProperties}>
         <h3>Detalhes dos Movimentos ({registros.length})</h3>
         <table style={styles.table}>
           <thead>
@@ -531,7 +528,7 @@ export const MovimentosCaixa: React.FC = () => {
           </thead>
           <tbody>
             {registros.map((registro) => (
-              <tr key={registro.id} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9f9f9'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}>
+              <tr key={registro.id} onMouseEnter={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = '#f9f9f9'} onMouseLeave={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = 'white'}>
                 <td style={styles.td}>{registro.data}</td>
                 <td style={styles.td}>{registro.hora}</td>
                 <td style={styles.td}>{registro.periodo}</td>
@@ -550,7 +547,7 @@ export const MovimentosCaixa: React.FC = () => {
                 <td style={styles.td}>R$ {registro.sangria.toFixed(2)}</td>
                 <td style={styles.td}><strong>R$ {registro.total.toFixed(2)}</strong></td>
                 <td style={styles.td}>R$ {registro.sistemaPdv.toFixed(2)}</td>
-                <td style={styles.td} style={{color: registro.diferenca < 0 ? 'red' : 'green'}}>
+                <td style={{...styles.td, color: registro.diferenca < 0 ? 'red' : 'green'}}>
                   R$ {registro.diferenca.toFixed(2)}
                 </td>
                 <td style={styles.td}>R$ {registro.referencia.toFixed(2)}</td>
