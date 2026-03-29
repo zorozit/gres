@@ -9,16 +9,20 @@ const dynamodb = new AWS.DynamoDB.DocumentClient({
 });
 
 // Função auxiliar para resposta CORS
-const response = (statusCode, body) => ({
-  statusCode,
-  headers: {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify(body)
-});
+const response = (statusCode, body) => {
+  const responseBody = typeof body === 'string' ? body : JSON.stringify(body);
+  return {
+    statusCode,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate'
+    },
+    body: responseBody
+  };
+};
 
 // Handler principal
 exports.handler = async (event) => {
