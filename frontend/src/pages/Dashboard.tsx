@@ -2,11 +2,13 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { useUnit } from '../contexts/UnitContext';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { activeUnit, setActiveUnit } = useUnit();
   const [unidades, setUnidades] = React.useState<any[]>([]);
-  const [selectedUnit, setSelectedUnit] = React.useState(localStorage.getItem('user_unit') || '');
+  const [selectedUnit, setSelectedUnit] = React.useState(activeUnit?.id || '');
 
   React.useEffect(() => {
     const carregarUnidades = async () => {
@@ -27,16 +29,29 @@ export const Dashboard: React.FC = () => {
     carregarUnidades();
   }, []);
 
+  // Sincronizar selectedUnit quando activeUnit muda
+  React.useEffect(() => {
+    if (activeUnit) {
+      setSelectedUnit(activeUnit.id);
+    } else {
+      setSelectedUnit('');
+    }
+  }, [activeUnit]);
+
   const handleUnitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const unitId = e.target.value;
     setSelectedUnit(unitId);
-    localStorage.setItem('user_unit', unitId);
     
-    // Atualizar UnitContext também
+    // Atualizar UnitContext
     const selectedUnitData = unidades.find(u => u.id === unitId);
     if (selectedUnitData) {
-      // Precisamos acessar o UnitContext aqui
+      setActiveUnit(selectedUnitData);
+      // Disparar evento para módulos que ainda usam o antigo sistema
       window.dispatchEvent(new CustomEvent('unitChanged', { detail: selectedUnitData }));
+    } else if (unitId === '') {
+      // Se selecionou "Todas as Unidades"
+      setActiveUnit(null);
+      window.dispatchEvent(new CustomEvent('unitChanged', { detail: null }));
     }
   };
 
@@ -58,7 +73,7 @@ export const Dashboard: React.FC = () => {
         {unidades.length > 0 && (
           <div style={styles.unitSelectorSection}>
             <label style={styles.unitSelectorLabel}>Selecione a Unidade:</label>
-            <select value={selectedUnit} onChange={handleUnitChange} style={styles.unitSelector}>
+            <select value={selectedUnit || ''} onChange={handleUnitChange} style={styles.unitSelector}>
               <option value="">Todas as Unidades</option>
               {unidades.map((unit: any) => (
                 <option key={unit.id} value={unit.id}>{unit.nome}</option>
