@@ -12,6 +12,7 @@ import { Unidades } from './pages/Unidades';
 import { Usuarios } from './pages/Usuarios';
 import { Colaboradores } from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
+import { UsuariosEdicao } from './pages/UsuariosEdicao';
 import './App.css';
 
 function App() {
@@ -90,6 +91,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Motoboys />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/modulos/usuarios-edicao"
+              element={
+                <ProtectedRoute>
+                  <UsuariosEdicao />
                 </ProtectedRoute>
               }
             />

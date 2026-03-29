@@ -71,6 +71,14 @@ export const Modules: React.FC = () => {
       description: 'Controle de acesso e permissões',
       path: '/modulos/usuarios',
       color: '#c44569'
+    },
+    {
+      id: 'usuarios-edicao',
+      icon: '✏️',
+      title: 'Edição de Usuários',
+      description: 'Editar usuários e vincular a unidades',
+      path: '/modulos/usuarios-edicao',
+      color: '#8e44ad'
     }
   ];
 

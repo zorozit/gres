@@ -454,6 +454,40 @@ exports.handler = async (event) => {
       }
     }
 
+    // PUT USUARIOS (atualizar)
+    if ((rawPath.includes('/usuarios/') || rawPath === '/usuarios') && httpMethod === 'PUT') {
+      const usuarioId = rawPath.split('/').pop();
+      const { nome, perfil, unitId, ativo } = body;
+
+      if (!usuarioId || !nome) {
+        return response(400, { error: 'ID do usuário e nome são obrigatórios' });
+      }
+
+      try {
+        const updateExpression = 'SET #nome = :nome, perfil = :perfil, unitId = :unitId, ativo = :ativo';
+        const expressionAttributeNames = { '#nome': 'nome' };
+        const expressionAttributeValues = {
+          ':nome': nome,
+          ':perfil': perfil || 'operador',
+          ':unitId': unitId || '',
+          ':ativo': ativo !== false
+        };
+
+        await dynamodb.update({
+          TableName: 'gres-prod-usuarios',
+          Key: { id: usuarioId },
+          UpdateExpression: updateExpression,
+          ExpressionAttributeNames: expressionAttributeNames,
+          ExpressionAttributeValues: expressionAttributeValues
+        }).promise();
+
+        return response(200, { success: true, message: 'Usuário atualizado' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar usuário' });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 
