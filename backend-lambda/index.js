@@ -125,10 +125,10 @@ exports.handler = async (event) => {
 
     // POST USUARIOS
     if ((rawPath === '/usuarios' || rawPath.includes('/usuarios')) && httpMethod === 'POST') {
-      const { email, nome, perfil, unidadeId, ativo } = body;
+      const { email, nome, perfil, unitId, ativo } = body;
 
-      if (!email || !nome) {
-        return response(400, { error: 'Email e nome são obrigatórios' });
+      if (!email || !nome || !unitId) {
+        return response(400, { error: 'Email, nome e unitId são obrigatórios' });
       }
 
       try {
@@ -137,7 +137,7 @@ exports.handler = async (event) => {
           email,
           nome,
           perfil: perfil || 'operador',
-          unidadeId: unidadeId || '',
+          unitId: unitId,
           ativo: ativo !== false,
           timestamp: new Date().toISOString()
         };
@@ -157,10 +157,15 @@ exports.handler = async (event) => {
     // GET USUARIOS
     if ((rawPath === '/usuarios' || rawPath.includes('/usuarios')) && httpMethod === 'GET') {
       try {
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios'
-        }).promise();
-
+        const unitId = queryParams.unitId;
+        let params = { TableName: 'gres-prod-usuarios' };
+        
+        if (unitId) {
+          params.FilterExpression = 'unitId = :unitId';
+          params.ExpressionAttributeValues = { ':unitId': unitId };
+        }
+        
+        const result = await dynamodb.scan(params).promise();
         return response(200, result.Items || []);
       } catch (error) {
         console.error('DynamoDB error:', error);
@@ -170,10 +175,10 @@ exports.handler = async (event) => {
 
     // POST COLABORADORES
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
-      const { nome, email, telefone, cpf, dataAdmissao, salario, chavePixe, cargo, unidadeId } = body;
+      const { nome, email, telefone, cpf, dataAdmissao, salario, chavePixe, cargo, unitId } = body;
 
-      if (!nome || !cpf) {
-        return response(400, { error: 'Nome e CPF são obrigatórios' });
+      if (!nome || !cpf || !unitId) {
+        return response(400, { error: 'Nome, CPF e unitId são obrigatórios' });
       }
 
       try {
@@ -187,7 +192,7 @@ exports.handler = async (event) => {
           salario: parseFloat(salario || 0),
           chavePixe: chavePixe || '',
           cargo: cargo || '',
-          unidadeId: unidadeId || '',
+          unitId: unitId,
           timestamp: new Date().toISOString()
         };
 
@@ -206,10 +211,15 @@ exports.handler = async (event) => {
     // GET COLABORADORES
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'GET') {
       try {
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-colaboradores'
-        }).promise();
-
+        const unitId = queryParams.unitId;
+        let params = { TableName: 'gres-prod-colaboradores' };
+        
+        if (unitId) {
+          params.FilterExpression = 'unitId = :unitId';
+          params.ExpressionAttributeValues = { ':unitId': unitId };
+        }
+        
+        const result = await dynamodb.scan(params).promise();
         return response(200, result.Items || []);
       } catch (error) {
         console.error('DynamoDB error:', error);
@@ -219,10 +229,10 @@ exports.handler = async (event) => {
 
     // POST MOTOBOYS
     if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'POST') {
-      const { nome, telefone, cpf, placa, dataAdmissao, comissao, chavePixe, unidadeId } = body;
+      const { nome, telefone, cpf, placa, dataAdmissao, comissao, chavePixe, unitId } = body;
 
-      if (!nome || !cpf) {
-        return response(400, { error: 'Nome e CPF são obrigatórios' });
+      if (!nome || !cpf || !unitId) {
+        return response(400, { error: 'Nome, CPF e unitId são obrigatórios' });
       }
 
       try {
@@ -233,9 +243,9 @@ exports.handler = async (event) => {
           cpf,
           placa: placa || '',
           dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
-          comissao: parseFloat(comissao || 10),
+          comissao: parseFloat(comissao || 0),
           chavePixe: chavePixe || '',
-          unidadeId: unidadeId || '',
+          unitId: unitId,
           timestamp: new Date().toISOString()
         };
 
@@ -254,10 +264,15 @@ exports.handler = async (event) => {
     // GET MOTOBOYS
     if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'GET') {
       try {
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-motoboys'
-        }).promise();
-
+        const unitId = queryParams.unitId;
+        let params = { TableName: 'gres-prod-motoboys' };
+        
+        if (unitId) {
+          params.FilterExpression = 'unitId = :unitId';
+          params.ExpressionAttributeValues = { ':unitId': unitId };
+        }
+        
+        const result = await dynamodb.scan(params).promise();
         return response(200, result.Items || []);
       } catch (error) {
         console.error('DynamoDB error:', error);

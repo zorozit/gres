@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnit } from '../contexts/UnitContext';
 import '../styles/ModuleDetail.css';
 
 export const Colaboradores: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout } = useAuth();
+  const { email, logout, token } = useAuth();
+  const { activeUnit } = useUnit();
   const [colaboradores, setColaboradores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
@@ -16,19 +18,21 @@ export const Colaboradores: React.FC = () => {
     dataAdmissao: new Date().toISOString().split('T')[0],
     salario: '',
     chavePixe: '',
-    cargo: '',
-    unidadeId: ''
+    cargo: ''
   });
 
   useEffect(() => {
-    fetchColaboradores();
-  }, []);
+    if (activeUnit) {
+      fetchColaboradores();
+    }
+  }, [activeUnit, token]);
 
   const fetchColaboradores = async () => {
+    if (!token || !activeUnit) return;
+    setLoading(true);
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${apiEndpoint}/colaboradores`, {
+      const response = await fetch(`${apiEndpoint}/colaboradores?unitId=${activeUnit.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -44,16 +48,23 @@ export const Colaboradores: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token || !activeUnit) {
+      alert('Selecione uma unidade primeiro');
+      return;
+    }
+
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const token = localStorage.getItem('token');
       const response = await fetch(`${apiEndpoint}/colaboradores`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          unitId: activeUnit.id
+        })
       });
       
       if (response.ok) {
@@ -65,15 +76,36 @@ export const Colaboradores: React.FC = () => {
           dataAdmissao: new Date().toISOString().split('T')[0],
           salario: '',
           chavePixe: '',
-          cargo: '',
-          unidadeId: ''
+          cargo: ''
         });
         fetchColaboradores();
+      } else {
+        alert('Erro ao criar colaborador');
       }
     } catch (error) {
       console.error('Erro ao salvar colaborador:', error);
+      alert('Erro ao salvar colaborador');
     }
   };
+
+  if (!activeUnit) {
+    return (
+      <div className="module-detail-container">
+        <header className="module-header">
+          <div className="header-left">
+            <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
+            <h1>👥 Gestão de Colaboradores</h1>
+          </div>
+        </header>
+        <main className="module-main">
+          <div className="empty-state">
+            <p>⚠️ Selecione uma unidade para continuar</p>
+            <button onClick={() => navigate('/modulos')}>Voltar para Módulos</button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="module-detail-container">
@@ -81,6 +113,7 @@ export const Colaboradores: React.FC = () => {
         <div className="header-left">
           <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
           <h1>👥 Gestão de Colaboradores</h1>
+          <p className="active-unit">Unidade: {activeUnit.nome}</p>
         </div>
         <div className="header-right">
           <span className="user-info">👤 {email}</span>
@@ -168,25 +201,16 @@ export const Colaboradores: React.FC = () => {
                   placeholder="Chave PIX para pagamentos"
                 />
               </div>
-              <div className="form-group">
-                <label>Unidade</label>
-                <input
-                  type="text"
-                  value={formData.unidadeId}
-                  onChange={(e) => setFormData({...formData, unidadeId: e.target.value})}
-                  placeholder="ID da unidade"
-                />
-              </div>
               <button type="submit" className="submit-button">Cadastrar Colaborador</button>
             </form>
           </section>
 
           <section className="list-section">
-            <h2>Colaboradores Registrados</h2>
+            <h2>Colaboradores da Unidade</h2>
             {loading ? (
               <p>Carregando...</p>
             ) : colaboradores.length === 0 ? (
-              <p>Nenhum colaborador registrado</p>
+              <p>Nenhum colaborador registrado nesta unidade</p>
             ) : (
               <table className="data-table">
                 <thead>
