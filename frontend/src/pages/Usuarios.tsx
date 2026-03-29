@@ -157,6 +157,41 @@ export const Usuarios: React.FC = () => {
     setEditData({});
   };
 
+  const handleChangePassword = async (usuarioEmail: string) => {
+    const novaSenha = prompt(`Digite a nova senha para ${usuarioEmail}:`);
+    if (!novaSenha) return;
+
+    if (novaSenha.length < 8) {
+      alert('A senha deve ter no mínimo 8 caracteres');
+      return;
+    }
+
+    try {
+      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      const response = await fetch(`${apiEndpoint}/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          email: usuarioEmail,
+          newPassword: novaSenha
+        })
+      });
+
+      if (response.ok) {
+        alert('Senha alterada com sucesso!');
+      } else {
+        const erro = await response.json();
+        alert(`Erro: ${erro.error || 'Erro ao alterar senha'}`);
+      }
+    } catch (error) {
+      console.error('Erro ao alterar senha:', error);
+      alert('Erro ao alterar senha');
+    }
+  };
+
 
 
   return (
@@ -313,6 +348,7 @@ export const Usuarios: React.FC = () => {
                           <td>{user.ativo ? '✅ Ativo' : '❌ Inativo'}</td>
                           <td>
                             <button onClick={() => handleEdit(user)} className="edit-button">Editar</button>
+                            <button onClick={() => handleChangePassword(user.email)} className="edit-button" style={{marginLeft: '5px', backgroundColor: '#FF9800'}}>🔑 Senha</button>
                           </td>
                         </>
                       )}

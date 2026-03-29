@@ -127,6 +127,33 @@ exports.handler = async (event) => {
       }
     }
 
+    // POST CHANGE PASSWORD
+    if ((rawPath === '/auth/change-password' || rawPath.includes('/auth/change-password')) && httpMethod === 'POST') {
+      const { email, newPassword } = body;
+
+      if (!email || !newPassword) {
+        return response(400, { error: 'Email e nova senha são obrigatórios' });
+      }
+
+      if (newPassword.length < 8) {
+        return response(400, { error: 'A senha deve ter no mínimo 8 caracteres' });
+      }
+
+      try {
+        await cognito.adminSetUserPassword({
+          UserPoolId: 'us-east-1_PETovl6rf',
+          Username: email,
+          Password: newPassword,
+          Permanent: true
+        }).promise();
+
+        return response(200, { success: true, message: 'Senha alterada com sucesso' });
+      } catch (error) {
+        console.error('Erro ao alterar senha:', error.message);
+        return response(400, { error: 'Erro ao alterar senha: ' + error.message });
+      }
+    }
+
     // POST UNIDADES
     if ((rawPath === '/unidades' || rawPath.includes('/unidades')) && httpMethod === 'POST') {
       const { nome, endereco, telefone, email, cnpj, gerente } = body;

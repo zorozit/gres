@@ -64,7 +64,7 @@ export default function Caixa() {
     sangria: 0,
     sistemaPdv: 0,
     referencia: 0,
-    responsavel: user?.email || '',
+    responsavel: (user as any)?.id || '',
   });
 
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
