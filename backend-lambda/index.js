@@ -5,7 +5,7 @@ const cognito = new AWS.CognitoIdentityServiceProvider({
 });
 
 const dynamodb = new AWS.DynamoDB.DocumentClient({
-  region: 'us-east-2'
+  region: 'us-east-1'
 });
 
 // Função auxiliar para resposta CORS
@@ -50,6 +50,7 @@ exports.handler = async (event) => {
       }
 
       try {
+        console.log('Tentando autenticar:', email);
         const result = await cognito.adminInitiateAuth({
           UserPoolId: 'us-east-1_PETovl6rf',
           ClientId: '6frd2mgr45hjv5nit883p6f62f',
@@ -60,7 +61,12 @@ exports.handler = async (event) => {
           }
         }).promise();
 
-        if (result.AuthenticationResult) {
+        console.log('Resultado Cognito:', result ? 'OK' : 'NULO');
+        
+        if (result && result.AuthenticationResult) {
+          let userProfile = 'operador';
+          let unitId = 'default';
+          
           // Verificar se o usuário existe no DynamoDB
           try {
             const userResult = await dynamodb.query({
@@ -69,9 +75,6 @@ exports.handler = async (event) => {
               KeyConditionExpression: 'email = :email',
               ExpressionAttributeValues: { ':email': email }
             }).promise();
-
-            let userProfile = 'operador';
-            let unitId = 'default';
             
             // Se não existe, criar automaticamente
             if (!userResult.Items || userResult.Items.length === 0) {
@@ -81,7 +84,7 @@ exports.handler = async (event) => {
                 Limit: 1
               }).promise();
 
-              const unitId = unidadesResult.Items && unidadesResult.Items.length > 0 
+              unitId = unidadesResult.Items && unidadesResult.Items.length > 0 
                 ? unidadesResult.Items[0].id 
                 : 'default';
 
@@ -119,6 +122,7 @@ exports.handler = async (event) => {
         }
       } catch (error) {
         console.error('Cognito error:', error.message);
+        console.error('Erro completo:', JSON.stringify(error));
         return response(401, { error: 'Credenciais inválidas' });
       }
     }
