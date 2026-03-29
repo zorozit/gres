@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { Header } from '../components/Header';
+import { Footer } from '../components/Footer';
 import '../styles/ModuleDetail.css';
 
 export const Escalas: React.FC = () => {
-  const navigate = useNavigate();
-  const { email, logout } = useAuth();
   const [escalas, setEscalas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
@@ -66,24 +64,14 @@ export const Escalas: React.FC = () => {
   };
 
   return (
-    <div className="module-detail-container">
-      <header className="module-header">
-        <div className="header-left">
-          <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
-          <h1>📅 Gestão de Escalas</h1>
-        </div>
-        <div className="header-right">
-          <span className="user-info">👤 {email}</span>
-          <button onClick={logout} className="logout-button">Sair</button>
-        </div>
-      </header>
-
-      <main className="module-main">
-        <div className="module-content">
-          <section className="form-section">
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <Header title="📅 Gestão de Escalas" showBack={true} />
+      <main style={{ flex: 1, padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <section style={{ backgroundColor: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
             <h2>Criar Escala</h2>
             <form onSubmit={handleSubmit}>
-              <div className="form-group">
+              <div style={{ marginBottom: '15px' }}>
                 <label>Unidade</label>
                 <input
                   type="text"
@@ -93,8 +81,8 @@ export const Escalas: React.FC = () => {
                   required
                 />
               </div>
-              <div className="form-group">
-                <label>Data</label>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Data</label>
                 <input
                   type="date"
                   value={formData.data}
@@ -102,8 +90,8 @@ export const Escalas: React.FC = () => {
                   required
                 />
               </div>
-              <div className="form-group">
-                <label>Colaborador</label>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Colaborador</label>
                 <input
                   type="text"
                   value={formData.colaboradorId}
@@ -112,8 +100,8 @@ export const Escalas: React.FC = () => {
                   required
                 />
               </div>
-              <div className="form-group">
-                <label>Turno</label>
+              <div style={{ marginBottom: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Turno</label>
                 <select
                   value={formData.turno}
                   onChange={(e) => setFormData({...formData, turno: e.target.value})}
@@ -124,11 +112,11 @@ export const Escalas: React.FC = () => {
                   <option value="noite">Noite</option>
                 </select>
               </div>
-              <button type="submit" className="submit-button">Criar Escala</button>
+              <button type="submit" style={{ padding: '10px 20px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Criar Escala</button>
             </form>
           </section>
 
-          <section className="list-section">
+          <section style={{ backgroundColor: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
             <h2>Escalas Registradas</h2>
             {loading ? (
               <p>Carregando...</p>
@@ -159,6 +147,7 @@ export const Escalas: React.FC = () => {
           </section>
         </div>
       </main>
+      <Footer showLinks={true} />
     </div>
   );
 };

@@ -322,7 +322,7 @@ exports.handler = async (event) => {
 
     // POST CAIXA - Registro único por dia/turno
     if ((rawPath === '/caixa' || rawPath.includes('/caixa')) && httpMethod === 'POST') {
-      const { unitId, data, periodo, abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistema, diferenca } = body;
+      const { id, unitId, data, hora, periodo, responsavel, responsavelNome, abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistemaPdv, diferenca, referencia } = body;
 
       if (!unitId || !data || !periodo) {
         return response(400, { error: 'unitId, data e periodo são obrigatórios' });
@@ -330,10 +330,13 @@ exports.handler = async (event) => {
 
       try {
         const item = {
-          id: `${unitId}-${data}-${periodo}`,
+          id: id || `${unitId}-${data}-${periodo}-${Date.now()}`,
           unitId,
           data,
+          hora: hora || new Date().toTimeString().split(' ')[0],
           periodo,
+          responsavel: responsavel || '',
+          responsavelNome: responsavelNome || '',
           abertura: parseFloat(abertura) || 0,
           maq1: parseFloat(maq1) || 0,
           maq2: parseFloat(maq2) || 0,
@@ -347,8 +350,9 @@ exports.handler = async (event) => {
           fiado: parseFloat(fiado) || 0,
           sangria: parseFloat(sangria) || 0,
           total: parseFloat(total) || 0,
-          sistema: parseFloat(sistema) || 0,
+          sistemaPdv: parseFloat(sistemaPdv) || 0,
           diferenca: parseFloat(diferenca) || 0,
+          referencia: parseFloat(referencia) || 0,
           timestamp: new Date().toISOString()
         };
 
@@ -357,10 +361,10 @@ exports.handler = async (event) => {
           Item: item
         }).promise();
 
-        return response(201, { success: true, id: item.id });
+        return response(201, { success: true, id: item.id, message: 'Registro salvo com sucesso' });
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao salvar caixa' });
+        return response(500, { error: 'Erro ao salvar caixa: ' + error.message });
       }
     }
 
@@ -522,19 +526,18 @@ exports.handler = async (event) => {
       }
     }
 
-    // PUT CAIXA (atualizar movimento)
     // PUT CAIXA - Atualizar registro
     if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'PUT') {
       const caixaId = rawPath.split('/').pop();
-      const { abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistema, diferenca, periodo } = body;
+      const { abertura, maq1, maq2, maq3, maq4, maq5, maq6, ifood, dinheiro, pix, fiado, sangria, total, sistemaPdv, diferenca, referencia, periodo, responsavel, responsavelNome, hora } = body;
 
       if (!caixaId) {
         return response(400, { error: 'ID do movimento é obrigatório' });
       }
 
       try {
-        const updateExpression = 'SET abertura = :abertura, maq1 = :maq1, maq2 = :maq2, maq3 = :maq3, maq4 = :maq4, maq5 = :maq5, maq6 = :maq6, ifood = :ifood, dinheiro = :dinheiro, #pix = :pix, fiado = :fiado, sangria = :sangria, #total = :total, sistema = :sistema, diferenca = :diferenca, #periodo = :periodo';
-        const expressionAttributeNames = { '#pix': 'pix', '#total': 'total', '#periodo': 'periodo' };
+        const updateExpression = 'SET abertura = :abertura, maq1 = :maq1, maq2 = :maq2, maq3 = :maq3, maq4 = :maq4, maq5 = :maq5, maq6 = :maq6, ifood = :ifood, dinheiro = :dinheiro, #pix = :pix, fiado = :fiado, sangria = :sangria, #total = :total, sistemaPdv = :sistemaPdv, diferenca = :diferenca, referencia = :referencia, #periodo = :periodo, responsavel = :responsavel, responsavelNome = :responsavelNome, #hora = :hora';
+        const expressionAttributeNames = { '#pix': 'pix', '#total': 'total', '#periodo': 'periodo', '#hora': 'hora' };
         const expressionAttributeValues = {
           ':abertura': parseFloat(abertura) || 0,
           ':maq1': parseFloat(maq1) || 0,
@@ -549,9 +552,13 @@ exports.handler = async (event) => {
           ':fiado': parseFloat(fiado) || 0,
           ':sangria': parseFloat(sangria) || 0,
           ':total': parseFloat(total) || 0,
-          ':sistema': parseFloat(sistema) || 0,
+          ':sistemaPdv': parseFloat(sistemaPdv) || 0,
           ':diferenca': parseFloat(diferenca) || 0,
-          ':periodo': periodo
+          ':referencia': parseFloat(referencia) || 0,
+          ':periodo': periodo || 'Dia',
+          ':responsavel': responsavel || '',
+          ':responsavelNome': responsavelNome || '',
+          ':hora': hora || new Date().toTimeString().split(' ')[0]
         };
 
         await dynamodb.update({
@@ -562,10 +569,10 @@ exports.handler = async (event) => {
           ExpressionAttributeValues: expressionAttributeValues
         }).promise();
 
-        return response(200, { success: true, message: 'Registro atualizado' });
+        return response(200, { success: true, message: 'Registro atualizado com sucesso' });
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao atualizar registro' });
+        return response(500, { error: 'Erro ao atualizar registro: ' + error.message });
       }
     }
 
