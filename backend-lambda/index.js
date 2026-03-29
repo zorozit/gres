@@ -41,7 +41,7 @@ exports.handler = async (event) => {
       return response(200, { ok: true });
     }
 
-    // LOGIN com Cognito
+    // LOGIN com DynamoDB
     if ((rawPath === '/auth/login' || rawPath.includes('/auth/login')) && httpMethod === 'POST') {
       const { email, password } = body;
 
@@ -50,80 +50,48 @@ exports.handler = async (event) => {
       }
 
       try {
-        console.log('Tentando autenticar:', email);
-        const result = await cognito.adminInitiateAuth({
-          UserPoolId: 'us-east-1_PETovl6rf',
-          ClientId: '6frd2mgr45hjv5nit883p6f62f',
-          AuthFlow: 'ADMIN_USER_PASSWORD_AUTH',
-          AuthParameters: {
-            USERNAME: email,
-            PASSWORD: password
-          }
+        // Buscar usuário no DynamoDB por email
+        const userResult = await dynamodb.scan({
+          TableName: 'gres-prod-usuarios',
+          FilterExpression: 'email = :email',
+          ExpressionAttributeValues: { ':email': email }
         }).promise();
 
-        console.log('Resultado Cognito:', result ? 'OK' : 'NULO');
-        
-        if (result && result.AuthenticationResult) {
-          let userProfile = 'operador';
-          let unitId = 'default';
-          
-          // Verificar se o usuário existe no DynamoDB
-          try {
-            const userResult = await dynamodb.query({
-              TableName: 'gres-prod-usuarios',
-              IndexName: 'email-index',
-              KeyConditionExpression: 'email = :email',
-              ExpressionAttributeValues: { ':email': email }
-            }).promise();
-            
-            // Se não existe, criar automaticamente
-            if (!userResult.Items || userResult.Items.length === 0) {
-              // Buscar primeira unidade
-              const unidadesResult = await dynamodb.scan({
-                TableName: 'gres-prod-unidades',
-                Limit: 1
-              }).promise();
-
-              unitId = unidadesResult.Items && unidadesResult.Items.length > 0 
-                ? unidadesResult.Items[0].id 
-                : 'default';
-
-              // Criar usuário
-              await dynamodb.put({
-                TableName: 'gres-prod-usuarios',
-                Item: {
-                  id: `${email}-${Date.now()}`,
-                  email: email,
-                  nome: email.split('@')[0],
-                  perfil: 'operador',
-                  unitId: unitId,
-                  ativo: true,
-                  timestamp: new Date().toISOString()
-                }
-              }).promise();
-            } else {
-              const user = userResult.Items[0];
-              userProfile = user.perfil || 'operador';
-              unitId = user.unitId || 'default';
-            }
-          } catch (dbError) {
-            console.error('Erro ao verificar/criar usuário:', dbError.message);
-          }
-
-          return response(200, {
-            success: true,
-            token: result.AuthenticationResult.IdToken,
-            accessToken: result.AuthenticationResult.AccessToken,
-            refreshToken: result.AuthenticationResult.RefreshToken,
-            user: { email, perfil: userProfile, unitId }
-          });
-        } else {
-          return response(401, { error: 'Credenciais inválidas' });
+        if (!userResult.Items || userResult.Items.length === 0) {
+          return response(401, { error: 'Usuário não encontrado' });
         }
+
+        const user = userResult.Items[0];
+        
+        // Validar senha
+        if (user.senha !== password) {
+          return response(401, { error: 'Senha incorreta' });
+        }
+
+        // Gerar token JWT simples
+        const token = Buffer.from(JSON.stringify({
+          email: user.email,
+          id: user.id,
+          perfil: user.perfil,
+          iat: Math.floor(Date.now() / 1000)
+        })).toString('base64');
+
+        return response(200, {
+          success: true,
+          token: token,
+          accessToken: token,
+          refreshToken: token,
+          user: { 
+            email: user.email, 
+            id: user.id,
+            perfil: user.perfil || 'operador', 
+            unitId: user.unitId || 'default',
+            nome: user.nome
+          }
+        });
       } catch (error) {
-        console.error('Cognito error:', error.message);
-        console.error('Erro completo:', JSON.stringify(error));
-        return response(401, { error: 'Credenciais inválidas' });
+        console.error('Login error:', error.message);
+        return response(401, { error: 'Erro ao fazer login' });
       }
     }
 
@@ -140,11 +108,27 @@ exports.handler = async (event) => {
       }
 
       try {
-        await cognito.adminSetUserPassword({
-          UserPoolId: 'us-east-1_PETovl6rf',
-          Username: email,
-          Password: newPassword,
-          Permanent: true
+        // Buscar usuário no DynamoDB
+        const userResult = await dynamodb.scan({
+          TableName: 'gres-prod-usuarios',
+          FilterExpression: 'email = :email',
+          ExpressionAttributeValues: { ':email': email }
+        }).promise();
+
+        if (!userResult.Items || userResult.Items.length === 0) {
+          return response(401, { error: 'Usuário não encontrado' });
+        }
+
+        const user = userResult.Items[0];
+
+        // Atualizar senha no DynamoDB
+        await dynamodb.update({
+          TableName: 'gres-prod-usuarios',
+          Key: { id: user.id },
+          UpdateExpression: 'SET senha = :newPassword',
+          ExpressionAttributeValues: {
+            ':newPassword': newPassword
+          }
         }).promise();
 
         return response(200, { success: true, message: 'Senha alterada com sucesso' });
