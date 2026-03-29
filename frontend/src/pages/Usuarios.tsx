@@ -4,24 +4,59 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUnit } from '../contexts/UnitContext';
 import '../styles/ModuleDetail.css';
 
+interface Usuario {
+  id: string;
+  email: string;
+  nome: string;
+  perfil: string;
+  unitId: string;
+  ativo: boolean;
+}
+
+interface Unidade {
+  id: string;
+  nome: string;
+}
+
 export const Usuarios: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout, token } = useAuth();
   const { activeUnit } = useUnit();
-  const [usuarios, setUsuarios] = useState<any[]>([]);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<Partial<Usuario>>({});
   const [formData, setFormData] = useState({
     email: '',
     nome: '',
     perfil: 'operador',
+    unitId: '',
     ativo: true
   });
 
   useEffect(() => {
-    if (activeUnit) {
-      fetchUsuarios();
+    if (token) {
+      fetchUnidades();
+      if (activeUnit) {
+        fetchUsuarios();
+      }
     }
   }, [activeUnit, token]);
+
+  const fetchUnidades = async () => {
+    if (!token) return;
+    try {
+      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      const response = await fetch(`${apiEndpoint}/unidades`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setUnidades(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Erro ao buscar unidades:', error);
+    }
+  };
 
   const fetchUsuarios = async () => {
     if (!token || !activeUnit) return;
@@ -29,9 +64,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
       const response = await fetch(`${apiEndpoint}/usuarios?unitId=${activeUnit.id}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
       setUsuarios(Array.isArray(data) ? data : []);
@@ -46,6 +79,11 @@ export const Usuarios: React.FC = () => {
     e.preventDefault();
     if (!token || !activeUnit) {
       alert('Selecione uma unidade primeiro');
+      return;
+    }
+
+    if (!formData.email || !formData.nome) {
+      alert('Email e nome são obrigatórios');
       return;
     }
 
@@ -68,9 +106,11 @@ export const Usuarios: React.FC = () => {
           email: '',
           nome: '',
           perfil: 'operador',
+          unitId: '',
           ativo: true
         });
         fetchUsuarios();
+        alert('Usuário criado com sucesso!');
       } else {
         alert('Erro ao criar usuário');
       }
@@ -80,24 +120,44 @@ export const Usuarios: React.FC = () => {
     }
   };
 
-  if (!activeUnit) {
-    return (
-      <div className="module-detail-container">
-        <header className="module-header">
-          <div className="header-left">
-            <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
-            <h1>🔐 Gestão de Usuários</h1>
-          </div>
-        </header>
-        <main className="module-main">
-          <div className="empty-state">
-            <p>⚠️ Selecione uma unidade para continuar</p>
-            <button onClick={() => navigate('/modulos')}>Voltar para Módulos</button>
-          </div>
-        </main>
-      </div>
-    );
-  }
+  const handleEdit = (usuario: Usuario) => {
+    setEditingId(usuario.id);
+    setEditData({ ...usuario });
+  };
+
+  const handleSave = async () => {
+    if (!token || !editingId) return;
+
+    try {
+      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
+      const response = await fetch(`${apiEndpoint}/usuarios/${editingId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editData)
+      });
+
+      if (response.ok) {
+        setEditingId(null);
+        fetchUsuarios();
+        alert('Usuário atualizado com sucesso!');
+      } else {
+        alert('Erro ao atualizar usuário');
+      }
+    } catch (error) {
+      console.error('Erro ao salvar:', error);
+      alert('Erro ao salvar usuário');
+    }
+  };
+
+  const handleCancel = () => {
+    setEditingId(null);
+    setEditData({});
+  };
+
+
 
   return (
     <div className="module-detail-container">
@@ -105,7 +165,7 @@ export const Usuarios: React.FC = () => {
         <div className="header-left">
           <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
           <h1>🔐 Gestão de Usuários</h1>
-          <p className="active-unit">Unidade: {activeUnit.nome}</p>
+          {activeUnit && <span className="unit-badge">Unidade: {activeUnit.nome}</span>}
         </div>
         <div className="header-right">
           <span className="user-info">👤 {email}</span>
@@ -115,11 +175,12 @@ export const Usuarios: React.FC = () => {
 
       <main className="module-main">
         <div className="module-content">
+          {/* Formulário de Criação */}
           <section className="form-section">
-            <h2>Criar Usuário</h2>
-            <form onSubmit={handleSubmit}>
+            <h2>Criar Novo Usuário</h2>
+            <form onSubmit={handleSubmit} className="data-form">
               <div className="form-group">
-                <label>Email</label>
+                <label>Email *</label>
                 <input
                   type="email"
                   value={formData.email}
@@ -128,8 +189,9 @@ export const Usuarios: React.FC = () => {
                   required
                 />
               </div>
+
               <div className="form-group">
-                <label>Nome</label>
+                <label>Nome Completo *</label>
                 <input
                   type="text"
                   value={formData.nome}
@@ -138,12 +200,12 @@ export const Usuarios: React.FC = () => {
                   required
                 />
               </div>
+
               <div className="form-group">
                 <label>Perfil</label>
                 <select
                   value={formData.perfil}
                   onChange={(e) => setFormData({...formData, perfil: e.target.value})}
-                  required
                 >
                   <option value="admin">Administrador</option>
                   <option value="gerente">Gerente</option>
@@ -151,8 +213,25 @@ export const Usuarios: React.FC = () => {
                   <option value="caixa">Caixa</option>
                 </select>
               </div>
+
               <div className="form-group">
-                <label>Status</label>
+                <label>Unidade *</label>
+                <select
+                  value={formData.unitId || (activeUnit?.id || '')}
+                  onChange={(e) => setFormData({...formData, unitId: e.target.value})}
+                  disabled={!!activeUnit}
+                >
+                  <option value="">Selecione uma unidade</option>
+                  {unidades.map((unidade) => (
+                    <option key={unidade.id} value={unidade.id}>
+                      {unidade.nome}
+                    </option>
+                  ))}
+                </select>
+                {activeUnit && <small>Unidade selecionada: {activeUnit.nome}</small>}
+              </div>
+
+              <div className="form-group">
                 <label>
                   <input
                     type="checkbox"
@@ -162,10 +241,12 @@ export const Usuarios: React.FC = () => {
                   Usuário Ativo
                 </label>
               </div>
+
               <button type="submit" className="submit-button">Criar Usuário</button>
             </form>
           </section>
 
+          {/* Lista de Usuários */}
           <section className="list-section">
             <h2>Usuários da Unidade</h2>
             {loading ? (
@@ -180,15 +261,61 @@ export const Usuarios: React.FC = () => {
                     <th>Nome</th>
                     <th>Perfil</th>
                     <th>Status</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {usuarios.map((user) => (
                     <tr key={user.id}>
-                      <td>{user.email}</td>
-                      <td>{user.nome}</td>
-                      <td>{user.perfil}</td>
-                      <td>{user.ativo ? '✅ Ativo' : '❌ Inativo'}</td>
+                      {editingId === user.id ? (
+                        <>
+                          <td>{user.email}</td>
+                          <td>
+                            <input
+                              type="text"
+                              value={editData.nome || ''}
+                              onChange={(e) => setEditData({...editData, nome: e.target.value})}
+                              style={{ width: '100%' }}
+                            />
+                          </td>
+                          <td>
+                            <select
+                              value={editData.perfil || ''}
+                              onChange={(e) => setEditData({...editData, perfil: e.target.value})}
+                              style={{ width: '100%' }}
+                            >
+                              <option value="admin">Administrador</option>
+                              <option value="gerente">Gerente</option>
+                              <option value="operador">Operador</option>
+                              <option value="caixa">Caixa</option>
+                            </select>
+                          </td>
+                          <td>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={editData.ativo !== false}
+                                onChange={(e) => setEditData({...editData, ativo: e.target.checked})}
+                              />
+                              {editData.ativo !== false ? '✅ Ativo' : '❌ Inativo'}
+                            </label>
+                          </td>
+                          <td>
+                            <button onClick={handleSave} className="save-button">Salvar</button>
+                            <button onClick={handleCancel} className="cancel-button">Cancelar</button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{user.email}</td>
+                          <td>{user.nome}</td>
+                          <td>{user.perfil}</td>
+                          <td>{user.ativo ? '✅ Ativo' : '❌ Inativo'}</td>
+                          <td>
+                            <button onClick={() => handleEdit(user)} className="edit-button">Editar</button>
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
