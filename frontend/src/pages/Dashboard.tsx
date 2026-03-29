@@ -5,6 +5,33 @@ import { Footer } from '../components/Footer';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [unidades, setUnidades] = React.useState<any[]>([]);
+  const [selectedUnit, setSelectedUnit] = React.useState(localStorage.getItem('user_unit') || '');
+
+  React.useEffect(() => {
+    const carregarUnidades = async () => {
+      try {
+        const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${apiUrl}/unidades`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await response.json();
+        if (data.success) {
+          setUnidades(data.unidades || []);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar unidades:', error);
+      }
+    };
+    carregarUnidades();
+  }, []);
+
+  const handleUnitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const unitId = e.target.value;
+    setSelectedUnit(unitId);
+    localStorage.setItem('user_unit', unitId);
+  };
 
   const modules = [
     { icon: '💰', title: 'Controle de Caixa', desc: 'Gerencie aberturas, recebimentos e fechamentos', path: '/modulos/caixa' },
@@ -21,6 +48,18 @@ export const Dashboard: React.FC = () => {
       <Header title="🍽️ GRES - Gestão de Restaurantes" showBack={false} />
       
       <main style={styles.container}>
+        {unidades.length > 0 && (
+          <div style={styles.unitSelectorSection}>
+            <label style={styles.unitSelectorLabel}>Selecione a Unidade:</label>
+            <select value={selectedUnit} onChange={handleUnitChange} style={styles.unitSelector}>
+              <option value="">Todas as Unidades</option>
+              {unidades.map((unit: any) => (
+                <option key={unit.id} value={unit.id}>{unit.nome}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        
         <div style={styles.welcomeSection}>
           <h2 style={styles.welcomeTitle}>Bem-vindo ao GRES! 👋</h2>
           <p style={styles.welcomeText}>Sistema de Gestão Operacional para Redes de Restaurantes</p>
@@ -93,6 +132,26 @@ const styles = {
     width: '100%',
     flex: 1,
   },
+  unitSelectorSection: {
+    marginBottom: '30px',
+    padding: '15px',
+    backgroundColor: '#f0f8ff',
+    borderRadius: '8px',
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center',
+  } as React.CSSProperties,
+  unitSelectorLabel: {
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  unitSelector: {
+    padding: '8px 12px',
+    border: '1px solid #3498db',
+    borderRadius: '4px',
+    fontSize: '14px',
+    cursor: 'pointer',
+  } as React.CSSProperties,
   welcomeSection: {
     textAlign: 'center' as const,
     marginBottom: '40px',

@@ -475,8 +475,81 @@ export default function Caixa() {
         <div style={styles.modal}>
           <div style={styles.modalContent}>
             <h2>Editar Registro</h2>
-            <p>Modal de edição em desenvolvimento...</p>
-            <button onClick={() => setRegistroEditando(null)}>Fechar</button>
+            <div style={styles.grid2Col}>
+              <div style={styles.formGroup}>
+                <label>Abertura (R$):</label>
+                <input type="number" value={registroEditando.abertura || 0} onChange={(e) => setRegistroEditando({...registroEditando, abertura: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 1 (R$):</label>
+                <input type="number" value={registroEditando.maq1 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq1: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 2 (R$):</label>
+                <input type="number" value={registroEditando.maq2 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq2: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 3 (R$):</label>
+                <input type="number" value={registroEditando.maq3 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq3: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 4 (R$):</label>
+                <input type="number" value={registroEditando.maq4 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq4: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 5 (R$):</label>
+                <input type="number" value={registroEditando.maq5 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq5: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Máq 6 (R$):</label>
+                <input type="number" value={registroEditando.maq6 || 0} onChange={(e) => setRegistroEditando({...registroEditando, maq6: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>iFood (R$):</label>
+                <input type="number" value={registroEditando.ifood || 0} onChange={(e) => setRegistroEditando({...registroEditando, ifood: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Dinheiro (R$):</label>
+                <input type="number" value={registroEditando.dinheiro || 0} onChange={(e) => setRegistroEditando({...registroEditando, dinheiro: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>PIX (R$):</label>
+                <input type="number" value={registroEditando.pix || 0} onChange={(e) => setRegistroEditando({...registroEditando, pix: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Fiado (R$):</label>
+                <input type="number" value={registroEditando.fiado || 0} onChange={(e) => setRegistroEditando({...registroEditando, fiado: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Sangria (R$):</label>
+                <input type="number" value={registroEditando.sangria || 0} onChange={(e) => setRegistroEditando({...registroEditando, sangria: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Sistema PDV (R$):</label>
+                <input type="number" value={registroEditando.sistemaPdv || 0} onChange={(e) => setRegistroEditando({...registroEditando, sistemaPdv: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+              <div style={styles.formGroup}>
+                <label>Referência (R$):</label>
+                <input type="number" value={registroEditando.referencia || 0} onChange={(e) => setRegistroEditando({...registroEditando, referencia: parseFloat(e.target.value) || 0})} style={styles.input} />
+              </div>
+            </div>
+            <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
+              <button onClick={() => setRegistroEditando(null)} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
+              <button onClick={() => {
+                if (registroEditando.id) {
+                  const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+                  const token = localStorage.getItem('auth_token');
+                  fetch(`${apiUrl}/caixa/${registroEditando.id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                    body: JSON.stringify(registroEditando)
+                  }).then(() => {
+                    setRegistroEditando(null);
+                    carregarRegistros();
+                  }).catch(err => console.error('Erro ao salvar:', err));
+                }
+              }} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
+            </div>
           </div>
         </div>
       )}

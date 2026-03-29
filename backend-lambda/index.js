@@ -70,6 +70,9 @@ exports.handler = async (event) => {
               ExpressionAttributeValues: { ':email': email }
             }).promise();
 
+            let userProfile = 'operador';
+            let unitId = 'default';
+            
             // Se não existe, criar automaticamente
             if (!userResult.Items || userResult.Items.length === 0) {
               // Buscar primeira unidade
@@ -95,10 +98,13 @@ exports.handler = async (event) => {
                   timestamp: new Date().toISOString()
                 }
               }).promise();
+            } else {
+              const user = userResult.Items[0];
+              userProfile = user.perfil || 'operador';
+              unitId = user.unitId || 'default';
             }
           } catch (dbError) {
             console.error('Erro ao verificar/criar usuário:', dbError.message);
-            // Continuar mesmo se houver erro
           }
 
           return response(200, {
@@ -106,7 +112,7 @@ exports.handler = async (event) => {
             token: result.AuthenticationResult.IdToken,
             accessToken: result.AuthenticationResult.AccessToken,
             refreshToken: result.AuthenticationResult.RefreshToken,
-            user: { email }
+            user: { email, perfil: userProfile, unitId }
           });
         } else {
           return response(401, { error: 'Credenciais inválidas' });

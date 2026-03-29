@@ -49,11 +49,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(data.error || 'Falha na autenticação');
       }
 
-      const userData = { email };
+      const userData = { email, perfil: data.user.perfil, unitId: data.user.unitId };
       setUser(userData);
       setIsAuthenticated(true);
       localStorage.setItem('user', JSON.stringify(userData));
       localStorage.setItem('token', data.token);
+      localStorage.setItem('user_role', data.user.perfil);
+      localStorage.setItem('user_unit', data.user.unitId);
       console.log('Login bem-sucedido!');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
