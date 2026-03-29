@@ -374,17 +374,21 @@ exports.handler = async (event) => {
       const data = queryParams.data;
 
       try {
-        let result;
-        
-        // Usar scan para filtrar, pois o índice pode não existir
-        result = await dynamodb.scan({
-          TableName: 'gres-prod-caixa',
-          FilterExpression: unitId && data ? 'unitId = :uid AND #d = :data' : (unitId ? 'unitId = :uid' : undefined),
-          ExpressionAttributeNames: unitId && data ? { '#d': 'data' } : (unitId ? {} : undefined),
-          ExpressionAttributeValues: unitId && data ? { ':uid': unitId, ':data': data } : (unitId ? { ':uid': unitId } : undefined)
+        // Sempre fazer scan sem filtro e depois filtrar em memória
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-caixa'
         }).promise();
 
-        return response(200, result.Items || []);
+        let items = result.Items || [];
+
+        // Filtrar em memória se necessário
+        if (unitId && data) {
+          items = items.filter(item => item.unitId === unitId && item.data === data);
+        } else if (unitId) {
+          items = items.filter(item => item.unitId === unitId);
+        }
+
+        return response(200, items);
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar caixa: ' + error.message });
