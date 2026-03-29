@@ -4,27 +4,43 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUnit } from '../contexts/UnitContext';
 import '../styles/ModuleDetail.css';
 
-interface Movimento {
+interface CaixaMovimento {
   id: string;
   tipo: 'abertura' | 'recebimento' | 'sangria' | 'reforço' | 'fechamento';
+  tipoRecebimento?: string;
   valor: number;
   descricao: string;
   data: string;
-  hora: string;
+  turno: string;
   saldoAnterior?: number;
-  saldoAtual?: number;
+  saldoAtual: number;
 }
+
+const TIPOS_RECEBIMENTO = [
+  { value: 'dinheiro', label: '💵 Dinheiro' },
+  { value: 'pix', label: '📱 PIX' },
+  { value: 'ifood', label: '🍔 iFood' },
+  { value: 'cartao_1', label: '💳 Máquina 1' },
+  { value: 'cartao_2', label: '💳 Máquina 2' },
+  { value: 'cartao_3', label: '💳 Máquina 3' },
+  { value: 'cartao_4', label: '💳 Máquina 4' },
+  { value: 'cartao_5', label: '💳 Máquina 5' },
+  { value: 'cartao_6', label: '💳 Máquina 6' },
+  { value: 'outros', label: '📦 Outros' }
+];
 
 export const Caixa: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout, token } = useAuth();
   const { activeUnit } = useUnit();
-  const [movimentos, setMovimentos] = useState<Movimento[]>([]);
+  const [movimentos, setMovimentos] = useState<CaixaMovimento[]>([]);
   const [loading, setLoading] = useState(true);
   const [caixaAberto, setCaixaAberto] = useState(false);
   const [saldoAtual, setSaldoAtual] = useState(0);
+  const [turnoAtivo, setTurnoAtivo] = useState('manhã');
   const [formData, setFormData] = useState({
     tipo: 'recebimento',
+    tipoRecebimento: 'dinheiro',
     valor: '',
     descricao: ''
   });
@@ -53,6 +69,7 @@ export const Caixa: React.FC = () => {
         const ultimoMovimento = movs[movs.length - 1];
         setSaldoAtual(ultimoMovimento.saldoAtual || 0);
         setCaixaAberto(ultimoMovimento.tipo !== 'fechamento');
+        setTurnoAtivo(ultimoMovimento.turno || 'manhã');
       }
     } catch (error) {
       console.error('Erro ao buscar movimentos:', error);
@@ -74,6 +91,7 @@ export const Caixa: React.FC = () => {
       if (movs.length > 0) {
         const ultimoMovimento = movs[movs.length - 1];
         setCaixaAberto(ultimoMovimento.tipo !== 'fechamento');
+        setTurnoAtivo(ultimoMovimento.turno || 'manhã');
       }
     } catch (error) {
       console.error('Erro ao verificar caixa:', error);
@@ -110,7 +128,7 @@ export const Caixa: React.FC = () => {
           descricao: 'Abertura de caixa',
           unitId: activeUnit.id,
           data: agora.toISOString().split('T')[0],
-          hora: agora.toTimeString().split(' ')[0],
+          turno: turnoAtivo,
           saldoAnterior: 0,
           saldoAtual: valor
         })
@@ -155,6 +173,13 @@ export const Caixa: React.FC = () => {
         novoSaldo -= valor;
       }
 
+      // Preparar descrição
+      let descricao = formData.descricao;
+      if (formData.tipo === 'recebimento') {
+        const tipoLabel = TIPOS_RECEBIMENTO.find(t => t.value === formData.tipoRecebimento)?.label || formData.tipoRecebimento;
+        descricao = `${tipoLabel} - ${formData.descricao}`;
+      }
+
       const response = await fetch(`${apiEndpoint}/caixa`, {
         method: 'POST',
         headers: {
@@ -163,11 +188,12 @@ export const Caixa: React.FC = () => {
         },
         body: JSON.stringify({
           tipo: formData.tipo,
+          tipoRecebimento: formData.tipo === 'recebimento' ? formData.tipoRecebimento : undefined,
           valor: valor,
-          descricao: formData.descricao,
+          descricao: descricao,
           unitId: activeUnit.id,
           data: agora.toISOString().split('T')[0],
-          hora: agora.toTimeString().split(' ')[0],
+          turno: turnoAtivo,
           saldoAnterior: saldoAtual,
           saldoAtual: novoSaldo
         })
@@ -177,6 +203,7 @@ export const Caixa: React.FC = () => {
         setSaldoAtual(novoSaldo);
         setFormData({
           tipo: 'recebimento',
+          tipoRecebimento: 'dinheiro',
           valor: '',
           descricao: ''
         });
@@ -223,7 +250,7 @@ export const Caixa: React.FC = () => {
           descricao: `Fechamento de caixa - Diferença: R$ ${diferenca.toFixed(2)}`,
           unitId: activeUnit.id,
           data: agora.toISOString().split('T')[0],
-          hora: agora.toTimeString().split(' ')[0],
+          turno: turnoAtivo,
           saldoAnterior: saldoAtual,
           saldoAtual: valor
         })
@@ -243,7 +270,16 @@ export const Caixa: React.FC = () => {
     }
   };
 
-  // Calcular totais
+  // Calcular totais por tipo de recebimento
+  const totaisPorTipo = movimentos
+    .filter(m => m.tipo === 'recebimento')
+    .reduce((acc, mov) => {
+      const tipo = (mov as any).tipoRecebimento || 'outros';
+      acc[tipo] = (acc[tipo] || 0) + mov.valor;
+      return acc;
+    }, {} as Record<string, number>);
+
+  // Calcular totais gerais
   const totais = movimentos.reduce((acc, mov) => {
     if (mov.tipo === 'recebimento' || mov.tipo === 'reforço') {
       acc.entradas += mov.valor;
@@ -276,6 +312,7 @@ export const Caixa: React.FC = () => {
               <p className={`status-badge ${caixaAberto ? 'aberto' : 'fechado'}`}>
                 {caixaAberto ? '🟢 ABERTO' : '🔴 FECHADO'}
               </p>
+              <p className="turno">Turno: <strong>{turnoAtivo.toUpperCase()}</strong></p>
               <p className="saldo">Saldo Atual: <strong>R$ {saldoAtual.toFixed(2)}</strong></p>
               <div className="button-group">
                 <button 
@@ -314,6 +351,23 @@ export const Caixa: React.FC = () => {
             </div>
           </section>
 
+          {/* Resumo por Tipo de Recebimento */}
+          {Object.keys(totaisPorTipo).length > 0 && (
+            <section className="resumo-tipos">
+              <h3>Recebimentos por Tipo</h3>
+              <div className="tipos-grid">
+                {TIPOS_RECEBIMENTO.map(tipo => (
+                  totaisPorTipo[tipo.value] && (
+                    <div key={tipo.value} className="tipo-item">
+                      <span>{tipo.label}</span>
+                      <strong>R$ {totaisPorTipo[tipo.value].toFixed(2)}</strong>
+                    </div>
+                  )
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* Formulário de Lançamento */}
           {caixaAberto && (
             <section className="form-section">
@@ -323,13 +377,34 @@ export const Caixa: React.FC = () => {
                   <label>Tipo de Lançamento *</label>
                   <select
                     value={formData.tipo}
-                    onChange={(e) => setFormData({...formData, tipo: e.target.value as any})}
+                    onChange={(e) => {
+                      setFormData({...formData, tipo: e.target.value});
+                      if (e.target.value !== 'recebimento') {
+                        setFormData(prev => ({...prev, tipoRecebimento: 'dinheiro'}));
+                      }
+                    }}
                   >
                     <option value="recebimento">Recebimento</option>
                     <option value="sangria">Sangria</option>
                     <option value="reforço">Reforço</option>
                   </select>
                 </div>
+
+                {formData.tipo === 'recebimento' && (
+                  <div className="form-group">
+                    <label>Tipo de Recebimento *</label>
+                    <select
+                      value={formData.tipoRecebimento}
+                      onChange={(e) => setFormData({...formData, tipoRecebimento: e.target.value as any})}
+                    >
+                      {TIPOS_RECEBIMENTO.map(tipo => (
+                        <option key={tipo.value} value={tipo.value}>
+                          {tipo.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="form-group">
                   <label>Valor *</label>
@@ -360,7 +435,7 @@ export const Caixa: React.FC = () => {
 
           {/* Grid de Movimentos */}
           <section className="list-section">
-            <h2>Movimentos do Mês</h2>
+            <h2>Movimentos do Dia</h2>
             {loading ? (
               <p>Carregando...</p>
             ) : movimentos.length === 0 ? (
@@ -369,8 +444,6 @@ export const Caixa: React.FC = () => {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Data</th>
-                    <th>Hora</th>
                     <th>Tipo</th>
                     <th>Descrição</th>
                     <th>Valor</th>
@@ -381,8 +454,6 @@ export const Caixa: React.FC = () => {
                 <tbody>
                   {movimentos.map((mov) => (
                     <tr key={mov.id} className={`tipo-${mov.tipo}`}>
-                      <td>{mov.data}</td>
-                      <td>{mov.hora}</td>
                       <td>
                         <span className={`tipo-badge ${mov.tipo}`}>
                           {mov.tipo === 'abertura' && '🟢 Abertura'}
@@ -415,11 +486,37 @@ export const Caixa: React.FC = () => {
           margin-bottom: 30px;
         }
 
-        .status-card, .totais-card {
+        .status-card, .totais-card, .resumo-tipos {
           background: white;
           border-radius: 8px;
           padding: 20px;
           box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .resumo-tipos {
+          grid-column: 1 / -1;
+          margin-bottom: 30px;
+        }
+
+        .tipos-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 10px;
+          margin-top: 15px;
+        }
+
+        .tipo-item {
+          background: #f5f5f5;
+          padding: 10px;
+          border-radius: 4px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .tipo-item strong {
+          color: #007bff;
+          font-weight: bold;
         }
 
         .status-badge {
@@ -439,6 +536,12 @@ export const Caixa: React.FC = () => {
         .status-badge.fechado {
           background: #f8d7da;
           color: #721c24;
+        }
+
+        .turno {
+          font-size: 14px;
+          margin: 10px 0;
+          color: #666;
         }
 
         .saldo {
@@ -520,6 +623,9 @@ export const Caixa: React.FC = () => {
         @media (max-width: 768px) {
           .status-section {
             grid-template-columns: 1fr;
+          }
+          .tipos-grid {
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
           }
         }
       `}</style>
