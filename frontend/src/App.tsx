@@ -13,6 +13,7 @@ import { Usuarios } from './pages/Usuarios';
 import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { UsuariosEdicao } from './pages/UsuariosEdicao';
+import FolhaPagamento from './pages/FolhaPagamento';
 import './App.css';
 
 function App() {
@@ -99,6 +100,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <UsuariosEdicao />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/modulos/folha-pagamento"
+              element={
+                <ProtectedRoute>
+                  <FolhaPagamento />
                 </ProtectedRoute>
               }
             />
