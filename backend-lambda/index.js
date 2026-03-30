@@ -408,9 +408,16 @@ exports.handler = async (event) => {
 
         // Filtrar em memória
         items = items.filter(item => {
-          // Filtrar por unidade
-          if (unitId && item.unidade_id !== unitId && item.unitId !== unitId) {
-            return false;
+          // Filtrar por unidade (suporta ambos os formatos)
+          if (unitId) {
+            // Comparar com unitId ou unidade_id
+            const itemUnitId = item.unitId || item.unidade_id;
+            // Comparar apenas o CNPJ (primeiros 14 dígitos)
+            const unitIdCnpj = unitId.substring(0, 14);
+            const itemCnpj = itemUnitId ? itemUnitId.substring(0, 14) : '';
+            if (itemCnpj !== unitIdCnpj) {
+              return false;
+            }
           }
           
           // Filtrar por data específica
@@ -437,6 +444,33 @@ exports.handler = async (event) => {
           
           return true;
         });
+
+        // Mapear campos para compatibilidade com frontend
+        items = items.map(item => ({
+          id: item.id,
+          unitId: item.unitId || item.unidade_id,
+          data: item.data,
+          hora: item.hora || '00:00:00',
+          periodo: item.periodo,
+          responsavel: item.responsavel || '',
+          responsavelNome: item.responsavelNome || item.responsavel || 'Não informado',
+          abertura: parseFloat(item.abertura) || 0,
+          maq1: parseFloat(item.maq1) || 0,
+          maq2: parseFloat(item.maq2) || 0,
+          maq3: parseFloat(item.maq3) || 0,
+          maq4: parseFloat(item.maq4) || 0,
+          maq5: parseFloat(item.maq5) || 0,
+          maq6: parseFloat(item.maq6) || 0,
+          ifood: parseFloat(item.ifood) || 0,
+          dinheiro: parseFloat(item.dinheiro) || 0,
+          pix: parseFloat(item.pix) || 0,
+          fiado: parseFloat(item.fiado) || 0,
+          sangria: parseFloat(item.sangria) || 0,
+          total: parseFloat(item.total) || 0,
+          sistemaPdv: parseFloat(item.sistemaPdv || item.sistema) || 0,
+          diferenca: parseFloat(item.diferenca) || 0,
+          referencia: parseFloat(item.referencia) || 0
+        }));
 
         return response(200, items);
       } catch (error) {
