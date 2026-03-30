@@ -571,6 +571,11 @@ exports.handler = async (event) => {
       }
     }
 
+    // TEST ENDPOINT
+    if (rawPath === '/test-users' && httpMethod === 'GET') {
+      return response(200, { message: 'Endpoint de teste funcionando', timestamp: new Date().toISOString() });
+    }
+
     // GET USERS
     if (rawPath === '/users' && httpMethod === 'GET') {
       try {
