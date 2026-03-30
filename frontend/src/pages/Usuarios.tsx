@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useUnit } from '../contexts/UnitContext';
-import '../styles/ModuleDetail.css';
+import { Footer } from '../components/Footer';
 
 interface Usuario {
   id: string;
@@ -13,353 +12,350 @@ interface Usuario {
   ativo: boolean;
 }
 
-interface Unidade {
-  id: string;
-  nome: string;
-}
-
 export const Usuarios: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout, token } = useAuth();
-  const { activeUnit } = useUnit();
+  const { email, logout } = useAuth();
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
-  const [unidades, setUnidades] = useState<Unidade[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editData, setEditData] = useState<Partial<Usuario>>({});
-  const [formData, setFormData] = useState({
+  const [usuarioEditando, setUsuarioEditando] = useState<Usuario | null>(null);
+  const [novoUsuario, setNovoUsuario] = useState({
     email: '',
     nome: '',
     perfil: 'operador',
     unitId: '',
-    ativo: true
+    ativo: true,
+    senha: ''
   });
+  const [loading, setLoading] = useState(true);
+  const [unidades, setUnidades] = useState<any[]>([]);
 
   useEffect(() => {
-    if (token) {
-      fetchUnidades();
-      if (activeUnit) {
-        fetchUsuarios();
+    carregarUsuarios();
+    carregarUnidades();
+  }, []);
+
+  const carregarUsuarios = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/users`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Usuários carregados:', data);
+        setUsuarios(Array.isArray(data) ? data : []);
+      } else {
+        console.error('Erro ao carregar usuários:', response.status);
       }
-    }
-  }, [activeUnit, token]);
-
-  const fetchUnidades = async () => {
-    if (!token) return;
-    try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/unidades`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      setUnidades(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error('Erro ao buscar unidades:', error);
-    }
-  };
-
-  const fetchUsuarios = async () => {
-    if (!token || !activeUnit) return;
-    setLoading(true);
-    try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/usuarios?unitId=${activeUnit.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      setUsuarios(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Erro ao buscar usuários:', error);
+      console.error('Erro ao carregar usuários:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token || !activeUnit) {
-      alert('Selecione uma unidade primeiro');
-      return;
+  const carregarUnidades = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/unidades`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUnidades(Array.isArray(data) ? data : []);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar unidades:', error);
     }
+  };
 
-    if (!formData.email || !formData.nome) {
-      alert('Email e nome são obrigatórios');
+  const handleSalvarNovoUsuario = async () => {
+    if (!novoUsuario.email || !novoUsuario.nome || !novoUsuario.senha) {
+      alert('Preencha todos os campos obrigatórios');
       return;
     }
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/usuarios`, {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/auth/register`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          ...formData,
-          unitId: activeUnit.id
-        })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(novoUsuario)
       });
-      
       if (response.ok) {
-        setFormData({
+        setNovoUsuario({
           email: '',
           nome: '',
           perfil: 'operador',
           unitId: '',
-          ativo: true
+          ativo: true,
+          senha: ''
         });
-        fetchUsuarios();
+        carregarUsuarios();
         alert('Usuário criado com sucesso!');
       } else {
         alert('Erro ao criar usuário');
       }
     } catch (error) {
-      console.error('Erro ao salvar usuário:', error);
-      alert('Erro ao salvar usuário');
+      console.error('Erro ao criar usuário:', error);
+      alert('Erro ao criar usuário');
     }
   };
 
-  const handleEdit = (usuario: Usuario) => {
-    setEditingId(usuario.id);
-    setEditData({ ...usuario });
-  };
-
-  const handleSave = async () => {
-    if (!token || !editingId) return;
+  const handleSalvarEdicao = async () => {
+    if (!usuarioEditando || !usuarioEditando.email || !usuarioEditando.nome) {
+      alert('Preencha todos os campos obrigatórios');
+      return;
+    }
 
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/usuarios/${editingId}`, {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/users/${usuarioEditando.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(editData)
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(usuarioEditando)
       });
-
       if (response.ok) {
-        setEditingId(null);
-        fetchUsuarios();
+        setUsuarioEditando(null);
+        carregarUsuarios();
         alert('Usuário atualizado com sucesso!');
       } else {
         alert('Erro ao atualizar usuário');
       }
     } catch (error) {
-      console.error('Erro ao salvar:', error);
-      alert('Erro ao salvar usuário');
+      console.error('Erro ao atualizar usuário:', error);
+      alert('Erro ao atualizar usuário');
     }
   };
 
-  const handleCancel = () => {
-    setEditingId(null);
-    setEditData({});
-  };
-
-  const handleChangePassword = async (usuarioEmail: string) => {
-    const novaSenha = prompt(`Digite a nova senha para ${usuarioEmail}:`);
-    if (!novaSenha) return;
-
-    if (novaSenha.length < 8) {
-      alert('A senha deve ter no mínimo 8 caracteres');
-      return;
-    }
-
+  const handleDeletarUsuario = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja deletar este usuário?')) return;
     try {
-      const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
-      const response = await fetch(`${apiEndpoint}/auth/change-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          email: usuarioEmail,
-          newPassword: novaSenha
-        })
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/users/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-
       if (response.ok) {
-        alert('Senha alterada com sucesso!');
+        carregarUsuarios();
+        alert('Usuário deletado com sucesso!');
       } else {
-        const erro = await response.json();
-        alert(`Erro: ${erro.error || 'Erro ao alterar senha'}`);
+        alert('Erro ao deletar usuário');
       }
     } catch (error) {
-      console.error('Erro ao alterar senha:', error);
-      alert('Erro ao alterar senha');
+      console.error('Erro ao deletar usuário:', error);
+      alert('Erro ao deletar usuário');
     }
   };
 
+  const styles = {
+    container: { padding: '20px', maxWidth: '1400px', margin: '0 auto' },
+    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
+    mainLayout: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' },
+    coluna: { backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '4px' },
+    formulario: { padding: '15px' },
+    formGroup: { marginBottom: '15px' },
+    label: { display: 'block', marginBottom: '5px', fontWeight: 'bold' },
+    input: { width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', boxSizing: 'border-box' as const },
+    h2: { marginTop: 0 },
+    botaoSalvar: { padding: '10px 20px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '20px', width: '100%' },
+    botaoEditar: { padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '5px' },
+    botaoDeletar: { padding: '8px 12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
+    usuarioItem: { padding: '10px', backgroundColor: 'white', borderRadius: '4px', marginBottom: '10px', border: '1px solid #ddd' },
+    usuarioActions: { display: 'flex', gap: '10px', marginTop: '10px' },
+    modal: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+    modalContent: { backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflowY: 'auto' as const },
+    tabela: { width: '100%', borderCollapse: 'collapse' as const, marginTop: '20px' },
+    th: { padding: '10px', textAlign: 'left' as const, borderBottom: '2px solid #ddd', backgroundColor: '#f0f0f0' },
+    td: { padding: '10px', borderBottom: '1px solid #ddd' }
+  };
 
+  if (loading) {
+    return <div style={styles.container}><p>Carregando...</p></div>;
+  }
 
   return (
-    <div className="module-detail-container">
-      <header className="module-header">
-        <div className="header-left">
-          <button onClick={() => navigate('/modulos')} className="back-button">← Voltar</button>
-          <h1>🔐 Gestão de Usuários</h1>
-          {activeUnit && <span className="unit-badge">Unidade: {activeUnit.nome}</span>}
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <div>
+          <button onClick={() => navigate('/dashboard')} style={{ padding: '8px 16px', marginRight: '10px' }}>← Voltar</button>
+          <h1>👨‍💼 Gestão de Usuários</h1>
         </div>
-        <div className="header-right">
-          <span className="user-info">👤 {email}</span>
-          <button onClick={logout} className="logout-button">Sair</button>
+        <div>
+          <span style={{ marginRight: '20px' }}>Usuário: {email}</span>
+          <button onClick={logout} style={{ padding: '8px 16px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🚪 Sair</button>
         </div>
-      </header>
+      </div>
 
-      <main className="module-main">
-        <div className="module-content">
-          {/* Formulário de Criação */}
-          <section className="form-section">
-            <h2>Criar Novo Usuário</h2>
-            <form onSubmit={handleSubmit} className="data-form">
-              <div className="form-group">
-                <label>Email *</label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  placeholder="usuario@example.com"
-                  required
-                />
-              </div>
+      <div style={styles.mainLayout}>
+        <div style={styles.coluna}>
+          <div style={styles.formulario}>
+            <h2 style={styles.h2}>➕ Novo Usuário</h2>
+            
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Email: *</label>
+              <input 
+                type="email"
+                value={novoUsuario.email}
+                onChange={(e) => setNovoUsuario({...novoUsuario, email: e.target.value})}
+                style={styles.input}
+                placeholder="usuario@email.com"
+              />
+            </div>
 
-              <div className="form-group">
-                <label>Nome Completo *</label>
-                <input
-                  type="text"
-                  value={formData.nome}
-                  onChange={(e) => setFormData({...formData, nome: e.target.value})}
-                  placeholder="Nome completo"
-                  required
-                />
-              </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Nome: *</label>
+              <input 
+                type="text"
+                value={novoUsuario.nome}
+                onChange={(e) => setNovoUsuario({...novoUsuario, nome: e.target.value})}
+                style={styles.input}
+                placeholder="Nome completo"
+              />
+            </div>
 
-              <div className="form-group">
-                <label>Perfil</label>
-                <select
-                  value={formData.perfil}
-                  onChange={(e) => setFormData({...formData, perfil: e.target.value})}
-                >
-                  <option value="admin">Administrador</option>
-                  <option value="gerente">Gerente</option>
-                  <option value="operador">Operador</option>
-                  <option value="caixa">Caixa</option>
-                </select>
-              </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Senha: *</label>
+              <input 
+                type="password"
+                value={novoUsuario.senha}
+                onChange={(e) => setNovoUsuario({...novoUsuario, senha: e.target.value})}
+                style={styles.input}
+                placeholder="Senha"
+              />
+            </div>
 
-              <div className="form-group">
-                <label>Unidade *</label>
-                <select
-                  value={formData.unitId || (activeUnit?.id || '')}
-                  onChange={(e) => setFormData({...formData, unitId: e.target.value})}
-                  disabled={!!activeUnit}
-                >
-                  <option value="">Selecione uma unidade</option>
-                  {unidades.map((unidade) => (
-                    <option key={unidade.id} value={unidade.id}>
-                      {unidade.nome}
-                    </option>
-                  ))}
-                </select>
-                {activeUnit && <small>Unidade selecionada: {activeUnit.nome}</small>}
-              </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Perfil:</label>
+              <select 
+                value={novoUsuario.perfil}
+                onChange={(e) => setNovoUsuario({...novoUsuario, perfil: e.target.value})}
+                style={styles.input}
+              >
+                <option value="operador">Operador</option>
+                <option value="gerente">Gerente</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
 
-              <div className="form-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={formData.ativo}
-                    onChange={(e) => setFormData({...formData, ativo: e.target.checked})}
-                  />
-                  Usuário Ativo
-                </label>
-              </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Unidade:</label>
+              <select 
+                value={novoUsuario.unitId}
+                onChange={(e) => setNovoUsuario({...novoUsuario, unitId: e.target.value})}
+                style={styles.input}
+              >
+                <option value="">Selecione uma unidade</option>
+                {unidades.map((unit: any) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              <button type="submit" className="submit-button">Criar Usuário</button>
-            </form>
-          </section>
+            <button onClick={handleSalvarNovoUsuario} style={styles.botaoSalvar}>💾 Criar Usuário</button>
+          </div>
+        </div>
 
-          {/* Lista de Usuários */}
-          <section className="list-section">
-            <h2>Usuários da Unidade</h2>
-            {loading ? (
-              <p>Carregando...</p>
-            ) : usuarios.length === 0 ? (
-              <p>Nenhum usuário registrado nesta unidade</p>
-            ) : (
-              <table className="data-table">
+        <div style={styles.coluna}>
+          <h2>📋 Usuários Cadastrados ({usuarios.length})</h2>
+          {usuarios.length === 0 ? (
+            <p>Nenhum usuário cadastrado</p>
+          ) : (
+            <div style={{overflowX: 'auto'}}>
+              <table style={styles.tabela}>
                 <thead>
                   <tr>
-                    <th>Email</th>
-                    <th>Nome</th>
-                    <th>Perfil</th>
-                    <th>Status</th>
-                    <th>Ações</th>
+                    <th style={styles.th}>Email</th>
+                    <th style={styles.th}>Nome</th>
+                    <th style={styles.th}>Perfil</th>
+                    <th style={styles.th}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {usuarios.map((user) => (
-                    <tr key={user.id}>
-                      {editingId === user.id ? (
-                        <>
-                          <td>{user.email}</td>
-                          <td>
-                            <input
-                              type="text"
-                              value={editData.nome || ''}
-                              onChange={(e) => setEditData({...editData, nome: e.target.value})}
-                              style={{ width: '100%' }}
-                            />
-                          </td>
-                          <td>
-                            <select
-                              value={editData.perfil || ''}
-                              onChange={(e) => setEditData({...editData, perfil: e.target.value})}
-                              style={{ width: '100%' }}
-                            >
-                              <option value="admin">Administrador</option>
-                              <option value="gerente">Gerente</option>
-                              <option value="operador">Operador</option>
-                              <option value="caixa">Caixa</option>
-                            </select>
-                          </td>
-                          <td>
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={editData.ativo !== false}
-                                onChange={(e) => setEditData({...editData, ativo: e.target.checked})}
-                              />
-                              {editData.ativo !== false ? '✅ Ativo' : '❌ Inativo'}
-                            </label>
-                          </td>
-                          <td>
-                            <button onClick={handleSave} className="save-button">Salvar</button>
-                            <button onClick={handleCancel} className="cancel-button">Cancelar</button>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td>{user.email}</td>
-                          <td>{user.nome}</td>
-                          <td>{user.perfil}</td>
-                          <td>{user.ativo ? '✅ Ativo' : '❌ Inativo'}</td>
-                          <td>
-                            <button onClick={() => handleEdit(user)} className="edit-button">Editar</button>
-                            <button onClick={() => handleChangePassword(user.email)} className="edit-button" style={{marginLeft: '5px', backgroundColor: '#FF9800'}}>🔑 Senha</button>
-                          </td>
-                        </>
-                      )}
+                  {usuarios.map((usuario) => (
+                    <tr key={usuario.id}>
+                      <td style={styles.td}>{usuario.email}</td>
+                      <td style={styles.td}>{usuario.nome}</td>
+                      <td style={styles.td}>{usuario.perfil}</td>
+                      <td style={styles.td}>
+                        <button onClick={() => setUsuarioEditando(usuario)} style={styles.botaoEditar}>✏️ Editar</button>
+                        <button onClick={() => handleDeletarUsuario(usuario.id)} style={{...styles.botaoDeletar, marginLeft: '5px'}}>🗑️ Deletar</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            )}
-          </section>
+            </div>
+          )}
         </div>
-      </main>
+      </div>
+
+      {usuarioEditando && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <h2>Editar Usuário</h2>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Email: *</label>
+              <input 
+                type="email"
+                value={usuarioEditando.email}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, email: e.target.value})}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Nome: *</label>
+              <input 
+                type="text"
+                value={usuarioEditando.nome}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, nome: e.target.value})}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Perfil:</label>
+              <select 
+                value={usuarioEditando.perfil}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, perfil: e.target.value})}
+                style={styles.input}
+              >
+                <option value="operador">Operador</option>
+                <option value="gerente">Gerente</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Ativo:</label>
+              <select 
+                value={usuarioEditando.ativo ? 'true' : 'false'}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, ativo: e.target.value === 'true'})}
+                style={styles.input}
+              >
+                <option value="true">Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </div>
+            <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
+              <button onClick={() => setUsuarioEditando(null)} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
+              <button onClick={handleSalvarEdicao} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
+              <button onClick={() => {
+                if (usuarioEditando.id && window.confirm('Tem certeza que deseja deletar este usuário?')) {
+                  handleDeletarUsuario(usuarioEditando.id);
+                  setUsuarioEditando(null);
+                }
+              }} style={{flex: 1, padding: '10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Deletar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Footer showLinks={true} />
     </div>
   );
 };

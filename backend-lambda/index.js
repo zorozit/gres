@@ -575,9 +575,18 @@ exports.handler = async (event) => {
     if ((rawPath === '/users' || rawPath.includes('/users')) && httpMethod === 'GET') {
       try {
         const result = await dynamodb.scan({
-          TableName: 'gres-prod-users'
+          TableName: 'gres-prod-usuarios'
         }).promise();
-        return response(200, result.Items || []);
+        const usuarios = (result.Items || []).map(user => ({
+          id: user.id,
+          email: user.email,
+          name: user.nome,
+          nome: user.nome,
+          perfil: user.perfil,
+          ativo: user.ativo,
+          unitId: user.unitId
+        }));
+        return response(200, usuarios);
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar usuários' });
