@@ -404,9 +404,9 @@ exports.handler = async (event) => {
 
         // Filtrar em memória se necessário
         if (unitId && data) {
-          items = items.filter(item => item.unitId === unitId && item.data === data);
+          items = items.filter(item => item.unidade_id === unitId && item.data === data);
         } else if (unitId) {
-          items = items.filter(item => item.unitId === unitId);
+          items = items.filter(item => item.unidade_id === unitId);
         }
 
         return response(200, items);
