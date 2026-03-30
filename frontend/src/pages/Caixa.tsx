@@ -333,14 +333,71 @@ export default function Caixa() {
         {abaSelecionada === 'novo' && (
           <>
             {/* FILTRO DE DATA */}
-            <div style={styles.filtroSection}>
+            <div style={{...styles.filtroSection, display: 'flex', alignItems: 'center', gap: '10px'}}>
               <label style={styles.label}>📅 Data:</label>
+              <button 
+                onClick={() => {
+                  const data = new Date(dataSelecionada);
+                  data.setDate(data.getDate() - 1);
+                  setDataSelecionada(data.toISOString().split('T')[0]);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  minWidth: '40px'
+                }}
+              >
+                ◀ Anterior
+              </button>
               <input 
                 type="date" 
                 value={dataSelecionada}
                 onChange={(e) => setDataSelecionada(e.target.value)}
                 style={styles.inputData}
               />
+              <button 
+                onClick={() => {
+                  const data = new Date(dataSelecionada);
+                  data.setDate(data.getDate() + 1);
+                  setDataSelecionada(data.toISOString().split('T')[0]);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  minWidth: '40px'
+                }}
+              >
+                Próximo ▶
+              </button>
+              <button 
+                onClick={() => {
+                  setDataSelecionada(new Date().toISOString().split('T')[0]);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#4CAF50',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Hoje
+              </button>
             </div>
 
             {/* LAYOUT 2 COLUNAS: FORMULÁRIO | REGISTROS */}
