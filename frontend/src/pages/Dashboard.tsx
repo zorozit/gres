@@ -13,7 +13,7 @@ export const Dashboard: React.FC = () => {
   React.useEffect(() => {
     const carregarUnidades = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+        const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
         const token = localStorage.getItem('auth_token');
         const response = await fetch(`${apiUrl}/unidades`, {
           headers: { 'Authorization': `Bearer ${token}` }

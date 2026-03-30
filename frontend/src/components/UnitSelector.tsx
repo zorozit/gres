@@ -14,7 +14,7 @@ export const UnitSelector: React.FC = () => {
     const loadUnits = async () => {
       setIsLoadingUnits(true);
       try {
-        const response = await fetch('https://xmv7n047i6.execute-api.us-east-1.amazonaws.com/unidades', {
+        const response = await fetch('https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod/unidades', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'

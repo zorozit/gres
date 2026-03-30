@@ -69,7 +69,7 @@ export default function Caixa() {
     responsavel: (user as any)?.id || '',
   });
 
-  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   // Listener para mudança de unidade
   useEffect(() => {

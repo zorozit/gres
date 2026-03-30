@@ -78,7 +78,7 @@ export default function Colaboradores() {
   const [filtroAtivo, setFiltroAtivo] = useState(true);
   const [busca, setBusca] = useState('');
 
-  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   const [novoColaborador, setNovoColaborador] = useState<Partial<Colaborador>>({
     tipoContrato: 'CLT',

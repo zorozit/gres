@@ -84,7 +84,7 @@ export default function FolhaPagamento() {
   const [mesAno, setMesAno] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('pendente');
 
-  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   useEffect(() => {
     if (unitId) {

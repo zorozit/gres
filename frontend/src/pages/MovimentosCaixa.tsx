@@ -161,7 +161,7 @@ export const MovimentosCaixa: React.FC = () => {
   // User info
   const [userRole, setUserRole] = useState('');
 
-  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://xmv7n047i6.execute-api.us-east-1.amazonaws.com';
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   // Carregar informações do usuário
   useEffect(() => {
