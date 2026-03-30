@@ -507,9 +507,7 @@ export default function Caixa() {
                       </div>
                       <div style={styles.registroActions}>
                         <button onClick={() => handleEditarRegistro(registro)} style={styles.botaoEditar}>✏️ Editar</button>
-                        {localStorage.getItem('user_role') === 'Admin' && (
-                          <button onClick={() => handleDeletarRegistro(registro.id)} style={styles.botaoDeletar}>🗑️ Deletar</button>
-                        )}
+                        <button onClick={() => handleDeletarRegistro(registro.id)} style={styles.botaoDeletar}>🗑️ Deletar</button>
                       </div>
                     </div>
                   ))}
@@ -612,6 +610,19 @@ export default function Caixa() {
                   }).catch(err => console.error('Erro ao salvar:', err));
                 }
               }} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
+              <button onClick={() => {
+                if (registroEditando.id && window.confirm('Tem certeza que deseja deletar este registro?')) {
+                  const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+                  const token = localStorage.getItem('auth_token');
+                  fetch(`${apiUrl}/caixa/${registroEditando.id}`, {
+                    method: 'DELETE',
+                    headers: {'Authorization': `Bearer ${token}`}
+                  }).then(() => {
+                    setRegistroEditando(null);
+                    carregarRegistros();
+                  }).catch(err => console.error('Erro ao deletar:', err));
+                }
+              }} style={{flex: 1, padding: '10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Deletar</button>
             </div>
           </div>
         </div>
