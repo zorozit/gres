@@ -10,6 +10,8 @@ export const Saidas: React.FC = () => {
   const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
   const [registrosDia, setRegistrosDia] = useState<any[]>([]);
   const [registroEditando, setRegistroEditando] = useState<any>(null);
+  const [usuarios, setUsuarios] = useState<any[]>([]);
+  const [colaboradores, setColaboradores] = useState<any[]>([]);
   const [novoRegistro, setNovoRegistro] = useState({
     responsavel: '',
     colaborador: '',
@@ -20,23 +22,78 @@ export const Saidas: React.FC = () => {
     dataPagamento: ''
   });
 
+  // Carregar usuários e colaboradores ao montar o componente
   useEffect(() => {
+    carregarUsuarios();
+    carregarColaboradores();
+  }, []);
+
+  // Carregar registros quando a data mudar
+  useEffect(() => {
+    console.log('Data mudou para:', dataSelecionada);
     carregarRegistros();
+    setNovoRegistro(prev => ({ ...prev, data: dataSelecionada }));
   }, [dataSelecionada]);
+
+  const carregarUsuarios = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/users`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Usuários carregados:', data);
+        setUsuarios(Array.isArray(data) ? data : []);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar usuários:', error);
+    }
+  };
+
+  const carregarColaboradores = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${apiUrl}/colaboradores`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Colaboradores carregados:', data);
+        setColaboradores(Array.isArray(data) ? data : []);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar colaboradores:', error);
+    }
+  };
 
   const carregarRegistros = async () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      console.log('Carregando registros para data:', dataSelecionada);
       const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const data = await response.json();
-      console.log('Registros carregados:', data);
-      setRegistrosDia(Array.isArray(data) ? data : []);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Registros carregados:', data);
+        setRegistrosDia(Array.isArray(data) ? data : []);
+      } else {
+        console.error('Erro na resposta:', response.status);
+        setRegistrosDia([]);
+      }
     } catch (error) {
       console.error('Erro ao carregar registros:', error);
+      setRegistrosDia([]);
     }
+  };
+
+  const handleMudarData = (novaData: string) => {
+    console.log('Mudando data de', dataSelecionada, 'para', novaData);
+    setDataSelecionada(novaData);
   };
 
   const handleMudarCampoNovo = (campo: string, valor: any) => {
@@ -197,7 +254,7 @@ export const Saidas: React.FC = () => {
               onClick={() => {
                 const data = new Date(dataSelecionada);
                 data.setDate(data.getDate() - 1);
-                setDataSelecionada(data.toISOString().split('T')[0]);
+                handleMudarData(data.toISOString().split('T')[0]);
               }}
               style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
@@ -206,21 +263,21 @@ export const Saidas: React.FC = () => {
             <input 
               type="date" 
               value={dataSelecionada}
-              onChange={(e) => setDataSelecionada(e.target.value)}
+              onChange={(e) => handleMudarData(e.target.value)}
               style={{...styles.input, width: '150px'}}
             />
             <button 
               onClick={() => {
                 const data = new Date(dataSelecionada);
                 data.setDate(data.getDate() + 1);
-                setDataSelecionada(data.toISOString().split('T')[0]);
+                handleMudarData(data.toISOString().split('T')[0]);
               }}
               style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
               Próximo ▶
             </button>
             <button 
-              onClick={() => setDataSelecionada(new Date().toISOString().split('T')[0])}
+              onClick={() => handleMudarData(new Date().toISOString().split('T')[0])}
               style={{padding: '8px 12px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
               Hoje
@@ -234,24 +291,34 @@ export const Saidas: React.FC = () => {
                 
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Responsável: *</label>
-                  <input 
-                    type="text"
+                  <select 
                     value={novoRegistro.responsavel}
                     onChange={(e) => handleMudarCampoNovo('responsavel', e.target.value)}
                     style={styles.input}
-                    placeholder="Nome do responsável"
-                  />
+                  >
+                    <option value="">Selecione um responsável</option>
+                    {usuarios.map((user: any) => (
+                      <option key={user.id} value={user.email || user.name || user.id}>
+                        {user.name || user.email || user.id}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Colaborador:</label>
-                  <input 
-                    type="text"
+                  <select 
                     value={novoRegistro.colaborador}
                     onChange={(e) => handleMudarCampoNovo('colaborador', e.target.value)}
                     style={styles.input}
-                    placeholder="Nome do colaborador"
-                  />
+                  >
+                    <option value="">Selecione um colaborador</option>
+                    {colaboradores.map((colab: any) => (
+                      <option key={colab.id} value={colab.nome || colab.name || colab.id}>
+                        {colab.nome || colab.name || colab.id}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div style={styles.formGroup}>
@@ -338,7 +405,7 @@ export const Saidas: React.FC = () => {
               onClick={() => {
                 const data = new Date(dataSelecionada);
                 data.setDate(data.getDate() - 1);
-                setDataSelecionada(data.toISOString().split('T')[0]);
+                handleMudarData(data.toISOString().split('T')[0]);
               }}
               style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
@@ -347,21 +414,21 @@ export const Saidas: React.FC = () => {
             <input 
               type="date" 
               value={dataSelecionada}
-              onChange={(e) => setDataSelecionada(e.target.value)}
+              onChange={(e) => handleMudarData(e.target.value)}
               style={{...styles.input, width: '150px'}}
             />
             <button 
               onClick={() => {
                 const data = new Date(dataSelecionada);
                 data.setDate(data.getDate() + 1);
-                setDataSelecionada(data.toISOString().split('T')[0]);
+                handleMudarData(data.toISOString().split('T')[0]);
               }}
               style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
               Próximo ▶
             </button>
             <button 
-              onClick={() => setDataSelecionada(new Date().toISOString().split('T')[0])}
+              onClick={() => handleMudarData(new Date().toISOString().split('T')[0])}
               style={{padding: '8px 12px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
               Hoje
@@ -410,21 +477,33 @@ export const Saidas: React.FC = () => {
             <h2>Editar Saída</h2>
             <div style={styles.formGroup}>
               <label style={styles.label}>Responsável: *</label>
-              <input 
-                type="text"
+              <select 
                 value={registroEditando.responsavel}
                 onChange={(e) => setRegistroEditando({...registroEditando, responsavel: e.target.value})}
                 style={styles.input}
-              />
+              >
+                <option value="">Selecione um responsável</option>
+                {usuarios.map((user: any) => (
+                  <option key={user.id} value={user.email || user.name || user.id}>
+                    {user.name || user.email || user.id}
+                  </option>
+                ))}
+              </select>
             </div>
             <div style={styles.formGroup}>
               <label style={styles.label}>Colaborador:</label>
-              <input 
-                type="text"
+              <select 
                 value={registroEditando.colaborador}
                 onChange={(e) => setRegistroEditando({...registroEditando, colaborador: e.target.value})}
                 style={styles.input}
-              />
+              >
+                <option value="">Selecione um colaborador</option>
+                {colaboradores.map((colab: any) => (
+                  <option key={colab.id} value={colab.nome || colab.name || colab.id}>
+                    {colab.nome || colab.name || colab.id}
+                  </option>
+                ))}
+              </select>
             </div>
             <div style={styles.formGroup}>
               <label style={styles.label}>Descrição: *</label>

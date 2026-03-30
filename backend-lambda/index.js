@@ -571,6 +571,19 @@ exports.handler = async (event) => {
       }
     }
 
+    // GET USERS
+    if ((rawPath === '/users' || rawPath.includes('/users')) && httpMethod === 'GET') {
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-users'
+        }).promise();
+        return response(200, result.Items || []);
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao buscar usuários' });
+      }
+    }
+
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
       const data = queryParams.data;
