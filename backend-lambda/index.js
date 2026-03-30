@@ -590,7 +590,9 @@ exports.handler = async (event) => {
           unitIds: user.unitIds || [user.unitId] || []
         }));
         console.log('Usuários mapeados:', JSON.stringify(usuarios, null, 2));
-        return response(200, usuarios);
+        const resp = response(200, usuarios);
+        console.log('Resposta final:', JSON.stringify(resp));
+        return resp;
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar usuários' });
