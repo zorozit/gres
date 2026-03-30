@@ -539,20 +539,24 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { unidadeId, data, descricao, valor } = body;
+      const { responsavel, colaborador, descricao, valor, data, origem, dataPagamento } = body;
 
-      if (!unidadeId || !data || !descricao || !valor) {
+      if (!responsavel || !descricao || !valor || !data) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
         const item = {
-          id: `${unidadeId}-${Date.now()}`,
-          unidadeId,
-          data,
+          id: `saida-${Date.now()}`,
+          responsavel,
+          colaborador: colaborador || '',
           descricao,
           valor: parseFloat(valor),
-          timestamp: new Date().toISOString()
+          data,
+          origem: origem || 'Sangria',
+          dataPagamento: dataPagamento || '',
+          timestamp: new Date().toISOString(),
+          createdAt: new Date().toISOString()
         };
 
         await dynamodb.put({
@@ -569,17 +573,19 @@ exports.handler = async (event) => {
 
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
-      const unidadeId = queryParams.unidadeId;
+      const data = queryParams.data;
 
       try {
         let result;
-        if (unidadeId) {
-          result = await dynamodb.query({
+        if (data) {
+          result = await dynamodb.scan({
             TableName: 'gres-prod-saidas',
-            IndexName: 'unidadeId-timestamp-index',
-            KeyConditionExpression: 'unidadeId = :uid',
+            FilterExpression: '#data = :data',
+            ExpressionAttributeNames: {
+              '#data': 'data'
+            },
             ExpressionAttributeValues: {
-              ':uid': unidadeId
+              ':data': data
             }
           }).promise();
         } else {
@@ -592,6 +598,62 @@ exports.handler = async (event) => {
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar saídas' });
+      }
+    }
+
+    // PUT SAIDAS - Editar saída
+    if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
+      const saidaId = rawPath.split('/').pop();
+      const { responsavel, colaborador, descricao, valor, data, origem, dataPagamento } = body;
+
+      if (!saidaId || !responsavel || !descricao || !valor) {
+        return response(400, { error: 'Campos obrigatórios faltando' });
+      }
+
+      try {
+        const item = {
+          id: saidaId,
+          responsavel,
+          colaborador: colaborador || '',
+          descricao,
+          valor: parseFloat(valor),
+          data,
+          origem: origem || 'Sangria',
+          dataPagamento: dataPagamento || '',
+          timestamp: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-saidas',
+          Item: item
+        }).promise();
+
+        return response(200, { success: true, id: item.id });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar saída' });
+      }
+    }
+
+    // DELETE SAIDAS - Deletar saída
+    if (rawPath.includes('/saidas/') && httpMethod === 'DELETE') {
+      const saidaId = rawPath.split('/').pop();
+
+      if (!saidaId) {
+        return response(400, { error: 'ID da saída não fornecido' });
+      }
+
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-saidas',
+          Key: { id: saidaId }
+        }).promise();
+
+        return response(200, { success: true });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar saída' });
       }
     }
 
