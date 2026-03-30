@@ -559,3 +559,4 @@ export const MovimentosCaixa: React.FC = () => {
     </div>
   );
 };
+// Deploy trigger - Mon Mar 30 10:21:29 EDT 2026
