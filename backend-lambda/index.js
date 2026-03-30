@@ -1,11 +1,11 @@
 const AWS = require('aws-sdk');
 
 const cognito = new AWS.CognitoIdentityServiceProvider({
-  region: 'us-east-1'
+  region: 'us-east-2'
 });
 
 const dynamodb = new AWS.DynamoDB.DocumentClient({
-  region: 'us-east-1'
+  region: 'us-east-2'
 });
 
 // Função auxiliar para resposta CORS
