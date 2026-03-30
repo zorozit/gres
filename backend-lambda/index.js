@@ -393,6 +393,10 @@ exports.handler = async (event) => {
     if ((rawPath === '/caixa' || rawPath.includes('/caixa')) && httpMethod === 'GET') {
       const unitId = queryParams.unitId;
       const data = queryParams.data;
+      const dataInicio = queryParams.dataInicio;
+      const dataFim = queryParams.dataFim;
+      const periodo = queryParams.periodo;
+      const responsavel = queryParams.responsavel;
 
       try {
         // Sempre fazer scan sem filtro e depois filtrar em memória
@@ -402,12 +406,37 @@ exports.handler = async (event) => {
 
         let items = result.Items || [];
 
-        // Filtrar em memória se necessário (buscar ambas as variações: unitId e unidade_id)
-        if (unitId && data) {
-          items = items.filter(item => (item.unidade_id === unitId || item.unitId === unitId) && item.data === data);
-        } else if (unitId) {
-          items = items.filter(item => item.unidade_id === unitId || item.unitId === unitId);
-        }
+        // Filtrar em memória
+        items = items.filter(item => {
+          // Filtrar por unidade
+          if (unitId && item.unidade_id !== unitId && item.unitId !== unitId) {
+            return false;
+          }
+          
+          // Filtrar por data específica
+          if (data && item.data !== data) {
+            return false;
+          }
+          
+          // Filtrar por intervalo de datas
+          if (dataInicio && dataFim) {
+            if (item.data < dataInicio || item.data > dataFim) {
+              return false;
+            }
+          }
+          
+          // Filtrar por período (Dia/Noite)
+          if (periodo && item.periodo !== periodo) {
+            return false;
+          }
+          
+          // Filtrar por responsável
+          if (responsavel && item.responsavel !== responsavel) {
+            return false;
+          }
+          
+          return true;
+        });
 
         return response(200, items);
       } catch (error) {
