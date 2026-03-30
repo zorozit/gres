@@ -5,10 +5,12 @@ import { Footer } from '../components/Footer';
 
 interface Usuario {
   id: string;
-  email: string;
   nome: string;
+  cpf: string;
+  celular: string;
+  email?: string;
   perfil: string;
-  unitId: string;
+  unitIds: string[];
   ativo: boolean;
 }
 
@@ -18,10 +20,12 @@ export const Usuarios: React.FC = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuarioEditando, setUsuarioEditando] = useState<Usuario | null>(null);
   const [novoUsuario, setNovoUsuario] = useState({
-    email: '',
     nome: '',
+    cpf: '',
+    celular: '',
+    email: '',
     perfil: 'operador',
-    unitId: '',
+    unitIds: [] as string[],
     ativo: true,
     senha: ''
   });
@@ -71,8 +75,13 @@ export const Usuarios: React.FC = () => {
   };
 
   const handleSalvarNovoUsuario = async () => {
-    if (!novoUsuario.email || !novoUsuario.nome || !novoUsuario.senha) {
-      alert('Preencha todos os campos obrigatórios');
+    if (!novoUsuario.nome || !novoUsuario.cpf || !novoUsuario.celular) {
+      alert('Preencha os campos obrigatórios: Nome, CPF e Celular');
+      return;
+    }
+
+    if (novoUsuario.unitIds.length === 0) {
+      alert('Selecione pelo menos uma unidade');
       return;
     }
 
@@ -86,10 +95,12 @@ export const Usuarios: React.FC = () => {
       });
       if (response.ok) {
         setNovoUsuario({
-          email: '',
           nome: '',
+          cpf: '',
+          celular: '',
+          email: '',
           perfil: 'operador',
-          unitId: '',
+          unitIds: [],
           ativo: true,
           senha: ''
         });
@@ -105,8 +116,13 @@ export const Usuarios: React.FC = () => {
   };
 
   const handleSalvarEdicao = async () => {
-    if (!usuarioEditando || !usuarioEditando.email || !usuarioEditando.nome) {
-      alert('Preencha todos os campos obrigatórios');
+    if (!usuarioEditando || !usuarioEditando.nome || !usuarioEditando.cpf || !usuarioEditando.celular) {
+      alert('Preencha os campos obrigatórios: Nome, CPF e Celular');
+      return;
+    }
+
+    if (usuarioEditando.unitIds.length === 0) {
+      alert('Selecione pelo menos uma unidade');
       return;
     }
 
@@ -152,6 +168,24 @@ export const Usuarios: React.FC = () => {
     }
   };
 
+  const handleToggleUnidade = (unitId: string, isChecked: boolean, isNew: boolean = false) => {
+    if (isNew) {
+      if (isChecked) {
+        setNovoUsuario({...novoUsuario, unitIds: [...novoUsuario.unitIds, unitId]});
+      } else {
+        setNovoUsuario({...novoUsuario, unitIds: novoUsuario.unitIds.filter(id => id !== unitId)});
+      }
+    } else {
+      if (usuarioEditando) {
+        if (isChecked) {
+          setUsuarioEditando({...usuarioEditando, unitIds: [...usuarioEditando.unitIds, unitId]});
+        } else {
+          setUsuarioEditando({...usuarioEditando, unitIds: usuarioEditando.unitIds.filter(id => id !== unitId)});
+        }
+      }
+    }
+  };
+
   const styles = {
     container: { padding: '20px', maxWidth: '1400px', margin: '0 auto' },
     header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
@@ -165,13 +199,13 @@ export const Usuarios: React.FC = () => {
     botaoSalvar: { padding: '10px 20px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '20px', width: '100%' },
     botaoEditar: { padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '5px' },
     botaoDeletar: { padding: '8px 12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
-    usuarioItem: { padding: '10px', backgroundColor: 'white', borderRadius: '4px', marginBottom: '10px', border: '1px solid #ddd' },
-    usuarioActions: { display: 'flex', gap: '10px', marginTop: '10px' },
     modal: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
     modalContent: { backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflowY: 'auto' as const },
     tabela: { width: '100%', borderCollapse: 'collapse' as const, marginTop: '20px' },
     th: { padding: '10px', textAlign: 'left' as const, borderBottom: '2px solid #ddd', backgroundColor: '#f0f0f0' },
-    td: { padding: '10px', borderBottom: '1px solid #ddd' }
+    td: { padding: '10px', borderBottom: '1px solid #ddd' },
+    checkboxGroup: { display: 'flex', flexDirection: 'column' as const, gap: '8px', marginTop: '8px' },
+    checkbox: { display: 'flex', alignItems: 'center', gap: '8px' }
   };
 
   if (loading) {
@@ -197,18 +231,7 @@ export const Usuarios: React.FC = () => {
             <h2 style={styles.h2}>➕ Novo Usuário</h2>
             
             <div style={styles.formGroup}>
-              <label style={styles.label}>Email: *</label>
-              <input 
-                type="email"
-                value={novoUsuario.email}
-                onChange={(e) => setNovoUsuario({...novoUsuario, email: e.target.value})}
-                style={styles.input}
-                placeholder="usuario@email.com"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Nome: *</label>
+              <label style={styles.label}>Nome: * (obrigatório)</label>
               <input 
                 type="text"
                 value={novoUsuario.nome}
@@ -219,13 +242,35 @@ export const Usuarios: React.FC = () => {
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>Senha: *</label>
+              <label style={styles.label}>CPF: * (obrigatório)</label>
               <input 
-                type="password"
-                value={novoUsuario.senha}
-                onChange={(e) => setNovoUsuario({...novoUsuario, senha: e.target.value})}
+                type="text"
+                value={novoUsuario.cpf}
+                onChange={(e) => setNovoUsuario({...novoUsuario, cpf: e.target.value})}
                 style={styles.input}
-                placeholder="Senha"
+                placeholder="000.000.000-00"
+              />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Celular: * (obrigatório)</label>
+              <input 
+                type="tel"
+                value={novoUsuario.celular}
+                onChange={(e) => setNovoUsuario({...novoUsuario, celular: e.target.value})}
+                style={styles.input}
+                placeholder="(11) 99999-9999"
+              />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Email: (opcional)</label>
+              <input 
+                type="email"
+                value={novoUsuario.email}
+                onChange={(e) => setNovoUsuario({...novoUsuario, email: e.target.value})}
+                style={styles.input}
+                placeholder="usuario@email.com"
               />
             </div>
 
@@ -243,19 +288,19 @@ export const Usuarios: React.FC = () => {
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>Unidade:</label>
-              <select 
-                value={novoUsuario.unitId}
-                onChange={(e) => setNovoUsuario({...novoUsuario, unitId: e.target.value})}
-                style={styles.input}
-              >
-                <option value="">Selecione uma unidade</option>
+              <label style={styles.label}>Unidades: * (selecione pelo menos uma)</label>
+              <div style={styles.checkboxGroup}>
                 {unidades.map((unit: any) => (
-                  <option key={unit.id} value={unit.id}>
+                  <label key={unit.id} style={styles.checkbox}>
+                    <input 
+                      type="checkbox"
+                      checked={novoUsuario.unitIds.includes(unit.id)}
+                      onChange={(e) => handleToggleUnidade(unit.id, e.target.checked, true)}
+                    />
                     {unit.nome}
-                  </option>
+                  </label>
                 ))}
-              </select>
+              </div>
             </div>
 
             <button onClick={handleSalvarNovoUsuario} style={styles.botaoSalvar}>💾 Criar Usuário</button>
@@ -271,18 +316,18 @@ export const Usuarios: React.FC = () => {
               <table style={styles.tabela}>
                 <thead>
                   <tr>
-                    <th style={styles.th}>Email</th>
                     <th style={styles.th}>Nome</th>
-                    <th style={styles.th}>Perfil</th>
+                    <th style={styles.th}>CPF</th>
+                    <th style={styles.th}>Celular</th>
                     <th style={styles.th}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {usuarios.map((usuario) => (
                     <tr key={usuario.id}>
-                      <td style={styles.td}>{usuario.email}</td>
                       <td style={styles.td}>{usuario.nome}</td>
-                      <td style={styles.td}>{usuario.perfil}</td>
+                      <td style={styles.td}>{usuario.cpf}</td>
+                      <td style={styles.td}>{usuario.celular}</td>
                       <td style={styles.td}>
                         <button onClick={() => setUsuarioEditando(usuario)} style={styles.botaoEditar}>✏️ Editar</button>
                         <button onClick={() => handleDeletarUsuario(usuario.id)} style={{...styles.botaoDeletar, marginLeft: '5px'}}>🗑️ Deletar</button>
@@ -301,20 +346,38 @@ export const Usuarios: React.FC = () => {
           <div style={styles.modalContent}>
             <h2>Editar Usuário</h2>
             <div style={styles.formGroup}>
-              <label style={styles.label}>Email: *</label>
-              <input 
-                type="email"
-                value={usuarioEditando.email}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, email: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Nome: *</label>
+              <label style={styles.label}>Nome: * (obrigatório)</label>
               <input 
                 type="text"
                 value={usuarioEditando.nome}
                 onChange={(e) => setUsuarioEditando({...usuarioEditando, nome: e.target.value})}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>CPF: * (obrigatório)</label>
+              <input 
+                type="text"
+                value={usuarioEditando.cpf}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, cpf: e.target.value})}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Celular: * (obrigatório)</label>
+              <input 
+                type="tel"
+                value={usuarioEditando.celular}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, celular: e.target.value})}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Email: (opcional)</label>
+              <input 
+                type="email"
+                value={usuarioEditando.email || ''}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, email: e.target.value})}
                 style={styles.input}
               />
             </div>
@@ -329,6 +392,21 @@ export const Usuarios: React.FC = () => {
                 <option value="gerente">Gerente</option>
                 <option value="admin">Admin</option>
               </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Unidades: * (selecione pelo menos uma)</label>
+              <div style={styles.checkboxGroup}>
+                {unidades.map((unit: any) => (
+                  <label key={unit.id} style={styles.checkbox}>
+                    <input 
+                      type="checkbox"
+                      checked={usuarioEditando.unitIds.includes(unit.id)}
+                      onChange={(e) => handleToggleUnidade(unit.id, e.target.checked, false)}
+                    />
+                    {unit.nome}
+                  </label>
+                ))}
+              </div>
             </div>
             <div style={styles.formGroup}>
               <label style={styles.label}>Ativo:</label>

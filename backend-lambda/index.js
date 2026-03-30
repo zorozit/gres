@@ -572,7 +572,7 @@ exports.handler = async (event) => {
     }
 
     // GET USERS
-    if ((rawPath === '/users' || rawPath.includes('/users')) && httpMethod === 'GET') {
+    if ((rawPath === '/users' || rawPath.includes('/users')) && httpMethod === 'GET' && !rawPath.includes('/users/')) {
       try {
         const result = await dynamodb.scan({
           TableName: 'gres-prod-usuarios'
@@ -580,11 +580,12 @@ exports.handler = async (event) => {
         const usuarios = (result.Items || []).map(user => ({
           id: user.id,
           email: user.email,
-          name: user.nome,
           nome: user.nome,
+          cpf: user.cpf,
+          celular: user.celular,
           perfil: user.perfil,
           ativo: user.ativo,
-          unitId: user.unitId
+          unitIds: user.unitIds || [user.unitId] || []
         }));
         return response(200, usuarios);
       } catch (error) {
