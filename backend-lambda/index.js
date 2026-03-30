@@ -402,11 +402,11 @@ exports.handler = async (event) => {
 
         let items = result.Items || [];
 
-        // Filtrar em memória se necessário
+        // Filtrar em memória se necessário (buscar ambas as variações: unitId e unidade_id)
         if (unitId && data) {
-          items = items.filter(item => item.unidade_id === unitId && item.data === data);
+          items = items.filter(item => (item.unidade_id === unitId || item.unitId === unitId) && item.data === data);
         } else if (unitId) {
-          items = items.filter(item => item.unidade_id === unitId);
+          items = items.filter(item => item.unidade_id === unitId || item.unitId === unitId);
         }
 
         return response(200, items);
