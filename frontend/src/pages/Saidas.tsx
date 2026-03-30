@@ -5,7 +5,7 @@ import { Footer } from '../components/Footer';
 
 export const Saidas: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout, unitId } = useAuth();
+  const { email, logout } = useAuth();
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
   const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
   const [usuarios, setUsuarios] = useState<any[]>([]);
@@ -17,7 +17,7 @@ export const Saidas: React.FC = () => {
     descricao: '',
     valor: 0,
     data: dataSelecionada,
-    unidade_id: unitId
+    unidade_id: ''
   });
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export const Saidas: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}&unidade_id=${unitId}`, {
+      const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -73,7 +73,7 @@ export const Saidas: React.FC = () => {
           descricao: '',
           valor: 0,
           data: dataSelecionada,
-          unidade_id: unitId
+          unidade_id: ''
         });
         carregarRegistros();
       }
@@ -166,7 +166,7 @@ export const Saidas: React.FC = () => {
         </div>
         <div>
           <span style={{ marginRight: '20px' }}>Usuário: {email}</span>
-          <span style={{ marginRight: '20px' }}>Unidade: {unitId}</span>
+          <span style={{ marginRight: '20px' }}>Unidade: -</span>
           <button onClick={logout} style={{ padding: '8px 16px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🚪 Sair</button>
         </div>
       </div>
