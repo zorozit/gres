@@ -42,7 +42,7 @@ export const Saidas: React.FC = () => {
   // Carregar registros quando a data mudar
   useEffect(() => {
     console.log('Data mudou para:', dataSelecionada);
-    carregarRegistros();
+    carregarRegistros(dataSelecionada);
   }, [dataSelecionada]);
 
 
@@ -64,19 +64,19 @@ export const Saidas: React.FC = () => {
     }
   };
 
-  const carregarRegistros = async () => {
+  const carregarRegistros = async (data: string) => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
       const unitId = localStorage.getItem('unit_id');
       
       // Filtrar por data E unidade
-      const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}&unitId=${unitId}`, {
+      const response = await fetch(`${apiUrl}/saidas?data=${data}&unitId=${unitId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Registros carregados para', dataSelecionada, 'unidade:', unitId, ':', data);
+        console.log('Registros carregados para', data, 'unidade:', unitId, ':', data);
         setRegistrosDia(Array.isArray(data) ? data : []);
       }
     } catch (error) {
@@ -117,7 +117,7 @@ export const Saidas: React.FC = () => {
           origem: 'Sangria',
           dataPagamento: ''
         });
-        carregarRegistros();
+        carregarRegistros(dataSelecionada);
       } else {
         alert('Erro ao salvar saída');
       }
@@ -150,7 +150,7 @@ export const Saidas: React.FC = () => {
       if (response.ok) {
         alert('Saída atualizada com sucesso!');
         setRegistroEditando(null);
-        carregarRegistros();
+        carregarRegistros(dataSelecionada);
       } else {
         const errorData = await response.text();
         console.error('Erro na resposta:', errorData);
@@ -176,7 +176,7 @@ export const Saidas: React.FC = () => {
 
       if (response.ok) {
         alert('Saída deletada com sucesso!');
-        carregarRegistros();
+        carregarRegistros(dataSelecionada);
       } else {
         alert('Erro ao deletar saída');
       }

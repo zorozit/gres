@@ -602,30 +602,47 @@ exports.handler = async (event) => {
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
       const data = queryParams.data;
+      const unitId = queryParams.unitId;
+      
+      console.log('GET /saidas - queryParams:', queryParams);
+      console.log('GET /saidas - data:', data, 'unitId:', unitId);
 
       try {
-        let result;
-        if (data) {
-          result = await dynamodb.scan({
-            TableName: 'gres-prod-saidas',
-            FilterExpression: '#data = :data',
-            ExpressionAttributeNames: {
-              '#data': 'data'
-            },
-            ExpressionAttributeValues: {
-              ':data': data
-            }
-          }).promise();
-        } else {
-          result = await dynamodb.scan({
-            TableName: 'gres-prod-saidas'
-          }).promise();
-        }
+        // Sempre fazer scan sem filtro e depois filtrar em memória
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-saidas'
+        }).promise();
 
-        return response(200, result.Items || []);
+        let items = result.Items || [];
+        console.log('Total de itens no banco:', items.length);
+
+        // Filtrar em memória
+        items = items.filter(item => {
+          // Filtrar por data específica
+          if (data && item.data !== data) {
+            console.log('Filtrando por data:', item.data, '!==', data);
+            return false;
+          }
+          
+          // Filtrar por unidade (ignorar se unitId for 'null' ou vazio)
+          if (unitId && unitId !== 'null' && unitId !== '') {
+            const itemUnitId = item.unitId || item.unidade_id;
+            const unitIdCnpj = unitId.substring(0, 14);
+            const itemCnpj = itemUnitId ? itemUnitId.substring(0, 14) : '';
+            console.log('Filtrando por unitId:', itemCnpj, 'vs', unitIdCnpj);
+            if (itemCnpj !== unitIdCnpj) {
+              return false;
+            }
+          }
+          
+          return true;
+        });
+
+        console.log('Itens após filtro:', items.length);
+        return response(200, items);
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao buscar saídas' });
+        return response(500, { error: 'Erro ao buscar saídas: ' + error.message });
       }
     }
 
