@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
 
 export const Saidas: React.FC = () => {
-  const navigate = useNavigate();
   const { email, logout } = useAuth();
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
   
