@@ -22,7 +22,6 @@ export const Saidas: React.FC = () => {
   const [dataSelecionada, setDataSelecionada] = useState(getLocalDate());
   const [registrosDia, setRegistrosDia] = useState<any[]>([]);
   const [registroEditando, setRegistroEditando] = useState<any>(null);
-  const [usuarios, setUsuarios] = useState<any[]>([]);
   const [colaboradores, setColaboradores] = useState<any[]>([]);
   const [novoRegistro, setNovoRegistro] = useState({
     responsavel: email,
@@ -33,9 +32,8 @@ export const Saidas: React.FC = () => {
     dataPagamento: ''
   });
 
-  // Carregar usuários e colaboradores ao montar o componente
+  // Carregar colaboradores ao montar o componente
   useEffect(() => {
-    carregarUsuarios();
     carregarColaboradores();
     // Definir responsável como email do usuário atual
     setNovoRegistro(prev => ({ ...prev, responsavel: email }));
@@ -47,22 +45,7 @@ export const Saidas: React.FC = () => {
     carregarRegistros();
   }, [dataSelecionada]);
 
-  const carregarUsuarios = async () => {
-    try {
-      const apiUrl = import.meta.env.VITE_API_ENDPOINT;
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/users`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Usuários carregados:', data);
-        setUsuarios(Array.isArray(data) ? data : []);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar usuários:', error);
-    }
-  };
+
 
   const carregarColaboradores = async () => {
     try {
