@@ -7,7 +7,14 @@ export const Saidas: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
-  const [dataSelecionada, setDataSelecionada] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Função para obter data local corretamente
+  const getLocalDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  };
+  
+  const [dataSelecionada, setDataSelecionada] = useState(getLocalDate());
   const [registrosDia, setRegistrosDia] = useState<any[]>([]);
   const [registroEditando, setRegistroEditando] = useState<any>(null);
   const [usuarios, setUsuarios] = useState<any[]>([]);
@@ -17,7 +24,6 @@ export const Saidas: React.FC = () => {
     colaborador: '',
     descricao: '',
     valor: 0,
-    data: dataSelecionada,
     origem: 'Sangria',
     dataPagamento: ''
   });
@@ -32,7 +38,6 @@ export const Saidas: React.FC = () => {
   useEffect(() => {
     console.log('Data mudou para:', dataSelecionada);
     carregarRegistros();
-    setNovoRegistro(prev => ({ ...prev, data: dataSelecionada }));
   }, [dataSelecionada]);
 
   const carregarUsuarios = async () => {
@@ -73,59 +78,53 @@ export const Saidas: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      console.log('Carregando registros para data:', dataSelecionada);
       const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Registros carregados:', data);
+        console.log('Registros carregados para', dataSelecionada, ':', data);
         setRegistrosDia(Array.isArray(data) ? data : []);
-      } else {
-        console.error('Erro na resposta:', response.status);
-        setRegistrosDia([]);
       }
     } catch (error) {
       console.error('Erro ao carregar registros:', error);
-      setRegistrosDia([]);
     }
   };
 
-  const handleMudarData = (novaData: string) => {
-    console.log('Mudando data de', dataSelecionada, 'para', novaData);
-    setDataSelecionada(novaData);
-  };
-
-  const handleMudarCampoNovo = (campo: string, valor: any) => {
-    setNovoRegistro({ ...novoRegistro, [campo]: valor, data: dataSelecionada });
-  };
-
-  const handleSalvarRegistro = async () => {
-    if (!novoRegistro.responsavel || !novoRegistro.descricao || !novoRegistro.valor) {
-      alert('Preencha todos os campos obrigatórios');
+  const handleSalvarNovoRegistro = async () => {
+    if (!novoRegistro.responsavel || !novoRegistro.colaborador || !novoRegistro.descricao || novoRegistro.valor === 0) {
+      alert('Por favor, preencha todos os campos obrigatórios');
       return;
     }
 
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      
       const response = await fetch(`${apiUrl}/saidas`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(novoRegistro)
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ...novoRegistro,
+          data: dataSelecionada,
+          responsavel: email
+        })
       });
+
       if (response.ok) {
+        alert('Saída registrada com sucesso!');
         setNovoRegistro({
           responsavel: '',
           colaborador: '',
           descricao: '',
           valor: 0,
-          data: dataSelecionada,
           origem: 'Sangria',
           dataPagamento: ''
         });
         carregarRegistros();
-        alert('Saída registrada com sucesso!');
       } else {
         alert('Erro ao salvar saída');
       }
@@ -140,44 +139,49 @@ export const Saidas: React.FC = () => {
   };
 
   const handleSalvarEdicao = async () => {
-    if (!registroEditando.responsavel || !registroEditando.descricao || !registroEditando.valor) {
-      alert('Preencha todos os campos obrigatórios');
-      return;
-    }
+    if (!registroEditando) return;
 
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      
       const response = await fetch(`${apiUrl}/saidas/${registroEditando.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify(registroEditando)
       });
+
       if (response.ok) {
+        alert('Saída atualizada com sucesso!');
         setRegistroEditando(null);
         carregarRegistros();
-        alert('Saída atualizada com sucesso!');
       } else {
         alert('Erro ao atualizar saída');
       }
     } catch (error) {
-      console.error('Erro ao salvar edição:', error);
+      console.error('Erro ao atualizar:', error);
       alert('Erro ao atualizar saída');
     }
   };
 
   const handleDeletarRegistro = async (id: string) => {
     if (!window.confirm('Tem certeza que deseja deletar este registro?')) return;
+
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      
       const response = await fetch(`${apiUrl}/saidas/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+
       if (response.ok) {
-        carregarRegistros();
         alert('Saída deletada com sucesso!');
+        carregarRegistros();
       } else {
         alert('Erro ao deletar saída');
       }
@@ -187,167 +191,140 @@ export const Saidas: React.FC = () => {
     }
   };
 
-  const formatarMoeda = (valor: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
+  const handleMudarData = (dias: number) => {
+    const novaData = new Date(dataSelecionada);
+    novaData.setDate(novaData.getDate() + dias);
+    setDataSelecionada(novaData.toISOString().split('T')[0]);
   };
 
-  const formatarData = (data: string) => {
-    const d = new Date(data + 'T00:00:00');
-    return d.toLocaleDateString('pt-BR');
-  };
-
-  const styles = {
-    container: { padding: '20px', maxWidth: '1400px', margin: '0 auto' },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-    abas: { display: 'flex', gap: '10px', marginBottom: '20px' },
-    abaBtn: (ativo: boolean) => ({
-      padding: '10px 20px',
-      backgroundColor: ativo ? '#4CAF50' : '#ddd',
-      color: ativo ? 'white' : 'black',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontWeight: 'bold'
-    }),
-    filtroSection: { marginBottom: '20px', padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '4px' },
-    mainLayout: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' },
-    coluna1: { backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '4px' },
-    coluna2: { backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '4px' },
-    formulario: { padding: '15px' },
-    formGroup: { marginBottom: '15px' },
-    label: { display: 'block', marginBottom: '5px', fontWeight: 'bold' },
-    input: { width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', boxSizing: 'border-box' as const },
-    h2: { marginTop: 0 },
-    h3: { marginTop: '20px', marginBottom: '10px' },
-    botaoSalvar: { padding: '10px 20px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '20px', width: '100%' },
-    botaoEditar: { padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '5px' },
-    botaoDeletar: { padding: '8px 12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
-    registroActions: { display: 'flex', gap: '10px', marginTop: '10px' },
-    registroItem: { padding: '10px', backgroundColor: 'white', borderRadius: '4px', marginBottom: '10px', border: '1px solid #ddd' },
-    modal: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-    modalContent: { backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflowY: 'auto' as const }
+  const handleHoje = () => {
+    setDataSelecionada(getLocalDate());
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <div>
-          <button onClick={() => navigate('/dashboard')} style={{ padding: '8px 16px', marginRight: '10px' }}>← Voltar</button>
-          <h1>💸 Registro de Saídas</h1>
-        </div>
-        <div>
-          <span style={{ marginRight: '20px' }}>Usuário: {email}</span>
-          <button onClick={logout} style={{ padding: '8px 16px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🚪 Sair</button>
-        </div>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h1>📋 Registro de Saídas</h1>
+            <button onClick={logout} style={{ padding: '10px 20px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+              Sair
+            </button>
+          </div>
 
-      <div style={styles.abas}>
-        <button style={styles.abaBtn(abaSelecionada === 'novo')} onClick={() => setAbaSelecionada('novo')}>📝 Novo Registro</button>
-        <button style={styles.abaBtn(abaSelecionada === 'movimentos')} onClick={() => setAbaSelecionada('movimentos')}>📊 Movimentos</button>
-      </div>
-
-      {abaSelecionada === 'novo' && (
-        <>
-          <div style={{...styles.filtroSection, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap'}}>
-            <label style={styles.label}>📅 Data:</label>
-            <button 
-              onClick={() => {
-                const data = new Date(dataSelecionada);
-                data.setDate(data.getDate() - 1);
-                handleMudarData(data.toISOString().split('T')[0]);
+          {/* Abas */}
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+            <button
+              onClick={() => setAbaSelecionada('novo')}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: abaSelecionada === 'novo' ? '#28a745' : '#e9ecef',
+                color: abaSelecionada === 'novo' ? 'white' : 'black',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
               }}
-              style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
             >
+              ➕ Novo Registro
+            </button>
+            <button
+              onClick={() => setAbaSelecionada('movimentos')}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: abaSelecionada === 'movimentos' ? '#28a745' : '#e9ecef',
+                color: abaSelecionada === 'movimentos' ? 'white' : 'black',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}
+            >
+              📊 Movimentos
+            </button>
+          </div>
+
+          {/* Seletor de Data */}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '20px' }}>
+            <label style={{ fontWeight: 'bold' }}>📅 Data:</label>
+            <button onClick={() => handleMudarData(-1)} style={{ padding: '8px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
               ◀ Anterior
             </button>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={dataSelecionada}
-              onChange={(e) => handleMudarData(e.target.value)}
-              style={{...styles.input, width: '150px'}}
+              onChange={(e) => setDataSelecionada(e.target.value)}
+              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
             />
-            <button 
-              onClick={() => {
-                const data = new Date(dataSelecionada);
-                data.setDate(data.getDate() + 1);
-                handleMudarData(data.toISOString().split('T')[0]);
-              }}
-              style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
-            >
+            <button onClick={() => handleMudarData(1)} style={{ padding: '8px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
               Próximo ▶
             </button>
-            <button 
-              onClick={() => handleMudarData(new Date().toISOString().split('T')[0])}
-              style={{padding: '8px 12px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
-            >
+            <button onClick={handleHoje} style={{ padding: '8px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
               Hoje
             </button>
           </div>
 
-          <div style={styles.mainLayout}>
-            <div style={styles.coluna1}>
-              <div style={styles.formulario}>
-                <h2 style={styles.h2}>📝 Nova Saída</h2>
-                
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Responsável: *</label>
-                  <select 
+          {/* Aba Novo Registro */}
+          {abaSelecionada === 'novo' && (
+            <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
+              <h2>➕ Nova Saída</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Responsável: *</label>
+                  <select
                     value={novoRegistro.responsavel}
-                    onChange={(e) => handleMudarCampoNovo('responsavel', e.target.value)}
-                    style={styles.input}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, responsavel: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="">Selecione um responsável</option>
-                    {usuarios.map((user: any) => (
-                      <option key={user.id} value={user.email || user.name || user.id}>
-                        {user.name || user.email || user.id}
-                      </option>
+                    {usuarios.map(u => (
+                      <option key={u.id} value={u.nome}>{u.nome}</option>
                     ))}
                   </select>
                 </div>
 
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Colaborador:</label>
-                  <select 
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Colaborador: *</label>
+                  <select
                     value={novoRegistro.colaborador}
-                    onChange={(e) => handleMudarCampoNovo('colaborador', e.target.value)}
-                    style={styles.input}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, colaborador: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="">Selecione um colaborador</option>
-                    {colaboradores.map((colab: any) => (
-                      <option key={colab.id} value={colab.nome || colab.name || colab.id}>
-                        {colab.nome || colab.name || colab.id}
-                      </option>
+                    {colaboradores.map(c => (
+                      <option key={c.id} value={c.nome}>{c.nome}</option>
                     ))}
                   </select>
                 </div>
 
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Descrição: *</label>
-                  <textarea 
-                    value={novoRegistro.descricao}
-                    onChange={(e) => handleMudarCampoNovo('descricao', e.target.value)}
-                    style={{...styles.input, minHeight: '80px'}}
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Descrição: *</label>
+                  <input
+                    type="text"
                     placeholder="Descrição da saída"
+                    value={novoRegistro.descricao}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, descricao: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   />
                 </div>
 
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Valor (R$): *</label>
-                  <input 
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Valor (R$): *</label>
+                  <input
                     type="number"
-                    step="0.01"
+                    placeholder="0"
                     value={novoRegistro.valor}
-                    onChange={(e) => handleMudarCampoNovo('valor', parseFloat(e.target.value) || 0)}
-                    style={styles.input}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, valor: parseFloat(e.target.value) })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   />
                 </div>
 
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Origem:</label>
-                  <select 
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Origem:</label>
+                  <select
                     value={novoRegistro.origem}
-                    onChange={(e) => handleMudarCampoNovo('origem', e.target.value)}
-                    style={styles.input}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, origem: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="Sangria">Sangria</option>
                     <option value="Caixa">Caixa</option>
@@ -357,210 +334,179 @@ export const Saidas: React.FC = () => {
                   </select>
                 </div>
 
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>Data de Pagamento:</label>
-                  <input 
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Data de Pagamento:</label>
+                  <input
                     type="date"
                     value={novoRegistro.dataPagamento}
-                    onChange={(e) => handleMudarCampoNovo('dataPagamento', e.target.value)}
-                    style={styles.input}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, dataPagamento: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   />
                 </div>
-
-                <button onClick={handleSalvarRegistro} style={styles.botaoSalvar}>💾 Salvar Saída</button>
               </div>
-            </div>
 
-            <div style={styles.coluna2}>
-              <h2>📋 Saídas do Dia ({formatarData(dataSelecionada)})</h2>
+              <button
+                onClick={handleSalvarNovoRegistro}
+                style={{ marginTop: '15px', padding: '12px 24px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                💾 Salvar Saída
+              </button>
+            </div>
+          )}
+
+          {/* Aba Movimentos */}
+          {abaSelecionada === 'movimentos' && (
+            <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '8px' }}>
+              <h2>📊 Saídas do Dia ({dataSelecionada})</h2>
               {registrosDia.length === 0 ? (
-                <p>Nenhuma saída para esta data</p>
+                <p>Nenhuma saída registrada para esta data</p>
               ) : (
-                registrosDia.map((registro) => (
-                  <div key={registro.id} style={styles.registroItem}>
-                    <div><strong>Responsável:</strong> {registro.responsavel}</div>
-                    {registro.colaborador && <div><strong>Colaborador:</strong> {registro.colaborador}</div>}
-                    <div><strong>Descrição:</strong> {registro.descricao}</div>
-                    <div><strong>Valor:</strong> {formatarMoeda(registro.valor)}</div>
-                    <div><strong>Origem:</strong> {registro.origem}</div>
-                    {registro.dataPagamento && <div><strong>Data Pagamento:</strong> {formatarData(registro.dataPagamento)}</div>}
-                    <div style={styles.registroActions}>
-                      <button onClick={() => handleEditarRegistro(registro)} style={styles.botaoEditar}>✏️ Editar</button>
-                      <button onClick={() => handleDeletarRegistro(registro.id)} style={styles.botaoDeletar}>🗑️ Deletar</button>
-                    </div>
-                  </div>
-                ))
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#007bff', color: 'white' }}>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Responsável</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Colaborador</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Descrição</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Origem</th>
+                        <th style={{ padding: '10px', textAlign: 'right', border: '1px solid #ddd' }}>Valor</th>
+                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Data Pagamento</th>
+                        <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ddd' }}>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {registrosDia.map((registro) => (
+                        <tr key={registro.id} style={{ backgroundColor: '#fff', borderBottom: '1px solid #ddd' }}>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.responsavel || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.colaborador || registro.favorecido || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.descricao || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.origem || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'right' }}>R$ {registro.valor?.toFixed(2) || '0.00'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.dataPagamento || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'center' }}>
+                            <button
+                              onClick={() => handleEditarRegistro(registro)}
+                              style={{ padding: '6px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '5px' }}
+                            >
+                              ✏️ Editar
+                            </button>
+                            <button
+                              onClick={() => handleDeletarRegistro(registro.id)}
+                              style={{ padding: '6px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                              🗑️ Deletar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
-          </div>
-        </>
-      )}
+          )}
 
-      {abaSelecionada === 'movimentos' && (
-        <div style={styles.coluna2}>
-          <h2>📊 Histórico de Movimentos</h2>
-          <div style={{...styles.filtroSection, display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap'}}>
-            <label style={styles.label}>📅 Data:</label>
-            <button 
-              onClick={() => {
-                const data = new Date(dataSelecionada);
-                data.setDate(data.getDate() - 1);
-                handleMudarData(data.toISOString().split('T')[0]);
-              }}
-              style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
-            >
-              ◀ Anterior
-            </button>
-            <input 
-              type="date" 
-              value={dataSelecionada}
-              onChange={(e) => handleMudarData(e.target.value)}
-              style={{...styles.input, width: '150px'}}
-            />
-            <button 
-              onClick={() => {
-                const data = new Date(dataSelecionada);
-                data.setDate(data.getDate() + 1);
-                handleMudarData(data.toISOString().split('T')[0]);
-              }}
-              style={{padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
-            >
-              Próximo ▶
-            </button>
-            <button 
-              onClick={() => handleMudarData(new Date().toISOString().split('T')[0])}
-              style={{padding: '8px 12px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
-            >
-              Hoje
-            </button>
-          </div>
+          {/* Modal de Edição */}
+          {registroEditando && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%' }}>
+                <h2>✏️ Editar Saída</h2>
+                <div style={{ display: 'grid', gap: '15px' }}>
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Responsável:</label>
+                    <input
+                      type="text"
+                      value={registroEditando.responsavel || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, responsavel: e.target.value })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
 
-          {registrosDia.length === 0 ? (
-            <p>Nenhuma saída para esta data</p>
-          ) : (
-            <div style={{overflowX: 'auto'}}>
-              <table style={{width: '100%', borderCollapse: 'collapse', marginTop: '20px'}}>
-                <thead>
-                  <tr style={{backgroundColor: '#f0f0f0'}}>
-                    <th style={{padding: '10px', textAlign: 'left', borderBottom: '2px solid #ddd'}}>Data</th>
-                    <th style={{padding: '10px', textAlign: 'left', borderBottom: '2px solid #ddd'}}>Responsável</th>
-                    <th style={{padding: '10px', textAlign: 'left', borderBottom: '2px solid #ddd'}}>Descrição</th>
-                    <th style={{padding: '10px', textAlign: 'left', borderBottom: '2px solid #ddd'}}>Origem</th>
-                    <th style={{padding: '10px', textAlign: 'right', borderBottom: '2px solid #ddd'}}>Valor</th>
-                    <th style={{padding: '10px', textAlign: 'left', borderBottom: '2px solid #ddd'}}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {registrosDia.map((registro) => (
-                    <tr key={registro.id} style={{borderBottom: '1px solid #ddd'}}>
-                      <td style={{padding: '10px'}}>{formatarData(registro.data)}</td>
-                      <td style={{padding: '10px'}}>{registro.responsavel}</td>
-                      <td style={{padding: '10px'}}>{registro.descricao}</td>
-                      <td style={{padding: '10px'}}>{registro.origem}</td>
-                      <td style={{padding: '10px', textAlign: 'right'}}>{formatarMoeda(registro.valor)}</td>
-                      <td style={{padding: '10px'}}>
-                        <button onClick={() => handleEditarRegistro(registro)} style={styles.botaoEditar}>✏️</button>
-                        <button onClick={() => handleDeletarRegistro(registro.id)} style={{...styles.botaoDeletar, marginLeft: '5px'}}>🗑️</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Colaborador:</label>
+                    <input
+                      type="text"
+                      value={registroEditando.colaborador || registroEditando.favorecido || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, colaborador: e.target.value })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Descrição:</label>
+                    <input
+                      type="text"
+                      value={registroEditando.descricao || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, descricao: e.target.value })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Valor (R$):</label>
+                    <input
+                      type="number"
+                      value={registroEditando.valor || 0}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, valor: parseFloat(e.target.value) })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Origem:</label>
+                    <select
+                      value={registroEditando.origem || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, origem: e.target.value })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    >
+                      <option value="Sangria">Sangria</option>
+                      <option value="Caixa">Caixa</option>
+                      <option value="PIX">PIX</option>
+                      <option value="A receber">A receber</option>
+                      <option value="A pagar">A pagar</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontWeight: 'bold' }}>Data de Pagamento:</label>
+                    <input
+                      type="date"
+                      value={registroEditando.dataPagamento || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, dataPagamento: e.target.value })}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button
+                    onClick={handleSalvarEdicao}
+                    style={{ flex: 1, padding: '10px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    💾 Salvar
+                  </button>
+                  <button
+                    onClick={() => setRegistroEditando(null)}
+                    style={{ flex: 1, padding: '10px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    ❌ Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleDeletarRegistro(registroEditando.id);
+                      setRegistroEditando(null);
+                    }}
+                    style={{ flex: 1, padding: '10px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    🗑️ Deletar
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
-      )}
-
-      {registroEditando && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
-            <h2>Editar Saída</h2>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Responsável: *</label>
-              <select 
-                value={registroEditando.responsavel}
-                onChange={(e) => setRegistroEditando({...registroEditando, responsavel: e.target.value})}
-                style={styles.input}
-              >
-                <option value="">Selecione um responsável</option>
-                {usuarios.map((user: any) => (
-                  <option key={user.id} value={user.email || user.name || user.id}>
-                    {user.name || user.email || user.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Colaborador:</label>
-              <select 
-                value={registroEditando.colaborador}
-                onChange={(e) => setRegistroEditando({...registroEditando, colaborador: e.target.value})}
-                style={styles.input}
-              >
-                <option value="">Selecione um colaborador</option>
-                {colaboradores.map((colab: any) => (
-                  <option key={colab.id} value={colab.nome || colab.name || colab.id}>
-                    {colab.nome || colab.name || colab.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Descrição: *</label>
-              <textarea 
-                value={registroEditando.descricao}
-                onChange={(e) => setRegistroEditando({...registroEditando, descricao: e.target.value})}
-                style={{...styles.input, minHeight: '80px'}}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Valor (R$): *</label>
-              <input 
-                type="number"
-                step="0.01"
-                value={registroEditando.valor}
-                onChange={(e) => setRegistroEditando({...registroEditando, valor: parseFloat(e.target.value) || 0})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Origem:</label>
-              <select 
-                value={registroEditando.origem}
-                onChange={(e) => setRegistroEditando({...registroEditando, origem: e.target.value})}
-                style={styles.input}
-              >
-                <option value="Sangria">Sangria</option>
-                <option value="Caixa">Caixa</option>
-                <option value="PIX">PIX</option>
-                <option value="A receber">A receber</option>
-                <option value="A pagar">A pagar</option>
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Data de Pagamento:</label>
-              <input 
-                type="date"
-                value={registroEditando.dataPagamento}
-                onChange={(e) => setRegistroEditando({...registroEditando, dataPagamento: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
-              <button onClick={() => setRegistroEditando(null)} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
-              <button onClick={handleSalvarEdicao} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
-              <button onClick={() => {
-                if (registroEditando.id && window.confirm('Tem certeza que deseja deletar este registro?')) {
-                  handleDeletarRegistro(registroEditando.id);
-                  setRegistroEditando(null);
-                }
-              }} style={{flex: 1, padding: '10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Deletar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <Footer showLinks={true} />
+      </div>
+      <Footer />
     </div>
   );
 };
