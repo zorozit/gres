@@ -11,6 +11,13 @@ export const Saidas: React.FC = () => {
     const today = new Date();
     return today.toISOString().split('T')[0];
   };
+
+  // Função para formatar data para exibição
+  const formatarData = (dataISO: string) => {
+    if (!dataISO) return '-';
+    const [ano, mes, dia] = dataISO.split('-');
+    return `${dia}/${mes}/${ano}`;
+  };
   
   const [dataSelecionada, setDataSelecionada] = useState(getLocalDate());
   const [registrosDia, setRegistrosDia] = useState<any[]>([]);
@@ -157,6 +164,8 @@ export const Saidas: React.FC = () => {
         setRegistroEditando(null);
         carregarRegistros();
       } else {
+        const errorData = await response.text();
+        console.error('Erro na resposta:', errorData);
         alert('Erro ao atualizar saída');
       }
     } catch (error) {
@@ -266,7 +275,7 @@ export const Saidas: React.FC = () => {
           {abaSelecionada === 'novo' && (
             <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
               <h2>➕ Nova Saída</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+              <div style={{ display: 'grid', gap: '15px' }}>
                 <div>
                   <label style={{ fontWeight: 'bold' }}>Responsável: *</label>
                   <select
@@ -275,8 +284,10 @@ export const Saidas: React.FC = () => {
                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="">Selecione um responsável</option>
-                    {usuarios.map(u => (
-                      <option key={u.id} value={u.nome}>{u.nome}</option>
+                    {usuarios.map((user) => (
+                      <option key={user.id} value={user.nome || user.email}>
+                        {user.nome || user.email}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -289,8 +300,10 @@ export const Saidas: React.FC = () => {
                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="">Selecione um colaborador</option>
-                    {colaboradores.map(c => (
-                      <option key={c.id} value={c.nome}>{c.nome}</option>
+                    {colaboradores.map((colab) => (
+                      <option key={colab.id} value={colab.nome || colab.email}>
+                        {colab.nome || colab.email}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -310,9 +323,9 @@ export const Saidas: React.FC = () => {
                   <label style={{ fontWeight: 'bold' }}>Valor (R$): *</label>
                   <input
                     type="number"
-                    placeholder="0"
+                    placeholder="0.00"
                     value={novoRegistro.valor}
-                    onChange={(e) => setNovoRegistro({ ...novoRegistro, valor: parseFloat(e.target.value) })}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, valor: parseFloat(e.target.value) || 0 })}
                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   />
                 </div>
@@ -341,21 +354,21 @@ export const Saidas: React.FC = () => {
                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   />
                 </div>
-              </div>
 
-              <button
-                onClick={handleSalvarNovoRegistro}
-                style={{ marginTop: '15px', padding: '12px 24px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-              >
-                💾 Salvar Saída
-              </button>
+                <button
+                  onClick={handleSalvarNovoRegistro}
+                  style={{ padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  💾 Salvar Saída
+                </button>
+              </div>
             </div>
           )}
 
           {/* Aba Movimentos */}
           {abaSelecionada === 'movimentos' && (
             <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '8px' }}>
-              <h2>📊 Saídas do Dia ({dataSelecionada})</h2>
+              <h2>📊 Saídas do Dia ({formatarData(dataSelecionada)})</h2>
               {registrosDia.length === 0 ? (
                 <p>Nenhuma saída registrada para esta data</p>
               ) : (
@@ -379,8 +392,8 @@ export const Saidas: React.FC = () => {
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.colaborador || registro.favorecido || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.descricao || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.origem || '-'}</td>
-                          <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'right' }}>R$ {registro.valor?.toFixed(2) || '0.00'}</td>
-                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.dataPagamento || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'right' }}>R$ {parseFloat(registro.valor || 0).toFixed(2)}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{formatarData(registro.dataPagamento) || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'center' }}>
                             <button
                               onClick={() => handleEditarRegistro(registro)}
@@ -407,7 +420,7 @@ export const Saidas: React.FC = () => {
           {/* Modal de Edição */}
           {registroEditando && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-              <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%' }}>
+              <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
                 <h2>✏️ Editar Saída</h2>
                 <div style={{ display: 'grid', gap: '15px' }}>
                   <div>
@@ -425,7 +438,7 @@ export const Saidas: React.FC = () => {
                     <input
                       type="text"
                       value={registroEditando.colaborador || registroEditando.favorecido || ''}
-                      onChange={(e) => setRegistroEditando({ ...registroEditando, colaborador: e.target.value })}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, colaborador: e.target.value, favorecido: e.target.value })}
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                     />
                   </div>
@@ -445,7 +458,7 @@ export const Saidas: React.FC = () => {
                     <input
                       type="number"
                       value={registroEditando.valor || 0}
-                      onChange={(e) => setRegistroEditando({ ...registroEditando, valor: parseFloat(e.target.value) })}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, valor: parseFloat(e.target.value) || 0 })}
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                     />
                   </div>
@@ -453,7 +466,7 @@ export const Saidas: React.FC = () => {
                   <div>
                     <label style={{ fontWeight: 'bold' }}>Origem:</label>
                     <select
-                      value={registroEditando.origem || ''}
+                      value={registroEditando.origem || 'Sangria'}
                       onChange={(e) => setRegistroEditando({ ...registroEditando, origem: e.target.value })}
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                     >
@@ -474,30 +487,21 @@ export const Saidas: React.FC = () => {
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                     />
                   </div>
-                </div>
 
-                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button
-                    onClick={handleSalvarEdicao}
-                    style={{ flex: 1, padding: '10px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                  >
-                    💾 Salvar
-                  </button>
-                  <button
-                    onClick={() => setRegistroEditando(null)}
-                    style={{ flex: 1, padding: '10px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                  >
-                    ❌ Cancelar
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleDeletarRegistro(registroEditando.id);
-                      setRegistroEditando(null);
-                    }}
-                    style={{ flex: 1, padding: '10px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                  >
-                    🗑️ Deletar
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={handleSalvarEdicao}
+                      style={{ flex: 1, padding: '10px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      💾 Salvar
+                    </button>
+                    <button
+                      onClick={() => setRegistroEditando(null)}
+                      style={{ flex: 1, padding: '10px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      ✕ Cancelar
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
