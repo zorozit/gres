@@ -25,7 +25,7 @@ export const Saidas: React.FC = () => {
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [colaboradores, setColaboradores] = useState<any[]>([]);
   const [novoRegistro, setNovoRegistro] = useState({
-    responsavel: '',
+    responsavel: email,
     colaborador: '',
     descricao: '',
     valor: 0,
@@ -37,7 +37,9 @@ export const Saidas: React.FC = () => {
   useEffect(() => {
     carregarUsuarios();
     carregarColaboradores();
-  }, []);
+    // Definir responsável como email do usuário atual
+    setNovoRegistro(prev => ({ ...prev, responsavel: email }));
+  }, [email]);
 
   // Carregar registros quando a data mudar
   useEffect(() => {
@@ -83,12 +85,15 @@ export const Saidas: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}`, {
+      const unitId = localStorage.getItem('unit_id');
+      
+      // Filtrar por data E unidade
+      const response = await fetch(`${apiUrl}/saidas?data=${dataSelecionada}&unitId=${unitId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Registros carregados para', dataSelecionada, ':', data);
+        console.log('Registros carregados para', dataSelecionada, 'unidade:', unitId, ':', data);
         setRegistrosDia(Array.isArray(data) ? data : []);
       }
     } catch (error) {
@@ -278,18 +283,13 @@ export const Saidas: React.FC = () => {
               <div style={{ display: 'grid', gap: '15px' }}>
                 <div>
                   <label style={{ fontWeight: 'bold' }}>Responsável: *</label>
-                  <select
-                    value={novoRegistro.responsavel}
-                    onChange={(e) => setNovoRegistro({ ...novoRegistro, responsavel: e.target.value })}
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  >
-                    <option value="">Selecione um responsável</option>
-                    {usuarios.map((user) => (
-                      <option key={user.id} value={user.nome || user.email}>
-                        {user.nome || user.email}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    value={email}
+                    disabled
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd', backgroundColor: '#e9ecef', cursor: 'not-allowed' }}
+                  />
+                  <small style={{ color: '#666', marginTop: '5px', display: 'block' }}>Registrado automaticamente como o usuário atual</small>
                 </div>
 
                 <div>
