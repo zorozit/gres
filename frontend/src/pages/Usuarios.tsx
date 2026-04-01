@@ -10,7 +10,7 @@ interface Usuario {
   celular: string;
   email?: string;
   perfil: string;
-  unitIds: string[];
+  unitId: string;
   ativo: boolean;
 }
 
@@ -25,7 +25,7 @@ export const Usuarios: React.FC = () => {
     celular: '',
     email: '',
     perfil: 'operador',
-    unitIds: [] as string[],
+    unitId: '',
     ativo: true,
     senha: ''
   });
@@ -41,7 +41,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/users`, {
+      const response = await fetch(`${apiUrl}/usuarios`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -80,15 +80,15 @@ export const Usuarios: React.FC = () => {
       return;
     }
 
-    if (novoUsuario.unitIds.length === 0) {
-      alert('Selecione pelo menos uma unidade');
+    if (!novoUsuario.unitId) {
+      alert('Selecione uma unidade');
       return;
     }
 
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/auth/register`, {
+      const response = await fetch(`${apiUrl}/usuarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(novoUsuario)
@@ -100,7 +100,7 @@ export const Usuarios: React.FC = () => {
           celular: '',
           email: '',
           perfil: 'operador',
-          unitIds: [],
+          unitId: '',
           ativo: true,
           senha: ''
         });
@@ -121,15 +121,15 @@ export const Usuarios: React.FC = () => {
       return;
     }
 
-    if (usuarioEditando.unitIds.length === 0) {
-      alert('Selecione pelo menos uma unidade');
+    if (!usuarioEditando.unitId) {
+      alert('Selecione uma unidade');
       return;
     }
 
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/users/${usuarioEditando.id}`, {
+      const response = await fetch(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(usuarioEditando)
@@ -152,7 +152,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/users/${id}`, {
+      const response = await fetch(`${apiUrl}/usuarios/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -168,20 +168,12 @@ export const Usuarios: React.FC = () => {
     }
   };
 
-  const handleToggleUnidade = (unitId: string, isChecked: boolean, isNew: boolean = false) => {
+  const handleToggleUnidade = (unitId: string, isNew: boolean = false) => {
     if (isNew) {
-      if (isChecked) {
-        setNovoUsuario({...novoUsuario, unitIds: [...novoUsuario.unitIds, unitId]});
-      } else {
-        setNovoUsuario({...novoUsuario, unitIds: novoUsuario.unitIds.filter(id => id !== unitId)});
-      }
+      setNovoUsuario({...novoUsuario, unitId: unitId});
     } else {
       if (usuarioEditando) {
-        if (isChecked) {
-          setUsuarioEditando({...usuarioEditando, unitIds: [...usuarioEditando.unitIds, unitId]});
-        } else {
-          setUsuarioEditando({...usuarioEditando, unitIds: usuarioEditando.unitIds.filter(id => id !== unitId)});
-        }
+        setUsuarioEditando({...usuarioEditando, unitId: unitId});
       }
     }
   };
@@ -288,19 +280,17 @@ export const Usuarios: React.FC = () => {
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>Unidades: * (selecione pelo menos uma)</label>
-              <div style={styles.checkboxGroup}>
+              <label style={styles.label}>Unidade: * (obrigatório)</label>
+              <select 
+                value={novoUsuario.unitId}
+                onChange={(e) => setNovoUsuario({...novoUsuario, unitId: e.target.value})}
+                style={styles.input}
+              >
+                <option value="">Selecione uma unidade</option>
                 {unidades.map((unit: any) => (
-                  <label key={unit.id} style={styles.checkbox}>
-                    <input 
-                      type="checkbox"
-                      checked={novoUsuario.unitIds.includes(unit.id)}
-                      onChange={(e) => handleToggleUnidade(unit.id, e.target.checked, true)}
-                    />
-                    {unit.nome}
-                  </label>
+                  <option key={unit.id} value={unit.id}>{unit.nome}</option>
                 ))}
-              </div>
+              </select>
             </div>
 
             <button onClick={handleSalvarNovoUsuario} style={styles.botaoSalvar}>💾 Criar Usuário</button>
@@ -394,19 +384,17 @@ export const Usuarios: React.FC = () => {
               </select>
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>Unidades: * (selecione pelo menos uma)</label>
-              <div style={styles.checkboxGroup}>
+              <label style={styles.label}>Unidade: * (obrigatório)</label>
+              <select 
+                value={usuarioEditando.unitId}
+                onChange={(e) => setUsuarioEditando({...usuarioEditando, unitId: e.target.value})}
+                style={styles.input}
+              >
+                <option value="">Selecione uma unidade</option>
                 {unidades.map((unit: any) => (
-                  <label key={unit.id} style={styles.checkbox}>
-                    <input 
-                      type="checkbox"
-                      checked={usuarioEditando.unitIds.includes(unit.id)}
-                      onChange={(e) => handleToggleUnidade(unit.id, e.target.checked, false)}
-                    />
-                    {unit.nome}
-                  </label>
+                  <option key={unit.id} value={unit.id}>{unit.nome}</option>
                 ))}
-              </div>
+              </select>
             </div>
             <div style={styles.formGroup}>
               <label style={styles.label}>Ativo:</label>

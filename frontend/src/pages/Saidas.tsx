@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
+import { Header } from '../components/Header';
 
 export const Saidas: React.FC = () => {
   const { email, logout } = useAuth();
@@ -198,14 +199,9 @@ export const Saidas: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <Header title="📋 Registro de Saídas" showBack={true} />
       <div style={{ flex: 1 }}>
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h1>📋 Registro de Saídas</h1>
-            <button onClick={logout} style={{ padding: '10px 20px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-              Sair
-            </button>
-          </div>
 
           {/* Abas */}
           <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
