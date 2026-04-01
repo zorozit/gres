@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
-import { Header } from '../components/Header';
 
 export const Saidas: React.FC = () => {
+  const navigate = useNavigate();
   const { email, logout } = useAuth();
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
   
@@ -199,7 +200,14 @@ export const Saidas: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <Header title="📋 Registro de Saídas" showBack={true} />
+      {/* Cabeçalho */}
+      <div style={{ backgroundColor: '#2c3e50', color: 'white', padding: '15px 20px', borderBottom: '3px solid #3498db', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <button onClick={() => navigate(-1)} style={{ padding: '8px 12px', backgroundColor: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>← Voltar</button>
+          <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>📋 Registro de Saídas</h1>
+        </div>
+        <button onClick={logout} style={{ padding: '8px 12px', backgroundColor: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🚪 Sair</button>
+      </div>
       <div style={{ flex: 1 }}>
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
 
