@@ -291,7 +291,7 @@ export const Saidas: React.FC = () => {
                       <option key={colab.id} value={colab.id}>
                         {colab.nome || colab.email}
                       </option>
-                    ))
+                    ))}
                   </select>
                 </div>
 
