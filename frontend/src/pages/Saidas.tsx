@@ -282,16 +282,16 @@ export const Saidas: React.FC = () => {
                 <div>
                   <label style={{ fontWeight: 'bold' }}>Colaborador: *</label>
                   <select
-                    value={novoRegistro.colaborador}
-                    onChange={(e) => setNovoRegistro({ ...novoRegistro, colaborador: e.target.value })}
+                    value={novoRegistro.colaboradorId}
+                    onChange={(e) => setNovoRegistro({ ...novoRegistro, colaboradorId: e.target.value })}
                     style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                   >
                     <option value="">Selecione um colaborador</option>
                     {colaboradores.map((colab) => (
-                      <option key={colab.id} value={colab.nome || colab.email}>
+                      <option key={colab.id} value={colab.id}>
                         {colab.nome || colab.email}
                       </option>
-                    ))}
+                    ))
                   </select>
                 </div>
 

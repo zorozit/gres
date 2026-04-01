@@ -462,6 +462,7 @@ exports.handler = async (event) => {
           } else if (item.colaborador) {
             // Fallback para dados históricos com nome
             item.colaboradorNome = item.colaborador;
+            item.colaboradorId = colaboradoresMap[item.colaborador];
           }
 
           return item;
@@ -677,6 +678,7 @@ exports.handler = async (event) => {
           } else if (item.colaborador) {
             // Fallback para dados históricos com nome
             item.colaboradorNome = item.colaborador;
+            item.colaboradorId = colaboradoresMap[item.colaborador];
           }
 
           return item;
