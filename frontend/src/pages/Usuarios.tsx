@@ -168,16 +168,6 @@ export const Usuarios: React.FC = () => {
     }
   };
 
-  const handleToggleUnidade = (unitId: string, isNew: boolean = false) => {
-    if (isNew) {
-      setNovoUsuario({...novoUsuario, unitId: unitId});
-    } else {
-      if (usuarioEditando) {
-        setUsuarioEditando({...usuarioEditando, unitId: unitId});
-      }
-    }
-  };
-
   const styles = {
     container: { padding: '20px', maxWidth: '1400px', margin: '0 auto' },
     header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
