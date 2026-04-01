@@ -455,9 +455,13 @@ exports.handler = async (event) => {
             item.responsavelNome = 'Não informado';
           }
 
-          // Enriquecer com ID do colaborador
-          if (item.colaborador) {
-            item.colaboradorId = colaboradoresMap[item.colaborador] || null;
+          // Enriquecer com nome do colaborador (buscar pelo ID)
+          if (item.colaboradorId) {
+            const colaborador = colaboradores.find(c => c.id === item.colaboradorId);
+            item.colaboradorNome = colaborador ? colaborador.nome : 'Colaborador não encontrado';
+          } else if (item.colaborador) {
+            // Fallback para dados históricos com nome
+            item.colaboradorNome = item.colaborador;
           }
 
           return item;
@@ -531,17 +535,27 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { responsavel, colaborador, descricao, valor, data, origem, dataPagamento } = body;
+      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento } = body;
 
-      if (!responsavel || !descricao || !valor || !data) {
+      if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
+        // Verificar se o colaborador existe
+        const colaboradorResult = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        if (!colaboradorResult.Item) {
+          return response(400, { error: 'Colaborador não encontrado' });
+        }
+
         const item = {
           id: `saida-${Date.now()}`,
           responsavel,
-          colaborador: colaborador || '',
+          colaboradorId: colaboradorId,
           descricao,
           valor: parseFloat(valor),
           data,
@@ -656,9 +670,13 @@ exports.handler = async (event) => {
             item.responsavelNome = 'Não informado';
           }
 
-          // Enriquecer com ID do colaborador
-          if (item.colaborador) {
-            item.colaboradorId = colaboradoresMap[item.colaborador] || null;
+          // Enriquecer com nome do colaborador (buscar pelo ID)
+          if (item.colaboradorId) {
+            const colaborador = colaboradores.find(c => c.id === item.colaboradorId);
+            item.colaboradorNome = colaborador ? colaborador.nome : 'Colaborador não encontrado';
+          } else if (item.colaborador) {
+            // Fallback para dados históricos com nome
+            item.colaboradorNome = item.colaborador;
           }
 
           return item;
@@ -675,17 +693,27 @@ exports.handler = async (event) => {
     // PUT SAIDAS - Editar saída
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
-      const { responsavel, colaborador, descricao, valor, data, origem, dataPagamento } = body;
+      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento } = body;
 
-      if (!saidaId || !responsavel || !descricao || !valor) {
+      if (!saidaId || !responsavel || !descricao || !valor || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
+        // Verificar se o colaborador existe
+        const colaboradorResult = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        if (!colaboradorResult.Item) {
+          return response(400, { error: 'Colaborador não encontrado' });
+        }
+
         const item = {
           id: saidaId,
           responsavel,
-          colaborador: colaborador || '',
+          colaboradorId: colaboradorId,
           descricao,
           valor: parseFloat(valor),
           data,

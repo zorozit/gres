@@ -27,7 +27,7 @@ export const Saidas: React.FC = () => {
   const [colaboradores, setColaboradores] = useState<any[]>([]);
   const [novoRegistro, setNovoRegistro] = useState({
     responsavel: email,
-    colaborador: '',
+    colaboradorId: '',
     descricao: '',
     valor: 0,
     origem: 'Sangria',
@@ -87,7 +87,7 @@ export const Saidas: React.FC = () => {
   };
 
   const handleSalvarNovoRegistro = async () => {
-    if (!novoRegistro.responsavel || !novoRegistro.colaborador || !novoRegistro.descricao || novoRegistro.valor === 0) {
+    if (!novoRegistro.responsavel || !novoRegistro.colaboradorId || !novoRegistro.descricao || novoRegistro.valor === 0) {
       alert('Por favor, preencha todos os campos obrigatórios');
       return;
     }
@@ -112,8 +112,8 @@ export const Saidas: React.FC = () => {
       if (response.ok) {
         alert('Saída registrada com sucesso!');
         setNovoRegistro({
-          responsavel: '',
-          colaborador: '',
+          responsavel: email,
+          colaboradorId: '',
           descricao: '',
           valor: 0,
           origem: 'Sangria',
@@ -376,7 +376,7 @@ export const Saidas: React.FC = () => {
                       {registrosDia.map((registro) => (
                         <tr key={registro.id} style={{ backgroundColor: '#fff', borderBottom: '1px solid #ddd' }}>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.responsavelNome || registro.responsavel || '-'}</td>
-                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.colaborador || registro.favorecido || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.colaboradorNome || registro.colaborador || registro.favorecido || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.descricao || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.origem || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd', textAlign: 'right' }}>R$ {parseFloat(registro.valor || 0).toFixed(2)}</td>
@@ -424,13 +424,13 @@ export const Saidas: React.FC = () => {
                   <div>
                     <label style={{ fontWeight: 'bold' }}>Colaborador:</label>
                     <select
-                      value={registroEditando.colaborador || ''}
-                      onChange={(e) => setRegistroEditando({ ...registroEditando, colaborador: e.target.value, favorecido: e.target.value })}
+                      value={registroEditando.colaboradorId || ''}
+                      onChange={(e) => setRegistroEditando({ ...registroEditando, colaboradorId: e.target.value })}
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
                     >
                       <option value="">Selecione um colaborador</option>
                       {colaboradores.map((col) => (
-                        <option key={col.id} value={col.nome}>{col.nome}</option>
+                        <option key={col.id} value={col.id}>{col.nome}</option>
                       ))}
                     </select>
                   </div>
