@@ -399,71 +399,79 @@ exports.handler = async (event) => {
       const responsavel = queryParams.responsavel;
 
       try {
-        // Buscar usuários para relacionamento
-        const usuariosResult = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios'
-        }).promise();
-        const usuarios = usuariosResult.Items || [];
-        const usuariosMap = {};
-        usuarios.forEach(u => {
-          usuariosMap[u.email] = u.nome;
-        });
-
-        // Buscar colaboradores para relacionamento
-        const colaboradoresResult = await dynamodb.scan({
-          TableName: 'gres-prod-colaboradores'
-        }).promise();
-        const colaboradores = colaboradoresResult.Items || [];
-        const colaboradoresMap = {};
-        colaboradores.forEach(c => {
-          colaboradoresMap[c.nome] = c.id;
-        });
-
         // Sempre fazer scan sem filtro e depois filtrar em memória
         const result = await dynamodb.scan({
-          TableName: 'gres-prod-saidas'
+          TableName: 'gres-prod-caixa'
         }).promise();
 
         let items = result.Items || [];
-        console.log('Total de itens no banco:', items.length);
 
-        // Filtrar em memória e enriquecer dados
+        // Filtrar em memória
         items = items.filter(item => {
-          // Filtrar por data específica
-          if (data && item.data !== data) {
-            console.log('Filtrando por data:', item.data, '!==', data);
-            return false;
-          }
-          
-          // Filtrar por unidade (ignorar se unitId for 'null' ou vazio)
-          if (unitId && unitId !== 'null' && unitId !== '') {
+          // Filtrar por unidade (suporta ambos os formatos)
+          if (unitId) {
+            // Comparar com unitId ou unidade_id
             const itemUnitId = item.unitId || item.unidade_id;
+            // Comparar apenas o CNPJ (primeiros 14 dígitos)
             const unitIdCnpj = unitId.substring(0, 14);
             const itemCnpj = itemUnitId ? itemUnitId.substring(0, 14) : '';
-            console.log('Filtrando por unitId:', itemCnpj, 'vs', unitIdCnpj);
             if (itemCnpj !== unitIdCnpj) {
               return false;
             }
           }
           
+          // Filtrar por data específica
+          if (data && item.data !== data) {
+            return false;
+          }
+          
+          // Filtrar por intervalo de datas
+          if (dataInicio && dataFim) {
+            if (item.data < dataInicio || item.data > dataFim) {
+              return false;
+            }
+          }
+          
+          // Filtrar por período (Dia/Noite)
+          if (periodo && item.periodo !== periodo) {
+            return false;
+          }
+          
+          // Filtrar por responsável
+          if (responsavel && item.responsavel !== responsavel) {
+            return false;
+          }
+          
           return true;
-        }).map(item => {
-          // Enriquecer com informações de responsável
-          if (item.responsavel && item.responsavel !== 'Não informado') {
-            item.responsavelNome = usuariosMap[item.responsavel] || item.responsavel;
-          } else {
-            item.responsavelNome = 'Não informado';
-          }
-
-          // Enriquecer com ID do colaborador
-          if (item.colaborador) {
-            item.colaboradorId = colaboradoresMap[item.colaborador] || null;
-          }
-
-          return item;
         });
 
-        console.log('Itens após filtro:', items.length);
+        // Mapear campos para compatibilidade com frontend
+        items = items.map(item => ({
+          id: item.id,
+          unitId: item.unitId || item.unidade_id,
+          data: item.data,
+          hora: item.hora || '00:00:00',
+          periodo: item.periodo,
+          responsavel: item.responsavel || '',
+          responsavelNome: item.responsavelNome || item.responsavel || 'Não informado',
+          abertura: parseFloat(item.abertura) || 0,
+          maq1: parseFloat(item.maq1) || 0,
+          maq2: parseFloat(item.maq2) || 0,
+          maq3: parseFloat(item.maq3) || 0,
+          maq4: parseFloat(item.maq4) || 0,
+          maq5: parseFloat(item.maq5) || 0,
+          maq6: parseFloat(item.maq6) || 0,
+          ifood: parseFloat(item.ifood) || 0,
+          dinheiro: parseFloat(item.dinheiro) || 0,
+          pix: parseFloat(item.pix) || 0,
+          fiado: parseFloat(item.fiado) || 0,
+          sangria: parseFloat(item.sangria) || 0,
+          total: parseFloat(item.total) || 0,
+          sistemaPdv: parseFloat(item.sistemaPdv || item.sistema) || 0,
+          diferenca: parseFloat(item.diferenca) || 0,
+          referencia: parseFloat(item.referencia) || 0
+        }));
+
         return response(200, items);
       } catch (error) {
         console.error('DynamoDB error:', error);
@@ -600,26 +608,6 @@ exports.handler = async (event) => {
       console.log('GET /saidas - data:', data, 'unitId:', unitId);
 
       try {
-        // Buscar usuários para relacionamento
-        const usuariosResult = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios'
-        }).promise();
-        const usuarios = usuariosResult.Items || [];
-        const usuariosMap = {};
-        usuarios.forEach(u => {
-          usuariosMap[u.email] = u.nome;
-        });
-
-        // Buscar colaboradores para relacionamento
-        const colaboradoresResult = await dynamodb.scan({
-          TableName: 'gres-prod-colaboradores'
-        }).promise();
-        const colaboradores = colaboradoresResult.Items || [];
-        const colaboradoresMap = {};
-        colaboradores.forEach(c => {
-          colaboradoresMap[c.nome] = c.id;
-        });
-
         // Sempre fazer scan sem filtro e depois filtrar em memória
         const result = await dynamodb.scan({
           TableName: 'gres-prod-saidas'
@@ -628,7 +616,7 @@ exports.handler = async (event) => {
         let items = result.Items || [];
         console.log('Total de itens no banco:', items.length);
 
-        // Filtrar em memória e enriquecer dados
+        // Filtrar em memória
         items = items.filter(item => {
           // Filtrar por data específica
           if (data && item.data !== data) {
@@ -648,20 +636,6 @@ exports.handler = async (event) => {
           }
           
           return true;
-        }).map(item => {
-          // Enriquecer com informações de responsável
-          if (item.responsavel && item.responsavel !== 'Não informado') {
-            item.responsavelNome = usuariosMap[item.responsavel] || item.responsavel;
-          } else {
-            item.responsavelNome = 'Não informado';
-          }
-
-          // Enriquecer com ID do colaborador
-          if (item.colaborador) {
-            item.colaboradorId = colaboradoresMap[item.colaborador] || null;
-          }
-
-          return item;
         });
 
         console.log('Itens após filtro:', items.length);

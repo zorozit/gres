@@ -375,7 +375,7 @@ export const Saidas: React.FC = () => {
                     <tbody>
                       {registrosDia.map((registro) => (
                         <tr key={registro.id} style={{ backgroundColor: '#fff', borderBottom: '1px solid #ddd' }}>
-                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.responsavel || '-'}</td>
+                          <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.responsavelNome || registro.responsavel || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.colaborador || registro.favorecido || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.descricao || '-'}</td>
                           <td style={{ padding: '10px', border: '1px solid #ddd' }}>{registro.origem || '-'}</td>
@@ -414,20 +414,25 @@ export const Saidas: React.FC = () => {
                     <label style={{ fontWeight: 'bold' }}>Responsável:</label>
                     <input
                       type="text"
-                      value={registroEditando.responsavel || ''}
-                      onChange={(e) => setRegistroEditando({ ...registroEditando, responsavel: e.target.value })}
-                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
+                      value={registroEditando.responsavelNome || 'Não informado'}
+                      disabled
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd', backgroundColor: '#f0f0f0' }}
                     />
+                    <small style={{ color: '#666', marginTop: '5px', display: 'block' }}>Responsável é definido automaticamente pelo usuário logado</small>
                   </div>
 
                   <div>
                     <label style={{ fontWeight: 'bold' }}>Colaborador:</label>
-                    <input
-                      type="text"
-                      value={registroEditando.colaborador || registroEditando.favorecido || ''}
+                    <select
+                      value={registroEditando.colaborador || ''}
                       onChange={(e) => setRegistroEditando({ ...registroEditando, colaborador: e.target.value, favorecido: e.target.value })}
                       style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                    />
+                    >
+                      <option value="">Selecione um colaborador</option>
+                      {colaboradores.map((col) => (
+                        <option key={col.id} value={col.nome}>{col.nome}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
