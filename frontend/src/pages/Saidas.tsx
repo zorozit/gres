@@ -119,24 +119,6 @@ export const Saidas: React.FC = () => {
     }
   };
 
-  // registros do dia (aba Novo Registro)
-  const carregarRegistrosDia = async (data: string) => {
-    try {
-      const token = localStorage.getItem('auth_token');
-      const unitId = localStorage.getItem('unit_id');
-      const res = await fetch(`${apiUrl}/saidas?data=${data}&unitId=${unitId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const d = await res.json();
-        return Array.isArray(d) ? d : [];
-      }
-    } catch (err) {
-      console.error('Erro ao carregar registros do dia:', err);
-    }
-    return [];
-  };
-
   // movimentos com filtros (aba Movimentos)
   const handleFiltrar = async () => {
     if (!movDataInicio || !movDataFim) return;
