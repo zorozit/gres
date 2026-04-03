@@ -250,6 +250,31 @@ export const MovimentosCaixa: React.FC = () => {
     calcularDatas();
   }, [dateFilter]);
 
+  const toNum = (val: any): number => {
+    const n = parseFloat(val);
+    return isNaN(n) ? 0 : n;
+  };
+
+  const normalizeRegistro = (r: any): RegistroCaixa => ({
+    ...r,
+    abertura:   toNum(r.abertura),
+    maq1:       toNum(r.maq1),
+    maq2:       toNum(r.maq2),
+    maq3:       toNum(r.maq3),
+    maq4:       toNum(r.maq4),
+    maq5:       toNum(r.maq5),
+    maq6:       toNum(r.maq6),
+    ifood:      toNum(r.ifood),
+    dinheiro:   toNum(r.dinheiro),
+    pix:        toNum(r.pix),
+    fiado:      toNum(r.fiado),
+    sangria:    toNum(r.sangria),
+    total:      toNum(r.total),
+    sistemaPdv: toNum(r.sistemaPdv),
+    diferenca:  toNum(r.diferenca),
+    referencia: toNum(r.referencia),
+  });
+
   const carregarRegistros = async () => {
     try {
       const token = localStorage.getItem('auth_token');
@@ -268,8 +293,9 @@ export const MovimentosCaixa: React.FC = () => {
       const data = await response.json();
       
       if (Array.isArray(data)) {
-        setRegistros(data);
-        processarGraficoData(data);
+        const normalized = data.map(normalizeRegistro);
+        setRegistros(normalized);
+        processarGraficoData(normalized);
       }
     } catch (error) {
       console.error('Erro ao carregar registros:', error);
@@ -477,7 +503,7 @@ export const MovimentosCaixa: React.FC = () => {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="data" />
               <YAxis />
-              <Tooltip formatter={(value: any) => `R$ ${value.toFixed(2)}`} />
+              <Tooltip formatter={(value: any) => `R$ ${toNum(value).toFixed(2)}`} />
               <Legend />
               <Line 
                 type="monotone" 
