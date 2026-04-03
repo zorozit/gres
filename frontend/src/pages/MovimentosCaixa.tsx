@@ -270,7 +270,8 @@ export const MovimentosCaixa: React.FC = () => {
     fiado:      toNum(r.fiado),
     sangria:    toNum(r.sangria),
     total:      toNum(r.total),
-    sistemaPdv: toNum(r.sistemaPdv),
+    // banco salva como 'sistema', frontend espera 'sistemaPdv'
+    sistemaPdv: toNum(r.sistemaPdv ?? r.sistema),
     diferenca:  toNum(r.diferenca),
     referencia: toNum(r.referencia),
   });
