@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 export const Saidas: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
+  const userId = localStorage.getItem('user_id') || '';
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
 
   // ---------- helpers ----------
@@ -167,13 +168,22 @@ export const Saidas: React.FC = () => {
       const res = await fetch(`${apiUrl}/saidas`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...novoRegistro, data: dataSelecionada, responsavel: email, unitId: localStorage.getItem('unit_id') || '' }),
+        body: JSON.stringify({
+          ...novoRegistro,
+          data: dataSelecionada,
+          responsavel: email,
+          responsavelId: userId,
+          unitId: localStorage.getItem('unit_id') || ''
+        }),
       });
       if (res.ok) {
         alert('Saída registrada com sucesso!');
         setNovoRegistro({ responsavel: email, colaboradorId: '', descricao: '', valor: 0, origem: 'Sangria', dataPagamento: '' });
+        // recarrega a lista de movimentos do dia atual na aba Movimentos
+        handleFiltrar();
       } else {
-        alert('Erro ao salvar saída');
+        const errData = await res.json().catch(() => ({}));
+        alert('Erro ao salvar saída: ' + (errData.error || res.status));
       }
     } catch (err) {
       console.error('Erro ao salvar:', err);
@@ -185,17 +195,29 @@ export const Saidas: React.FC = () => {
     if (!registroEditando) return;
     try {
       const token = localStorage.getItem('auth_token');
+      // Garante que responsavel/responsavelId do usuário logado é enviado na edição
+      const payload = {
+        ...registroEditando,
+        responsavel: registroEditando.responsavel || email,
+        responsavelId: registroEditando.responsavelId || userId,
+      };
       const res = await fetch(`${apiUrl}/saidas/${registroEditando.id}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(registroEditando),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
+        const updated = await res.json().catch(() => ({}));
         alert('Saída atualizada com sucesso!');
+        // Atualiza o item na lista local imediatamente com os dados retornados
+        if (updated.item) {
+          setMovRegistros(prev => prev.map(r => r.id === registroEditando.id ? { ...r, ...updated.item } : r));
+        }
         setRegistroEditando(null);
         handleFiltrar();
       } else {
-        alert('Erro ao atualizar saída');
+        const errData = await res.json().catch(() => ({}));
+        alert('Erro ao atualizar saída: ' + (errData.error || res.status));
       }
     } catch (err) {
       console.error('Erro ao atualizar:', err);
@@ -238,7 +260,7 @@ export const Saidas: React.FC = () => {
       'Referência': r.referencia || r.origem || '-',
       'Valor': toNum(r.valor),
       'Data Pagamento': r.dataPagamento || '-',
-      'Responsável': r.responsavel || '-',
+      'Responsável': r.responsavelNome || r.responsavel || '-',
     }));
     const ws = XLSX.utils.json_to_sheet(dados);
     const wb = XLSX.utils.book_new();
@@ -254,7 +276,7 @@ export const Saidas: React.FC = () => {
       'Referência': r.referencia || r.origem || '-',
       'Valor': toNum(r.valor),
       'Data Pagamento': r.dataPagamento || '-',
-      'Responsável': r.responsavel || '-',
+      'Responsável': r.responsavelNome || r.responsavel || '-',
     }));
     const ws = XLSX.utils.json_to_sheet(dados);
     const csv = XLSX.utils.sheet_to_csv(ws);
