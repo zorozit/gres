@@ -53,10 +53,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(userData);
       setIsAuthenticated(true);
       localStorage.setItem('user', JSON.stringify(userData));
+      // Salvar com TODAS as chaves usadas no app
       localStorage.setItem('token', data.token);
+      localStorage.setItem('auth_token', data.token);   // usado em todos os fetch
       localStorage.setItem('user_role', data.user.perfil);
       localStorage.setItem('user_unit', data.user.unitId);
-      console.log('Login bem-sucedido!');
+      localStorage.setItem('unit_id', data.user.unitId); // usado em Saidas e outros
+      console.log('Login bem-sucedido! unitId:', data.user.unitId);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
       setError(errorMsg);
@@ -73,6 +76,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_unit');
+    localStorage.removeItem('unit_id');
   };
 
   const token = localStorage.getItem('token') || undefined;
