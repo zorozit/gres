@@ -364,13 +364,14 @@ exports.handler = async (event) => {
 
     // POST MOTOBOYS — ID = mot-{uuid}; obrigatório = CPF + telefone
     if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'POST') {
-      const { nome, telefone, cpf, placa, dataAdmissao, comissao, chavePix, unitId } = body;
+      const { nome, telefone, cpf, placa, dataAdmissao, dataDemissao,
+              comissao, chavePix, unitId, vinculo, ativo } = body;
 
-      if (!nome || !cpf || !telefone || !unitId) {
-        return response(400, { error: 'Nome, CPF, telefone e unitId são obrigatórios' });
+      if (!nome || !cpf || !telefone) {
+        return response(400, { error: 'Nome, CPF e telefone são obrigatórios' });
       }
 
-      const unitIdClean = resolveUnitId(unitId);
+      const unitIdClean = unitId ? resolveUnitId(unitId) : '';
 
       try {
         const newId = 'mot-' + require('crypto').randomBytes(4).toString('hex');
@@ -381,10 +382,12 @@ exports.handler = async (event) => {
           telefone,
           placa: placa || '',
           dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
+          dataDemissao: dataDemissao || '',
           comissao: parseFloat(comissao) || 0,
           chavePix: chavePix || '',
+          vinculo: vinculo || 'Freelancer',
           unitId: unitIdClean,
-          ativo: true,
+          ativo: ativo !== undefined ? ativo : true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -418,6 +421,71 @@ exports.handler = async (event) => {
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar motoboys' });
+      }
+    }
+
+    // PUT MOTOBOYS — Editar motoboy
+    if (rawPath.includes('/motoboys/') && httpMethod === 'PUT') {
+      const motoboyId = rawPath.split('/').pop();
+      if (!motoboyId) {
+        return response(400, { error: 'ID do motoboy é obrigatório' });
+      }
+
+      const { nome, cpf, telefone, placa, dataAdmissao, dataDemissao, comissao,
+              chavePix, unitId, vinculo, ativo } = body;
+
+      if (!nome || !cpf || !telefone) {
+        return response(400, { error: 'Nome, CPF e telefone são obrigatórios' });
+      }
+
+      try {
+        // Load original to preserve createdAt
+        const orig = await dynamodb.get({ TableName: 'gres-prod-motoboys', Key: { id: motoboyId } }).promise();
+        if (!orig.Item) {
+          return response(404, { error: 'Motoboy não encontrado' });
+        }
+
+        const unitIdClean = unitId ? resolveUnitId(unitId) : (orig.Item.unitId || '');
+
+        const item = {
+          ...orig.Item,
+          nome,
+          cpf,
+          telefone,
+          placa: placa || orig.Item.placa || '',
+          dataAdmissao: dataAdmissao || orig.Item.dataAdmissao || '',
+          dataDemissao: dataDemissao || orig.Item.dataDemissao || '',
+          comissao: parseFloat(comissao) || 0,
+          chavePix: chavePix || orig.Item.chavePix || '',
+          vinculo: vinculo || orig.Item.vinculo || 'Freelancer',
+          ativo: ativo !== undefined ? ativo : orig.Item.ativo,
+          unitId: unitIdClean,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await dynamodb.put({ TableName: 'gres-prod-motoboys', Item: item }).promise();
+        return response(200, { success: true, id: motoboyId });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar motoboy' });
+      }
+    }
+
+    // DELETE MOTOBOYS — Deletar motoboy
+    if (rawPath.includes('/motoboys/') && httpMethod === 'DELETE') {
+      const motoboyId = rawPath.split('/').pop();
+      if (!motoboyId) {
+        return response(400, { error: 'ID do motoboy é obrigatório' });
+      }
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-motoboys',
+          Key: { id: motoboyId }
+        }).promise();
+        return response(200, { success: true, message: 'Motoboy deletado com sucesso' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar motoboy' });
       }
     }
 
@@ -606,7 +674,8 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, unitId, viagens, caixinha, turno } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
+              origem, tipo, dataPagamento, unitId, viagens, caixinha, turno, observacao } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -654,9 +723,11 @@ exports.handler = async (event) => {
           valor: parseFloat(valor),
           data,
           turno: turno || '',
-          origem: origem || 'Sangria',
-          referencia: origem || 'Sangria',
+          tipo: tipo || origem || 'A pagar',
+          origem: tipo || origem || 'A pagar',
+          referencia: tipo || origem || 'A pagar',
           dataPagamento: dataPagamento || '',
+          observacao: observacao || '',
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           unitId: itemUnitId,
@@ -794,7 +865,8 @@ exports.handler = async (event) => {
     // PUT SAIDAS - Editar saída
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
-      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, viagens, caixinha, turno } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
+              origem, tipo, dataPagamento, viagens, caixinha, turno, observacao } = body;
 
       if (!saidaId || !responsavel || !descricao || !valor || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -848,9 +920,11 @@ exports.handler = async (event) => {
           valor: parseFloat(valor),
           data,
           turno: turno !== undefined ? turno : (original.turno || ''),
-          origem: origem || original.origem || 'Sangria',
-          referencia: origem || original.referencia || 'Sangria',
+          tipo: tipo || origem || original.tipo || original.origem || 'A pagar',
+          origem: tipo || origem || original.origem || 'A pagar',
+          referencia: tipo || origem || original.referencia || 'A pagar',
           dataPagamento: dataPagamento || original.dataPagamento || '',
+          observacao: observacao !== undefined ? observacao : (original.observacao || ''),
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),
           updatedAt: new Date().toISOString()
