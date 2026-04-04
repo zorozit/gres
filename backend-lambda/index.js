@@ -536,13 +536,28 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento, unitId } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, unitId, viagens, caixinha, turno } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
+        // Buscar nome do responsável via email
+        let responsavelNome = '';
+        let responsavelIdResolved = responsavelId || '';
+        const usuariosResult2 = await dynamodb.scan({
+          TableName: 'gres-prod-usuarios',
+          FilterExpression: 'email = :email',
+          ExpressionAttributeValues: { ':email': responsavel }
+        }).promise();
+        if (usuariosResult2.Items && usuariosResult2.Items.length > 0) {
+          responsavelNome = usuariosResult2.Items[0].nome || responsavel;
+          if (!responsavelIdResolved) responsavelIdResolved = usuariosResult2.Items[0].id || '';
+        } else {
+          responsavelNome = responsavel;
+        }
+
         // Verificar se o colaborador existe
         const colaboradorResult = await dynamodb.get({
           TableName: 'gres-prod-colaboradores',
@@ -560,15 +575,20 @@ exports.handler = async (event) => {
         const item = {
           id: `saida-${Date.now()}`,
           responsavel,
+          responsavelId: responsavelIdResolved,
+          responsavelNome,
           colaboradorId,
           colaborador: colaborador.nome || '',
           favorecido: colaborador.nome || '',
           descricao,
           valor: parseFloat(valor),
           data,
+          turno: turno || '',
           origem: origem || 'Sangria',
           referencia: origem || 'Sangria',
           dataPagamento: dataPagamento || '',
+          viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
+          caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           unitId: itemUnitId,
           timestamp: new Date().toISOString(),
           createdAt: new Date().toISOString()
@@ -579,7 +599,7 @@ exports.handler = async (event) => {
           Item: item
         }).promise();
 
-        return response(201, { success: true, id: item.id });
+        return response(201, { success: true, id: item.id, item });
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao salvar saída' });
@@ -669,7 +689,10 @@ exports.handler = async (event) => {
           return true;
         }).map(item => {
           // Enriquecer responsável
-          if (item.responsavel && item.responsavel !== 'Não informado') {
+          // Enriquecer responsável: tentar por email, depois por id, depois pelo campo responsavelNome já salvo
+          if (item.responsavelNome && item.responsavelNome !== 'Não informado') {
+            // já tem nome salvo diretamente no registro — mantém
+          } else if (item.responsavel && item.responsavel !== 'Não informado') {
             item.responsavelNome = usuariosMap[item.responsavel] || item.responsavel;
           } else {
             item.responsavelNome = 'Não informado';
@@ -701,13 +724,35 @@ exports.handler = async (event) => {
     // PUT SAIDAS - Editar saída
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
-      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, viagens, caixinha, turno } = body;
 
       if (!saidaId || !responsavel || !descricao || !valor || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
+        // Buscar registro original para preservar campos imutáveis (unitId, createdAt)
+        const originalResult = await dynamodb.get({
+          TableName: 'gres-prod-saidas',
+          Key: { id: saidaId }
+        }).promise();
+        const original = originalResult.Item || {};
+
+        // Buscar nome do responsável via email
+        let responsavelNome = '';
+        let responsavelIdResolved = responsavelId || '';
+        const usuariosLookup = await dynamodb.scan({
+          TableName: 'gres-prod-usuarios',
+          FilterExpression: 'email = :email',
+          ExpressionAttributeValues: { ':email': responsavel }
+        }).promise();
+        if (usuariosLookup.Items && usuariosLookup.Items.length > 0) {
+          responsavelNome = usuariosLookup.Items[0].nome || responsavel;
+          if (!responsavelIdResolved) responsavelIdResolved = usuariosLookup.Items[0].id || '';
+        } else {
+          responsavelNome = responsavel;
+        }
+
         // Verificar se o colaborador existe
         const colaboradorResult = await dynamodb.get({
           TableName: 'gres-prod-colaboradores',
@@ -718,16 +763,26 @@ exports.handler = async (event) => {
           return response(400, { error: 'Colaborador não encontrado' });
         }
 
+        const colaborador = colaboradorResult.Item;
+
         const item = {
+          ...original,                          // preserve all original fields (unitId, createdAt, etc.)
           id: saidaId,
           responsavel,
-          colaboradorId: colaboradorId,
+          responsavelId: responsavelIdResolved,
+          responsavelNome,
+          colaboradorId,
+          colaborador: colaborador.nome || original.colaborador || '',
+          favorecido: colaborador.nome || original.favorecido || '',
           descricao,
           valor: parseFloat(valor),
           data,
-          origem: origem || 'Sangria',
-          dataPagamento: dataPagamento || '',
-          timestamp: new Date().toISOString(),
+          turno: turno !== undefined ? turno : (original.turno || ''),
+          origem: origem || original.origem || 'Sangria',
+          referencia: origem || original.referencia || 'Sangria',
+          dataPagamento: dataPagamento || original.dataPagamento || '',
+          viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
+          caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),
           updatedAt: new Date().toISOString()
         };
 
@@ -736,7 +791,7 @@ exports.handler = async (event) => {
           Item: item
         }).promise();
 
-        return response(200, { success: true, id: item.id });
+        return response(200, { success: true, id: item.id, item });
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao atualizar saída' });

@@ -49,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(data.error || 'Falha na autenticação');
       }
 
-      const userData = { email, perfil: data.user.perfil, unitId: data.user.unitId };
+      const userData = { email, perfil: data.user.perfil, unitId: data.user.unitId, id: data.user.id };
       setUser(userData);
       setIsAuthenticated(true);
       localStorage.setItem('user', JSON.stringify(userData));
@@ -59,7 +59,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('user_role', data.user.perfil);
       localStorage.setItem('user_unit', data.user.unitId);
       localStorage.setItem('unit_id', data.user.unitId); // usado em Saidas e outros
-      console.log('Login bem-sucedido! unitId:', data.user.unitId);
+      localStorage.setItem('user_id', data.user.id || '');  // id do usuário para responsavelId
+      console.log('Login bem-sucedido! unitId:', data.user.unitId, '| userId:', data.user.id);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
       setError(errorMsg);
@@ -80,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('user_role');
     localStorage.removeItem('user_unit');
     localStorage.removeItem('unit_id');
+    localStorage.removeItem('user_id');
   };
 
   const token = localStorage.getItem('token') || undefined;
