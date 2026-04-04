@@ -536,7 +536,7 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento } = body;
+      const { responsavel, colaboradorId, descricao, valor, data, origem, dataPagamento, unitId } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -553,15 +553,23 @@ exports.handler = async (event) => {
           return response(400, { error: 'Colaborador não encontrado' });
         }
 
+        const colaborador = colaboradorResult.Item;
+        // Pegar unitId do body, ou do colaborador como fallback
+        const itemUnitId = unitId || colaborador.unitId || '';
+
         const item = {
           id: `saida-${Date.now()}`,
           responsavel,
-          colaboradorId: colaboradorId,
+          colaboradorId,
+          colaborador: colaborador.nome || '',
+          favorecido: colaborador.nome || '',
           descricao,
           valor: parseFloat(valor),
           data,
           origem: origem || 'Sangria',
+          referencia: origem || 'Sangria',
           dataPagamento: dataPagamento || '',
+          unitId: itemUnitId,
           timestamp: new Date().toISOString(),
           createdAt: new Date().toISOString()
         };
@@ -608,81 +616,79 @@ exports.handler = async (event) => {
 
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
-      const data = queryParams.data;
-      const unitId = queryParams.unitId;
-      
+      const data        = queryParams.data;        // filtro por dia exato
+      const dataInicio  = queryParams.dataInicio;  // filtro por período
+      const dataFim     = queryParams.dataFim;
+      const unitId      = queryParams.unitId;
+
       console.log('GET /saidas - queryParams:', queryParams);
-      console.log('GET /saidas - data:', data, 'unitId:', unitId);
 
       try {
         // Buscar usuários para relacionamento
-        const usuariosResult = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios'
-        }).promise();
-        const usuarios = usuariosResult.Items || [];
+        const usuariosResult = await dynamodb.scan({ TableName: 'gres-prod-usuarios' }).promise();
         const usuariosMap = {};
-        usuarios.forEach(u => {
-          usuariosMap[u.email] = u.nome;
-        });
+        (usuariosResult.Items || []).forEach(u => { usuariosMap[u.email] = u.nome; });
 
         // Buscar colaboradores para relacionamento
-        const colaboradoresResult = await dynamodb.scan({
-          TableName: 'gres-prod-colaboradores'
-        }).promise();
+        const colaboradoresResult = await dynamodb.scan({ TableName: 'gres-prod-colaboradores' }).promise();
         const colaboradores = colaboradoresResult.Items || [];
         const colaboradoresMap = {};
-        colaboradores.forEach(c => {
-          colaboradoresMap[c.nome] = c.id;
-        });
+        colaboradores.forEach(c => { colaboradoresMap[c.nome] = c.id; });
 
-        // Sempre fazer scan sem filtro e depois filtrar em memória
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-saidas'
-        }).promise();
-
+        // Scan completo e filtro em memória
+        const result = await dynamodb.scan({ TableName: 'gres-prod-saidas' }).promise();
         let items = result.Items || [];
         console.log('Total de itens no banco:', items.length);
 
-        // Filtrar em memória e enriquecer dados
+        // --- CNPJ da unidade solicitante (primeiros 14 chars) ---
+        const unitCnpj = (unitId && unitId !== 'null' && unitId !== '')
+          ? unitId.substring(0, 14)
+          : null;
+
         items = items.filter(item => {
-          // Filtrar por data específica
-          if (data && item.data !== data) {
-            console.log('Filtrando por data:', item.data, '!==', data);
-            return false;
+          // Filtro por data exata (aba Novo Registro)
+          if (data) {
+            return item.data === data;
           }
-          
-          // Filtrar por unidade (ignorar se unitId for 'null' ou vazio)
-          if (unitId && unitId !== 'null' && unitId !== '') {
-            const itemUnitId = item.unitId || item.unidade_id;
-            const unitIdCnpj = unitId.substring(0, 14);
-            const itemCnpj = itemUnitId ? itemUnitId.substring(0, 14) : '';
-            console.log('Filtrando por unitId:', itemCnpj, 'vs', unitIdCnpj);
-            if (itemCnpj !== unitIdCnpj) {
-              return false;
+
+          // Filtro por período (aba Movimentos)
+          if (dataInicio && dataFim) {
+            if (!item.data || item.data < dataInicio || item.data > dataFim) return false;
+          }
+
+          // Filtro por unidade — aceita itens sem unitId (dados históricos)
+          if (unitCnpj) {
+            const itemUnitId = item.unitId || item.unidade_id || '';
+            // Se item não tem unitId, inclui (dados históricos pertencem à unidade)
+            if (itemUnitId !== '') {
+              const itemCnpj = itemUnitId.substring(0, 14);
+              if (itemCnpj !== unitCnpj) return false;
             }
           }
-          
+
           return true;
         }).map(item => {
-          // Enriquecer com informações de responsável
+          // Enriquecer responsável
           if (item.responsavel && item.responsavel !== 'Não informado') {
             item.responsavelNome = usuariosMap[item.responsavel] || item.responsavel;
           } else {
             item.responsavelNome = 'Não informado';
           }
 
-          // Enriquecer com nome do colaborador (buscar pelo ID)
+          // Enriquecer colaborador
           if (item.colaboradorId) {
-            const colaborador = colaboradores.find(c => c.id === item.colaboradorId);
-            item.colaboradorNome = colaborador ? colaborador.nome : 'Colaborador não encontrado';
+            const col = colaboradores.find(c => c.id === item.colaboradorId);
+            item.colaboradorNome = col ? col.nome : (item.colaborador || 'Não encontrado');
           } else if (item.colaborador) {
-            // Fallback para dados históricos com nome
             item.colaboradorNome = item.colaborador;
-            item.colaboradorId = colaboradoresMap[item.colaborador];
+            item.colaboradorId = colaboradoresMap[item.colaborador] || '';
           }
 
           return item;
         });
+
+        // Ordenar por data desc
+        items.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
 
         console.log('Itens após filtro:', items.length);
         return response(200, items);

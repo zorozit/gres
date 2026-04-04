@@ -167,7 +167,7 @@ export const Saidas: React.FC = () => {
       const res = await fetch(`${apiUrl}/saidas`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...novoRegistro, data: dataSelecionada, responsavel: email }),
+        body: JSON.stringify({ ...novoRegistro, data: dataSelecionada, responsavel: email, unitId: localStorage.getItem('unit_id') || '' }),
       });
       if (res.ok) {
         alert('Saída registrada com sucesso!');
