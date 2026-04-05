@@ -44,6 +44,123 @@ const resolveUnitId = (val) => toCnpj(val);
 const caixaId = (unitId, data, periodo) =>
   `${toCnpj(unitId)}-${data}-${(periodo || 'dia').toLowerCase()}`;
 
+// ─────────────────────────────────────────────────────────
+// Helpers de integridade do DynamoDB
+// Garantem referências cruzadas entre entidades para
+// preservar a consistência dos dados sem chaves estrangeiras
+// nativas (DynamoDB é schemaless).
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Verifica se uma unidade existe no banco.
+ * Retorna o item da unidade ou null se não encontrado.
+ */
+const validarUnidade = async (unitId) => {
+  if (!unitId) return null;
+  const cnpj = toCnpj(unitId);
+  try {
+    // Tenta busca direta pelo CNPJ (chave primária)
+    const r = await dynamodb.get({
+      TableName: 'gres-prod-unidades',
+      Key: { cnpj }
+    }).promise();
+    if (r.Item) return r.Item;
+    // Fallback: scan por id
+    const rs = await dynamodb.scan({
+      TableName: 'gres-prod-unidades',
+      FilterExpression: 'id = :id OR cnpj = :cnpj',
+      ExpressionAttributeValues: { ':id': unitId, ':cnpj': cnpj }
+    }).promise();
+    return rs.Items && rs.Items.length > 0 ? rs.Items[0] : null;
+  } catch (e) {
+    console.warn('validarUnidade error:', e.message);
+    return null;
+  }
+};
+
+/**
+ * Verifica se um usuário existe e retorna {id, nome, email}.
+ * Aceita e-mail ou ID do usuário.
+ */
+const validarUsuario = async (identificador) => {
+  if (!identificador) return null;
+  try {
+    // Tenta busca direta por ID
+    const r = await dynamodb.get({
+      TableName: 'gres-prod-usuarios',
+      Key: { id: identificador }
+    }).promise();
+    if (r.Item) return r.Item;
+    // Fallback: scan por e-mail
+    const rs = await dynamodb.scan({
+      TableName: 'gres-prod-usuarios',
+      FilterExpression: 'email = :e',
+      ExpressionAttributeValues: { ':e': identificador }
+    }).promise();
+    return rs.Items && rs.Items.length > 0 ? rs.Items[0] : null;
+  } catch (e) {
+    console.warn('validarUsuario error:', e.message);
+    return null;
+  }
+};
+
+/**
+ * Verifica se um colaborador existe.
+ * Retorna o item ou null.
+ */
+const validarColaborador = async (colaboradorId) => {
+  if (!colaboradorId) return null;
+  try {
+    const r = await dynamodb.get({
+      TableName: 'gres-prod-colaboradores',
+      Key: { id: colaboradorId }
+    }).promise();
+    return r.Item || null;
+  } catch (e) {
+    console.warn('validarColaborador error:', e.message);
+    return null;
+  }
+};
+
+/**
+ * Verifica se um motoboy existe.
+ * Retorna o item ou null.
+ */
+const validarMotoboy = async (motoboyId) => {
+  if (!motoboyId) return null;
+  try {
+    const r = await dynamodb.get({
+      TableName: 'gres-prod-motoboys',
+      Key: { id: motoboyId }
+    }).promise();
+    return r.Item || null;
+  } catch (e) {
+    console.warn('validarMotoboy error:', e.message);
+    return null;
+  }
+};
+
+/**
+ * Resolve responsável: dado um identificador (ID ou e-mail),
+ * devolve { responsavel, responsavelId, responsavelNome }.
+ * Nunca lança erro — retorna os valores originais se não encontrar.
+ */
+const resolverResponsavel = async (identificador, fallbackNome) => {
+  const usuario = await validarUsuario(identificador);
+  if (usuario) {
+    return {
+      responsavel:       usuario.email || identificador,
+      responsavelId:     usuario.id    || identificador,
+      responsavelNome:   usuario.nome  || fallbackNome || identificador
+    };
+  }
+  return {
+    responsavel:     identificador || '',
+    responsavelId:   identificador || '',
+    responsavelNome: fallbackNome  || identificador || ''
+  };
+};
+
 // Handler principal
 exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
@@ -290,12 +407,23 @@ exports.handler = async (event) => {
       }
     }
 
-    // POST COLABORADORES — ID = col-{uuid}; obrigatório = CPF + telefone (não email)
+    // POST COLABORADORES — ID = col-{uuid}; obrigatórios = Nome + CPF + celular/telefone + unitId
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
-      const { nome, email, telefone, cpf, dataAdmissao, salario, chavePix, cargo, unitId, dataNascimento } = body;
+      const {
+        nome, email, telefone, celular, cpf,
+        tipoContrato, cargo, tipo,
+        valorDia, valorNoite, valorTransporte, valeAlimentacao,
+        salario, chavePix, dataAdmissao, dataNascimento,
+        endereco, numero, complemento, cidade, estado, cep,
+        diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
+        unitId, ativo
+      } = body;
 
-      if (!nome || !cpf || !telefone || !unitId) {
-        return response(400, { error: 'Nome, CPF, telefone e unitId são obrigatórios' });
+      const celularFinal = celular || telefone || '';
+      const cargoFinal   = cargo   || tipo     || '';
+
+      if (!nome || !cpf || !celularFinal || !unitId) {
+        return response(400, { error: 'Nome, CPF, celular e unitId são obrigatórios' });
       }
 
       const unitIdClean = resolveUnitId(unitId);
@@ -313,20 +441,37 @@ exports.handler = async (event) => {
 
         const newId = 'col-' + require('crypto').randomBytes(4).toString('hex');
         const item = {
-          id: newId,
+          id:               newId,
           nome,
           cpf,
-          telefone,
-          email: email || '',
-          cargo: cargo || '',
-          chavePix: chavePix || '',
-          dataNascimento: dataNascimento || '',
-          dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
-          salario: parseFloat(salario) || 0,
-          unitId: unitIdClean,
-          ativo: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          celular:          celularFinal,
+          telefone:         celularFinal,          // retrocompat
+          email:            email || '',
+          tipoContrato:     tipoContrato || 'CLT',
+          cargo:            cargoFinal,
+          tipo:             cargoFinal,            // retrocompat
+          valorDia:         parseFloat(valorDia)          || 0,
+          valorNoite:       parseFloat(valorNoite)        || 0,
+          valorTransporte:  parseFloat(valorTransporte)   || 0,
+          valeAlimentacao:  valeAlimentacao === true || valeAlimentacao === 'true' || false,
+          salario:          parseFloat(salario)           || 0,
+          chavePix:         chavePix         || '',
+          dataAdmissao:     dataAdmissao     || new Date().toISOString().split('T')[0],
+          dataNascimento:   dataNascimento   || '',
+          endereco:         endereco         || '',
+          numero:           numero           || '',
+          complemento:      complemento      || '',
+          cidade:           cidade           || '',
+          estado:           estado           || '',
+          cep:              cep              || '',
+          diasDisponiveis:  Array.isArray(diasDisponiveis)  ? diasDisponiveis  : [],
+          podeTrabalharDia:   podeTrabalharDia   === true || podeTrabalharDia   === 'true' || false,
+          podeTrabalharNoite: podeTrabalharNoite === true || podeTrabalharNoite === 'true' || false,
+          unitId:           unitIdClean,
+          ativo:            ativo !== false,
+          dataCadastro:     new Date().toISOString().split('T')[0],
+          createdAt:        new Date().toISOString(),
+          updatedAt:        new Date().toISOString()
         };
 
         await dynamodb.put({
@@ -338,6 +483,96 @@ exports.handler = async (event) => {
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao salvar colaborador' });
+      }
+    }
+
+    // PUT COLABORADORES — atualiza colaborador existente
+    if (rawPath.includes('/colaboradores/') && httpMethod === 'PUT') {
+      const colaboradorId = rawPath.split('/').pop();
+      if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
+
+      const {
+        nome, email, telefone, celular, cpf,
+        tipoContrato, cargo, tipo,
+        valorDia, valorNoite, valorTransporte, valeAlimentacao,
+        salario, chavePix, dataAdmissao, dataNascimento,
+        endereco, numero, complemento, cidade, estado, cep,
+        diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
+        ativo
+      } = body;
+
+      const celularFinal = celular || telefone || '';
+      const cargoFinal   = cargo   || tipo     || '';
+
+      try {
+        // Busca registro original para preservar campos imutáveis
+        const original = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        if (!original.Item) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        const updated = {
+          ...original.Item,
+          nome:             nome             || original.Item.nome,
+          cpf:              cpf              || original.Item.cpf,
+          celular:          celularFinal     || original.Item.celular || original.Item.telefone || '',
+          telefone:         celularFinal     || original.Item.telefone || '',
+          email:            email            !== undefined ? email : (original.Item.email || ''),
+          tipoContrato:     tipoContrato     || original.Item.tipoContrato || 'CLT',
+          cargo:            cargoFinal       || original.Item.cargo || original.Item.tipo || '',
+          tipo:             cargoFinal       || original.Item.tipo  || original.Item.cargo || '',
+          valorDia:         valorDia         !== undefined ? (parseFloat(valorDia)         || 0) : (original.Item.valorDia         || 0),
+          valorNoite:       valorNoite       !== undefined ? (parseFloat(valorNoite)       || 0) : (original.Item.valorNoite       || 0),
+          valorTransporte:  valorTransporte  !== undefined ? (parseFloat(valorTransporte)  || 0) : (original.Item.valorTransporte  || 0),
+          valeAlimentacao:  valeAlimentacao  !== undefined ? (valeAlimentacao === true || valeAlimentacao === 'true') : (original.Item.valeAlimentacao || false),
+          salario:          salario          !== undefined ? (parseFloat(salario)          || 0) : (original.Item.salario          || 0),
+          chavePix:         chavePix         !== undefined ? chavePix         : (original.Item.chavePix         || ''),
+          dataAdmissao:     dataAdmissao     || original.Item.dataAdmissao     || '',
+          dataNascimento:   dataNascimento   || original.Item.dataNascimento   || '',
+          endereco:         endereco         !== undefined ? endereco     : (original.Item.endereco     || ''),
+          numero:           numero           !== undefined ? numero       : (original.Item.numero       || ''),
+          complemento:      complemento      !== undefined ? complemento  : (original.Item.complemento  || ''),
+          cidade:           cidade           !== undefined ? cidade       : (original.Item.cidade       || ''),
+          estado:           estado           !== undefined ? estado       : (original.Item.estado       || ''),
+          cep:              cep              !== undefined ? cep          : (original.Item.cep          || ''),
+          diasDisponiveis:  Array.isArray(diasDisponiveis) ? diasDisponiveis : (original.Item.diasDisponiveis || []),
+          podeTrabalharDia:   podeTrabalharDia   !== undefined ? (podeTrabalharDia   === true || podeTrabalharDia   === 'true') : (original.Item.podeTrabalharDia   || false),
+          podeTrabalharNoite: podeTrabalharNoite !== undefined ? (podeTrabalharNoite === true || podeTrabalharNoite === 'true') : (original.Item.podeTrabalharNoite || false),
+          ativo:            ativo !== undefined ? (ativo === true || ativo === 'true') : (original.Item.ativo !== false),
+          updatedAt:        new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-colaboradores',
+          Item: updated
+        }).promise();
+
+        return response(200, { success: true, id: colaboradorId, item: updated });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar colaborador: ' + error.message });
+      }
+    }
+
+    // DELETE COLABORADORES
+    if (rawPath.includes('/colaboradores/') && httpMethod === 'DELETE') {
+      const colaboradorId = rawPath.split('/').pop();
+      if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
+
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        return response(200, { success: true, message: 'Colaborador deletado com sucesso' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar colaborador: ' + error.message });
       }
     }
 
@@ -364,13 +599,14 @@ exports.handler = async (event) => {
 
     // POST MOTOBOYS — ID = mot-{uuid}; obrigatório = CPF + telefone
     if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'POST') {
-      const { nome, telefone, cpf, placa, dataAdmissao, comissao, chavePix, unitId } = body;
+      const { nome, telefone, cpf, placa, dataAdmissao, dataDemissao,
+              comissao, chavePix, unitId, vinculo, ativo } = body;
 
-      if (!nome || !cpf || !telefone || !unitId) {
-        return response(400, { error: 'Nome, CPF, telefone e unitId são obrigatórios' });
+      if (!nome || !cpf || !telefone) {
+        return response(400, { error: 'Nome, CPF e telefone são obrigatórios' });
       }
 
-      const unitIdClean = resolveUnitId(unitId);
+      const unitIdClean = unitId ? resolveUnitId(unitId) : '';
 
       try {
         const newId = 'mot-' + require('crypto').randomBytes(4).toString('hex');
@@ -381,10 +617,12 @@ exports.handler = async (event) => {
           telefone,
           placa: placa || '',
           dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
+          dataDemissao: dataDemissao || '',
           comissao: parseFloat(comissao) || 0,
           chavePix: chavePix || '',
+          vinculo: vinculo || 'Freelancer',
           unitId: unitIdClean,
-          ativo: true,
+          ativo: ativo !== undefined ? ativo : true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -421,6 +659,71 @@ exports.handler = async (event) => {
       }
     }
 
+    // PUT MOTOBOYS — Editar motoboy
+    if (rawPath.includes('/motoboys/') && httpMethod === 'PUT') {
+      const motoboyId = rawPath.split('/').pop();
+      if (!motoboyId) {
+        return response(400, { error: 'ID do motoboy é obrigatório' });
+      }
+
+      const { nome, cpf, telefone, placa, dataAdmissao, dataDemissao, comissao,
+              chavePix, unitId, vinculo, ativo } = body;
+
+      if (!nome || !cpf || !telefone) {
+        return response(400, { error: 'Nome, CPF e telefone são obrigatórios' });
+      }
+
+      try {
+        // Load original to preserve createdAt
+        const orig = await dynamodb.get({ TableName: 'gres-prod-motoboys', Key: { id: motoboyId } }).promise();
+        if (!orig.Item) {
+          return response(404, { error: 'Motoboy não encontrado' });
+        }
+
+        const unitIdClean = unitId ? resolveUnitId(unitId) : (orig.Item.unitId || '');
+
+        const item = {
+          ...orig.Item,
+          nome,
+          cpf,
+          telefone,
+          placa: placa || orig.Item.placa || '',
+          dataAdmissao: dataAdmissao || orig.Item.dataAdmissao || '',
+          dataDemissao: dataDemissao || orig.Item.dataDemissao || '',
+          comissao: parseFloat(comissao) || 0,
+          chavePix: chavePix || orig.Item.chavePix || '',
+          vinculo: vinculo || orig.Item.vinculo || 'Freelancer',
+          ativo: ativo !== undefined ? ativo : orig.Item.ativo,
+          unitId: unitIdClean,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await dynamodb.put({ TableName: 'gres-prod-motoboys', Item: item }).promise();
+        return response(200, { success: true, id: motoboyId });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar motoboy' });
+      }
+    }
+
+    // DELETE MOTOBOYS — Deletar motoboy
+    if (rawPath.includes('/motoboys/') && httpMethod === 'DELETE') {
+      const motoboyId = rawPath.split('/').pop();
+      if (!motoboyId) {
+        return response(400, { error: 'ID do motoboy é obrigatório' });
+      }
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-motoboys',
+          Key: { id: motoboyId }
+        }).promise();
+        return response(200, { success: true, message: 'Motoboy deletado com sucesso' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar motoboy' });
+      }
+    }
+
     // POST CAIXA — ID canônico: CNPJ-data-turno; unitId = CNPJ
     if ((rawPath === '/caixa' || rawPath.includes('/caixa')) && httpMethod === 'POST') {
       const { unitId, data, hora, periodo, responsavel, responsavelId, responsavelNome,
@@ -435,20 +738,28 @@ exports.handler = async (event) => {
       const itemId = caixaId(unitClean, data, periodo);
 
       try {
-        // Resolve responsavel name if not provided
-        let respNome = responsavelNome || '';
-        let respId   = responsavelId || '';
-        if (responsavel && !respNome) {
-          const ur = await dynamodb.scan({
-            TableName: 'gres-prod-usuarios',
-            FilterExpression: 'email = :e',
-            ExpressionAttributeValues: { ':e': responsavel }
-          }).promise();
-          if (ur.Items && ur.Items.length > 0) {
-            respNome = ur.Items[0].nome || responsavel;
-            if (!respId) respId = ur.Items[0].id || '';
-          }
-        }
+        // Resolve responsável usando helper de integridade
+        const resp = await resolverResponsavel(responsavel || responsavelId, responsavelNome);
+        const respNome = responsavelNome || resp.responsavelNome;
+        const respId   = responsavelId   || resp.responsavelId;
+
+        // Server-side recalculation — never trust client-provided totals
+        const p_ab  = parseFloat(abertura)   || 0;
+        const p_m1  = parseFloat(maq1)       || 0;
+        const p_m2  = parseFloat(maq2)       || 0;
+        const p_m3  = parseFloat(maq3)       || 0;
+        const p_m4  = parseFloat(maq4)       || 0;
+        const p_m5  = parseFloat(maq5)       || 0;
+        const p_m6  = parseFloat(maq6)       || 0;
+        const p_if  = parseFloat(ifood)      || 0;
+        const p_din = parseFloat(dinheiro)   || 0;
+        const p_pix = parseFloat(pix)        || 0;
+        const p_fia = parseFloat(fiado)      || 0;
+        const p_san = parseFloat(sangria)    || 0;
+        const p_pdv = parseFloat(sistemaPdv) || 0;
+        // total = soma das entradas (sangria NÃO entra)
+        const p_tot = p_ab + p_m1 + p_m2 + p_m3 + p_m4 + p_m5 + p_m6 + p_if + p_din + p_pix + p_fia;
+        const p_dif = p_pdv - p_tot;
 
         const item = {
           id: itemId,
@@ -460,22 +771,22 @@ exports.handler = async (event) => {
           responsavel: responsavel || '',
           responsavelId: respId,
           responsavelNome: respNome,
-          abertura:   parseFloat(abertura)  || 0,
-          maq1:       parseFloat(maq1)      || 0,
-          maq2:       parseFloat(maq2)      || 0,
-          maq3:       parseFloat(maq3)      || 0,
-          maq4:       parseFloat(maq4)      || 0,
-          maq5:       parseFloat(maq5)      || 0,
-          maq6:       parseFloat(maq6)      || 0,
-          ifood:      parseFloat(ifood)     || 0,
-          dinheiro:   parseFloat(dinheiro)  || 0,
-          pix:        parseFloat(pix)       || 0,
-          fiado:      parseFloat(fiado)     || 0,
-          sangria:    parseFloat(sangria)   || 0,
-          total:      parseFloat(total)     || 0,
-          sistema:    parseFloat(sistemaPdv) || 0,
-          sistemaPdv: parseFloat(sistemaPdv) || 0,
-          diferenca:  parseFloat(diferenca)  || 0,
+          abertura:   p_ab,
+          maq1:       p_m1,
+          maq2:       p_m2,
+          maq3:       p_m3,
+          maq4:       p_m4,
+          maq5:       p_m5,
+          maq6:       p_m6,
+          ifood:      p_if,
+          dinheiro:   p_din,
+          pix:        p_pix,
+          fiado:      p_fia,
+          sangria:    p_san,
+          total:      p_tot,
+          sistema:    p_pdv,
+          sistemaPdv: p_pdv,
+          diferenca:  p_dif,
           referencia: referencia || '',
           createdAt:  new Date().toISOString(),
           updatedAt:  new Date().toISOString()
@@ -606,39 +917,24 @@ exports.handler = async (event) => {
 
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
-      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, unitId, viagens, caixinha, turno } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
+              origem, tipo, dataPagamento, unitId, viagens, caixinha, turno, observacao } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
       }
 
       try {
-        // Buscar nome do responsável via email
-        let responsavelNome = '';
-        let responsavelIdResolved = responsavelId || '';
-        const usuariosResult2 = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios',
-          FilterExpression: 'email = :email',
-          ExpressionAttributeValues: { ':email': responsavel }
-        }).promise();
-        if (usuariosResult2.Items && usuariosResult2.Items.length > 0) {
-          responsavelNome = usuariosResult2.Items[0].nome || responsavel;
-          if (!responsavelIdResolved) responsavelIdResolved = usuariosResult2.Items[0].id || '';
-        } else {
-          responsavelNome = responsavel;
-        }
+        // Resolve responsável usando helper de integridade
+        const respSaida = await resolverResponsavel(responsavel || responsavelId, '');
+        const responsavelNome      = respSaida.responsavelNome;
+        const responsavelIdResolved = responsavelId || respSaida.responsavelId;
 
-        // Verificar se o colaborador existe
-        const colaboradorResult = await dynamodb.get({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: colaboradorId }
-        }).promise();
-
-        if (!colaboradorResult.Item) {
+        // Verificar se o colaborador existe (integridade referencial)
+        const colaborador = await validarColaborador(colaboradorId);
+        if (!colaborador) {
           return response(400, { error: 'Colaborador não encontrado' });
         }
-
-        const colaborador = colaboradorResult.Item;
         // Pegar unitId do body, ou do colaborador como fallback
         const itemUnitId = unitId || colaborador.unitId || '';
 
@@ -654,9 +950,11 @@ exports.handler = async (event) => {
           valor: parseFloat(valor),
           data,
           turno: turno || '',
-          origem: origem || 'Sangria',
-          referencia: origem || 'Sangria',
+          tipo: tipo || origem || 'A pagar',
+          origem: tipo || origem || 'A pagar',
+          referencia: tipo || origem || 'A pagar',
           dataPagamento: dataPagamento || '',
+          observacao: observacao || '',
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           unitId: itemUnitId,
@@ -794,7 +1092,8 @@ exports.handler = async (event) => {
     // PUT SAIDAS - Editar saída
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
-      const { responsavel, responsavelId, colaboradorId, descricao, valor, data, origem, dataPagamento, viagens, caixinha, turno } = body;
+      const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
+              origem, tipo, dataPagamento, viagens, caixinha, turno, observacao } = body;
 
       if (!saidaId || !responsavel || !descricao || !valor || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -808,32 +1107,16 @@ exports.handler = async (event) => {
         }).promise();
         const original = originalResult.Item || {};
 
-        // Buscar nome do responsável via email
-        let responsavelNome = '';
-        let responsavelIdResolved = responsavelId || '';
-        const usuariosLookup = await dynamodb.scan({
-          TableName: 'gres-prod-usuarios',
-          FilterExpression: 'email = :email',
-          ExpressionAttributeValues: { ':email': responsavel }
-        }).promise();
-        if (usuariosLookup.Items && usuariosLookup.Items.length > 0) {
-          responsavelNome = usuariosLookup.Items[0].nome || responsavel;
-          if (!responsavelIdResolved) responsavelIdResolved = usuariosLookup.Items[0].id || '';
-        } else {
-          responsavelNome = responsavel;
-        }
+        // Resolve responsável usando helper de integridade
+        const respPut = await resolverResponsavel(responsavel || responsavelId, '');
+        const responsavelNome      = respPut.responsavelNome;
+        const responsavelIdResolved = responsavelId || respPut.responsavelId;
 
-        // Verificar se o colaborador existe
-        const colaboradorResult = await dynamodb.get({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: colaboradorId }
-        }).promise();
-
-        if (!colaboradorResult.Item) {
+        // Verificar se o colaborador existe (integridade referencial)
+        const colaborador = await validarColaborador(colaboradorId);
+        if (!colaborador) {
           return response(400, { error: 'Colaborador não encontrado' });
         }
-
-        const colaborador = colaboradorResult.Item;
 
         const item = {
           ...original,                          // preserve all original fields (unitId, createdAt, etc.)
@@ -848,9 +1131,11 @@ exports.handler = async (event) => {
           valor: parseFloat(valor),
           data,
           turno: turno !== undefined ? turno : (original.turno || ''),
-          origem: origem || original.origem || 'Sangria',
-          referencia: origem || original.referencia || 'Sangria',
+          tipo: tipo || origem || original.tipo || original.origem || 'A pagar',
+          origem: tipo || origem || original.origem || 'A pagar',
+          referencia: tipo || origem || original.referencia || 'A pagar',
           dataPagamento: dataPagamento || original.dataPagamento || '',
+          observacao: observacao !== undefined ? observacao : (original.observacao || ''),
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),
           updatedAt: new Date().toISOString()
@@ -922,22 +1207,27 @@ exports.handler = async (event) => {
       }
 
       try {
-        // Resolve responsavel
-        let respNome = responsavelNome || '';
-        let respId   = responsavelId || '';
-        if (responsavel && !respNome) {
-          const ur = await dynamodb.scan({
-            TableName: 'gres-prod-usuarios',
-            FilterExpression: 'email = :e',
-            ExpressionAttributeValues: { ':e': responsavel }
-          }).promise();
-          if (ur.Items && ur.Items.length > 0) {
-            respNome = ur.Items[0].nome || responsavel;
-            if (!respId) respId = ur.Items[0].id || '';
-          }
-        }
+        // Resolve responsável usando helper de integridade
+        const respData = await resolverResponsavel(responsavel || responsavelId, responsavelNome);
+        const respNome = responsavelNome || respData.responsavelNome;
+        const respId   = responsavelId   || respData.responsavelId;
 
-        const pdv = parseFloat(sistemaPdv) || 0;
+        // Server-side recalculation — never trust client-provided totals
+        const _ab  = parseFloat(abertura)  || 0;
+        const _m1  = parseFloat(maq1)      || 0;
+        const _m2  = parseFloat(maq2)      || 0;
+        const _m3  = parseFloat(maq3)      || 0;
+        const _m4  = parseFloat(maq4)      || 0;
+        const _m5  = parseFloat(maq5)      || 0;
+        const _m6  = parseFloat(maq6)      || 0;
+        const _if  = parseFloat(ifood)     || 0;
+        const _din = parseFloat(dinheiro)  || 0;
+        const _pix = parseFloat(pix)       || 0;
+        const _fia = parseFloat(fiado)     || 0;
+        const pdv  = parseFloat(sistemaPdv) || 0;
+        // total = soma das entradas (sangria NÃO entra no total)
+        const computedTotal    = _ab + _m1 + _m2 + _m3 + _m4 + _m5 + _m6 + _if + _din + _pix + _fia;
+        const computedDiferenca = pdv - computedTotal;
         const updateExpression =
           'SET abertura = :abertura, maq1 = :maq1, maq2 = :maq2, maq3 = :maq3, ' +
           'maq4 = :maq4, maq5 = :maq5, maq6 = :maq6, ifood = :ifood, ' +
@@ -954,21 +1244,21 @@ exports.handler = async (event) => {
           UpdateExpression: updateExpression,
           ExpressionAttributeNames: { '#pix': 'pix', '#total': 'total', '#periodo': 'periodo', '#hora': 'hora' },
           ExpressionAttributeValues: {
-            ':abertura':       parseFloat(abertura)  || 0,
-            ':maq1':           parseFloat(maq1)      || 0,
-            ':maq2':           parseFloat(maq2)      || 0,
-            ':maq3':           parseFloat(maq3)      || 0,
-            ':maq4':           parseFloat(maq4)      || 0,
-            ':maq5':           parseFloat(maq5)      || 0,
-            ':maq6':           parseFloat(maq6)      || 0,
-            ':ifood':          parseFloat(ifood)     || 0,
-            ':dinheiro':       parseFloat(dinheiro)  || 0,
-            ':pix':            parseFloat(pix)       || 0,
-            ':fiado':          parseFloat(fiado)     || 0,
+            ':abertura':       _ab,
+            ':maq1':           _m1,
+            ':maq2':           _m2,
+            ':maq3':           _m3,
+            ':maq4':           _m4,
+            ':maq5':           _m5,
+            ':maq6':           _m6,
+            ':ifood':          _if,
+            ':dinheiro':       _din,
+            ':pix':            _pix,
+            ':fiado':          _fia,
             ':sangria':        parseFloat(sangria)   || 0,
-            ':total':          parseFloat(total)     || 0,
+            ':total':          computedTotal,
             ':sistemaPdv':     pdv,
-            ':diferenca':      parseFloat(diferenca)  || 0,
+            ':diferenca':      computedDiferenca,
             ':referencia':     referencia || '',
             ':periodo':        periodo || 'Dia',
             ':responsavel':    responsavel || '',
