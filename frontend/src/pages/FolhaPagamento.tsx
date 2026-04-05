@@ -1,446 +1,605 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import * as XLSX from 'xlsx';
+
+/* ─── Tipos ──────────────────────────────────────────────────────────────── */
 
 interface Colaborador {
   id: string;
-  unitId: string;
   nome: string;
-  email: string;
-  telefone: string;
   cpf: string;
-  tipoContrato: 'CLT' | 'Freelancer';
-  valorDia: number;
-  valorNoite: number;
-  valorTransporte: number;
-  valeAlimentacao: boolean;
-  tipo: string;
-  diasDisponiveis: string[];
-  podeTrabalharDia: boolean;
-  podeTrabalharNoite: boolean;
-  ativo: boolean;
+  telefone?: string;
+  chavePix?: string;
+  cargo?: string;
+  tipoContrato?: 'CLT' | 'Freelancer';
+  salario?: number;
+  valorDia?: number;
+  valorNoite?: number;
+  valorTransporte?: number;
+  periculosidade?: number; // % adicional (motoboys CLT = 30)
+  unitId?: string;
+  ativo?: boolean;
 }
 
-interface Transacao {
-  id: string;
-  favorecido: string;
-  valor: number;
-  referencia: string;
+interface Motoboy extends Colaborador {
+  placa?: string;
+  vinculo?: 'CLT' | 'Freelancer';
+  comissao?: number;
+}
+
+interface ControleDia {
+  motoboyId: string;
   data: string;
-  turno: string;
-  descricao: string;
+  entDia: number;
+  caixinhaDia: number;
+  entNoite: number;
+  caixinhaNoite: number;
+  vlVariavel: number;
+  pgto: number;
+  variavel: number;
 }
 
-interface FolhaPagamento {
+/** Resumo mensal calculado para um colaborador */
+interface FolhaMensal {
   colaboradorId: string;
   nome: string;
   cpf: string;
-  telefone: string;
-  pix: string;
+  chavePix?: string;
+  cargo?: string;
   tipoContrato: string;
-  
-  // Horas trabalhadas
-  diasTrabalhados: number;
-  noitesTrabalhadas: number;
-  
-  // Valores
-  valorDia: number;
-  valorNoite: number;
-  valorTransporte: number;
-  
-  // Cálculos
-  totalDias: number;
-  totalNoites: number;
-  totalTransporte: number;
-  
-  // Transações
-  caixinha: number;
-  adiantamentos: number;
-  gastos: number;
-  retiradaSangria: number;
-  
-  // Total
-  totalBruto: number;
-  totalDescontos: number;
-  totalLiquido: number;
-  
+  vinculo?: string;
+
+  // Salário CLT
+  salarioBase: number;
+  periculosidade: number;      // valor R$
+  inss: number;                // valor R$
+  contrAssistencial: number;   // valor R$
+  adiantamentoSalario: number; // % pago como adiantamento
+  adiantamentoValor: number;   // R$
+  diferencaSalario: number;    // R$ que falta pagar do salário
+
+  // Variável (motoboys / freelancers)
+  variavelAte19: number;       // entregas 1–19
+  variavelDe20a31: number;     // entregas 20–31
+  totalVariavel: number;
+
+  // Pagamentos realizados
+  pgtosDia20: number;
+  pgtosDia05: number;
+  outrosPgtos: number;
+
+  // Saldo final
+  saldoFinal: number;
+
   // Status
   pago: boolean;
   dataPagamento?: string;
+
+  // Raw
+  raw?: any;
 }
+
+/* ─── Helpers ────────────────────────────────────────────────────────────── */
+
+const R = (v: any) => parseFloat(v) || 0;
+
+function fmt(v: number) {
+  return v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtMoeda(v: number) {
+  return 'R$ ' + fmt(v);
+}
+
+// INSS 2026 simplificado (tabela progressiva)
+function calcINSS(salarioBruto: number): number {
+  const tabela = [
+    { ate: 1518.00,   aliq: 0.075 },
+    { ate: 2793.88,   aliq: 0.09 },
+    { ate: 4190.83,   aliq: 0.12 },
+    { ate: 8157.41,   aliq: 0.14 },
+  ];
+  let inss = 0;
+  let base = salarioBruto;
+  let anterior = 0;
+  for (const faixa of tabela) {
+    if (base <= 0) break;
+    const faixaVal = Math.min(base, faixa.ate - anterior);
+    inss += faixaVal * faixa.aliq;
+    base -= faixaVal;
+    anterior = faixa.ate;
+    if (salarioBruto <= faixa.ate) break;
+  }
+  return parseFloat(inss.toFixed(2));
+}
+
+/* ─── Component ─────────────────────────────────────────────────────────── */
 
 export default function FolhaPagamento() {
   const { activeUnit } = useUnit();
   const { user } = useAuth();
-  const userUnitId = (user as any)?.unitId || '';
-  const unitId = activeUnit?.id || userUnitId || '';
-  
-  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
-  const [transacoes, setTransacoes] = useState<Transacao[]>([]);
-  const [folhas, setFolhas] = useState<FolhaPagamento[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [mesAno, setMesAno] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
-  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('pendente');
-
+  const unitId = activeUnit?.id || (user as any)?.unitId || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
-  useEffect(() => {
-    if (unitId) {
-      carregarDados();
-    }
-  }, [unitId, mesAno]);
+  const hoje = new Date();
+  const [mesAno, setMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
+  const [loading, setLoading] = useState(false);
+
+  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
+  const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
+  const [controlesMap, setControlesMap] = useState<Record<string, ControleDia[]>>({}); // motoboyId → linhas
+  const [folhasDB, setFolhasDB] = useState<any[]>([]); // folhas salvas no DB
+  const [folhasLocais, setFolhasLocais] = useState<FolhaMensal[]>([]);
+
+  const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
+  const [filtroTipo, setFiltroTipo] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
+
+  const token = () => localStorage.getItem('auth_token');
 
   const carregarDados = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('auth_token');
-      
-      // Carregar colaboradores
-      const respColaboradores = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (respColaboradores.ok) {
-        const data = await respColaboradores.json();
-        setColaboradores(Array.isArray(data) ? data : []);
-      }
-      
-      // Carregar transações do mês
-      const respTransacoes = await fetch(`${apiUrl}/saidas?unitId=${unitId}&mes=${mesAno}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (respTransacoes.ok) {
-        const data = await respTransacoes.json();
-        setTransacoes(Array.isArray(data) ? data : []);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error);
-    } finally {
-      setLoading(false);
-    }
+      // 1. Colaboradores
+      const rC = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } });
+      const dC = await rC.json();
+      const colabs: Colaborador[] = (Array.isArray(dC) ? dC : []).filter((c: Colaborador) => c.ativo !== false);
+      setColaboradores(colabs);
+
+      // 2. Motoboys
+      const rM = await fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } });
+      const dM = await rM.json();
+      const motos: Motoboy[] = Array.isArray(dM) ? dM.filter((m: Motoboy) => m.ativo !== false) : [];
+      setMotoboys(motos);
+
+      // 3. Controles diários dos motoboys (em paralelo)
+      const ctrlMap: Record<string, ControleDia[]> = {};
+      await Promise.all(motos.map(async m => {
+        try {
+          const r = await fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mesAno}&unitId=${unitId}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          const d = await r.json();
+          if (Array.isArray(d)) ctrlMap[m.id] = d;
+        } catch { ctrlMap[m.id] = []; }
+      }));
+      setControlesMap(ctrlMap);
+
+      // 4. Folhas salvas (status pago etc.)
+      try {
+        const rF = await fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } });
+        if (rF.ok) { const dF = await rF.json(); setFolhasDB(Array.isArray(dF) ? dF : []); }
+      } catch { setFolhasDB([]); }
+
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  const calcularFolhas = () => {
-    const novasFolhas: FolhaPagamento[] = [];
-
-    colaboradores.forEach(colab => {
-      // Contar dias e noites trabalhadas
-      let diasTrabalhados = 0;
-      let noitesTrabalhadas = 0;
-
-      // Aqui você pode adicionar lógica para contar a partir de escalas
-      // Por enquanto, vamos usar um exemplo simples
-
-      // Calcular transações do colaborador
-      const transacoesColab = transacoes.filter(t => 
-        t.favorecido.toLowerCase().includes(colab.nome.toLowerCase())
-      );
-
-      let caixinha = 0;
-      let adiantamentos = 0;
-      let gastos = 0;
-      let retiradaSangria = 0;
-
-      transacoesColab.forEach(t => {
-        if (t.referencia.toLowerCase().includes('caixinha')) {
-          caixinha += t.valor;
-        } else if (t.referencia.toLowerCase().includes('adiantamento')) {
-          adiantamentos += t.valor;
-        } else if (t.referencia.toLowerCase().includes('gasto') || t.referencia.toLowerCase().includes('a pagar')) {
-          gastos += t.valor;
-        } else if (t.descricao.toLowerCase().includes('sangria')) {
-          retiradaSangria += t.valor;
-        }
-      });
-
-      const totalDias = diasTrabalhados * colab.valorDia;
-      const totalNoites = noitesTrabalhadas * colab.valorNoite;
-      const totalTransporte = (diasTrabalhados + noitesTrabalhadas) * (colab.valorTransporte / 2); // Ida e volta
-
-      const totalBruto = totalDias + totalNoites + totalTransporte;
-      const totalDescontos = caixinha + adiantamentos + gastos;
-      const totalLiquido = totalBruto - totalDescontos + retiradaSangria;
-
-      novasFolhas.push({
-        colaboradorId: colab.id,
-        nome: colab.nome,
-        cpf: colab.cpf,
-        telefone: colab.telefone,
-        pix: colab.email, // Usar email como placeholder para PIX
-        tipoContrato: colab.tipoContrato,
-        diasTrabalhados,
-        noitesTrabalhadas,
-        valorDia: colab.valorDia,
-        valorNoite: colab.valorNoite,
-        valorTransporte: colab.valorTransporte,
-        totalDias,
-        totalNoites,
-        totalTransporte,
-        caixinha,
-        adiantamentos,
-        gastos,
-        retiradaSangria,
-        totalBruto,
-        totalDescontos,
-        totalLiquido,
-        pago: false,
-      });
-    });
-
-    setFolhas(novasFolhas);
-  };
-
+  // Recalcular folhas sempre que os dados mudarem
   useEffect(() => {
-    if (colaboradores.length > 0) {
-      calcularFolhas();
+    const novas = calcularTodasFolhas();
+    setFolhasLocais(novas);
+  }, [colaboradores, motoboys, controlesMap, folhasDB, mesAno]);
+
+  const calcularTodasFolhas = (): FolhaMensal[] => {
+    const folhas: FolhaMensal[] = [];
+
+    // ── Colaboradores CLT (não motoboy) ───────────────────────────
+    for (const c of colaboradores) {
+      const isMotoboy = motoboys.some(m => m.id === c.id || m.cpf === c.cpf);
+      if (isMotoboy) continue; // será tratado no bloco de motoboys
+
+      const salBase = R(c.salario);
+      const peri = R(c.periculosidade) / 100;
+      const salBruto = salBase * (1 + peri);
+      const inss = calcINSS(salBruto);
+      const contrAssist = 0; // colaboradores gerais não têm sindimoto
+      const adiantPct = 0.40; // 40% como adiantamento (personalizável)
+      const adiantValor = parseFloat((salBruto * adiantPct).toFixed(2));
+      const difSal = parseFloat((salBruto - adiantValor).toFixed(2));
+      const saldoFinal = difSal - inss - contrAssist;
+
+      const salva = folhasDB.find(f => f.colaboradorId === c.id);
+      folhas.push({
+        colaboradorId: c.id,
+        nome: c.nome,
+        cpf: c.cpf,
+        chavePix: c.chavePix,
+        cargo: c.cargo,
+        tipoContrato: c.tipoContrato || 'CLT',
+        salarioBase: salBase,
+        periculosidade: salBase * peri,
+        inss,
+        contrAssistencial: contrAssist,
+        adiantamentoSalario: adiantPct * 100,
+        adiantamentoValor: adiantValor,
+        diferencaSalario: difSal,
+        variavelAte19: 0, variavelDe20a31: 0, totalVariavel: 0,
+        pgtosDia20: adiantValor,
+        pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
+        outrosPgtos: 0,
+        saldoFinal: parseFloat(saldoFinal.toFixed(2)),
+        pago: salva?.pago || false,
+        dataPagamento: salva?.dataPagamento,
+        raw: c,
+      });
     }
-  }, [colaboradores, transacoes, mesAno]);
 
-  const folhasFiltradas = folhas.filter(f => {
-    if (filtroStatus === 'pago') return f.pago;
-    if (filtroStatus === 'pendente') return !f.pago;
+    // ── Motoboys ──────────────────────────────────────────────────
+    for (const m of motoboys) {
+      const controle: ControleDia[] = controlesMap[m.id] || [];
+      const salBase = R(m.salario);
+      const peri = R(m.periculosidade ?? 30) / 100;
+      const salBruto = salBase * (1 + peri);
+      const periculosidadeValor = salBase * peri;
+      const inss = calcINSS(salBruto);
+      const contrAssist = 32.62; // Sindimoto fixo (do exemplo)
+
+      // Split variável: 1–19 vs 20–31
+      const dia19 = `${mesAno}-19`;
+      let varAte19 = 0, varDe20a31 = 0;
+      for (const linha of controle) {
+        if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
+        else varDe20a31 += R(linha.vlVariavel);
+      }
+      varAte19 = parseFloat(varAte19.toFixed(2));
+      varDe20a31 = parseFloat(varDe20a31.toFixed(2));
+      const totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
+
+      // Adiantamento salarial no dia 20 (40% do salário bruto + variável até 19)
+      const adiantPct = 40;
+      const adiantValor = parseFloat((salBruto * 0.40).toFixed(2));
+
+      // Diferença de salário = 60% restante
+      const difSal = parseFloat((salBruto * 0.60).toFixed(2));
+
+      // Saldo final = variável + salário líquido − descontos
+      const descontos = inss + contrAssist;
+      const saldoFinal = parseFloat((totalVariavel + salBruto - descontos).toFixed(2));
+
+      // Pagamento dia 05: saldo após variável20–31 menos o que já foi pago no dia 20
+      const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
+
+      const salva = folhasDB.find(f => f.colaboradorId === m.id);
+      folhas.push({
+        colaboradorId: m.id,
+        nome: m.nome,
+        cpf: m.cpf,
+        chavePix: m.chavePix,
+        cargo: m.cargo || 'Motoboy',
+        tipoContrato: 'CLT',
+        vinculo: m.vinculo,
+        salarioBase: salBase,
+        periculosidade: periculosidadeValor,
+        inss,
+        contrAssistencial: contrAssist,
+        adiantamentoSalario: adiantPct,
+        adiantamentoValor: adiantValor,
+        diferencaSalario: difSal,
+        variavelAte19: varAte19,
+        variavelDe20a31: varDe20a31,
+        totalVariavel,
+        pgtosDia20: varAte19 + adiantValor,
+        pgtosDia05,
+        outrosPgtos: 0,
+        saldoFinal,
+        pago: salva?.pago || false,
+        dataPagamento: salva?.dataPagamento,
+        raw: m,
+      });
+    }
+
+    return folhas.sort((a, b) => a.nome.localeCompare(b.nome));
+  };
+
+  const handleTogglePago = async (folha: FolhaMensal) => {
+    const novoPago = !folha.pago;
+    setSalvando(true);
+    try {
+      const payload = {
+        colaboradorId: folha.colaboradorId,
+        mes: mesAno,
+        unitId,
+        pago: novoPago,
+        dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
+        saldoFinal: folha.saldoFinal,
+      };
+      await fetch(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(payload),
+      });
+      setFolhasLocais(prev => prev.map(f =>
+        f.colaboradorId === folha.colaboradorId
+          ? { ...f, pago: novoPago, dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : undefined }
+          : f
+      ));
+    } catch (e) { alert('Erro ao salvar status'); }
+    finally { setSalvando(false); }
+  };
+
+  const exportarXLSX = () => {
+    const ws = XLSX.utils.json_to_sheet(folhasFiltradas.map(f => ({
+      'Nome': f.nome, 'CPF': f.cpf, 'Cargo': f.cargo, 'Tipo': f.tipoContrato,
+      'Salário Base': f.salarioBase,
+      'Periculosidade': f.periculosidade,
+      'Variável até 19': f.variavelAte19,
+      'Pgto dia 20': f.pgtosDia20,
+      'Diferença Sal.': f.diferencaSalario,
+      'Variável 20-31': f.variavelDe20a31,
+      'INSS': f.inss,
+      'Contr. Assist.': f.contrAssistencial,
+      'Pgto dia 05': f.pgtosDia05,
+      'Total Variável': f.totalVariavel,
+      'Saldo Final': f.saldoFinal,
+      'Pago': f.pago ? 'Sim' : 'Não',
+      'Data Pgto': f.dataPagamento || '',
+      'PIX': f.chavePix || '',
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Folha ${mesAno}`);
+    XLSX.writeFile(wb, `folha-pagamento-${mesAno}.xlsx`);
+  };
+
+  const folhasFiltradas = useMemo(() => folhasLocais.filter(f => {
+    if (filtroStatus === 'pago' && !f.pago) return false;
+    if (filtroStatus === 'pendente' && f.pago) return false;
+    if (filtroTipo === 'CLT' && f.tipoContrato !== 'CLT') return false;
+    if (filtroTipo === 'Freelancer' && f.tipoContrato !== 'Freelancer') return false;
     return true;
-  });
+  }), [folhasLocais, filtroStatus, filtroTipo]);
 
-  const formatarMoeda = (valor: number) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(valor);
+  const totais = useMemo(() => ({
+    saldo: folhasFiltradas.reduce((s, f) => s + f.saldoFinal, 0),
+    variavel: folhasFiltradas.reduce((s, f) => s + f.totalVariavel, 0),
+    salarios: folhasFiltradas.reduce((s, f) => s + f.salarioBase + f.periculosidade, 0),
+    pgto20: folhasFiltradas.reduce((s, f) => s + f.pgtosDia20, 0),
+    pgto05: folhasFiltradas.reduce((s, f) => s + f.pgtosDia05, 0),
+  }), [folhasFiltradas]);
+
+  /* ── Styles ──────────────────────────────────────────── */
+  const s = {
+    card: { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
+    label: { fontSize: '13px', fontWeight: 'bold' as const, marginBottom: '4px', color: '#444', display: 'block' },
+    input: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
+    select: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
+    btn: (bg: string) => ({ padding: '8px 16px', border: 'none', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: bg, color: 'white' }),
+    th: { backgroundColor: '#1565c0', color: 'white', padding: '8px 8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'left' as const },
+    thC: { backgroundColor: '#1565c0', color: 'white', padding: '8px 8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'center' as const },
+    td: { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const },
+    tdR: { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'right' as const },
+    badge: (bg: string, color: string) => ({ backgroundColor: bg, color, padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' as const }),
   };
 
-  const handleMarcarPago = (colaboradorId: string) => {
-    setFolhas(folhas.map(f => 
-      f.colaboradorId === colaboradorId 
-        ? { ...f, pago: !f.pago, dataPagamento: new Date().toISOString().split('T')[0] }
-        : f
-    ));
-  };
-
-  const totalGeral = folhasFiltradas.reduce((sum, f) => sum + f.totalLiquido, 0);
-
-  return (
-    <div style={styles.pageWrapper}>
-      <Header title="💰 Folha de Pagamento" showBack={true} />
-      <div style={styles.container}>
-        
-        {/* FILTROS */}
-        <div style={styles.filtrosContainer}>
-          <div style={styles.formGroup}>
-            <label>Mês/Ano:</label>
-            <input 
-              type="month"
-              value={mesAno}
-              onChange={(e) => setMesAno(e.target.value)}
-              style={styles.input}
-            />
-          </div>
-          <div style={styles.formGroup}>
-            <label>Status:</label>
-            <select 
-              value={filtroStatus}
-              onChange={(e) => setFiltroStatus(e.target.value as any)}
-              style={styles.input}
-            >
-              <option value="todos">Todos</option>
-              <option value="pago">Pagos</option>
-              <option value="pendente">Pendentes</option>
-            </select>
-          </div>
+  /* ── Detalhe modal ────────────────────────────────────── */
+  const ModalDetalhe = ({ f, onClose }: { f: FolhaMensal; onClose: () => void }) => (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}>
+      <div style={{ ...s.card, maxWidth: '520px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0 }}>💰 Resumo Mensal — {f.nome.split(' ')[0]}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+        </div>
+        <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
+          {f.cargo} · {f.tipoContrato} · {mesAno}
         </div>
 
-        {/* TABELA */}
-        {loading ? (
-          <p>Carregando dados...</p>
-        ) : folhasFiltradas.length === 0 ? (
-          <p>Nenhum colaborador encontrado para este período.</p>
-        ) : (
-          <>
-            <div style={styles.tableWrapper}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={styles.headerRow}>
-                    <th style={styles.th}>Nome</th>
-                    <th style={styles.th}>CPF</th>
-                    <th style={styles.th}>Tipo</th>
-                    <th style={styles.th}>Dias</th>
-                    <th style={styles.th}>Noites</th>
-                    <th style={styles.th}>Total Bruto</th>
-                    <th style={styles.th}>Descontos</th>
-                    <th style={styles.th}>Sangria</th>
-                    <th style={styles.th}>Total Líquido</th>
-                    <th style={styles.th}>PIX</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={styles.th}>Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {folhasFiltradas.map((folha, idx) => (
-                    <tr key={folha.colaboradorId} style={{...styles.row, backgroundColor: idx % 2 === 0 ? '#f9f9f9' : 'white'}}>
-                      <td style={styles.td}>{folha.nome}</td>
-                      <td style={styles.td}>{folha.cpf}</td>
-                      <td style={styles.td}>{folha.tipoContrato}</td>
-                      <td style={styles.td}>{folha.diasTrabalhados}</td>
-                      <td style={styles.td}>{folha.noitesTrabalhadas}</td>
-                      <td style={{...styles.td, fontWeight: 'bold'}}>{formatarMoeda(folha.totalBruto)}</td>
-                      <td style={{...styles.td, color: '#dc3545'}}>{formatarMoeda(folha.totalDescontos)}</td>
-                      <td style={{...styles.td, color: '#28a745'}}>{formatarMoeda(folha.retiradaSangria)}</td>
-                      <td style={{...styles.td, fontWeight: 'bold', backgroundColor: folha.totalLiquido > 0 ? '#d4edda' : '#f8d7da'}}>{formatarMoeda(folha.totalLiquido)}</td>
-                      <td style={styles.td}>
-                        <button 
-                          onClick={() => navigator.clipboard.writeText(folha.pix)}
-                          style={styles.botaoPix}
-                          title="Copiar PIX"
-                        >
-                          📋 Copiar
-                        </button>
-                      </td>
-                      <td style={styles.td}>
-                        <span style={{...styles.badge, backgroundColor: folha.pago ? '#28a745' : '#ffc107'}}>
-                          {folha.pago ? '✅ Pago' : '⏳ Pendente'}
-                        </span>
-                      </td>
-                      <td style={styles.td}>
-                        <button 
-                          onClick={() => handleMarcarPago(folha.colaboradorId)}
-                          style={{...styles.botao, backgroundColor: folha.pago ? '#dc3545' : '#28a745'}}
-                        >
-                          {folha.pago ? 'Desfazer' : 'Marcar Pago'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <colgroup><col style={{ width: '60%' }} /><col style={{ width: '20%' }} /><col style={{ width: '20%' }} /></colgroup>
+          <thead>
+            <tr style={{ backgroundColor: '#e8f5e9' }}>
+              <th style={{ padding: '6px 8px', textAlign: 'left' }}>Descrição</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#2e7d32' }}>Crédito</th>
+              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>Débito</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              { desc: 'Adiantamentos', cred: 0, deb: 0, bold: false },
+              { desc: `Variável até dia 19`, cred: f.variavelAte19, deb: 0 },
+              { desc: `Adiantamento Sal. ${f.adiantamentoSalario}%`, cred: 0, deb: f.adiantamentoValor, note: 'Pgto dia 20' },
+              { desc: `Pgto dia 20`, cred: f.pgtosDia20, deb: 0, style: { color: '#c62828', fontStyle: 'italic' } },
+              { desc: `Diferença de Salário (60%)`, cred: f.diferencaSalario, deb: 0 },
+              { desc: `Adicional Periculosidade`, cred: f.periculosidade, deb: 0 },
+              { desc: `INSS sobre Salário`, cred: 0, deb: f.inss },
+              ...(f.contrAssistencial > 0 ? [{ desc: 'Contr. Assistencial', cred: 0, deb: f.contrAssistencial }] : []),
+              { desc: `Variável 20 a 31`, cred: f.variavelDe20a31, deb: 0 },
+              { desc: `Pgto dia 05`, cred: 0, deb: f.pgtosDia05, style: { color: '#c62828', fontStyle: 'italic' } },
+            ].map((row, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
+                <td style={{ padding: '6px 8px', ...(row as any).style }}>{row.desc}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: row.cred > 0 ? '#2e7d32' : '#bbb' }}>
+                  {row.cred > 0 ? fmtMoeda(row.cred) : '—'}
+                </td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: row.deb > 0 ? '#c62828' : '#bbb' }}>
+                  {row.deb > 0 ? fmtMoeda(row.deb) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+              <td style={{ padding: '8px' }}>Saldo Final</td>
+              <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(f.saldoFinal)}</td>
+              <td style={{ padding: '8px' }} />
+            </tr>
+          </tfoot>
+        </table>
 
-            {/* RESUMO */}
-            <div style={styles.resumo}>
-              <div style={styles.resumoItem}>
-                <span style={styles.resumoLabel}>Total a Pagar (Mês):</span>
-                <span style={{...styles.resumoValor, color: '#dc3545', fontSize: '20px', fontWeight: 'bold'}}>
-                  {formatarMoeda(totalGeral)}
-                </span>
-              </div>
-              <div style={styles.resumoItem}>
-                <span style={styles.resumoLabel}>Colaboradores:</span>
-                <span style={styles.resumoValor}>{folhasFiltradas.length}</span>
-              </div>
+        {f.chavePix && (
+          <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '6px', fontSize: '13px' }}>
+            <strong>PIX:</strong> {f.chavePix}
+            <button onClick={() => navigator.clipboard.writeText(f.chavePix!)} style={{ marginLeft: '8px', ...s.btn('#43a047'), padding: '4px 10px', fontSize: '11px' }}>
+              📋 Copiar
+            </button>
+          </div>
+        )}
+
+        <div style={{ marginTop: '14px', display: 'flex', gap: '10px' }}>
+          <button onClick={() => { handleTogglePago(f); onClose(); }} style={s.btn(f.pago ? '#e53935' : '#43a047')}>
+            {f.pago ? '↩ Desfazer pagamento' : '✅ Marcar como pago'}
+          </button>
+          <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ── Render ──────────────────────────────────────────── */
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
+      <Header title="💰 Folha de Pagamento" showBack={true} />
+      {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
+
+      <div style={{ flex: 1, padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+
+        {/* Filtros */}
+        <div style={{ ...s.card, marginBottom: '16px', display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={s.label}>Mês / Ano</label>
+            <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
+          </div>
+          <div>
+            <label style={s.label}>Tipo</label>
+            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
+              <option value="todos">Todos</option><option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
+            </select>
+          </div>
+          <div>
+            <label style={s.label}>Status</label>
+            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
+              <option value="todos">Todos</option><option value="pago">Pagos</option><option value="pendente">Pendentes</option>
+            </select>
+          </div>
+          <button onClick={carregarDados} style={s.btn('#1976d2')}>🔄 Atualizar</button>
+          <button onClick={exportarXLSX} disabled={folhasFiltradas.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
+        </div>
+
+        {/* Cards de totais */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '18px' }}>
+          {[
+            { label: 'Colaboradores', val: `${folhasFiltradas.length}`, cor: '#1976d2' },
+            { label: 'Total Variável', val: fmtMoeda(totais.variavel), cor: '#43a047' },
+            { label: 'Total Salários', val: fmtMoeda(totais.salarios), cor: '#6a1b9a' },
+            { label: 'Pgto dia 20', val: fmtMoeda(totais.pgto20), cor: '#fb8c00' },
+            { label: 'Pgto dia 05', val: fmtMoeda(totais.pgto05), cor: '#0288d1' },
+            { label: 'Saldo Total', val: fmtMoeda(totais.saldo), cor: '#2e7d32' },
+          ].map(c => (
+            <div key={c.label} style={{ ...s.card, borderLeft: `4px solid ${c.cor}` }}>
+              <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
+              <div style={{ fontSize: '15px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
             </div>
-          </>
+          ))}
+        </div>
+
+        {/* Tabela principal */}
+        {loading ? (
+          <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando dados...</div>
+        ) : folhasFiltradas.length === 0 ? (
+          <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Nenhum colaborador para este período.</div>
+        ) : (
+          <div style={{ ...s.card, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Nome</th>
+                  <th style={s.th}>Cargo</th>
+                  <th style={s.thC}>Tipo</th>
+                  <th style={{ ...s.th, textAlign: 'right' }}>Sal. Base</th>
+                  <th style={{ ...s.th, textAlign: 'right' }}>+ Periculosidade</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável ≤19</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#fb8c00' }}>Pgto dia 20</th>
+                  <th style={{ ...s.th, textAlign: 'right' }}>Dif. Sal.</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20–31</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>INSS</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto dia 05</th>
+                  <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Saldo Final</th>
+                  <th style={s.thC}>Status</th>
+                  <th style={s.thC}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {folhasFiltradas.map((f, idx) => (
+                  <tr key={f.colaboradorId}
+                    style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}
+                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#fafafa' : 'white')}>
+                    <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                    <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
+                    <td style={{ ...s.td, textAlign: 'center' }}>
+                      <span style={f.tipoContrato === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                        {f.tipoContrato}
+                      </span>
+                    </td>
+                    <td style={{ ...s.tdR }}>{fmtMoeda(f.salarioBase)}</td>
+                    <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelAte19 > 0 ? fmtMoeda(f.variavelAte19) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#fb8c00', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</td>
+                    <td style={s.tdR}>{fmtMoeda(f.diferencaSalario)}</td>
+                    <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelDe20a31 > 0 ? fmtMoeda(f.variavelDe20a31) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
+                    <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia05)}</td>
+                    <td style={{ ...s.tdR, fontWeight: 'bold', color: f.saldoFinal >= 0 ? '#2e7d32' : '#c62828' }}>
+                      {fmtMoeda(f.saldoFinal)}
+                    </td>
+                    <td style={{ ...s.td, textAlign: 'center' }}>
+                      <span style={f.pago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
+                        {f.pago ? '✅ Pago' : '⏳ Pendente'}
+                      </span>
+                      {f.pago && f.dataPagamento && (
+                        <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>{f.dataPagamento}</div>
+                      )}
+                    </td>
+                    <td style={{ ...s.td, textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                        <button onClick={() => setDetalheSelecionado(f)} style={{ ...s.btn('#1976d2'), padding: '4px 10px', fontSize: '11px' }}>
+                          📋 Detalhe
+                        </button>
+                        <button onClick={() => handleTogglePago(f)} disabled={salvando} style={{ ...s.btn(f.pago ? '#e53935' : '#43a047'), padding: '4px 10px', fontSize: '11px' }}>
+                          {f.pago ? '↩' : '✅'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
+                  <td style={{ padding: '8px', fontSize: '13px' }} colSpan={3}>TOTAIS</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.salarioBase, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.periculosidade, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(totais.variavel - folhasFiltradas.reduce((s, f) => s + f.variavelDe20a31, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ffcc80' }}>{fmtMoeda(totais.pgto20)}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.diferencaSalario, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.variavelDe20a31, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.inss, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.contrAssistencial, 0))}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#b3e5fc' }}>{fmtMoeda(totais.pgto05)}</td>
+                  <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>{fmtMoeda(totais.saldo)}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            </table>
+
+            {/* Legenda */}
+            <div style={{ marginTop: '12px', fontSize: '11px', color: '#666', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <span>🟠 <strong>Pgto dia 20</strong> = variável até 19 + adiantamento 40% sal.</span>
+              <span>🔵 <strong>Pgto dia 05</strong> = variável 20–31 + diferença sal. (60%) − INSS − contr. assist.</span>
+              <span>🟣 <strong>Periculosidade</strong>: CLT motoboy = 30% sobre salário base</span>
+            </div>
+          </div>
         )}
       </div>
       <Footer showLinks={true} />
     </div>
   );
 }
-
-const styles: { [key: string]: React.CSSProperties } = {
-  pageWrapper: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    minHeight: '100vh',
-  } as React.CSSProperties,
-  container: {
-    padding: '20px',
-    maxWidth: '1600px',
-    margin: '0 auto',
-    width: '100%',
-    flex: 1,
-  },
-  filtrosContainer: {
-    display: 'flex',
-    gap: '20px',
-    marginBottom: '20px',
-    flexWrap: 'wrap',
-  },
-  formGroup: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '5px',
-  },
-  input: {
-    padding: '10px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    fontSize: '14px',
-    minWidth: '150px',
-  },
-  tableWrapper: {
-    overflowX: 'auto',
-    marginBottom: '20px',
-    border: '1px solid #ddd',
-    borderRadius: '8px',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: '13px',
-  },
-  headerRow: {
-    backgroundColor: '#007bff',
-    color: 'white',
-  },
-  th: {
-    padding: '12px',
-    textAlign: 'left',
-    fontWeight: 'bold',
-    borderRight: '1px solid #0056b3',
-  },
-  row: {
-    borderBottom: '1px solid #ddd',
-  },
-  td: {
-    padding: '12px',
-    borderRight: '1px solid #eee',
-  },
-  botaoPix: {
-    padding: '6px 12px',
-    backgroundColor: '#007bff',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '12px',
-  },
-  badge: {
-    padding: '6px 12px',
-    borderRadius: '4px',
-    color: 'white',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    display: 'inline-block',
-  },
-  botao: {
-    padding: '6px 12px',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '12px',
-  },
-  resumo: {
-    display: 'flex',
-    gap: '30px',
-    padding: '20px',
-    backgroundColor: '#f9f9f9',
-    borderRadius: '8px',
-    border: '2px solid #007bff',
-  },
-  resumoItem: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '5px',
-  },
-  resumoLabel: {
-    fontSize: '14px',
-    color: '#666',
-    fontWeight: 'bold',
-  },
-  resumoValor: {
-    fontSize: '18px',
-    fontWeight: 'bold',
-    color: '#007bff',
-  },
-};
