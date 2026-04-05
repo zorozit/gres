@@ -859,59 +859,182 @@ exports.handler = async (event) => {
 
     // POST ESCALAS
     if ((rawPath === '/escalas' || rawPath.includes('/escalas')) && httpMethod === 'POST') {
-      const { unidadeId, data, colaboradorId, turno } = body;
-
-      if (!unidadeId || !data || !colaboradorId || !turno) {
-        return response(400, { error: 'Campos obrigatórios faltando' });
+      const uid = body.unitId || body.unidadeId;
+      const { data, colaboradorId, turno, observacao } = body;
+      if (!uid || !data || !colaboradorId || !turno) {
+        return response(400, { error: 'unitId, data, colaboradorId e turno são obrigatórios' });
       }
-
       try {
         const item = {
-          id: `${unidadeId}-${Date.now()}`,
-          unidadeId,
-          data,
-          colaboradorId,
-          turno,
-          timestamp: new Date().toISOString()
+          id: `esc-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          unitId: uid, unidadeId: uid, data, colaboradorId, turno,
+          observacao: observacao || '',
+          timestamp: new Date().toISOString(), createdAt: new Date().toISOString()
         };
-
-        await dynamodb.put({
-          TableName: 'gres-prod-escalas',
-          Item: item
-        }).promise();
-
+        await dynamodb.put({ TableName: 'gres-prod-escalas', Item: item }).promise();
         return response(201, { success: true, id: item.id });
-      } catch (error) {
-        console.error('DynamoDB error:', error);
+      } catch (err) {
+        console.error('DynamoDB error:', err);
         return response(500, { error: 'Erro ao salvar escala' });
       }
     }
 
-    // GET ESCALAS
-    if ((rawPath === '/escalas' || rawPath.includes('/escalas')) && httpMethod === 'GET') {
-      const unidadeId = queryParams.unidadeId;
-
+    // GET ESCALAS — suporta unitId, unidadeId, mes (YYYY-MM)
+    if (rawPath === '/escalas' && httpMethod === 'GET') {
+      const uid = queryParams.unitId || queryParams.unidadeId;
+      const mes = queryParams.mes; // ex: 2026-03
       try {
-        let result;
-        if (unidadeId) {
-          result = await dynamodb.query({
-            TableName: 'gres-prod-escalas',
-            IndexName: 'unidadeId-timestamp-index',
-            KeyConditionExpression: 'unidadeId = :uid',
-            ExpressionAttributeValues: {
-              ':uid': unidadeId
+        let items = [];
+        if (uid) {
+          // Tenta query pelo índice, fallback para scan filtrado
+          try {
+            const r = await dynamodb.query({
+              TableName: 'gres-prod-escalas',
+              IndexName: 'unidadeId-timestamp-index',
+              KeyConditionExpression: 'unidadeId = :uid',
+              ExpressionAttributeValues: { ':uid': uid }
+            }).promise();
+            items = r.Items || [];
+          } catch {
+            const r = await dynamodb.scan({ TableName: 'gres-prod-escalas' }).promise();
+            items = (r.Items || []).filter(i => i.unitId === uid || i.unidadeId === uid);
+          }
+        } else {
+          const r = await dynamodb.scan({ TableName: 'gres-prod-escalas' }).promise();
+          items = r.Items || [];
+        }
+        if (mes) items = items.filter(i => (i.data || '').startsWith(mes));
+        return response(200, items);
+      } catch (err) {
+        console.error('DynamoDB error:', err);
+        return response(500, { error: 'Erro ao buscar escalas' });
+      }
+    }
+
+    // DELETE ESCALA
+    if (rawPath.includes('/escalas/') && httpMethod === 'DELETE') {
+      const escId = rawPath.split('/').pop();
+      if (!escId) return response(400, { error: 'ID obrigatório' });
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao deletar escala' });
+      }
+    }
+
+    // ── CONTROLE DIÁRIO MOTOBOY ────────────────────────────────────────
+    // POST /controle-motoboy — salva array de linhas do mês
+    if (rawPath === '/controle-motoboy' && httpMethod === 'POST') {
+      const { motoboyId, mes, unitId, linhas } = body;
+      if (!motoboyId || !mes || !Array.isArray(linhas)) {
+        return response(400, { error: 'motoboyId, mes e linhas são obrigatórios' });
+      }
+      try {
+        // Upsert em lote (DynamoDB transact ou batch write)
+        const chunks = [];
+        for (let i = 0; i < linhas.length; i += 25) chunks.push(linhas.slice(i, i + 25));
+        for (const chunk of chunks) {
+          await dynamodb.batchWrite({
+            RequestItems: {
+              'gres-prod-controle-motoboy': chunk.map(l => ({
+                PutRequest: {
+                  Item: {
+                    id: `${motoboyId}_${l.data}`,
+                    motoboyId, data: l.data,
+                    diaSemana: l.diaSemana != null ? Number(l.diaSemana) : 0,
+                    salDia: parseFloat(l.salDia) || 0,
+                    entDia: parseFloat(l.entDia) || 0,
+                    caixinhaDia: parseFloat(l.caixinhaDia) || 0,
+                    entNoite: parseFloat(l.entNoite) || 0,
+                    caixinhaNoite: parseFloat(l.caixinhaNoite) || 0,
+                    vlVariavel: parseFloat(l.vlVariavel) || 0,
+                    pgto: parseFloat(l.pgto) || 0,
+                    variavel: parseFloat(l.variavel) || 0,
+                    unitId: unitId || l.unitId || '',
+                    updatedAt: new Date().toISOString()
+                  }
+                }
+              }))
             }
           }).promise();
-        } else {
-          result = await dynamodb.scan({
-            TableName: 'gres-prod-escalas'
-          }).promise();
         }
+        return response(200, { success: true, total: linhas.length });
+      } catch (err) {
+        console.error('controle-motoboy error:', err);
+        return response(500, { error: 'Erro ao salvar controle: ' + err.message });
+      }
+    }
 
-        return response(200, result.Items || []);
-      } catch (error) {
-        console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao buscar escalas' });
+    // GET /controle-motoboy?motoboyId=xxx&mes=2026-03&unitId=xxx
+    if (rawPath === '/controle-motoboy' && httpMethod === 'GET') {
+      const { motoboyId, mes, unitId } = queryParams;
+      if (!motoboyId) return response(400, { error: 'motoboyId obrigatório' });
+      try {
+        const result = await dynamodb.query({
+          TableName: 'gres-prod-controle-motoboy',
+          KeyConditionExpression: 'motoboyId = :mid',
+          ExpressionAttributeValues: { ':mid': motoboyId }
+        }).promise();
+        let items = result.Items || [];
+        if (mes) items = items.filter(i => (i.data || '').startsWith(mes));
+        items.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+        return response(200, items);
+      } catch (err) {
+        console.error('controle-motoboy GET error:', err);
+        return response(500, { error: 'Erro ao buscar controle: ' + err.message });
+      }
+    }
+
+    // ── FOLHA DE PAGAMENTO ──────────────────────────────────────────────
+    // POST /folha-pagamento — salva status de pagamento
+    if (rawPath === '/folha-pagamento' && httpMethod === 'POST') {
+      const { colaboradorId, mes, unitId, pago, dataPagamento, saldoFinal } = body;
+      if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
+      try {
+        const item = {
+          id: `${colaboradorId}_${mes}`,
+          colaboradorId, mes, unitId: unitId || '',
+          pago: pago === true,
+          dataPagamento: dataPagamento || null,
+          saldoFinal: parseFloat(saldoFinal) || 0,
+          updatedAt: new Date().toISOString()
+        };
+        await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        console.error('folha-pagamento error:', err);
+        return response(500, { error: 'Erro ao salvar folha: ' + err.message });
+      }
+    }
+
+    // GET /folha-pagamento?unitId=xxx&mes=2026-03
+    if (rawPath === '/folha-pagamento' && httpMethod === 'GET') {
+      const { unitId, mes } = queryParams;
+      try {
+        let items = [];
+        if (mes && unitId) {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-folha-pagamento',
+            FilterExpression: 'mes = :m AND unitId = :u',
+            ExpressionAttributeValues: { ':m': mes, ':u': unitId }
+          }).promise();
+          items = r.Items || [];
+        } else if (mes) {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-folha-pagamento',
+            FilterExpression: 'mes = :m',
+            ExpressionAttributeValues: { ':m': mes }
+          }).promise();
+          items = r.Items || [];
+        } else {
+          const r = await dynamodb.scan({ TableName: 'gres-prod-folha-pagamento' }).promise();
+          items = r.Items || [];
+        }
+        return response(200, items);
+      } catch (err) {
+        console.error('folha-pagamento GET error:', err);
+        return response(500, { error: 'Erro ao buscar folha: ' + err.message });
       }
     }
 

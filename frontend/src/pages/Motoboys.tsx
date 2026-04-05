@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
+
+/* ─── Interfaces ─────────────────────────────────────────────────────────── */
 
 interface Motoboy {
   id: string;
@@ -16,40 +18,86 @@ interface Motoboy {
   chavePix?: string;
   unitId?: string;
   vinculo: 'CLT' | 'Freelancer';
+  salario?: number;       // salário base mensal (CLT)
+  periculosidade?: number; // % adicional (ex: 30)
   ativo: boolean;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
+/** Um dia do controle diário de motoboy */
+interface ControleDia {
+  id?: string;
+  motoboyId: string;
+  data: string;          // YYYY-MM-DD
+  diaSemana?: number;    // 0=dom … 6=sáb
+  salDia: number;        // sal+periculosidade / 30
+  // Turno dia
+  entDia: number;        // entregas no turno dia
+  caixinhaDia: number;   // caixinha turno dia
+  // Turno noite
+  entNoite: number;
+  caixinhaNoite: number;
+  vlVariavel: number;    // calculado ou lançado
+  pgto: number;          // pagamento parcial do dia
+  variavel: number;      // acumulado
+  unitId?: string;
+}
+
+/* ─── helpers ────────────────────────────────────────────────────────────── */
+
+const R = (v: any) => parseFloat(v) || 0;
+
+// Calcula vl_variavel de uma linha do controle
+// Base: cada entrega = salDia/30 * proporção (simplificado: salDia por entrada)
+// Regra real: (entDia + entNoite) * (salDia / valorDiario) — mas como o exemplo mostra
+// valores diferentes, usamos a coluna diretamente como input ou deixamos o usuário preencher.
+// Fórmula do exemplo: vl_variavel = entDia * (salDia/diariasEsperadas) + caixinhaDia + caixinhaNoite + entNoite * ...
+// Na prática o sistema armazena o valor calculado externamente.
+// Aqui exibimos e permitimos editar o campo diretamente.
+
+function diasDoMes(ano: number, mes: number) {
+  const dias: string[] = [];
+  const d = new Date(ano, mes - 1, 1);
+  while (d.getMonth() === mes - 1) {
+    dias.push(d.toISOString().split('T')[0]);
+    d.setDate(d.getDate() + 1);
+  }
+  return dias;
+}
+
+function diaSemana(dataStr: string) {
+  return new Date(dataStr + 'T12:00:00').getDay();
+}
+
+const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
 const emptyForm: Partial<Motoboy> = {
-  nome: '',
-  cpf: '',
-  telefone: '',
-  placa: '',
-  dataAdmissao: new Date().toISOString().split('T')[0],
-  dataDemissao: '',
-  comissao: 0,
-  chavePix: '',
-  vinculo: 'Freelancer',
-  ativo: true,
+  nome: '', cpf: '', telefone: '', placa: '', dataAdmissao: new Date().toISOString().split('T')[0],
+  comissao: 0, chavePix: '', vinculo: 'Freelancer', salario: 0, periculosidade: 30, ativo: true,
 };
 
-const VINCULOS = ['CLT', 'Freelancer'] as const;
+/* ─── Component ─────────────────────────────────────────────────────────── */
 
 export const Motoboys: React.FC = () => {
   const { activeUnit } = useUnit();
-
   const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
 
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
   const [loading, setLoading] = useState(false);
-  const [abaSelecionada, setAbaSelecionada] = useState<'lista' | 'novo'>('lista');
+  const [aba, setAba] = useState<'lista' | 'controle' | 'novo'>('lista');
   const [formData, setFormData] = useState<Partial<Motoboy>>({ ...emptyForm, unitId });
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [filtroVinculo, setFiltroVinculo] = useState<'Todos' | 'CLT' | 'Freelancer'>('Todos');
   const [filtroAtivo, setFiltroAtivo] = useState<'Todos' | 'Ativo' | 'Inativo'>('Ativo');
   const [busca, setBusca] = useState('');
+
+  // Controle diário
+  const hoje = new Date();
+  const [ctrlMesAno, setCtrlMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
+  const [ctrlMotoboyId, setCtrlMotoboyId] = useState('');
+  const [controle, setControle] = useState<ControleDia[]>([]);
+  const [loadingCtrl, setLoadingCtrl] = useState(false);
+  const [salvandoCtrl, setSalvandoCtrl] = useState(false);
 
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
@@ -58,374 +106,499 @@ export const Motoboys: React.FC = () => {
     try {
       const token = localStorage.getItem('auth_token');
       const url = unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`;
-      const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-      const data = await response.json();
-      setMotoboys(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Erro ao buscar motoboys:', error);
-    } finally {
-      setLoading(false);
-    }
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setMotoboys(Array.isArray(d) ? d : []);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
+
+  /* ── Controle diário ─────────────────────────────────── */
+
+  const fetchControle = async () => {
+    if (!ctrlMotoboyId || !ctrlMesAno) return;
+    setLoadingCtrl(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const r = await fetch(`${apiUrl}/controle-motoboy?motoboyId=${ctrlMotoboyId}&mes=${ctrlMesAno}&unitId=${unitId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      if (Array.isArray(d) && d.length > 0) {
+        setControle(d);
+      } else {
+        // Inicializar planilha em branco para o mês
+        const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+        const salBase = R(motoboy?.salario);
+        const peri = R(motoboy?.periculosidade) / 100;
+        const salDia = salBase > 0 ? parseFloat(((salBase * (1 + peri)) / 30).toFixed(2)) : 0;
+        const [ano, mes] = ctrlMesAno.split('-').map(Number);
+        const dias = diasDoMes(ano, mes);
+        setControle(dias.map(data => ({
+          motoboyId: ctrlMotoboyId, data,
+          diaSemana: diaSemana(data),
+          salDia,
+          entDia: 0, caixinhaDia: 0,
+          entNoite: 0, caixinhaNoite: 0,
+          vlVariavel: 0, pgto: 0, variavel: 0,
+          unitId,
+        })));
+      }
+    } catch (e) { console.error(e); setControle([]); }
+    finally { setLoadingCtrl(false); }
+  };
+
+  useEffect(() => { if (aba === 'controle' && ctrlMotoboyId) fetchControle(); }, [ctrlMotoboyId, ctrlMesAno, aba]);
+
+  // Recalcular variavel acumulado quando controle muda
+  const controleComAcumulado = useMemo(() => {
+    let acumulado = 0;
+    return controle.map(linha => {
+      acumulado += R(linha.vlVariavel);
+      return { ...linha, variavel: parseFloat(acumulado.toFixed(2)) };
+    });
+  }, [controle]);
+
+  const handleCampoControle = (idx: number, campo: keyof ControleDia, valor: string) => {
+    setControle(prev => {
+      const next = [...prev];
+      (next[idx] as any)[campo] = valor === '' ? 0 : parseFloat(valor) || 0;
+      return next;
+    });
+  };
+
+  const salvarControle = async () => {
+    if (!ctrlMotoboyId) return;
+    setSalvandoCtrl(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const payload = { motoboyId: ctrlMotoboyId, mes: ctrlMesAno, unitId, linhas: controleComAcumulado };
+      const r = await fetch(`${apiUrl}/controle-motoboy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) alert('✅ Controle salvo com sucesso!');
+      else {
+        const err = await r.json().catch(() => ({}));
+        alert('Erro ao salvar: ' + (err.error || r.status));
+      }
+    } catch (e) { alert('Erro ao salvar controle'); }
+    finally { setSalvandoCtrl(false); }
+  };
+
+  const exportarControleXLSX = () => {
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    const ws = XLSX.utils.json_to_sheet(controleComAcumulado.map(l => ({
+      'Data': l.data,
+      'Dia Sem': DIAS_SEMANA_ABREV[l.diaSemana ?? diaSemana(l.data)],
+      'Sal.+Per.': l.salDia,
+      'Ent. Dia': l.entDia || '',
+      'Caixinha Dia': l.caixinhaDia || '',
+      'Ent. Noite': l.entNoite || '',
+      'Caixinha Noite': l.caixinhaNoite || '',
+      'Vl. Variável': l.vlVariavel || '',
+      'Pgto': l.pgto || '',
+      'Variável Acum.': l.variavel,
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Controle');
+    XLSX.writeFile(wb, `controle-${motoboy?.nome.split(' ')[0] || 'motoboy'}-${ctrlMesAno}.xlsx`);
+  };
+
+  /* ── Resumo do controle ──────────────────────────────── */
+  const resumoCtrl = useMemo(() => {
+    const totalVariavel = controleComAcumulado.reduce((s, l) => s + R(l.vlVariavel), 0);
+    const totalPgto = controleComAcumulado.reduce((s, l) => s + R(l.pgto), 0);
+    const diasTrab = controleComAcumulado.filter(l => R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.vlVariavel) > 0).length;
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    const salBase = R(motoboy?.salario);
+    const peri = R(motoboy?.periculosidade) / 100;
+    const periculosidadeValor = salBase * peri;
+    const salLiq = salBase; // salário antes de INSS — simplificado
+    return { totalVariavel, totalPgto, diasTrab, salBase, periculosidadeValor, salLiq };
+  }, [controleComAcumulado, ctrlMotoboyId, motoboys]);
+
+  /* ── CRUD motoboys ───────────────────────────────────── */
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.nome || !formData.cpf || !formData.telefone) {
-      alert('Nome, CPF e Telefone são obrigatórios.');
-      return;
-    }
+    if (!formData.nome || !formData.cpf || !formData.telefone) { alert('Nome, CPF e Telefone são obrigatórios.'); return; }
     try {
       const token = localStorage.getItem('auth_token');
       const isEdit = !!editandoId;
       const url = isEdit ? `${apiUrl}/motoboys/${editandoId}` : `${apiUrl}/motoboys`;
-      const method = isEdit ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      const r = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ ...formData, unitId }),
       });
-
-      if (response.ok) {
-        alert(isEdit ? 'Motoboy atualizado com sucesso!' : 'Motoboy cadastrado com sucesso!');
-        resetForm();
-        setAbaSelecionada('lista');
-        fetchMotoboys();
+      if (r.ok) {
+        alert(isEdit ? 'Motoboy atualizado!' : 'Motoboy cadastrado!');
+        resetForm(); setAba('lista'); fetchMotoboys();
       } else {
-        const err = await response.json().catch(() => ({}));
-        alert('Erro ao salvar: ' + (err.error || response.status));
+        const err = await r.json().catch(() => ({}));
+        alert('Erro: ' + (err.error || r.status));
       }
-    } catch (error) {
-      console.error('Erro ao salvar motoboy:', error);
-      alert('Erro ao salvar motoboy');
-    }
+    } catch (e) { alert('Erro ao salvar'); }
   };
 
-  const handleEditar = (moto: Motoboy) => {
-    setFormData({ ...moto });
-    setEditandoId(moto.id);
-    setAbaSelecionada('novo');
-  };
+  const handleEditar = (m: Motoboy) => { setFormData({ ...m }); setEditandoId(m.id); setAba('novo'); };
 
   const handleDeletar = async (id: string, nome: string) => {
-    if (!window.confirm(`Tem certeza que deseja excluir ${nome}?`)) return;
-    try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/motoboys/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (response.ok) {
-        alert('Motoboy excluído com sucesso!');
-        fetchMotoboys();
-      } else {
-        alert('Erro ao excluir motoboy');
-      }
-    } catch (error) {
-      console.error('Erro ao excluir:', error);
-      alert('Erro ao excluir motoboy');
-    }
+    if (!window.confirm(`Excluir ${nome}?`)) return;
+    const token = localStorage.getItem('auth_token');
+    const r = await fetch(`${apiUrl}/motoboys/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    if (r.ok) { alert('Excluído!'); fetchMotoboys(); } else alert('Erro ao excluir');
   };
 
-  const handleToggleAtivo = async (moto: Motoboy) => {
-    try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/motoboys/${moto.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...moto, ativo: !moto.ativo }),
-      });
-      if (response.ok) { fetchMotoboys(); }
-      else { alert('Erro ao atualizar status'); }
-    } catch (error) { alert('Erro ao atualizar status'); }
+  const handleToggleAtivo = async (m: Motoboy) => {
+    const token = localStorage.getItem('auth_token');
+    const r = await fetch(`${apiUrl}/motoboys/${m.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...m, ativo: !m.ativo }),
+    });
+    if (r.ok) fetchMotoboys(); else alert('Erro ao atualizar status');
   };
 
-  const resetForm = () => {
-    setFormData({ ...emptyForm, unitId });
-    setEditandoId(null);
-  };
+  const resetForm = () => { setFormData({ ...emptyForm, unitId }); setEditandoId(null); };
+
+  const motoboysFiltrados = motoboys.filter(m => {
+    if (filtroVinculo !== 'Todos' && m.vinculo !== filtroVinculo) return false;
+    if (filtroAtivo === 'Ativo' && !m.ativo) return false;
+    if (filtroAtivo === 'Inativo' && m.ativo) return false;
+    const q = busca.toLowerCase();
+    if (q && !m.nome.toLowerCase().includes(q) && !m.cpf.includes(q) && !(m.telefone || '').includes(q)) return false;
+    return true;
+  });
 
   const exportarXLSX = () => {
-    const dados = motoboysFiltrados.map(m => ({
-      'Nome': m.nome, 'CPF': m.cpf, 'Telefone': m.telefone,
-      'Placa': m.placa || '-', 'Vínculo': m.vinculo,
-      'Comissão (%)': m.comissao ?? 0, 'Chave PIX': m.chavePix || '-',
-      'Admissão': m.dataAdmissao || '-', 'Demissão': m.dataDemissao || '-',
-      'Ativo': m.ativo ? 'Sim' : 'Não',
-    }));
-    const ws = XLSX.utils.json_to_sheet(dados);
+    const ws = XLSX.utils.json_to_sheet(motoboysFiltrados.map(m => ({
+      Nome: m.nome, CPF: m.cpf, Telefone: m.telefone, Placa: m.placa || '-',
+      Vínculo: m.vinculo, 'Salário': m.salario ?? 0, 'Periculosidade (%)': m.periculosidade ?? 0,
+      'Diária': m.salario ? ((m.salario * (1 + R(m.periculosidade) / 100)) / 30).toFixed(2) : '-',
+      'Chave PIX': m.chavePix || '-', Admissão: m.dataAdmissao || '-', Ativo: m.ativo ? 'Sim' : 'Não',
+    })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Motoboys');
     XLSX.writeFile(wb, `motoboys-${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Filtros
-  const motoboysFiltrados = motoboys.filter(m => {
-    if (filtroVinculo !== 'Todos' && m.vinculo !== filtroVinculo) return false;
-    if (filtroAtivo === 'Ativo'   && !m.ativo) return false;
-    if (filtroAtivo === 'Inativo' && m.ativo)  return false;
-    if (busca && !m.nome.toLowerCase().includes(busca.toLowerCase()) &&
-        !m.cpf.includes(busca) && !(m.telefone || '').includes(busca)) return false;
-    return true;
-  });
+  const fmt = (v: number) => v ? v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
-  const cltCount       = motoboys.filter(m => m.vinculo === 'CLT' && m.ativo).length;
-  const freelancerCount = motoboys.filter(m => m.vinculo === 'Freelancer' && m.ativo).length;
-
+  /* ── Styles ──────────────────────────────────────────── */
   const s = {
-    tab: (active: boolean) => ({
-      padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 'bold',
+    tab: (a: boolean) => ({
+      padding: '10px 18px', border: 'none', cursor: 'pointer', fontWeight: 'bold' as const,
       borderRadius: '4px 4px 0 0',
-      backgroundColor: active ? '#1976d2' : '#e0e0e0',
-      color: active ? 'white' : '#333',
+      backgroundColor: a ? '#1976d2' : '#e0e0e0', color: a ? 'white' : '#333',
     }),
     card: { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.08)' },
     label: { fontSize: '13px', fontWeight: 'bold' as const, marginBottom: '4px', color: '#444', display: 'block' },
     input: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
     select: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
-    btnPrimary: { padding: '10px 20px', border: 'none', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: '#1976d2', color: 'white' },
-    btnSuccess: { padding: '10px 20px', border: 'none', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: '#43a047', color: 'white' },
-    btnDanger:  { padding: '10px 20px', border: 'none', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: '#e53935', color: 'white' },
-    btnSecondary: { padding: '10px 20px', border: 'none', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: '#9e9e9e', color: 'white' },
-    th: { backgroundColor: '#1565c0', color: 'white', padding: '10px 8px', textAlign: 'left' as const, fontWeight: 'bold' as const, whiteSpace: 'nowrap' as const },
-    td: { padding: '10px 8px', borderBottom: '1px solid #f0f0f0', fontSize: '13px', verticalAlign: 'middle' as const },
-    badge: (bg: string, text: string) => ({ backgroundColor: bg, color: text, padding: '2px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' as const, whiteSpace: 'nowrap' as const }),
+    btn: (bg: string) => ({ padding: '8px 16px', border: 'none', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: bg, color: 'white' }),
+    th: { backgroundColor: '#1565c0', color: 'white', padding: '8px 6px', textAlign: 'left' as const, fontWeight: 'bold' as const, whiteSpace: 'nowrap' as const, fontSize: '12px' },
+    td: { padding: '7px 6px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const },
+    badge: (bg: string, color: string) => ({ backgroundColor: bg, color, padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' as const }),
+    numInput: {
+      width: '54px', padding: '3px 4px', border: '1px solid #ccc', borderRadius: '3px',
+      fontSize: '12px', textAlign: 'right' as const, backgroundColor: '#fff',
+    },
   };
 
+  /* ── Render ──────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="🏍️ Gestão de Motoboys" showBack={true} />
+      <div style={{ flex: 1, padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
 
-      <div style={{ flex: 1, padding: '20px', maxWidth: '1300px', margin: '0 auto', width: '100%' }}>
-
-        {/* Resumo */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '24px' }}>
-          <div style={{ ...s.card, borderLeft: '4px solid #1976d2' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>Total ativo</div>
-            <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#1976d2' }}>{motoboys.filter(m => m.ativo).length}</div>
-          </div>
-          <div style={{ ...s.card, borderLeft: '4px solid #43a047' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>CLT ativos</div>
-            <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#43a047' }}>{cltCount}</div>
-          </div>
-          <div style={{ ...s.card, borderLeft: '4px solid #fb8c00' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>Freelancers ativos</div>
-            <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#fb8c00' }}>{freelancerCount}</div>
-          </div>
-          <div style={{ ...s.card, borderLeft: '4px solid #9e9e9e' }}>
-            <div style={{ fontSize: '12px', color: '#666' }}>Inativos</div>
-            <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#9e9e9e' }}>{motoboys.filter(m => !m.ativo).length}</div>
-          </div>
+        {/* Cards resumo */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+          {[
+            { label: 'Total ativos', val: motoboys.filter(m => m.ativo).length, cor: '#1976d2' },
+            { label: 'CLT ativos', val: motoboys.filter(m => m.ativo && m.vinculo === 'CLT').length, cor: '#43a047' },
+            { label: 'Freelancers', val: motoboys.filter(m => m.ativo && m.vinculo === 'Freelancer').length, cor: '#fb8c00' },
+            { label: 'Inativos', val: motoboys.filter(m => !m.ativo).length, cor: '#9e9e9e' },
+          ].map(c => (
+            <div key={c.label} style={{ ...s.card, borderLeft: `4px solid ${c.cor}` }}>
+              <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
+              <div style={{ fontSize: '26px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+            </div>
+          ))}
         </div>
 
         {/* Abas */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '0', borderBottom: '2px solid #e0e0e0' }}>
-          <button style={s.tab(abaSelecionada === 'lista')} onClick={() => { setAbaSelecionada('lista'); resetForm(); }}>
-            📋 Lista de Motoboys
-          </button>
-          <button style={s.tab(abaSelecionada === 'novo')} onClick={() => { setAbaSelecionada('novo'); }}>
-            {editandoId ? '✏️ Editar Motoboy' : '➕ Novo Motoboy'}
+        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0' }}>
+          <button style={s.tab(aba === 'lista')} onClick={() => { setAba('lista'); resetForm(); }}>📋 Lista</button>
+          <button style={s.tab(aba === 'controle')} onClick={() => setAba('controle')}>📊 Controle Diário</button>
+          <button style={s.tab(aba === 'novo')} onClick={() => setAba('novo')}>
+            {editandoId ? '✏️ Editar' : '➕ Novo'}
           </button>
         </div>
 
-        {/* ABA LISTA */}
-        {abaSelecionada === 'lista' && (
+        {/* ─── LISTA ─────────────────────────────────────────────── */}
+        {aba === 'lista' && (
           <div style={{ ...s.card, borderRadius: '0 8px 8px 8px' }}>
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '14px', alignItems: 'flex-end' }}>
               <div>
-                <label style={s.label}>Buscar:</label>
-                <input type="text" placeholder="Nome, CPF ou telefone..." value={busca} onChange={e => setBusca(e.target.value)}
-                  style={{ ...s.input, width: '220px' }} />
+                <label style={s.label}>Buscar</label>
+                <input type="text" placeholder="Nome, CPF, tel..." value={busca} onChange={e => setBusca(e.target.value)} style={{ ...s.input, width: '200px' }} />
               </div>
               <div>
-                <label style={s.label}>Vínculo:</label>
-                <select value={filtroVinculo} onChange={e => setFiltroVinculo(e.target.value as any)} style={{ ...s.select, width: '150px' }}>
-                  <option value="Todos">Todos</option>
-                  <option value="CLT">CLT</option>
-                  <option value="Freelancer">Freelancer</option>
+                <label style={s.label}>Vínculo</label>
+                <select value={filtroVinculo} onChange={e => setFiltroVinculo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
+                  <option value="Todos">Todos</option><option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
                 </select>
               </div>
               <div>
-                <label style={s.label}>Status:</label>
-                <select value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
-                  <option value="Todos">Todos</option>
-                  <option value="Ativo">Ativos</option>
-                  <option value="Inativo">Inativos</option>
+                <label style={s.label}>Status</label>
+                <select value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value as any)} style={{ ...s.select, width: '110px' }}>
+                  <option value="Todos">Todos</option><option value="Ativo">Ativos</option><option value="Inativo">Inativos</option>
                 </select>
               </div>
-              <button onClick={fetchMotoboys} style={s.btnPrimary}>🔄 Atualizar</button>
-              <button onClick={exportarXLSX} style={s.btnSuccess}>📥 Exportar XLSX</button>
+              <button onClick={fetchMotoboys} style={s.btn('#1976d2')}>🔄</button>
+              <button onClick={exportarXLSX} style={s.btn('#43a047')}>📥 XLSX</button>
             </div>
 
-            {loading ? (
-              <p style={{ textAlign: 'center', color: '#999', padding: '30px' }}>Carregando...</p>
-            ) : motoboysFiltrados.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#999', padding: '30px' }}>
-                Nenhum motoboy encontrado. {motoboys.length === 0 && <span>Cadastre o primeiro clicando em "Novo Motoboy".</span>}
-              </p>
-            ) : (
+            {loading ? <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Carregando...</p>
+              : motoboysFiltrados.length === 0 ? <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Nenhum motoboy encontrado.</p>
+              : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      <th style={s.th}>Nome</th>
-                      <th style={s.th}>Vínculo</th>
-                      <th style={s.th}>CPF</th>
-                      <th style={s.th}>Telefone</th>
-                      <th style={s.th}>Placa</th>
-                      <th style={s.th}>Comissão</th>
-                      <th style={s.th}>Chave PIX</th>
-                      <th style={s.th}>Admissão</th>
-                      <th style={s.th}>Status</th>
-                      <th style={{ ...s.th, textAlign: 'center', minWidth: '140px' }}>Ações</th>
+                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário', 'Diária', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
+                        <th key={h} style={s.th}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {motoboysFiltrados.map(moto => (
-                      <tr key={moto.id}
-                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f0f7ff')}
-                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
-                        <td style={{ ...s.td, fontWeight: 'bold' }}>{moto.nome}</td>
-                        <td style={s.td}>
-                          <span style={moto.vinculo === 'CLT'
-                            ? s.badge('#e8f5e9', '#2e7d32')
-                            : s.badge('#fff3e0', '#e65100')}>
-                            {moto.vinculo}
-                          </span>
-                        </td>
-                        <td style={s.td}>{moto.cpf}</td>
-                        <td style={s.td}>{moto.telefone}</td>
-                        <td style={s.td}>{moto.placa || '-'}</td>
-                        <td style={s.td}>{moto.comissao != null ? `${moto.comissao}%` : '-'}</td>
-                        <td style={s.td}>{moto.chavePix || '-'}</td>
-                        <td style={s.td}>{moto.dataAdmissao || '-'}</td>
-                        <td style={s.td}>
-                          <span style={moto.ativo ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fce4e4', '#c62828')}>
-                            {moto.ativo ? '● Ativo' : '○ Inativo'}
-                          </span>
-                        </td>
-                        <td style={{ ...s.td, textAlign: 'center' }}>
-                          <button onClick={() => handleEditar(moto)}
-                            style={{ padding: '4px 10px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '4px' }}>
-                            ✏️ Editar
-                          </button>
-                          <button onClick={() => handleToggleAtivo(moto)}
-                            style={{ padding: '4px 10px', backgroundColor: moto.ativo ? '#fb8c00' : '#43a047', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '4px' }}>
-                            {moto.ativo ? '⏸' : '▶'}
-                          </button>
-                          <button onClick={() => handleDeletar(moto.id, moto.nome)}
-                            style={{ padding: '4px 10px', backgroundColor: '#e53935', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
-                            🗑️
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {motoboysFiltrados.map(m => {
+                      const peri = R(m.periculosidade) / 100;
+                      const salComPeri = R(m.salario) * (1 + peri);
+                      const diaria = m.salario ? (salComPeri / 30).toFixed(2) : '-';
+                      return (
+                        <tr key={m.id}
+                          onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f0f7ff')}
+                          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
+                          <td style={{ ...s.td, fontWeight: 'bold' }}>{m.nome}</td>
+                          <td style={s.td}>
+                            <span style={m.vinculo === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>{m.vinculo}</span>
+                          </td>
+                          <td style={s.td}>{m.cpf}</td>
+                          <td style={s.td}>{m.telefone}</td>
+                          <td style={s.td}>{m.placa || '-'}</td>
+                          <td style={s.td}>{m.salario ? `R$ ${fmt(m.salario)}` : '-'}</td>
+                          <td style={{ ...s.td, fontWeight: 'bold', color: '#1976d2' }}>R$ {diaria}</td>
+                          <td style={s.td}>{m.periculosidade != null ? `${m.periculosidade}%` : '-'}</td>
+                          <td style={s.td}>{m.chavePix || '-'}</td>
+                          <td style={s.td}>{m.dataAdmissao || '-'}</td>
+                          <td style={s.td}>
+                            <span style={m.ativo ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fce4e4', '#c62828')}>
+                              {m.ativo ? '● Ativo' : '○ Inativo'}
+                            </span>
+                          </td>
+                          <td style={{ ...s.td }}>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button onClick={() => { setCtrlMotoboyId(m.id); setAba('controle'); }} style={{ ...s.btn('#0288d1'), fontSize: '11px', padding: '3px 8px' }}>📊</button>
+                              <button onClick={() => handleEditar(m)} style={{ ...s.btn('#1976d2'), fontSize: '11px', padding: '3px 8px' }}>✏️</button>
+                              <button onClick={() => handleToggleAtivo(m)} style={{ ...s.btn(m.ativo ? '#fb8c00' : '#43a047'), fontSize: '11px', padding: '3px 8px' }}>{m.ativo ? '⏸' : '▶'}</button>
+                              <button onClick={() => handleDeletar(m.id, m.nome)} style={{ ...s.btn('#e53935'), fontSize: '11px', padding: '3px 8px' }}>🗑</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-                <div style={{ padding: '10px 0', color: '#666', fontSize: '13px' }}>
-                  {motoboysFiltrados.length} de {motoboys.length} motoboy(s)
-                </div>
+                <div style={{ padding: '8px 0', color: '#666', fontSize: '12px' }}>{motoboysFiltrados.length} de {motoboys.length} motoboy(s)</div>
               </div>
             )}
           </div>
         )}
 
-        {/* ABA FORMULÁRIO */}
-        {abaSelecionada === 'novo' && (
+        {/* ─── CONTROLE DIÁRIO ────────────────────────────────────── */}
+        {aba === 'controle' && (
+          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px' }}>
+            {/* Seleção */}
+            <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
+              <div>
+                <label style={s.label}>Motoboy</label>
+                <select value={ctrlMotoboyId} onChange={e => setCtrlMotoboyId(e.target.value)} style={{ ...s.select, width: '240px' }}>
+                  <option value="">Selecione...</option>
+                  {motoboys.filter(m => m.ativo).map(m => (
+                    <option key={m.id} value={m.id}>{m.nome} ({m.vinculo})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={s.label}>Mês</label>
+                <input type="month" value={ctrlMesAno} onChange={e => setCtrlMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
+              </div>
+              <button onClick={fetchControle} disabled={!ctrlMotoboyId} style={s.btn('#1976d2')}>🔄 Carregar</button>
+              <button onClick={salvarControle} disabled={!ctrlMotoboyId || salvandoCtrl} style={s.btn('#43a047')}>
+                {salvandoCtrl ? '⏳ Salvando...' : '💾 Salvar'}
+              </button>
+              <button onClick={exportarControleXLSX} disabled={!ctrlMotoboyId || controle.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
+            </div>
+
+            {!ctrlMotoboyId ? (
+              <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Selecione um motoboy para ver o controle diário.</p>
+            ) : loadingCtrl ? (
+              <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Carregando...</p>
+            ) : (
+              <>
+                {/* Cards resumo do mês */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                  {[
+                    { label: 'Dias trabalhados', val: resumoCtrl.diasTrab, cor: '#1976d2' },
+                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047' },
+                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
+                    { label: 'Saldo variável', val: `R$ ${fmt(resumoCtrl.totalVariavel - resumoCtrl.totalPgto)}`, cor: resumoCtrl.totalVariavel - resumoCtrl.totalPgto > 0 ? '#2e7d32' : '#c62828' },
+                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a' },
+                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100' },
+                  ].map(c => (
+                    <div key={c.label} style={{ ...s.card, padding: '10px', borderLeft: `3px solid ${c.cor}` }}>
+                      <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Tabela diária */}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr>
+                        {[
+                          'Data', 'Dia Sem', 'Sal.+Per.', 'Ent. Dia', 'Caixinha Dia',
+                          'Ent. Noite', 'Caixinha Noite', 'Vl. Variável', 'Pgto', 'Variável Acum.'
+                        ].map(h => <th key={h} style={s.th}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {controleComAcumulado.map((l, idx) => {
+                        const dow = l.diaSemana ?? diaSemana(l.data);
+                        const folga = dow === 0 || dow === 1;
+                        const rowBg = folga ? '#f5f5f5' : idx % 2 === 0 ? '#fafff8' : 'white';
+                        return (
+                          <tr key={l.data} style={{ backgroundColor: rowBg }}>
+                            <td style={{ ...s.td, fontWeight: 'bold' }}>{l.data.split('-').reverse().join('/')}</td>
+                            <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
+                              {DIAS_SEMANA_ABREV[dow]}
+                            </td>
+                            <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
+                            {/* Campos editáveis */}
+                            {(['entDia', 'caixinhaDia', 'entNoite', 'caixinhaNoite', 'vlVariavel', 'pgto'] as const).map(campo => (
+                              <td key={campo} style={s.td}>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  style={s.numInput}
+                                  value={(l as any)[campo] || ''}
+                                  onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                  onFocus={e => e.target.select()}
+                                  placeholder="0"
+                                />
+                              </td>
+                            ))}
+                            <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32' }}>{fmt(l.variavel)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                        <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entNoite), 0)}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaNoite), 0))}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
+                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
+                  <button onClick={salvarControle} disabled={salvandoCtrl} style={s.btn('#43a047')}>
+                    {salvandoCtrl ? '⏳ Salvando...' : '💾 Salvar Controle'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ─── FORMULÁRIO CADASTRO/EDIÇÃO ──────────────────────────── */}
+        {aba === 'novo' && (
           <div style={{ ...s.card, borderRadius: '0 8px 8px 8px' }}>
             <h2 style={{ marginTop: 0 }}>{editandoId ? '✏️ Editar Motoboy' : '➕ Cadastrar Motoboy'}</h2>
-
             <form onSubmit={handleSubmit}>
-              {/* Dados Pessoais */}
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
+              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
                 <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>👤 Dados Pessoais</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
-                  <div>
-                    <label style={s.label}>Nome completo *</label>
-                    <input type="text" placeholder="Ex: João da Silva" value={formData.nome || ''} onChange={e => setFormData({ ...formData, nome: e.target.value })} style={s.input} required />
-                  </div>
-                  <div>
-                    <label style={s.label}>CPF *</label>
-                    <input type="text" placeholder="000.000.000-00" value={formData.cpf || ''} onChange={e => setFormData({ ...formData, cpf: e.target.value })} style={s.input} required />
-                  </div>
-                  <div>
-                    <label style={s.label}>Telefone *</label>
-                    <input type="tel" placeholder="(00) 00000-0000" value={formData.telefone || ''} onChange={e => setFormData({ ...formData, telefone: e.target.value })} style={s.input} required />
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+                  <div><label style={s.label}>Nome *</label><input type="text" value={formData.nome || ''} onChange={e => setFormData({ ...formData, nome: e.target.value })} style={s.input} required /></div>
+                  <div><label style={s.label}>CPF *</label><input type="text" placeholder="000.000.000-00" value={formData.cpf || ''} onChange={e => setFormData({ ...formData, cpf: e.target.value })} style={s.input} required /></div>
+                  <div><label style={s.label}>Celular *</label><input type="tel" placeholder="(00) 00000-0000" value={formData.telefone || ''} onChange={e => setFormData({ ...formData, telefone: e.target.value })} style={s.input} required /></div>
+                  <div><label style={s.label}>Chave PIX</label><input type="text" value={formData.chavePix || ''} onChange={e => setFormData({ ...formData, chavePix: e.target.value })} style={s.input} /></div>
                 </div>
               </fieldset>
 
-              {/* Vínculo */}
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
-                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>📋 Vínculo Empregatício</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
+                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>📋 Vínculo e Salário</legend>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
                   <div>
-                    <label style={s.label}>Tipo de vínculo *</label>
+                    <label style={s.label}>Vínculo *</label>
                     <select value={formData.vinculo || 'Freelancer'} onChange={e => setFormData({ ...formData, vinculo: e.target.value as any })} style={s.select}>
-                      {VINCULOS.map(v => <option key={v} value={v}>{v}</option>)}
+                      <option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
                     </select>
-                    {formData.vinculo === 'CLT' && (
-                      <small style={{ color: '#2e7d32' }}>👔 CLT: registro em carteira, férias, 13º, FGTS</small>
-                    )}
-                    {formData.vinculo === 'Freelancer' && (
-                      <small style={{ color: '#e65100' }}>🏍️ Freelancer: autônomo, pagamento por entrega/dia</small>
-                    )}
                   </div>
+                  <div><label style={s.label}>Salário Base (R$)</label><input type="number" step="0.01" min="0" value={formData.salario ?? ''} onChange={e => setFormData({ ...formData, salario: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
                   <div>
-                    <label style={s.label}>Data de admissão</label>
-                    <input type="date" value={formData.dataAdmissao || ''} onChange={e => setFormData({ ...formData, dataAdmissao: e.target.value })} style={s.input} />
+                    <label style={s.label}>Periculosidade (%)</label>
+                    <input type="number" step="1" min="0" max="100" placeholder="30" value={formData.periculosidade ?? ''} onChange={e => setFormData({ ...formData, periculosidade: parseFloat(e.target.value) || 0 })} style={s.input} />
+                    {formData.salario && formData.periculosidade ? (
+                      <small style={{ color: '#2e7d32' }}>
+                        Diária: R$ {(R(formData.salario) * (1 + R(formData.periculosidade) / 100) / 30).toFixed(2)}
+                      </small>
+                    ) : null}
                   </div>
+                  <div><label style={s.label}>Comissão por entrega (%)</label><input type="number" step="0.01" min="0" value={formData.comissao ?? ''} onChange={e => setFormData({ ...formData, comissao: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
+                  <div><label style={s.label}>Admissão</label><input type="date" value={formData.dataAdmissao || ''} onChange={e => setFormData({ ...formData, dataAdmissao: e.target.value })} style={s.input} /></div>
                   {formData.vinculo === 'CLT' && (
-                    <div>
-                      <label style={s.label}>Data de demissão</label>
-                      <input type="date" value={formData.dataDemissao || ''} onChange={e => setFormData({ ...formData, dataDemissao: e.target.value })} style={s.input} />
-                    </div>
+                    <div><label style={s.label}>Demissão</label><input type="date" value={formData.dataDemissao || ''} onChange={e => setFormData({ ...formData, dataDemissao: e.target.value })} style={s.input} /></div>
                   )}
-                  <div>
-                    <label style={s.label}>Comissão (%)</label>
-                    <input type="number" step="0.01" min="0" max="100" placeholder="Ex: 10" value={formData.comissao ?? 0} onChange={e => setFormData({ ...formData, comissao: parseFloat(e.target.value) || 0 })} style={s.input} />
-                  </div>
                 </div>
               </fieldset>
 
-              {/* Operacional */}
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '16px' }}>
-                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>🏍️ Dados Operacionais</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
-                  <div>
-                    <label style={s.label}>Placa da moto</label>
-                    <input type="text" placeholder="ABC-1234 ou BRA2E19" value={formData.placa || ''} onChange={e => setFormData({ ...formData, placa: e.target.value.toUpperCase() })} style={s.input} />
-                  </div>
-                  <div>
-                    <label style={s.label}>Chave PIX</label>
-                    <input type="text" placeholder="CPF, e-mail, telefone ou chave aleatória" value={formData.chavePix || ''} onChange={e => setFormData({ ...formData, chavePix: e.target.value })} style={s.input} />
-                  </div>
+              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
+                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>🏍️ Operacional</legend>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
+                  <div><label style={s.label}>Placa</label><input type="text" placeholder="ABC-1234" value={formData.placa || ''} onChange={e => setFormData({ ...formData, placa: e.target.value.toUpperCase() })} style={s.input} /></div>
                   <div>
                     <label style={s.label}>Status</label>
                     <select value={formData.ativo ? 'true' : 'false'} onChange={e => setFormData({ ...formData, ativo: e.target.value === 'true' })} style={s.select}>
-                      <option value="true">Ativo</option>
-                      <option value="false">Inativo</option>
+                      <option value="true">Ativo</option><option value="false">Inativo</option>
                     </select>
                   </div>
                 </div>
               </fieldset>
 
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button type="submit" style={s.btnSuccess}>
-                  {editandoId ? '💾 Salvar alterações' : '✅ Cadastrar Motoboy'}
-                </button>
-                {editandoId && (
-                  <button type="button" onClick={resetForm} style={s.btnSecondary}>
-                    ✕ Cancelar edição
-                  </button>
-                )}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button type="submit" style={s.btn('#43a047')}>{editandoId ? '💾 Salvar' : '✅ Cadastrar'}</button>
+                {editandoId && <button type="button" onClick={resetForm} style={s.btn('#9e9e9e')}>✕ Cancelar</button>}
               </div>
             </form>
           </div>
         )}
-      </div>
 
+      </div>
       <Footer showLinks={true} />
     </div>
   );
