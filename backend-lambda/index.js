@@ -1446,6 +1446,84 @@ exports.handler = async (event) => {
       }
     }
 
+    // ─── POST /freelancers ──────────────────────────────────────────────
+    if ((rawPath === '/freelancers' || rawPath.includes('/freelancers')) && httpMethod === 'POST' && !rawPath.match(/\/freelancers\/.+/)) {
+      const { nome, chavePix, telefone, cargo, valorDobra, ativo, unitId: uid } = body;
+      if (!nome) return response(400, { error: 'Nome é obrigatório' });
+      try {
+        const id = `freel-${Date.now()}`;
+        await dynamodb.put({
+          TableName: 'gres-prod-freelancers',
+          Item: {
+            id, nome, chavePix: chavePix || '', telefone: telefone || '',
+            cargo: cargo || '', valorDobra: parseFloat(valorDobra) || 120,
+            ativo: ativo !== false, unitId: uid || '',
+            createdAt: new Date().toISOString(),
+          }
+        }).promise();
+        return response(201, { id, nome });
+      } catch (err) {
+        console.error('freelancers POST error:', err);
+        return response(500, { error: 'Erro ao salvar freelancer: ' + err.message });
+      }
+    }
+
+    // ─── GET /freelancers ───────────────────────────────────────────────
+    if ((rawPath === '/freelancers' || rawPath.includes('/freelancers')) && httpMethod === 'GET' && !rawPath.match(/\/freelancers\/.+/)) {
+      const uid = event.queryStringParameters?.unitId;
+      try {
+        let items = [];
+        if (uid) {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-freelancers',
+            FilterExpression: 'unitId = :uid',
+            ExpressionAttributeValues: { ':uid': uid }
+          }).promise();
+          items = r.Items || [];
+        } else {
+          const r = await dynamodb.scan({ TableName: 'gres-prod-freelancers' }).promise();
+          items = r.Items || [];
+        }
+        return response(200, items);
+      } catch (err) {
+        console.error('freelancers GET error:', err);
+        return response(500, { error: 'Erro ao buscar freelancers: ' + err.message });
+      }
+    }
+
+    // ─── PUT /freelancers/:id ───────────────────────────────────────────
+    if (rawPath.match(/\/freelancers\/.+/) && httpMethod === 'PUT') {
+      const freId = rawPath.split('/').pop();
+      const { nome, chavePix, telefone, cargo, valorDobra, ativo } = body;
+      try {
+        await dynamodb.update({
+          TableName: 'gres-prod-freelancers',
+          Key: { id: freId },
+          UpdateExpression: 'SET #nome = :nome, chavePix = :pix, telefone = :tel, cargo = :cargo, valorDobra = :vd, ativo = :at, updatedAt = :ts',
+          ExpressionAttributeNames: { '#nome': 'nome' },
+          ExpressionAttributeValues: {
+            ':nome': nome, ':pix': chavePix || '', ':tel': telefone || '',
+            ':cargo': cargo || '', ':vd': parseFloat(valorDobra) || 120,
+            ':at': ativo !== false, ':ts': new Date().toISOString()
+          }
+        }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar freelancer: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /freelancers/:id ────────────────────────────────────────
+    if (rawPath.match(/\/freelancers\/.+/) && httpMethod === 'DELETE') {
+      const freId = rawPath.split('/').pop();
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-freelancers', Key: { id: freId } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao excluir freelancer: ' + err.message });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 
