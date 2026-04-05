@@ -218,9 +218,23 @@ export const MovimentosCaixa: React.FC = () => {
   };
 
   /* ── Edit handlers ─────────────────────────────────────── */
-  const handleMudarCampoEdit = (campo: string, valor: any) => {
+  /** Abre modal de edição já com total/diferença recalculados a partir dos campos armazenados */
+  const abrirEdicaoMovimento = (registro: RegistroCaixa) => {
+    const normalizado = normalizeRegistro(registro);
+    const { total, diferenca } = calcularTotais(normalizado);
+    setRegistroEditando({ ...normalizado, total, diferenca });
+  };
+
+  /**
+   * Atualiza campo do registro em edição.
+   * rawValue pode ser string (do onChange) ou number.
+   * Usa parseFloat sem fallback || 0 para não colapsar campos em branco para zero.
+   */
+  const handleMudarCampoEdit = (campo: string, rawValue: string | number) => {
     if (!registroEditando) return;
-    const updated = { ...registroEditando, [campo]: valor };
+    const parsed = typeof rawValue === 'number' ? rawValue : parseFloat(rawValue as string);
+    const numValue = isNaN(parsed) ? 0 : parsed;
+    const updated = { ...registroEditando, [campo]: numValue };
     if (['abertura','maq1','maq2','maq3','maq4','maq5','maq6','ifood','dinheiro','pix','fiado','sistemaPdv'].includes(campo)) {
       const { total, diferenca } = calcularTotais(updated);
       updated.total = total;
@@ -431,7 +445,7 @@ export const MovimentosCaixa: React.FC = () => {
                 </td>
                 <td style={styles.td}>{fmt(registro.referencia)}</td>
                 <td style={{ ...styles.td, textAlign: 'center' }}>
-                  <button onClick={() => setRegistroEditando({ ...normalizeRegistro(registro) })}
+                  <button onClick={() => abrirEdicaoMovimento(registro)}
                     style={{ padding: '4px 10px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginRight: '4px' }}>
                     ✏️ Editar
                   </button>
@@ -489,7 +503,8 @@ export const MovimentosCaixa: React.FC = () => {
                   <label style={styles.label}>{label} (R$):</label>
                   <input type="number" step="0.01"
                     value={(registroEditando as any)[campo] ?? 0}
-                    onChange={e => handleMudarCampoEdit(campo, parseFloat(e.target.value) || 0)}
+                    onChange={e => handleMudarCampoEdit(campo, e.target.value)}
+                    onFocus={e => e.target.select()}
                     style={styles.input} />
                 </div>
               ))}
@@ -500,12 +515,16 @@ export const MovimentosCaixa: React.FC = () => {
               <div style={styles.formGroup}>
                 <label style={styles.label}>Sistema PDV (R$):</label>
                 <input type="number" step="0.01" value={registroEditando.sistemaPdv ?? 0}
-                  onChange={e => handleMudarCampoEdit('sistemaPdv', parseFloat(e.target.value) || 0)} style={styles.input} />
+                  onChange={e => handleMudarCampoEdit('sistemaPdv', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  style={styles.input} />
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>Referência (R$):</label>
                 <input type="number" step="0.01" value={registroEditando.referencia ?? 0}
-                  onChange={e => handleMudarCampoEdit('referencia', parseFloat(e.target.value) || 0)} style={styles.input} />
+                  onChange={e => handleMudarCampoEdit('referencia', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  style={styles.input} />
               </div>
             </div>
 

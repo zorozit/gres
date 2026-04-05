@@ -143,14 +143,23 @@ export default function Caixa() {
     referencia: toNum(r.referencia),
   });
 
+  // Campos que compõem o TOTAL (sangria NÃO entra no total - é retirada separada)
+  const CAMPOS_TOTAL = ['abertura','maq1','maq2','maq3','maq4','maq5','maq6','ifood','dinheiro','pix','fiado'] as const;
+  // Campos que disparam recálculo quando alterados
+  const CAMPOS_RECALCULO = [...CAMPOS_TOTAL, 'sistemaPdv'] as const;
+
   const calcularTotais = (registro: Partial<RegistroCaixa>) => {
-    const total =
-      toNum(registro.abertura) + toNum(registro.maq1) + toNum(registro.maq2) +
-      toNum(registro.maq3) + toNum(registro.maq4) + toNum(registro.maq5) +
-      toNum(registro.maq6) + toNum(registro.ifood) + toNum(registro.dinheiro) +
-      toNum(registro.pix) + toNum(registro.fiado);
+    const total = CAMPOS_TOTAL.reduce((acc, campo) => acc + toNum((registro as any)[campo]), 0);
     const diferenca = toNum(registro.sistemaPdv) - total;
     return { total, diferenca };
+  };
+
+  /** Abre modal de edição já com total/diferenca recalculados a partir dos valores armazenados */
+  const abrirEdicao = (registro: RegistroCaixa) => {
+    const normalizado = normalizeRegistro(registro);
+    // Força recálculo para garantir que o total exibido bate com os campos individuais
+    const { total, diferenca } = calcularTotais(normalizado);
+    setRegistroEditando({ ...normalizado, total, diferenca });
   };
 
   const handleCriarRegistro = async () => {
@@ -225,10 +234,21 @@ export default function Caixa() {
   };
 
   /* ── Modal Edit helpers ────────────────────────────────── */
-  const handleMudarCampoEdit = (campo: string, valor: any) => {
+  /**
+   * Atualiza campo do registro em edição.
+   * Aceita rawValue como string (vindo do onChange) ou number.
+   * Para campos numéricos: preserva o valor digitado no estado como número;
+   * se a string for vazia/inválida usa 0 apenas para o cálculo mas não
+   * sobrescreve o input (o input usa seu próprio valor via `value` → number).
+   */
+  const handleMudarCampoEdit = (campo: string, rawValue: string | number) => {
     if (!registroEditando) return;
-    const updated = { ...registroEditando, [campo]: valor };
-    if (['abertura','maq1','maq2','maq3','maq4','maq5','maq6','ifood','dinheiro','pix','fiado','sistemaPdv'].includes(campo)) {
+    // Converte para número: se vazio ou inválido, usa 0
+    const parsed = typeof rawValue === 'number' ? rawValue : parseFloat(rawValue as string);
+    const numValue = isNaN(parsed) ? 0 : parsed;
+    const updated = { ...registroEditando, [campo]: numValue };
+    // Recalcula sempre que qualquer campo numérico relevante muda
+    if ((CAMPOS_RECALCULO as readonly string[]).includes(campo)) {
       const { total, diferenca } = calcularTotais(updated);
       updated.total = total;
       updated.diferenca = diferenca;
@@ -238,6 +258,7 @@ export default function Caixa() {
 
   const handleSalvarEdicao = async () => {
     if (!registroEditando?.id) return;
+    // Recalculate one final time before sending to guarantee consistency
     const { total, diferenca } = calcularTotais(registroEditando);
     const payload = { ...registroEditando, total, diferenca };
     try {
@@ -466,7 +487,7 @@ export default function Caixa() {
                             </div>
                           </div>
                           <div style={styles.registroActions}>
-                            <button onClick={() => setRegistroEditando({ ...normalizeRegistro(registro) })} style={styles.botaoEditar}>✏️ Editar</button>
+                            <button onClick={() => abrirEdicao(registro)} style={styles.botaoEditar}>✏️ Editar</button>
                             <button onClick={() => handleDeletarRegistro(registro.id)} style={styles.botaoDeletar}>🗑️ Deletar</button>
                           </div>
                         </div>
@@ -517,14 +538,17 @@ export default function Caixa() {
                 { label: 'Dinheiro', campo: 'dinheiro' },
                 { label: 'PIX', campo: 'pix' },
                 { label: 'Fiado', campo: 'fiado' },
-                { label: 'Sangria', campo: 'sangria' },
+                { label: 'Sangria *', campo: 'sangria' },
               ].map(({ label, campo }) => (
                 <div key={campo} style={styles.formGroup}>
                   <label style={styles.label}>{label} (R$):</label>
-                  <input type="number" step="0.01"
+                  <input
+                    type="number" step="0.01"
                     value={(registroEditando as any)[campo] ?? 0}
-                    onChange={e => handleMudarCampoEdit(campo, parseFloat(e.target.value) || 0)}
-                    style={styles.input} />
+                    onChange={e => handleMudarCampoEdit(campo, e.target.value)}
+                    onFocus={e => e.target.select()}
+                    style={styles.input}
+                  />
                 </div>
               ))}
             </div>
@@ -533,18 +557,27 @@ export default function Caixa() {
             <div style={styles.grid2Col}>
               <div style={styles.formGroup}>
                 <label style={styles.label}>Sistema PDV (R$):</label>
-                <input type="number" step="0.01" value={registroEditando.sistemaPdv ?? 0}
-                  onChange={e => handleMudarCampoEdit('sistemaPdv', parseFloat(e.target.value) || 0)} style={styles.input} />
+                <input type="number" step="0.01"
+                  value={registroEditando.sistemaPdv ?? 0}
+                  onChange={e => handleMudarCampoEdit('sistemaPdv', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  style={styles.input} />
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.label}>Referência (R$):</label>
-                <input type="number" step="0.01" value={registroEditando.referencia ?? 0}
-                  onChange={e => handleMudarCampoEdit('referencia', parseFloat(e.target.value) || 0)} style={styles.input} />
+                <input type="number" step="0.01"
+                  value={registroEditando.referencia ?? 0}
+                  onChange={e => handleMudarCampoEdit('referencia', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  style={styles.input} />
+              </div>
+              <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                <small style={{ color: '#888', fontSize: '11px' }}>* Sangria = retirada do caixa físico. Não soma no Total de Entradas.</small>
               </div>
             </div>
 
-            {/* RESUMO LIVE NO MODAL */}
-            <div style={{ ...styles.resumo, gridTemplateColumns: '1fr 1fr 1fr' }}>
+            {/* RESUMO LIVE NO MODAL — recalculado automaticamente */}
+            <div style={{ ...styles.resumo, gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
               <div style={styles.resumoItem}>
                 <span style={styles.resumoLabel}>Total (Entradas):</span>
                 <span style={styles.resumoValor}>{formatarMoeda(registroEditando.total || 0)}</span>
@@ -554,9 +587,15 @@ export default function Caixa() {
                 <span style={styles.resumoValor}>{formatarMoeda(registroEditando.sistemaPdv || 0)}</span>
               </div>
               <div style={styles.resumoItem}>
-                <span style={styles.resumoLabel}>Diferença:</span>
+                <span style={styles.resumoLabel}>Diferença (PDV−Total):</span>
                 <span style={{ ...styles.resumoValor, color: (registroEditando.diferenca || 0) !== 0 ? '#d32f2f' : '#388e3c' }}>
                   {formatarMoeda(registroEditando.diferenca || 0)}
+                </span>
+              </div>
+              <div style={styles.resumoItem}>
+                <span style={styles.resumoLabel}>Sangria (retirada):</span>
+                <span style={{ ...styles.resumoValor, color: '#e65100' }}>
+                  {formatarMoeda(toNum(registroEditando.sangria))}
                 </span>
               </div>
             </div>
