@@ -407,12 +407,23 @@ exports.handler = async (event) => {
       }
     }
 
-    // POST COLABORADORES — ID = col-{uuid}; obrigatório = CPF + telefone (não email)
+    // POST COLABORADORES — ID = col-{uuid}; obrigatórios = Nome + CPF + celular/telefone + unitId
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
-      const { nome, email, telefone, cpf, dataAdmissao, salario, chavePix, cargo, unitId, dataNascimento } = body;
+      const {
+        nome, email, telefone, celular, cpf,
+        tipoContrato, cargo, tipo,
+        valorDia, valorNoite, valorTransporte, valeAlimentacao,
+        salario, chavePix, dataAdmissao, dataNascimento,
+        endereco, numero, complemento, cidade, estado, cep,
+        diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
+        unitId, ativo
+      } = body;
 
-      if (!nome || !cpf || !telefone || !unitId) {
-        return response(400, { error: 'Nome, CPF, telefone e unitId são obrigatórios' });
+      const celularFinal = celular || telefone || '';
+      const cargoFinal   = cargo   || tipo     || '';
+
+      if (!nome || !cpf || !celularFinal || !unitId) {
+        return response(400, { error: 'Nome, CPF, celular e unitId são obrigatórios' });
       }
 
       const unitIdClean = resolveUnitId(unitId);
@@ -430,20 +441,37 @@ exports.handler = async (event) => {
 
         const newId = 'col-' + require('crypto').randomBytes(4).toString('hex');
         const item = {
-          id: newId,
+          id:               newId,
           nome,
           cpf,
-          telefone,
-          email: email || '',
-          cargo: cargo || '',
-          chavePix: chavePix || '',
-          dataNascimento: dataNascimento || '',
-          dataAdmissao: dataAdmissao || new Date().toISOString().split('T')[0],
-          salario: parseFloat(salario) || 0,
-          unitId: unitIdClean,
-          ativo: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          celular:          celularFinal,
+          telefone:         celularFinal,          // retrocompat
+          email:            email || '',
+          tipoContrato:     tipoContrato || 'CLT',
+          cargo:            cargoFinal,
+          tipo:             cargoFinal,            // retrocompat
+          valorDia:         parseFloat(valorDia)          || 0,
+          valorNoite:       parseFloat(valorNoite)        || 0,
+          valorTransporte:  parseFloat(valorTransporte)   || 0,
+          valeAlimentacao:  valeAlimentacao === true || valeAlimentacao === 'true' || false,
+          salario:          parseFloat(salario)           || 0,
+          chavePix:         chavePix         || '',
+          dataAdmissao:     dataAdmissao     || new Date().toISOString().split('T')[0],
+          dataNascimento:   dataNascimento   || '',
+          endereco:         endereco         || '',
+          numero:           numero           || '',
+          complemento:      complemento      || '',
+          cidade:           cidade           || '',
+          estado:           estado           || '',
+          cep:              cep              || '',
+          diasDisponiveis:  Array.isArray(diasDisponiveis)  ? diasDisponiveis  : [],
+          podeTrabalharDia:   podeTrabalharDia   === true || podeTrabalharDia   === 'true' || false,
+          podeTrabalharNoite: podeTrabalharNoite === true || podeTrabalharNoite === 'true' || false,
+          unitId:           unitIdClean,
+          ativo:            ativo !== false,
+          dataCadastro:     new Date().toISOString().split('T')[0],
+          createdAt:        new Date().toISOString(),
+          updatedAt:        new Date().toISOString()
         };
 
         await dynamodb.put({
@@ -455,6 +483,96 @@ exports.handler = async (event) => {
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao salvar colaborador' });
+      }
+    }
+
+    // PUT COLABORADORES — atualiza colaborador existente
+    if (rawPath.includes('/colaboradores/') && httpMethod === 'PUT') {
+      const colaboradorId = rawPath.split('/').pop();
+      if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
+
+      const {
+        nome, email, telefone, celular, cpf,
+        tipoContrato, cargo, tipo,
+        valorDia, valorNoite, valorTransporte, valeAlimentacao,
+        salario, chavePix, dataAdmissao, dataNascimento,
+        endereco, numero, complemento, cidade, estado, cep,
+        diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
+        ativo
+      } = body;
+
+      const celularFinal = celular || telefone || '';
+      const cargoFinal   = cargo   || tipo     || '';
+
+      try {
+        // Busca registro original para preservar campos imutáveis
+        const original = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        if (!original.Item) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        const updated = {
+          ...original.Item,
+          nome:             nome             || original.Item.nome,
+          cpf:              cpf              || original.Item.cpf,
+          celular:          celularFinal     || original.Item.celular || original.Item.telefone || '',
+          telefone:         celularFinal     || original.Item.telefone || '',
+          email:            email            !== undefined ? email : (original.Item.email || ''),
+          tipoContrato:     tipoContrato     || original.Item.tipoContrato || 'CLT',
+          cargo:            cargoFinal       || original.Item.cargo || original.Item.tipo || '',
+          tipo:             cargoFinal       || original.Item.tipo  || original.Item.cargo || '',
+          valorDia:         valorDia         !== undefined ? (parseFloat(valorDia)         || 0) : (original.Item.valorDia         || 0),
+          valorNoite:       valorNoite       !== undefined ? (parseFloat(valorNoite)       || 0) : (original.Item.valorNoite       || 0),
+          valorTransporte:  valorTransporte  !== undefined ? (parseFloat(valorTransporte)  || 0) : (original.Item.valorTransporte  || 0),
+          valeAlimentacao:  valeAlimentacao  !== undefined ? (valeAlimentacao === true || valeAlimentacao === 'true') : (original.Item.valeAlimentacao || false),
+          salario:          salario          !== undefined ? (parseFloat(salario)          || 0) : (original.Item.salario          || 0),
+          chavePix:         chavePix         !== undefined ? chavePix         : (original.Item.chavePix         || ''),
+          dataAdmissao:     dataAdmissao     || original.Item.dataAdmissao     || '',
+          dataNascimento:   dataNascimento   || original.Item.dataNascimento   || '',
+          endereco:         endereco         !== undefined ? endereco     : (original.Item.endereco     || ''),
+          numero:           numero           !== undefined ? numero       : (original.Item.numero       || ''),
+          complemento:      complemento      !== undefined ? complemento  : (original.Item.complemento  || ''),
+          cidade:           cidade           !== undefined ? cidade       : (original.Item.cidade       || ''),
+          estado:           estado           !== undefined ? estado       : (original.Item.estado       || ''),
+          cep:              cep              !== undefined ? cep          : (original.Item.cep          || ''),
+          diasDisponiveis:  Array.isArray(diasDisponiveis) ? diasDisponiveis : (original.Item.diasDisponiveis || []),
+          podeTrabalharDia:   podeTrabalharDia   !== undefined ? (podeTrabalharDia   === true || podeTrabalharDia   === 'true') : (original.Item.podeTrabalharDia   || false),
+          podeTrabalharNoite: podeTrabalharNoite !== undefined ? (podeTrabalharNoite === true || podeTrabalharNoite === 'true') : (original.Item.podeTrabalharNoite || false),
+          ativo:            ativo !== undefined ? (ativo === true || ativo === 'true') : (original.Item.ativo !== false),
+          updatedAt:        new Date().toISOString()
+        };
+
+        await dynamodb.put({
+          TableName: 'gres-prod-colaboradores',
+          Item: updated
+        }).promise();
+
+        return response(200, { success: true, id: colaboradorId, item: updated });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao atualizar colaborador: ' + error.message });
+      }
+    }
+
+    // DELETE COLABORADORES
+    if (rawPath.includes('/colaboradores/') && httpMethod === 'DELETE') {
+      const colaboradorId = rawPath.split('/').pop();
+      if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
+
+      try {
+        await dynamodb.delete({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+
+        return response(200, { success: true, message: 'Colaborador deletado com sucesso' });
+      } catch (error) {
+        console.error('DynamoDB error:', error);
+        return response(500, { error: 'Erro ao deletar colaborador: ' + error.message });
       }
     }
 
