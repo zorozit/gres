@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
@@ -18,41 +18,54 @@ interface Motoboy {
   chavePix?: string;
   unitId?: string;
   vinculo: 'CLT' | 'Freelancer';
-  salario?: number;       // salário base mensal (CLT)
-  periculosidade?: number; // % adicional (ex: 30)
+  salario?: number;
+  periculosidade?: number;
   ativo: boolean;
 }
 
-/** Um dia do controle diário de motoboy */
+/** Saída lançada no módulo de controle financeiro */
+interface Saida {
+  id: string;
+  colaboradorId: string;
+  favorecido?: string;
+  colaborador?: string;
+  valor: number;
+  data: string;
+  turno?: string;
+  viagens?: number;
+  caixinha?: number;
+  tipo?: string;
+  descricao?: string;
+  dataPagamento?: string;
+  unitId?: string;
+}
+
+/** Linha do controle diário (base de dados + dados de saídas) */
 interface ControleDia {
   id?: string;
   motoboyId: string;
-  data: string;          // YYYY-MM-DD
-  diaSemana?: number;    // 0=dom … 6=sáb
-  salDia: number;        // sal+periculosidade / 30
-  // Turno dia
-  entDia: number;        // entregas no turno dia
-  caixinhaDia: number;   // caixinha turno dia
-  // Turno noite
+  data: string;
+  diaSemana?: number;
+  salDia: number;
+  // Turno dia — populados de saídas
+  entDia: number;
+  caixinhaDia: number;
+  // Turno noite — populados de saídas
   entNoite: number;
   caixinhaNoite: number;
-  vlVariavel: number;    // calculado ou lançado
-  pgto: number;          // pagamento parcial do dia
-  variavel: number;      // acumulado
+  vlVariavel: number;
+  pgto: number;
+  variavel: number;
   unitId?: string;
+  // Referência às saídas que geraram os valores
+  saidasDia?: Saida[];
+  saidasNoite?: Saida[];
 }
 
 /* ─── helpers ────────────────────────────────────────────────────────────── */
 
 const R = (v: any) => parseFloat(v) || 0;
-
-// Calcula vl_variavel de uma linha do controle
-// Base: cada entrega = salDia/30 * proporção (simplificado: salDia por entrada)
-// Regra real: (entDia + entNoite) * (salDia / valorDiario) — mas como o exemplo mostra
-// valores diferentes, usamos a coluna diretamente como input ou deixamos o usuário preencher.
-// Fórmula do exemplo: vl_variavel = entDia * (salDia/diariasEsperadas) + caixinhaDia + caixinhaNoite + entNoite * ...
-// Na prática o sistema armazena o valor calculado externamente.
-// Aqui exibimos e permitimos editar o campo diretamente.
+const fmt = (v: number) => v ? v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
 function diasDoMes(ano: number, mes: number) {
   const dias: string[] = [];
@@ -69,6 +82,72 @@ function diaSemana(dataStr: string) {
 }
 
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+/** Normaliza turno para comparação */
+function normalizeTurno(t?: string): 'dia' | 'noite' | '' {
+  const s = (t || '').toLowerCase().trim();
+  if (s === 'dia' || s === 'd') return 'dia';
+  if (s === 'noite' || s === 'n') return 'noite';
+  return '';
+}
+
+/**
+ * Preenche o controle diário de um motoboy com base nas saídas do período.
+ * Saídas com viagens > 0 alimentam entDia/entNoite.
+ * Saídas com valor > 0 (pagamento) alimentam pgto.
+ * Saídas com caixinha > 0 alimentam caixinhaDia/caixinhaNoite.
+ */
+function preencherControleComSaidas(
+  linhasBase: ControleDia[],
+  saidas: Saida[],
+  motoboyId: string
+): ControleDia[] {
+  // Saídas do motoboy
+  const saidasMoto = saidas.filter(s => s.colaboradorId === motoboyId);
+
+  return linhasBase.map(linha => {
+    const saidasDoDia = saidasMoto.filter(s => s.data === linha.data);
+
+    const saidasDia = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
+    const saidasNoite = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
+    const saidasSemTurno = saidasDoDia.filter(s => normalizeTurno(s.turno) === '');
+
+    // Viagens por turno
+    const entDia = saidasDia.reduce((sum, s) => sum + R(s.viagens), 0);
+    const entNoite = saidasNoite.reduce((sum, s) => sum + R(s.viagens), 0);
+
+    // Caixinha por turno
+    const caixinhaDia = saidasDia.reduce((sum, s) => sum + R(s.caixinha), 0);
+    const caixinhaNoite = saidasNoite.reduce((sum, s) => sum + R(s.caixinha), 0);
+
+    // Pagamentos (valor em dinheiro/pix) — soma de todos os turnos
+    const pgto = saidasDoDia
+      .filter(s => R(s.valor) > 0)
+      .reduce((sum, s) => sum + R(s.valor), 0);
+
+    // Se há viagens ou pagamentos, recalcula vlVariavel
+    const totalCaixinha = caixinhaDia + caixinhaNoite;
+    // vlVariavel = soma de caixinhas das saídas sem turno + caixinhas dos turnos
+    const caixinhaExtra = saidasSemTurno.reduce((sum, s) => sum + R(s.caixinha), 0);
+    const vlVariavel = totalCaixinha + caixinhaExtra > 0
+      ? totalCaixinha + caixinhaExtra
+      : linha.vlVariavel; // mantém o valor existente se não há dados nas saídas
+
+    const hasData = saidasDoDia.length > 0;
+
+    return {
+      ...linha,
+      entDia: hasData ? entDia : linha.entDia,
+      entNoite: hasData ? entNoite : linha.entNoite,
+      caixinhaDia: hasData ? caixinhaDia : linha.caixinhaDia,
+      caixinhaNoite: hasData ? caixinhaNoite : linha.caixinhaNoite,
+      pgto: hasData ? pgto : linha.pgto,
+      vlVariavel: hasData ? vlVariavel : linha.vlVariavel,
+      saidasDia,
+      saidasNoite,
+    };
+  });
+}
 
 const emptyForm: Partial<Motoboy> = {
   nome: '', cpf: '', telefone: '', placa: '', dataAdmissao: new Date().toISOString().split('T')[0],
@@ -99,6 +178,14 @@ export const Motoboys: React.FC = () => {
   const [loadingCtrl, setLoadingCtrl] = useState(false);
   const [salvandoCtrl, setSalvandoCtrl] = useState(false);
 
+  // Saídas carregadas para o período
+  const [saidas, setSaidas] = useState<Saida[]>([]);
+  const [loadingSaidas, setLoadingSaidas] = useState(false);
+
+  // Modo de visualização do controle
+  const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('integrado');
+  const [mostrarSaidas, setMostrarSaidas] = useState(false);
+
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
   const fetchMotoboys = async () => {
@@ -113,9 +200,28 @@ export const Motoboys: React.FC = () => {
     finally { setLoading(false); }
   };
 
+  /* ── Buscar saídas do período ─────────────────────────── */
+  const fetchSaidas = useCallback(async (mesAno: string) => {
+    if (!unitId || !mesAno) return;
+    setLoadingSaidas(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const [ano, mes] = mesAno.split('-').map(Number);
+      const inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
+      const fim = new Date(ano, mes, 0).toISOString().split('T')[0];
+      const r = await fetch(
+        `${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const d = await r.json();
+      setSaidas(Array.isArray(d) ? d : []);
+    } catch (e) { console.error(e); setSaidas([]); }
+    finally { setLoadingSaidas(false); }
+  }, [apiUrl, unitId]);
+
   /* ── Controle diário ─────────────────────────────────── */
 
-  const fetchControle = async () => {
+  const fetchControle = useCallback(async () => {
     if (!ctrlMotoboyId || !ctrlMesAno) return;
     setLoadingCtrl(true);
     try {
@@ -124,33 +230,54 @@ export const Motoboys: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       const d = await r.json();
+
+      const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+      const salBase = R(motoboy?.salario);
+      const peri = R(motoboy?.periculosidade) / 100;
+      const salDia = salBase > 0 ? parseFloat(((salBase * (1 + peri)) / 30).toFixed(2)) : 0;
+      const [ano, mes] = ctrlMesAno.split('-').map(Number);
+      const dias = diasDoMes(ano, mes);
+
+      let linhasBase: ControleDia[];
       if (Array.isArray(d) && d.length > 0) {
-        setControle(d);
+        // Usa dados salvos como base
+        const dbMap = new Map(d.map((l: any) => [l.data, l]));
+        linhasBase = dias.map(data => {
+          const db = dbMap.get(data) as any;
+          return db ? { ...db, motoboyId: ctrlMotoboyId } : {
+            motoboyId: ctrlMotoboyId, data,
+            diaSemana: diaSemana(data), salDia,
+            entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+            vlVariavel: 0, pgto: 0, variavel: 0, unitId,
+          };
+        });
       } else {
-        // Inicializar planilha em branco para o mês
-        const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-        const salBase = R(motoboy?.salario);
-        const peri = R(motoboy?.periculosidade) / 100;
-        const salDia = salBase > 0 ? parseFloat(((salBase * (1 + peri)) / 30).toFixed(2)) : 0;
-        const [ano, mes] = ctrlMesAno.split('-').map(Number);
-        const dias = diasDoMes(ano, mes);
-        setControle(dias.map(data => ({
+        linhasBase = dias.map(data => ({
           motoboyId: ctrlMotoboyId, data,
-          diaSemana: diaSemana(data),
-          salDia,
-          entDia: 0, caixinhaDia: 0,
-          entNoite: 0, caixinhaNoite: 0,
-          vlVariavel: 0, pgto: 0, variavel: 0,
-          unitId,
-        })));
+          diaSemana: diaSemana(data), salDia,
+          entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+          vlVariavel: 0, pgto: 0, variavel: 0, unitId,
+        }));
       }
+
+      // Integrar com saídas
+      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId);
+      setControle(linhasIntegradas);
     } catch (e) { console.error(e); setControle([]); }
     finally { setLoadingCtrl(false); }
-  };
+  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas]);
 
-  useEffect(() => { if (aba === 'controle' && ctrlMotoboyId) fetchControle(); }, [ctrlMotoboyId, ctrlMesAno, aba]);
+  // Carregar saídas ao mudar mês
+  useEffect(() => {
+    if (aba === 'controle') fetchSaidas(ctrlMesAno);
+  }, [ctrlMesAno, aba, fetchSaidas]);
 
-  // Recalcular variavel acumulado quando controle muda
+  // Carregar controle quando motoboy ou saídas mudam
+  useEffect(() => {
+    if (aba === 'controle' && ctrlMotoboyId && !loadingSaidas) fetchControle();
+  }, [ctrlMotoboyId, ctrlMesAno, aba, loadingSaidas]);
+
+  // Recalcular variavel acumulado
   const controleComAcumulado = useMemo(() => {
     let acumulado = 0;
     return controle.map(linha => {
@@ -187,6 +314,23 @@ export const Motoboys: React.FC = () => {
     finally { setSalvandoCtrl(false); }
   };
 
+  const recarregarDeSaidas = () => {
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    const salBase = R(motoboy?.salario);
+    const peri = R(motoboy?.periculosidade) / 100;
+    const salDia = salBase > 0 ? parseFloat(((salBase * (1 + peri)) / 30).toFixed(2)) : 0;
+    const [ano, mes] = ctrlMesAno.split('-').map(Number);
+    const dias = diasDoMes(ano, mes);
+    const linhasBase = dias.map(data => ({
+      motoboyId: ctrlMotoboyId, data,
+      diaSemana: diaSemana(data), salDia,
+      entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+      vlVariavel: 0, pgto: 0, variavel: 0, unitId,
+    }));
+    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId);
+    setControle(linhasIntegradas);
+  };
+
   const exportarControleXLSX = () => {
     const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
     const ws = XLSX.utils.json_to_sheet(controleComAcumulado.map(l => ({
@@ -200,6 +344,8 @@ export const Motoboys: React.FC = () => {
       'Vl. Variável': l.vlVariavel || '',
       'Pgto': l.pgto || '',
       'Variável Acum.': l.variavel,
+      'Saídas Dia': (l.saidasDia || []).map(s => `${s.viagens}viag R$${s.valor}`).join('; '),
+      'Saídas Noite': (l.saidasNoite || []).map(s => `${s.viagens}viag R$${s.valor}`).join('; '),
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Controle');
@@ -210,14 +356,23 @@ export const Motoboys: React.FC = () => {
   const resumoCtrl = useMemo(() => {
     const totalVariavel = controleComAcumulado.reduce((s, l) => s + R(l.vlVariavel), 0);
     const totalPgto = controleComAcumulado.reduce((s, l) => s + R(l.pgto), 0);
+    const totalViagens = controleComAcumulado.reduce((s, l) => s + R(l.entDia) + R(l.entNoite), 0);
+    const totalCaixinha = controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0);
     const diasTrab = controleComAcumulado.filter(l => R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.vlVariavel) > 0).length;
     const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
     const salBase = R(motoboy?.salario);
     const peri = R(motoboy?.periculosidade) / 100;
     const periculosidadeValor = salBase * peri;
-    const salLiq = salBase; // salário antes de INSS — simplificado
-    return { totalVariavel, totalPgto, diasTrab, salBase, periculosidadeValor, salLiq };
+    return { totalVariavel, totalPgto, totalViagens, totalCaixinha, diasTrab, salBase, periculosidadeValor };
   }, [controleComAcumulado, ctrlMotoboyId, motoboys]);
+
+  /* ── Saídas do motoboy selecionado no período ─────────── */
+  const saidasDoMotoboy = useMemo(() => {
+    if (!ctrlMotoboyId) return [];
+    return saidas
+      .filter(s => s.colaboradorId === ctrlMotoboyId)
+      .sort((a, b) => a.data.localeCompare(b.data));
+  }, [saidas, ctrlMotoboyId]);
 
   /* ── CRUD motoboys ───────────────────────────────────── */
 
@@ -284,8 +439,6 @@ export const Motoboys: React.FC = () => {
     XLSX.utils.book_append_sheet(wb, ws, 'Motoboys');
     XLSX.writeFile(wb, `motoboys-${new Date().toISOString().split('T')[0]}.xlsx`);
   };
-
-  const fmt = (v: number) => v ? v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
   /* ── Styles ──────────────────────────────────────────── */
   const s = {
@@ -437,12 +590,37 @@ export const Motoboys: React.FC = () => {
                 <label style={s.label}>Mês</label>
                 <input type="month" value={ctrlMesAno} onChange={e => setCtrlMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
               </div>
-              <button onClick={fetchControle} disabled={!ctrlMotoboyId} style={s.btn('#1976d2')}>🔄 Carregar</button>
+              <div>
+                <label style={s.label}>Modo</label>
+                <select value={modoVisualizacao} onChange={e => setModoVisualizacao(e.target.value as any)} style={{ ...s.select, width: '150px' }}>
+                  <option value="integrado">🔗 Integrado (Saídas)</option>
+                  <option value="manual">✏️ Manual</option>
+                </select>
+              </div>
+              <button onClick={fetchControle} disabled={!ctrlMotoboyId || loadingCtrl} style={s.btn('#1976d2')}>
+                {loadingCtrl || loadingSaidas ? '⏳' : '🔄'} Carregar
+              </button>
+              {modoVisualizacao === 'integrado' && ctrlMotoboyId && (
+                <button onClick={recarregarDeSaidas} style={s.btn('#0288d1')}>⚡ Reimportar Saídas</button>
+              )}
               <button onClick={salvarControle} disabled={!ctrlMotoboyId || salvandoCtrl} style={s.btn('#43a047')}>
                 {salvandoCtrl ? '⏳ Salvando...' : '💾 Salvar'}
               </button>
               <button onClick={exportarControleXLSX} disabled={!ctrlMotoboyId || controle.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', marginLeft: '4px' }}>
+                <input type="checkbox" checked={mostrarSaidas} onChange={e => setMostrarSaidas(e.target.checked)} />
+                Ver saídas
+              </label>
             </div>
+
+            {/* Banner de modo integrado */}
+            {modoVisualizacao === 'integrado' && ctrlMotoboyId && (
+              <div style={{ backgroundColor: '#e3f2fd', border: '1px solid #90caf9', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px', color: '#1565c0' }}>
+                <strong>🔗 Modo Integrado:</strong> Viagens, pagamentos e caixinhas são preenchidos automaticamente a partir das <strong>saídas lançadas</strong> no período.
+                {loadingSaidas && <span style={{ marginLeft: '8px' }}>⏳ Carregando saídas...</span>}
+                {!loadingSaidas && <span style={{ marginLeft: '8px' }}>✅ {saidas.filter(s => s.colaboradorId === ctrlMotoboyId).length} saída(s) encontrada(s) para este motoboy.</span>}
+              </div>
+            )}
 
             {!ctrlMotoboyId ? (
               <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Selecione um motoboy para ver o controle diário.</p>
@@ -453,16 +631,18 @@ export const Motoboys: React.FC = () => {
                 {/* Cards resumo do mês */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
                   {[
-                    { label: 'Dias trabalhados', val: resumoCtrl.diasTrab, cor: '#1976d2' },
-                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047' },
-                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
-                    { label: 'Saldo variável', val: `R$ ${fmt(resumoCtrl.totalVariavel - resumoCtrl.totalPgto)}`, cor: resumoCtrl.totalVariavel - resumoCtrl.totalPgto > 0 ? '#2e7d32' : '#c62828' },
-                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a' },
-                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100' },
+                    { label: 'Dias trabalhados', val: resumoCtrl.diasTrab, cor: '#1976d2', isNum: true },
+                    { label: 'Total viagens', val: resumoCtrl.totalViagens, cor: '#0288d1', isNum: true },
+                    { label: 'Total caixinha', val: `R$ ${fmt(resumoCtrl.totalCaixinha)}`, cor: '#00838f', isNum: false },
+                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047', isNum: false },
+                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00', isNum: false },
+                    { label: 'Saldo variável', val: `R$ ${fmt(resumoCtrl.totalVariavel - resumoCtrl.totalPgto)}`, cor: resumoCtrl.totalVariavel - resumoCtrl.totalPgto > 0 ? '#2e7d32' : '#c62828', isNum: false },
+                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a', isNum: false },
+                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100', isNum: false },
                   ].map(c => (
                     <div key={c.label} style={{ ...s.card, padding: '10px', borderLeft: `3px solid ${c.cor}` }}>
                       <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: c.cor }}>{c.isNum ? c.val : c.val}</div>
                     </div>
                   ))}
                 </div>
@@ -473,8 +653,11 @@ export const Motoboys: React.FC = () => {
                     <thead>
                       <tr>
                         {[
-                          'Data', 'Dia Sem', 'Sal.+Per.', 'Ent. Dia', 'Caixinha Dia',
-                          'Ent. Noite', 'Caixinha Noite', 'Vl. Variável', 'Pgto', 'Variável Acum.'
+                          'Data', 'Dia', 'Sal.+Per.',
+                          'Ent. Dia', 'Caix. Dia',
+                          'Ent. Noite', 'Caix. Noite',
+                          'Vl. Variável', 'Pgto', 'Var. Acum.',
+                          ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
                         ].map(h => <th key={h} style={s.th}>{h}</th>)}
                       </tr>
                     </thead>
@@ -482,30 +665,78 @@ export const Motoboys: React.FC = () => {
                       {controleComAcumulado.map((l, idx) => {
                         const dow = l.diaSemana ?? diaSemana(l.data);
                         const folga = dow === 0 || dow === 1;
-                        const rowBg = folga ? '#f5f5f5' : idx % 2 === 0 ? '#fafff8' : 'white';
+                        const temDados = (l.saidasDia && l.saidasDia.length > 0) || (l.saidasNoite && l.saidasNoite.length > 0);
+                        const rowBg = temDados ? '#f0fff4' : folga ? '#f5f5f5' : idx % 2 === 0 ? '#fafff8' : 'white';
                         return (
                           <tr key={l.data} style={{ backgroundColor: rowBg }}>
-                            <td style={{ ...s.td, fontWeight: 'bold' }}>{l.data.split('-').reverse().join('/')}</td>
+                            <td style={{ ...s.td, fontWeight: 'bold' }}>
+                              {l.data.split('-').reverse().join('/')}
+                              {temDados && <span style={{ marginLeft: '4px', color: '#2e7d32', fontSize: '10px' }}>●</span>}
+                            </td>
                             <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
                               {DIAS_SEMANA_ABREV[dow]}
                             </td>
                             <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
-                            {/* Campos editáveis */}
-                            {(['entDia', 'caixinhaDia', 'entNoite', 'caixinhaNoite', 'vlVariavel', 'pgto'] as const).map(campo => (
-                              <td key={campo} style={s.td}>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  style={s.numInput}
-                                  value={(l as any)[campo] || ''}
-                                  onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                  onFocus={e => e.target.select()}
-                                  placeholder="0"
-                                />
-                              </td>
-                            ))}
+                            {/* Campos editáveis ou só-leitura conforme modo */}
+                            {modoVisualizacao === 'manual' ? (
+                              (['entDia', 'caixinhaDia', 'entNoite', 'caixinhaNoite', 'vlVariavel', 'pgto'] as const).map(campo => (
+                                <td key={campo} style={s.td}>
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    style={s.numInput}
+                                    value={(l as any)[campo] || ''}
+                                    onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                    onFocus={e => e.target.select()}
+                                    placeholder="0"
+                                  />
+                                </td>
+                              ))
+                            ) : (
+                              <>
+                                <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                  {R(l.entDia) > 0 ? <strong style={{ color: '#0288d1' }}>{l.entDia}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                  {R(l.caixinhaDia) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                  {R(l.entNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>{l.entNoite}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                  {R(l.caixinhaNoite) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                </td>
+                                <td style={s.td}>
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    style={s.numInput}
+                                    value={R(l.vlVariavel) || ''}
+                                    onChange={e => handleCampoControle(idx, 'vlVariavel', e.target.value)}
+                                    onFocus={e => e.target.select()}
+                                    placeholder="0"
+                                  />
+                                </td>
+                                <td style={{ ...s.td }}>
+                                  {R(l.pgto) > 0 ? (
+                                    <span style={{ color: '#fb8c00', fontWeight: 'bold' }}>R$ {fmt(l.pgto)}</span>
+                                  ) : <span style={{ color: '#ccc' }}>-</span>}
+                                </td>
+                              </>
+                            )}
                             <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32' }}>{fmt(l.variavel)}</td>
+                            {mostrarSaidas && (
+                              <>
+                                <td style={{ ...s.td, fontSize: '11px', color: '#0288d1', maxWidth: '200px' }}>
+                                  {(l.saidasDia || []).map(s => (
+                                    <div key={s.id}>{s.viagens ? `${s.viagens}viag` : ''} {s.valor ? `R$${s.valor.toFixed(2)}` : ''} {s.descricao || ''}</div>
+                                  ))}
+                                </td>
+                                <td style={{ ...s.td, fontSize: '11px', color: '#7b1fa2', maxWidth: '200px' }}>
+                                  {(l.saidasNoite || []).map(s => (
+                                    <div key={s.id}>{s.viagens ? `${s.viagens}viag` : ''} {s.valor ? `R$${s.valor.toFixed(2)}` : ''} {s.descricao || ''}</div>
+                                  ))}
+                                </td>
+                              </>
+                            )}
                           </tr>
                         );
                       })}
@@ -520,10 +751,67 @@ export const Motoboys: React.FC = () => {
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
+                        {mostrarSaidas && <td colSpan={2} />}
                       </tr>
                     </tfoot>
                   </table>
                 </div>
+
+                {/* Painel de saídas detalhado */}
+                {mostrarSaidas && saidasDoMotoboy.length > 0 && (
+                  <div style={{ marginTop: '20px' }}>
+                    <h3 style={{ color: '#1565c0', marginBottom: '10px', fontSize: '14px' }}>
+                      📋 Saídas lançadas – {motoboys.find(m => m.id === ctrlMotoboyId)?.nome} – {ctrlMesAno}
+                    </h3>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr>
+                            {['Data', 'Turno', 'Viagens', 'Caixinha', 'Valor (Pgto)', 'Tipo', 'Dt. Pgto', 'Descrição'].map(h => (
+                              <th key={h} style={{ ...s.th, backgroundColor: '#37474f' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {saidasDoMotoboy.map(s => (
+                            <tr key={s.id}
+                              style={{ backgroundColor: normalizeTurno(s.turno) === 'noite' ? '#f3e5f5' : normalizeTurno(s.turno) === 'dia' ? '#e3f2fd' : '#fafafa' }}>
+                              <td style={{ ...s as any, padding: '6px', borderBottom: '1px solid #eee' }}>{(s.data || '').split('-').reverse().join('/')}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>
+                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
+                                  backgroundColor: normalizeTurno(s.turno) === 'noite' ? '#ce93d8' : normalizeTurno(s.turno) === 'dia' ? '#90caf9' : '#e0e0e0',
+                                  color: '#333' }}>
+                                  {s.turno || '-'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'center', fontSize: '12px', fontWeight: 'bold', color: '#0288d1' }}>{s.viagens || '-'}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'right', fontSize: '12px', color: '#00838f' }}>{s.caixinha ? `R$ ${R(s.caixinha).toFixed(2)}` : '-'}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#fb8c00' }}>{s.valor ? `R$ ${R(s.valor).toFixed(2)}` : '-'}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>{s.tipo || '-'}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>{s.dataPagamento ? (s.dataPagamento as string).split('-').reverse().join('/') : '-'}</td>
+                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px', color: '#555' }}>{s.descricao || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ backgroundColor: '#37474f', color: 'white', fontWeight: 'bold' }}>
+                            <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={2}>TOTAL</td>
+                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'center' }}>
+                              {saidasDoMotoboy.reduce((sum, s) => sum + R(s.viagens), 0)} viag
+                            </td>
+                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' }}>
+                              R$ {saidasDoMotoboy.reduce((sum, s) => sum + R(s.caixinha), 0).toFixed(2)}
+                            </td>
+                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' }}>
+                              R$ {saidasDoMotoboy.reduce((sum, s) => sum + R(s.valor), 0).toFixed(2)}
+                            </td>
+                            <td colSpan={3} />
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
                   <button onClick={salvarControle} disabled={salvandoCtrl} style={s.btn('#43a047')}>
