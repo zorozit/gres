@@ -203,6 +203,8 @@ export default function FolhaPagamento() {
   const [folhasDB, setFolhasDB] = useState<any[]>([]);
   const [folhasLocais, setFolhasLocais] = useState<FolhaMensal[]>([]);
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
+  // Saídas do período para cruzamento com motoboys
+  const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
 
   const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
@@ -219,12 +221,17 @@ export default function FolhaPagamento() {
   const carregarDados = async () => {
     setLoading(true);
     try {
-      const [rC, rM, rF, rFr, rE] = await Promise.all([
+      const [ano, mes] = mesAno.split('-').map(Number);
+      const dataInicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
+      const dataFim = new Date(ano, mes, 0).toISOString().split('T')[0];
+
+      const [rC, rM, rF, rFr, rE, rS] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/freelancers?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
       ]);
 
       const dC = await rC.json();
@@ -263,6 +270,14 @@ export default function FolhaPagamento() {
       } else {
         setFolhasDB([]);
       }
+
+      // Carregar saídas do período
+      if (rS?.ok) {
+        const dS = await rS.json();
+        setSaidasPeriodo(Array.isArray(dS) ? dS : []);
+      } else {
+        setSaidasPeriodo([]);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -270,7 +285,7 @@ export default function FolhaPagamento() {
   // Recalcular folhas CLT
   useEffect(() => {
     setFolhasLocais(calcularTodasFolhas());
-  }, [colaboradores, motoboys, controlesMap, folhasDB, mesAno]);
+  }, [colaboradores, motoboys, controlesMap, folhasDB, mesAno, saidasPeriodo]);
 
   // Recalcular fechamentos freelancer
   useEffect(() => {
@@ -317,10 +332,24 @@ export default function FolhaPagamento() {
       const inss = calcINSS(salBruto);
       const contrAssist = 32.62;
       const dia19 = `${mesAno}-19`;
+
+      // Saídas do motoboy no período — complementam o controle quando não há dados salvos
+      const saidasMotoboy = saidasPeriodo.filter(s => s.colaboradorId === m.id);
+      const totalPagoSaidas = saidasMotoboy.reduce((sum: number, s: any) => sum + R(s.valor), 0);
+
       let varAte19 = 0, varDe20a31 = 0;
-      for (const linha of controle) {
-        if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
-        else varDe20a31 += R(linha.vlVariavel);
+      if (controle.length > 0) {
+        // Usar controle salvo
+        for (const linha of controle) {
+          if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
+          else varDe20a31 += R(linha.vlVariavel);
+        }
+      } else if (saidasMotoboy.length > 0) {
+        // Fallback: calcular variável a partir das saídas
+        for (const s of saidasMotoboy) {
+          if ((s.data || '') <= dia19) varAte19 += R(s.valor);
+          else varDe20a31 += R(s.valor);
+        }
       }
       varAte19 = parseFloat(varAte19.toFixed(2));
       varDe20a31 = parseFloat(varDe20a31.toFixed(2));
@@ -338,7 +367,7 @@ export default function FolhaPagamento() {
         adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
-        outrosPgtos: 0, saldoFinal,
+        outrosPgtos: totalPagoSaidas, saldoFinal,
         pago: salva?.pago || false, dataPagamento: salva?.dataPagamento, raw: m,
       });
     }
