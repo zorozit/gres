@@ -915,7 +915,7 @@ exports.handler = async (event) => {
     }
 
     // POST ESCALAS
-    if ((rawPath === '/escalas' || rawPath.includes('/escalas')) && httpMethod === 'POST') {
+    if (rawPath === '/escalas' && httpMethod === 'POST') {
       const uid = body.unitId || body.unidadeId;
       const { data, colaboradorId, turno, observacao } = body;
       if (!uid || !data || !colaboradorId || !turno) {
@@ -961,6 +961,8 @@ exports.handler = async (event) => {
           items = r.Items || [];
         }
         if (mes) items = items.filter(i => (i.data || '').startsWith(mes));
+        // Filter out soft-deleted items
+        items = items.filter(i => !i._deleted && i.turno !== 'Deletado');
         return response(200, items);
       } catch (err) {
         console.error('DynamoDB error:', err);
@@ -973,10 +975,26 @@ exports.handler = async (event) => {
       const escId = rawPath.split('/').pop();
       if (!escId) return response(400, { error: 'ID obrigatório' });
       try {
-        const original = await dynamodb.get({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
-        if (!original.Item) return response(404, { error: 'Escala não encontrada' });
+        // Try direct get first
+        let originalItem = null;
+        try {
+          const r = await dynamodb.get({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+          originalItem = r.Item || null;
+        } catch (e) {
+          console.warn('PUT escalas direct get failed, trying scan:', e.message);
+        }
+        // Fallback: scan to find by id field
+        if (!originalItem) {
+          const scan = await dynamodb.scan({
+            TableName: 'gres-prod-escalas',
+            FilterExpression: 'id = :eid',
+            ExpressionAttributeValues: { ':eid': escId }
+          }).promise();
+          originalItem = (scan.Items && scan.Items.length > 0) ? scan.Items[0] : null;
+        }
+        if (!originalItem) return response(404, { error: 'Escala não encontrada' });
         const updated = {
-          ...original.Item,
+          ...originalItem,
           ...(body.turno         !== undefined ? { turno: body.turno }              : {}),
           ...(body.observacao    !== undefined ? { observacao: body.observacao }    : {}),
           ...(body.presenca      !== undefined ? { presenca: body.presenca }        : {}),
@@ -991,11 +1009,34 @@ exports.handler = async (event) => {
     }
 
     // DELETE ESCALA
-    if (rawPath.includes('/escalas/') && httpMethod === 'DELETE') {
+    if (rawPath.match(/\/escalas\/.+/) && httpMethod === 'DELETE') {
       const escId = rawPath.split('/').pop();
       if (!escId) return response(400, { error: 'ID obrigatório' });
       try {
-        await dynamodb.delete({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+        // Try direct delete first (works if 'id' is the partition key)
+        let deleted = false;
+        try {
+          await dynamodb.delete({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+          deleted = true;
+        } catch (e) {
+          console.warn('DELETE escalas direct failed:', e.message);
+        }
+        // If direct delete failed or item might have different key, mark as deleted via PUT
+        if (!deleted) {
+          const scan = await dynamodb.scan({
+            TableName: 'gres-prod-escalas',
+            FilterExpression: 'id = :eid',
+            ExpressionAttributeValues: { ':eid': escId }
+          }).promise();
+          if (scan.Items && scan.Items.length > 0) {
+            const item = scan.Items[0];
+            // Mark as deleted (soft delete - update turno to empty string to exclude from results)
+            await dynamodb.put({
+              TableName: 'gres-prod-escalas',
+              Item: { ...item, turno: 'Deletado', _deleted: true, updatedAt: new Date().toISOString() }
+            }).promise();
+          }
+        }
         return response(200, { success: true });
       } catch (err) {
         return response(500, { error: 'Erro ao deletar escala' });
@@ -1075,10 +1116,11 @@ exports.handler = async (event) => {
         // id includes semana when it's a weekly dobra payment
         const itemId = semana ? `${colaboradorId}_${mes}_${semana}` : `${colaboradorId}_${mes}`;
         const now = new Date().toISOString();
+        const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
         const item = {
           id: itemId,
           colaboradorId, mes, semana: semana || null,
-          unitId: unitId || '',
+          unitId: normalizedUnitId,
           pago: pago === true,
           dataPagamento: pago ? (dataPagamento || now.split('T')[0]) : null,
           saldoFinal: parseFloat(saldoFinal) || 0,
@@ -1110,23 +1152,25 @@ exports.handler = async (event) => {
     // GET /folha-pagamento?unitId=xxx&mes=2026-03[&colaboradorId=xxx]
     if (rawPath === '/folha-pagamento' && httpMethod === 'GET') {
       const { unitId, mes, colaboradorId } = queryParams;
+      const unitCnpj = unitId ? toCnpj(unitId) : null;
       try {
         let items = [];
         const filters = [];
         const exprVals = {};
+        // Filter by mes and colaboradorId in DynamoDB (these are stable values)
         if (mes) { filters.push('mes = :m'); exprVals[':m'] = mes; }
-        if (unitId) { filters.push('unitId = :u'); exprVals[':u'] = unitId; }
         if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
-        if (filters.length > 0) {
-          const r = await dynamodb.scan({
-            TableName: 'gres-prod-folha-pagamento',
-            FilterExpression: filters.join(' AND '),
-            ExpressionAttributeValues: exprVals,
-          }).promise();
-          items = r.Items || [];
-        } else {
-          const r = await dynamodb.scan({ TableName: 'gres-prod-folha-pagamento' }).promise();
-          items = r.Items || [];
+        const r = await dynamodb.scan({
+          TableName: 'gres-prod-folha-pagamento',
+          ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
+        }).promise();
+        items = r.Items || [];
+        // Filter unitId client-side with CNPJ normalization
+        if (unitCnpj) {
+          items = items.filter(i => {
+            const iCnpj = toCnpj(i.unitId || '');
+            return !i.unitId || iCnpj === unitCnpj || i.unitId === unitId;
+          });
         }
         return response(200, items);
       } catch (err) {
