@@ -157,7 +157,6 @@ export default function Colaboradores() {
 
   /* ── State ─────────────────────────────────────────────────── */
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
-  const [freelancers, setFreelancers]   = useState<Freelancer[]>([]);
   const [funcoes, setFuncoes]           = useState<FuncaoEscala[]>([]);
   const [loading, setLoading]           = useState(false);
   const [salvando, setSalvando]         = useState(false);
@@ -174,7 +173,7 @@ export default function Colaboradores() {
   const [busca, setBusca]             = useState('');
   const [novoColab, setNovoColab]     = useState<Partial<Colaborador>>(ESTADO_INICIAL);
 
-  // Freelancer
+  // Freelancer editing (using same Colaborador form)
   const [freelancerEditando, setFreelancerEditando] = useState<string | null>(null);
   const [formFree, setFormFree]       = useState<Partial<Freelancer>>(FREELANCER_INICIAL);
 
@@ -188,7 +187,6 @@ export default function Colaboradores() {
   useEffect(() => {
     if (unitId) {
       carregarColaboradores();
-      carregarFreelancers();
       carregarFuncoes();
     }
   }, [unitId]);
@@ -213,15 +211,6 @@ export default function Colaboradores() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  };
-
-  const carregarFreelancers = async () => {
-    try {
-      const r = await fetch(`${apiUrl}/freelancers?unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
-      if (r.ok) { const d = await r.json(); setFreelancers(Array.isArray(d) ? d : []); }
-    } catch (e) { console.error(e); }
   };
 
   const carregarFuncoes = async () => {
@@ -358,24 +347,37 @@ export default function Colaboradores() {
     finally { setSalvando(false); }
   };
 
-  /* ── CRUD Freelancers ─────────────────────────────────────── */
+  /* ── CRUD Freelancers (via /colaboradores com tipoContrato=Freelancer) ─── */
   const handleSalvarFreelancer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formFree.nome?.trim()) { alert('Nome é obrigatório.'); return; }
     setSalvando(true);
     try {
       const isEdit = !!freelancerEditando;
-      const url    = isEdit ? `${apiUrl}/freelancers/${freelancerEditando}` : `${apiUrl}/freelancers`;
+      const payload = {
+        ...formFree,
+        unitId,
+        tipoContrato: 'Freelancer',
+        cargo: formFree.funcao || formFree.cargo || 'Freelancer',
+        tipo:  formFree.funcao || formFree.cargo || 'Freelancer',
+        cpf:   (formFree as any).cpf || '00000000000',
+        celular: formFree.telefone || '',
+        telefone: formFree.telefone || '',
+        ativo: formFree.ativo !== false,
+      };
+      const url = isEdit
+        ? `${apiUrl}/colaboradores/${freelancerEditando}`
+        : `${apiUrl}/colaboradores`;
       const res = await fetch(url, {
         method: isEdit ? 'PUT' : 'POST',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formFree, unitId }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         mostrarMsg(isEdit ? '✅ Freelancer atualizado!' : '✅ Freelancer cadastrado!');
         setFormFree(FREELANCER_INICIAL);
         setFreelancerEditando(null);
-        carregarFreelancers();
+        carregarColaboradores();
       } else {
         const err = await res.json().catch(() => ({}));
         alert('Erro: ' + ((err as any).error || res.status));
@@ -386,11 +388,11 @@ export default function Colaboradores() {
 
   const handleDeletarFreelancer = async (id: string, nome: string) => {
     if (!window.confirm(`Excluir ${nome}?`)) return;
-    await fetch(`${apiUrl}/freelancers/${id}`, {
+    await fetch(`${apiUrl}/colaboradores/${id}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
     });
     mostrarMsg('🗑️ Freelancer removido.');
-    carregarFreelancers();
+    carregarColaboradores();
   };
 
   /* ── CRUD Funções de Escala ───────────────────────────────── */
@@ -452,10 +454,21 @@ export default function Colaboradores() {
     carregarFuncoes();
   };
 
+  /* ── Derivados ───────────────────────────────────────────── */
+  // Freelancers são colaboradores com tipoContrato='Freelancer'
+  const freelancers = useMemo(() =>
+    colaboradores.filter(c => c.tipoContrato === 'Freelancer'),
+  [colaboradores]);
+
+  // CLTs (exibidos na aba lista)
+  const colaboradoresCLT = useMemo(() =>
+    colaboradores.filter(c => c.tipoContrato !== 'Freelancer'),
+  [colaboradores]);
+
   /* ── Filtros ──────────────────────────────────────────────── */
   const colaboradoresFiltrados = useMemo(() => {
-    return colaboradores.filter(c => {
-      const matchTipo  = !filtroTipo || cargoDe(c) === filtroTipo;
+    return colaboradoresCLT.filter(c => {
+      const matchTipo  = !filtroTipo || cargoDe(c) === filtroTipo || (c.funcao||'') === filtroTipo;
       const matchArea  = !filtroArea || (c.area || '') === filtroArea;
       const matchAtivo = filtroAtivo ? c.ativo !== false : c.ativo === false;
       const q = busca.toLowerCase();
@@ -469,9 +482,9 @@ export default function Colaboradores() {
   }, [colaboradores, filtroTipo, filtroArea, filtroAtivo, busca]);
 
   const areasUnicas = useMemo(() => {
-    const s = new Set(colaboradores.map(c => c.area || '').filter(Boolean));
+    const s = new Set(colaboradoresCLT.map(c => c.area || '').filter(Boolean));
     return Array.from(s).sort();
-  }, [colaboradores]);
+  }, [colaboradoresCLT]);
 
   /* ── Estilos ──────────────────────────────────────────────── */
   const S = styles;
@@ -709,8 +722,8 @@ export default function Colaboradores() {
         {/* ABAS */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '0', borderBottom: '2px solid #ddd', flexWrap: 'wrap' }}>
           {([
-            { key: 'lista',       label: `📋 Colaboradores (${colaboradores.length})` },
-            { key: 'novo',        label: '➕ Novo Colaborador' },
+            { key: 'lista',       label: `📋 CLT (${colaboradoresCLT.length})` },
+            { key: 'novo',        label: '➕ Novo' },
             { key: 'freelancers', label: `🎯 Freelancers (${freelancers.length})` },
             { key: 'regras',      label: `📖 Funções/Regras (${funcoes.length})` },
           ] as { key: AbaType; label: string }[]).map(({ key, label }) => (
@@ -733,6 +746,7 @@ export default function Colaboradores() {
               <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={S.select}>
                 <option value="">Todos os cargos</option>
                 {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
+                {funcoesOpcoes.filter(f => !TIPOS_CARGO.includes(f)).map(f => <option key={f} value={f}>{f}</option>)}
               </select>
               <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)} style={S.select}>
                 <option value="">Todas as áreas</option>
@@ -747,9 +761,8 @@ export default function Colaboradores() {
 
             {/* Legenda rápida */}
             <div style={{ display:'flex', gap:'8px', marginBottom:'12px', fontSize:'11px', color:'#666', flexWrap:'wrap' }}>
-              <span>Total: <strong>{colaboradoresFiltrados.length}</strong></span>
-              <span>CLT: <strong>{colaboradoresFiltrados.filter(c=>c.tipoContrato==='CLT').length}</strong></span>
-              <span>Freelancer: <strong>{colaboradoresFiltrados.filter(c=>c.tipoContrato==='Freelancer').length}</strong></span>
+              <span>Total CLT: <strong>{colaboradoresFiltrados.length}</strong></span>
+              <span style={{ color:'#e65100' }}>Freelancers (separado): <strong>{freelancers.length}</strong></span>
             </div>
 
             {loading ? (
@@ -867,7 +880,7 @@ export default function Colaboradores() {
         {aba === 'freelancers' && (
           <div style={S.tabContent}>
             <div style={{ padding:'10px 14px', backgroundColor:'#fff3e0', borderRadius:'6px', borderLeft:'4px solid #e65100', marginBottom:'16px', fontSize:'13px' }}>
-              <strong style={{ color:'#e65100' }}>ℹ️ Segregação:</strong> Freelancers cadastrados aqui aparecem na <strong>Gestão de Escalas</strong> junto com os CLTs, agrupados por área. Os valores acordados (valorDobra) só são visíveis em <strong>Folha de Pagamento</strong>.
+              <strong style={{ color:'#e65100' }}>ℹ️ Freelancers</strong> — cadastrados como colaboradores com tipo <strong>Freelancer</strong>. Aparecem na escala agrupados por área. Os valores de dobra só são visíveis em <strong>Folha de Pagamento</strong>.
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
               <h3 style={{ margin: 0 }}>🎯 Freelancers Cadastrados ({freelancers.length})</h3>
@@ -880,7 +893,7 @@ export default function Colaboradores() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                      {['Nome', 'Função', 'Área', 'PIX', 'Telefone', 'R$/Dobra', 'Status', ''].map(h => (
+                      {['Nome', 'Função', 'Área', 'PIX', 'Telefone', 'R$/Dobra', 'Transp/dia', 'Status', ''].map(h => (
                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -890,20 +903,21 @@ export default function Colaboradores() {
                       <tr key={f.id} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
                         <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{f.nome}</td>
                         <td style={{ padding: '8px 10px', color: '#1976d2' }}>{f.funcao || f.cargo || '—'}</td>
-                        <td style={{ padding: '8px 10px', color: '#555', fontSize: '12px' }}>{(f as any).area || '—'}</td>
+                        <td style={{ padding: '8px 10px', color: '#555', fontSize: '12px' }}>{f.area || '—'}</td>
                         <td style={{ padding: '8px 10px', fontSize: '12px' }}>{f.chavePix || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontSize: '12px' }}>{f.telefone || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#2e7d32' }}>R$ {(f.valorDobra || 0).toFixed(2)}</td>
+                        <td style={{ padding: '8px 10px', fontSize: '12px' }}>{(f.celular || f.telefone) || '—'}</td>
+                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#2e7d32' }}>{fmt(f.valorDia || 0)}<span style={{fontSize:'10px',color:'#888'}}>/dobra</span></td>
+                        <td style={{ padding: '8px 10px', fontSize: '12px', color: '#1565c0' }}>{f.valorTransporte > 0 ? fmt(f.valorTransporte) : '—'}</td>
                         <td style={{ padding: '8px 10px' }}>
                           <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                            backgroundColor: f.ativo ? '#e8f5e9' : '#fce4ec',
-                            color: f.ativo ? '#2e7d32' : '#c62828' }}>
-                            {f.ativo ? '● Ativo' : '○ Inativo'}
+                            backgroundColor: f.ativo !== false ? '#e8f5e9' : '#fce4ec',
+                            color: f.ativo !== false ? '#2e7d32' : '#c62828' }}>
+                            {f.ativo !== false ? '● Ativo' : '○ Inativo'}
                           </span>
                         </td>
                         <td style={{ padding: '8px 6px' }}>
                           <div style={{ display: 'flex', gap: '4px' }}>
-                            <button onClick={() => { setFormFree({ ...f }); setFreelancerEditando(f.id); }}
+                            <button onClick={() => setColaboradorEditando(f as Colaborador)}
                               style={{ padding: '3px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#1976d2', color: 'white', fontSize: '12px' }}>✏️</button>
                             <button onClick={() => handleDeletarFreelancer(f.id, f.nome)}
                               style={{ padding: '3px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#e53935', color: 'white', fontSize: '12px' }}>🗑</button>
@@ -916,11 +930,10 @@ export default function Colaboradores() {
               </div>
             )}
 
-            {/* Formulário */}
-            <div style={{ backgroundColor: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', borderTop: '3px solid #1976d2' }}>
-              <h4 style={{ marginTop: 0, color: '#1976d2' }}>
-                {freelancerEditando ? '✏️ Editar' : '➕ Cadastrar'} Freelancer
-              </h4>
+            {/* Formulário para novo freelancer */}
+            <div style={{ backgroundColor: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', borderTop: '3px solid #e65100' }}>
+              <h4 style={{ marginTop: 0, color: '#e65100' }}>➕ Novo Freelancer</h4>
+              <p style={{ fontSize: '12px', color: '#888', margin: '0 0 12px 0' }}>Preencha os campos abaixo. O colaborador será salvo como <strong>Freelancer</strong>.</p>
               <form onSubmit={handleSalvarFreelancer}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                   <div style={S.formGroup}>
@@ -955,13 +968,18 @@ export default function Colaboradores() {
                       onChange={e => setFormFree({ ...formFree, telefone: e.target.value })} />
                   </div>
                   <div style={S.formGroup}>
-                    <label style={S.label}>Valor por Dobra (R$)</label>
-                    <input type="number" step="10" min="0" value={formFree.valorDobra ?? 120} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, valorDobra: parseFloat(e.target.value) || 0 })} />
+                    <label style={S.label}>Valor por Dobra (R$) <span style={{fontSize:'11px',color:'#888'}}>(usado na folha)</span></label>
+                    <input type="number" step="10" min="0" value={(formFree as any).valorDia ?? 120} style={S.input}
+                      onChange={e => setFormFree({ ...formFree, valorDia: parseFloat(e.target.value) || 0 } as any)} />
+                  </div>
+                  <div style={S.formGroup}>
+                    <label style={S.label}>Transporte por dia (R$)</label>
+                    <input type="number" step="0.50" min="0" value={(formFree as any).valorTransporte ?? 0} style={S.input}
+                      onChange={e => setFormFree({ ...formFree, valorTransporte: parseFloat(e.target.value) || 0 } as any)} />
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Status</label>
-                    <select value={formFree.ativo ? 'true' : 'false'} style={S.input}
+                    <select value={formFree.ativo !== false ? 'true' : 'false'} style={S.input}
                       onChange={e => setFormFree({ ...formFree, ativo: e.target.value === 'true' })}>
                       <option value="true">● Ativo</option>
                       <option value="false">○ Inativo</option>
@@ -970,12 +988,8 @@ export default function Colaboradores() {
                 </div>
                 <div style={{ marginTop: '14px', display: 'flex', gap: '10px' }}>
                   <button type="submit" disabled={salvando} style={S.botaoSalvar}>
-                    {salvando ? '⏳...' : (freelancerEditando ? '💾 Salvar' : '✅ Cadastrar')}
+                    {salvando ? '⏳...' : '✅ Cadastrar Freelancer'}
                   </button>
-                  {freelancerEditando && (
-                    <button type="button" onClick={() => { setFormFree(FREELANCER_INICIAL); setFreelancerEditando(null); }}
-                      style={S.botaoCancelar}>✕ Cancelar</button>
-                  )}
                 </div>
               </form>
             </div>

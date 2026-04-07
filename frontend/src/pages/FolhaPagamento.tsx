@@ -12,11 +12,16 @@ interface Colaborador {
   nome: string;
   cpf: string;
   telefone?: string;
+  celular?: string;
   chavePix?: string;
   cargo?: string;
+  funcao?: string;
+  area?: string;
   tipoContrato?: 'CLT' | 'Freelancer';
   salario?: number;
-  valorDia?: number;
+  valorDia?: number;      // CLT: valor dobra-dia; Freelancer: valor por dobra
+  valorNoite?: number;    // CLT: valor dobra-noite
+  valorTransporte?: number;
   periculosidade?: number;
   unitId?: string;
   ativo?: boolean;
@@ -28,16 +33,8 @@ interface Motoboy extends Colaborador {
   comissao?: number;
 }
 
-interface Freelancer {
-  id: string;
-  nome: string;
-  chavePix?: string;
-  telefone?: string;
-  valorDobra?: number;
-  cargo?: string;
-  ativo: boolean;
-  unitId?: string;
-}
+// Freelancers are colaboradores with tipoContrato='Freelancer'
+type Freelancer = Colaborador;
 
 interface ControleDia {
   motoboyId: string;
@@ -171,7 +168,7 @@ function fmtDataISO(d: Date) {
 function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string } {
   const linhas: string[] = [];
   let dobras = 0;
-  const dias = escalas.filter(e => e.colaboradorId === freelancerId);
+  const dias = escalas.filter(e => e.colaboradorId === freelancerId).sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
     const dow = new Date(esc.data + 'T12:00:00').getDay();
     const label = `${DIAS_SEMANA_ABREV[dow]} ${esc.turno === 'DiaNoite' ? 'DN' : esc.turno === 'Dia' ? 'D' : esc.turno === 'Noite' ? 'N' : 'F'}`;
@@ -197,7 +194,6 @@ export default function FolhaPagamento() {
 
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
-  const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
   const [controlesMap, setControlesMap] = useState<Record<string, ControleDia[]>>({});
   const [escalas, setEscalas] = useState<EscalaItem[]>([]);
   const [folhasDB, setFolhasDB] = useState<any[]>([]);
@@ -207,6 +203,8 @@ export default function FolhaPagamento() {
   const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
 
   const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
+  const [historicoColabId, setHistoricoColabId] = useState<string | null>(null);
+  const [historicoItems, setHistoricoItems] = useState<any[]>([]);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [salvando, setSalvando] = useState(false);
@@ -220,6 +218,21 @@ export default function FolhaPagamento() {
 
   useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
 
+  const abrirHistorico = async (colaboradorId: string) => {
+    try {
+      const r = await fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&colaboradorId=${colaboradorId}`, {
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      if (r.ok) {
+        const items = await r.json();
+        setHistoricoItems(Array.isArray(items) ? items.sort((a: any, b: any) => (b.updatedAt||'').localeCompare(a.updatedAt||'')) : []);
+      } else {
+        setHistoricoItems([]);
+      }
+    } catch { setHistoricoItems([]); }
+    setHistoricoColabId(colaboradorId);
+  };
+
   const token = () => localStorage.getItem('auth_token');
 
   const carregarDados = async () => {
@@ -229,27 +242,25 @@ export default function FolhaPagamento() {
       const dataInicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
       const dataFim = new Date(ano, mes, 0).toISOString().split('T')[0];
 
-      const [rC, rM, rF, rFr, rE, rS] = await Promise.all([
+      const [rC, rM, rF, rE, rS] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
-        fetch(`${apiUrl}/freelancers?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
       ]);
 
       const dC = await rC.json();
-      const colabs: Colaborador[] = (Array.isArray(dC) ? dC : []).filter((c: Colaborador) => c.ativo !== false);
+      const todosColabs: Colaborador[] = (Array.isArray(dC) ? dC : []).filter((c: Colaborador) => c.ativo !== false);
+      // Separate CLT from Freelancer
+      const colabs = todosColabs.filter(c => c.tipoContrato !== 'Freelancer');
       setColaboradores(colabs);
+      // Freelancers are colaboradores with tipoContrato='Freelancer'
+      setFreelancers(todosColabs.filter(c => c.tipoContrato === 'Freelancer'));
 
       const dM = await rM.json();
       const motos: Motoboy[] = Array.isArray(dM) ? dM.filter((m: Motoboy) => m.ativo !== false) : [];
       setMotoboys(motos);
-
-      if (rFr?.ok) {
-        const dFr = await rFr.json();
-        setFreelancers(Array.isArray(dFr) ? dFr.filter((f: Freelancer) => f.ativo !== false) : []);
-      }
 
       if (rE?.ok) {
         const dE = await rE.json();
@@ -285,6 +296,9 @@ export default function FolhaPagamento() {
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
+
+  // Freelancers state (derived from colaboradores)
+  const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
 
   // Recalcular folhas CLT
   useEffect(() => {
@@ -392,10 +406,13 @@ export default function FolhaPagamento() {
           e.colaboradorId === f.id && e.data >= isoInicio && e.data <= isoFim
         );
         const { dobras, diasCodigo } = contarDobras(escalasSemana, f.id);
-        const total = parseFloat((dobras * (f.valorDobra || 120)).toFixed(2));
+        // valorDia is used as 'valor por dobra' for freelancers
+        const valorDobra = R(f.valorDia) || R((f as any).valorDobra) || 120;
+        const total = parseFloat((dobras * valorDobra).toFixed(2));
         return {
-          id: f.id, nome: f.nome, chavePix: f.chavePix, telefone: f.telefone,
-          dobras, valorDobra: f.valorDobra || 120, total, diasCodigo,
+          id: f.id, nome: f.nome, chavePix: f.chavePix,
+          telefone: f.celular || f.telefone,
+          dobras, valorDobra, total, diasCodigo,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -505,6 +522,8 @@ export default function FolhaPagamento() {
     fechamentosFreelancer.reduce((s, f) => s + f.totalSemana, 0),
     [fechamentosFreelancer]);
 
+
+
   /* ── Styles ──────────────────────────────────────────────── */
   const s = {
     card: { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
@@ -524,6 +543,77 @@ export default function FolhaPagamento() {
     tdR: { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'right' as const },
     badge: (bg: string, color: string) => ({ backgroundColor: bg, color, padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' as const }),
   };
+
+  /* ── Modal histórico analítico ───────────────────────────── */
+  const ModalHistorico = ({ items, nome, onClose }: { items: any[]; nome: string; onClose: () => void }) => (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}>
+      <div style={{ ...s.card, maxWidth: '700px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, color: '#1565c0' }}>📊 Histórico Analítico — {nome}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+        </div>
+        {items.length === 0 ? (
+          <p style={{ textAlign: 'center', color: '#999' }}>Nenhum registro de pagamento encontrado.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
+                {['Mês', 'Semana', 'Bruto', 'Transp', 'Total', 'Status', 'Data Pgto', 'Obs'].map(h => (
+                  <th key={h} style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, i) => (
+                <tr key={item.id} style={{ backgroundColor: i % 2 === 0 ? '#f9f9f9' : 'white', borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '6px 8px' }}>{item.mes}</td>
+                  <td style={{ padding: '6px 8px', color: '#666', fontSize: '11px' }}>{item.semana || '—'}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1976d2' }}>
+                    {item.valorBruto > 0 ? fmtMoeda(item.valorBruto) : fmtMoeda(item.saldoFinal || 0)}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1565c0' }}>
+                    {item.valorTransporte > 0 ? fmtMoeda(item.valorTransporte) : '—'}
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20' }}>
+                    {fmtMoeda(item.totalFinal || item.saldoFinal || 0)}
+                  </td>
+                  <td style={{ padding: '6px 8px' }}>
+                    <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                      backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4',
+                      color: item.pago ? '#2e7d32' : '#f57f17' }}>
+                      {item.pago ? '✅ Pago' : '⏳ Pendente'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '6px 8px', fontSize: '11px', color: item.dataPagamento ? '#2e7d32' : '#bbb' }}>
+                    {item.dataPagamento || '—'}
+                  </td>
+                  <td style={{ padding: '6px 8px', fontSize: '11px', color: '#666', maxWidth: '120px' }}>
+                    {item.obs || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                <td colSpan={4} style={{ padding: '8px' }}>TOTAL PAGO (histórico)</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>
+                  {fmtMoeda(items.filter((x: any) => x.pago).reduce((sum: number, x: any) => sum + R(x.totalFinal || x.saldoFinal), 0))}
+                </td>
+                <td colSpan={3} />
+              </tr>
+            </tfoot>
+          </table>
+          </div>
+        )}
+        <div style={{ marginTop: '12px', textAlign: 'right' }}>
+          <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  );
 
   /* ── Modal detalhe CLT ───────────────────────────────────── */
   const ModalDetalhe = ({ f, onClose }: { f: FolhaMensal; onClose: () => void }) => (
@@ -605,6 +695,13 @@ export default function FolhaPagamento() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
+      {historicoColabId && (
+        <ModalHistorico
+          items={historicoItems}
+          nome={(() => { const f = folhasLocais.find(x => x.colaboradorId === historicoColabId) || freelancers.find(x => x.id === historicoColabId); return (f as any)?.nome || historicoColabId; })()}
+          onClose={() => { setHistoricoColabId(null); setHistoricoItems([]); }}
+        />
+      )}
 
       <div style={{ flex: 1, padding: '20px', maxWidth: '1500px', margin: '0 auto', width: '100%' }}>
 
@@ -728,8 +825,13 @@ export default function FolhaPagamento() {
                         </td>
                         <td style={{ ...s.td, textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                            <button onClick={() => setDetalheSelecionado(f)} style={{ ...s.btn('#1976d2'), padding: '4px 10px', fontSize: '11px' }}>
+                            <button onClick={() => setDetalheSelecionado(f)} style={{ ...s.btn('#1976d2'), padding: '4px 10px', fontSize: '11px' }}
+                              title="Ver detalhes">
                               📋
+                            </button>
+                            <button onClick={() => abrirHistorico(f.colaboradorId)} style={{ ...s.btn('#6a1b9a'), padding: '4px 10px', fontSize: '11px' }}
+                              title="Histórico analítico">
+                              📊
                             </button>
                             <button onClick={() => handleTogglePago(f)} disabled={salvando}
                               style={{ ...s.btn(f.pago ? '#e53935' : '#43a047'), padding: '4px 10px', fontSize: '11px' }}>
@@ -813,14 +915,17 @@ export default function FolhaPagamento() {
             ...colaboradores.map(c => ({
               id: c.id, nome: c.nome, chavePix: c.chavePix, cargo: c.cargo,
               tipoContrato: c.tipoContrato || 'CLT',
-              area: (c as any).area, funcao: (c as any).funcao,
-              valorDia: (c as any).valorDia || 0, valorNoite: (c as any).valorNoite || 0,
-              valorDobra: 0, valorTransporte: (c as any).valorTransporte || 0,
+              area: c.area, funcao: c.funcao,
+              valorDia: c.valorDia || 0, valorNoite: c.valorNoite || 0,
+              valorDobra: 0, valorTransporte: c.valorTransporte || 0,
             })),
             ...freelancers.map(f => ({
               id: f.id, nome: f.nome, chavePix: f.chavePix, cargo: f.cargo,
-              tipoContrato: 'Freelancer', area: (f as any).area, funcao: (f as any).cargo || f.cargo,
-              valorDia: 0, valorNoite: 0, valorDobra: f.valorDobra || 120, valorTransporte: 0,
+              tipoContrato: 'Freelancer' as const, area: f.area, funcao: f.funcao || f.cargo,
+              valorDia: 0, valorNoite: 0,
+              // valorDia on freelancer record = valor por dobra
+              valorDobra: R(f.valorDia) || R((f as any).valorDobra) || 120,
+              valorTransporte: f.valorTransporte || 0,
             })),
           ].sort((a,b) => {
             const aa = a.area || 'zzz', ba = b.area || 'zzz';
@@ -1039,6 +1144,11 @@ export default function FolhaPagamento() {
                                         {isPago && dataPgto && (
                                           <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{dataPgto}</div>
                                         )}
+                                        <button
+                                          onClick={() => abrirHistorico(p.id)}
+                                          style={{ ...s.btn('#6a1b9a'), padding: '2px 6px', fontSize: '9px', marginTop: '3px' }}
+                                          title="Histórico de pagamentos"
+                                        >📊</button>
                                       </td>
                                       <td style={{ ...s.td, fontSize: '11px' }}>
                                         {p.chavePix ? (
@@ -1307,7 +1417,8 @@ export default function FolhaPagamento() {
                           const frSem = fech.freelancers.find(x => x.id === fr.id);
                           if (frSem) totalDobras += frSem.dobras;
                         }
-                        const totalMes = totalDobras * (fr.valorDobra || 120);
+                        const valorDobra = R(fr.valorDia) || R((fr as any).valorDobra) || 120;
+                        const totalMes = totalDobras * valorDobra;
                         if (totalDobras === 0) return null;
                         return (
                           <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
