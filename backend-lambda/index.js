@@ -977,9 +977,10 @@ exports.handler = async (event) => {
         if (!original.Item) return response(404, { error: 'Escala não encontrada' });
         const updated = {
           ...original.Item,
-          ...(body.turno      !== undefined ? { turno: body.turno }           : {}),
-          ...(body.observacao !== undefined ? { observacao: body.observacao } : {}),
-          ...(body.presenca   !== undefined ? { presenca: body.presenca }     : {}),
+          ...(body.turno         !== undefined ? { turno: body.turno }              : {}),
+          ...(body.observacao    !== undefined ? { observacao: body.observacao }    : {}),
+          ...(body.presenca      !== undefined ? { presenca: body.presenca }        : {}),
+          ...(body.presencaNoite !== undefined ? { presencaNoite: body.presencaNoite } : {}),
           updatedAt: new Date().toISOString(),
         };
         await dynamodb.put({ TableName: 'gres-prod-escalas', Item: updated }).promise();

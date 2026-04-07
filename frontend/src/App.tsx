@@ -14,6 +14,7 @@ import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { UsuariosEdicao } from './pages/UsuariosEdicao';
 import FolhaPagamento from './pages/FolhaPagamento';
+import { Extrato } from './pages/Extrato';
 import './App.css';
 
 function App() {
@@ -108,6 +109,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <FolhaPagamento />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/modulos/extrato"
+              element={
+                <ProtectedRoute>
+                  <Extrato />
                 </ProtectedRoute>
               }
             />

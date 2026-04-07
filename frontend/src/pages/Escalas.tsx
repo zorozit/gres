@@ -193,7 +193,7 @@ export const Escalas: React.FC = () => {
 
   const fetchAll = async () => {
     setLoading(true);
-    await Promise.all([fetchColabs(), fetchFreels(), fetchEscalas(), fetchFuncoes()]);
+    await Promise.all([fetchColabs(), fetchEscalas(), fetchFuncoes()]);
     setLoading(false);
   };
 
@@ -201,20 +201,14 @@ export const Escalas: React.FC = () => {
     try {
       const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
-      setColabs((Array.isArray(d)?d:[]).filter((c:Pessoa)=>c.ativo!==false));
+      const todos = (Array.isArray(d)?d:[]).filter((c:Pessoa)=>c.ativo!==false);
+      // Separate CLT from Freelancers
+      setColabs(todos.filter((c:Pessoa)=>c.tipoContrato!=='Freelancer'));
+      setFreels(todos.filter((c:Pessoa)=>c.tipoContrato==='Freelancer').map((f:any)=>({ ...f, tipoContrato:'Freelancer' as const })));
     } catch(e){console.error(e);}
   };
 
-  const fetchFreels = async () => {
-    try {
-      const r = await fetch(`${apiUrl}/freelancers?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
-      if (r.ok) {
-        const d = await r.json();
-        const lista = (Array.isArray(d)?d:[]).filter((f:Pessoa)=>f.ativo!==false);
-        setFreels(lista.map((f:any)=>({ ...f, tipoContrato:'Freelancer' })));
-      }
-    } catch(e){console.error(e);}
-  };
+
 
   const fetchEscalas = async () => {
     try {
@@ -222,12 +216,17 @@ export const Escalas: React.FC = () => {
       const d = await r.json();
       const lista:Escala[] = Array.isArray(d)?d:[];
       setEscalas(lista);
-      // Rebuild presenca map
+      // Rebuild presenca map (day presenca uses id, night presenca uses id_N)
       const pm:Record<string,Record<string,string>>={};
       for (const e of lista) {
         if (e.presenca) {
           if (!pm[e.colaboradorId]) pm[e.colaboradorId]={};
           pm[e.colaboradorId][e.data]=e.presenca;
+        }
+        if ((e as any).presencaNoite) {
+          const kN=`${e.colaboradorId}_N`;
+          if (!pm[kN]) pm[kN]={};
+          pm[kN][e.data]=(e as any).presencaNoite;
         }
       }
       setPresencaMap(pm);
@@ -338,24 +337,30 @@ export const Escalas: React.FC = () => {
   };
 
   /* ── Presença ciclo ──────────────────────────────────────── */
-  const handlePresenca = useCallback(async (pessoaId:string, data:string, cur:string) => {
+  // presKey can be pessoaId (dia) or pessoaId_N (noite)
+  const handlePresenca = useCallback(async (presKey:string, data:string, cur:string) => {
     const ciclo = ['','presente','falta','falta_justificada'];
     const next = ciclo[(ciclo.indexOf(cur)+1)%ciclo.length];
-    setPresencaMap(prev=>({...prev,[pessoaId]:{...(prev[pessoaId]||{}),[data]:next}}));
+    setPresencaMap(prev=>({...prev,[presKey]:{...(prev[presKey]||{}),[data]:next}}));
     setSalvandoPres(true);
+    const isNoite = presKey.endsWith('_N');
+    const pessoaId = isNoite ? presKey.slice(0,-2) : presKey;
     try {
       const esc = escalasMap[pessoaId]?.[data];
       if (esc) {
+        const field = isNoite ? 'presencaNoite' : 'presenca';
         await fetch(`${apiUrl}/escalas/${esc.id}`, {
           method:'PUT',
           headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-          body: JSON.stringify({ presenca: next }),
+          body: JSON.stringify({ [field]: next }),
         });
       } else if (next) {
+        const turno = isNoite ? 'Noite' : 'Dia';
+        const field = isNoite ? 'presencaNoite' : 'presenca';
         await fetch(`${apiUrl}/escalas`, {
           method:'POST',
           headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno:'Dia', presenca:next }),
+          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next }),
         });
       }
     } catch(e){ console.error(e); }
@@ -840,7 +845,8 @@ export const Escalas: React.FC = () => {
             </div>
 
             <p style={{ color:'#666', fontSize:'12px', margin:'0 0 14px 0', backgroundColor:'#e8f5e9', padding:'8px 12px', borderRadius:'6px' }}>
-              🖱️ Clique na célula para ciclar: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>. Apenas dias com turno lançado podem ser pontuados.
+              🖱️ Clique em <strong style={{color:'#f57f17'}}>D</strong> ou <strong style={{color:'#3949ab'}}>N</strong> para ciclar presença: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>.
+              Apenas dias com turno lançado podem ser pontuados. Dia e Noite são pontuados separadamente.
             </p>
 
             {semAtual && areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
@@ -856,12 +862,13 @@ export const Escalas: React.FC = () => {
                     <thead>
                       <tr>
                         <th style={{ ...s.th, textAlign:'left', minWidth:'130px', backgroundColor:areaColor, fontSize:'11px' }}>Nome</th>
-                        <th style={{ ...s.th, textAlign:'left', minWidth:'70px', backgroundColor:areaColor, fontSize:'10px' }}>Função</th>
+                        <th style={{ ...s.th, textAlign:'left', minWidth:'60px', backgroundColor:areaColor, fontSize:'10px' }}>Função</th>
+                        <th style={{ ...s.th, width:'28px', backgroundColor:'#0d47a1', fontSize:'9px' }}>T</th>
                         {semAtual.dias.map(d=>{
                           const ds=fmtIso(d); const dow=d.getDay();
                           const isFer=!!FERIADOS_2026[ds];
                           return (
-                            <th key={ds} style={{ ...s.th, minWidth:'48px', backgroundColor:isFer?'#b71c1c':dow===0||dow===6?'#546e7a':areaColor }}>
+                            <th key={ds} style={{ ...s.th, minWidth:'64px', backgroundColor:isFer?'#b71c1c':dow===0||dow===6?'#546e7a':areaColor }}>
                               <div style={{ fontSize:'11px' }}>{d.getDate()}/{d.getMonth()+1}</div>
                               <div style={{ fontSize:'8px', opacity:0.85 }}>{DS[dow]}</div>
                               {isFer&&<div style={{ fontSize:'7px' }}>🎉</div>}
@@ -882,42 +889,82 @@ export const Escalas: React.FC = () => {
                           if(pr==='presente')pT++;
                           else if(pr==='falta')fT++;
                           else if(pr==='falta_justificada')fjT++;
+                          // Also count night separately
+                          const prN=presencaMap[`${p.id}_N`]?.[fmtIso(d)];
+                          if(prN==='presente')pT++;
+                          else if(prN==='falta')fT++;
+                          else if(prN==='falta_justificada')fjT++;
                         }
-                        return (
-                          <tr key={p.id} style={{ backgroundColor:ci%2===0?'#fafafa':'white' }}>
-                            <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }}>
-                              {p.nome.split(' ').slice(0,2).join(' ')}
-                            </td>
-                            <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555' }}>{funcaoDe(p)}</td>
-                            {semAtual.dias.map(d=>{
-                              const ds=fmtIso(d);
-                              const esc=escalasMap[p.id]?.[ds];
-                              const temEscala=!!esc?.turno&&esc.turno!=='Folga';
-                              const cur=presencaMap[p.id]?.[ds]||'';
-                              const pb=cur?PRES_BADGE[cur]:null;
-                              // Show turno code too
-                              const tb=esc?.turno?TURNO_BADGE[esc.turno]:null;
-                              return (
-                                <td key={ds} style={{ ...s.td, cursor:temEscala?'pointer':'default',
-                                  backgroundColor:FERIADOS_2026[ds]?'#fff9e0':pb?pb.bg:undefined,
-                                  opacity:temEscala?1:0.4, minWidth:'48px' }}
-                                  title={temEscala?(esc?.turno+' — clique para pontuar'):'Sem escala'}
-                                  onClick={()=>temEscala&&handlePresenca(p.id,ds,cur)}>
-                                  {temEscala ? (
-                                    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
-                                      {tb && <span style={{ fontSize:'9px', backgroundColor:tb.bg, color:tb.cor, padding:'0 3px', borderRadius:'3px', fontWeight:'bold' }}>{tb.label}</span>}
-                                      {pb ? <span style={{ fontSize:'13px' }}>{pb.icon}</span>
-                                           : <span style={{ fontSize:'10px', color:'#bbb' }}>—</span>}
-                                    </div>
-                                  ) : null}
-                                </td>
-                              );
-                            })}
-                            <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }}>{pT}</td>
-                            <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'11px' }}>{fT}</td>
-                            <td style={{ ...s.td, fontWeight:'bold', color:'#e65100', fontSize:'11px' }}>{fjT}</td>
-                          </tr>
-                        );
+                        // Check if this person has any DiaNoite shifts this week
+                        const hasDN = semAtual.dias.some(d=>{
+                          const esc=escalasMap[p.id]?.[fmtIso(d)];
+                          return esc?.turno==='DiaNoite';
+                        });
+                        // Render 2 rows if hasDN, else 1
+                        const turnos_label = ['Dia','Noite'] as const;
+                        return turnos_label.map((tLabel, tIdx)=>{
+                          // Only show night row if person has noite or diaNoite shifts this week
+                          const hasNightInWeek = semAtual.dias.some(d=>{
+                            const esc=escalasMap[p.id]?.[fmtIso(d)];
+                            return esc?.turno==='Noite'||esc?.turno==='DiaNoite';
+                          });
+                          const hasDayInWeek = semAtual.dias.some(d=>{
+                            const esc=escalasMap[p.id]?.[fmtIso(d)];
+                            return esc?.turno==='Dia'||esc?.turno==='DiaNoite';
+                          });
+                          if (tLabel==='Noite' && !hasNightInWeek) return null;
+                          if (tLabel==='Dia' && !hasDayInWeek && hasNightInWeek) return null;
+                          const presKey = tLabel==='Noite' ? `${p.id}_N` : p.id;
+                          return (
+                            <tr key={`${p.id}_${tLabel}`} style={{ backgroundColor:ci%2===0?'#fafafa':'white', borderBottom: tLabel==='Dia'&&hasDN?'none':undefined }}>
+                              {tIdx===0 ? (
+                                <>
+                                  <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }} rowSpan={hasDN&&hasNightInWeek?2:1}>
+                                    {p.nome.split(' ').slice(0,2).join(' ')}
+                                  </td>
+                                  <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{funcaoDe(p)}</td>
+                                </>
+                              ) : null}
+                              <td style={{ ...s.td, textAlign:'center', fontWeight:'bold', fontSize:'9px',
+                                backgroundColor:tLabel==='Dia'?'#fff9c4':'#e8eaf6',
+                                color:tLabel==='Dia'?'#f57f17':'#3949ab',
+                                padding:'2px 3px' }}>{tLabel[0]}</td>
+                              {semAtual.dias.map(d=>{
+                                const ds=fmtIso(d);
+                                const esc=escalasMap[p.id]?.[ds];
+                                // Check if this shift type is present
+                                const hasThisTurno = tLabel==='Dia'
+                                  ? (esc?.turno==='Dia'||esc?.turno==='DiaNoite')
+                                  : (esc?.turno==='Noite'||esc?.turno==='DiaNoite');
+                                const cur=presencaMap[presKey]?.[ds]||'';
+                                const pb=cur?PRES_BADGE[cur]:null;
+                                return (
+                                  <td key={ds} style={{ ...s.td, cursor:hasThisTurno?'pointer':'default',
+                                    backgroundColor:FERIADOS_2026[ds]?'#fff9e0':pb?pb.bg:(hasThisTurno?(tLabel==='Dia'?'#fffde7':'#e8eaf6'):undefined),
+                                    opacity:hasThisTurno?1:0.2, minWidth:'64px', padding:'3px' }}
+                                    title={hasThisTurno?(tLabel+' — clique para pontuar'):'Sem turno '+tLabel}
+                                    onClick={()=>hasThisTurno&&handlePresenca(presKey,ds,cur)}>
+                                    {hasThisTurno ? (
+                                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
+                                        <span style={{ fontSize:'8px', fontWeight:'bold',
+                                          color:tLabel==='Dia'?'#f57f17':'#3949ab' }}>{tLabel[0]}</span>
+                                        {pb ? <span style={{ fontSize:'12px' }}>{pb.icon}</span>
+                                             : <span style={{ fontSize:'9px', color:'#bbb' }}>—</span>}
+                                      </div>
+                                    ) : <span style={{ color:'#eee', fontSize:'8px' }}>·</span>}
+                                  </td>
+                                );
+                              })}
+                              {tIdx===0 ? (
+                                <>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{pT}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{fT}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#e65100', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{fjT}</td>
+                                </>
+                              ) : null}
+                            </tr>
+                          );
+                        });
                       })}
                     </tbody>
                   </table>
