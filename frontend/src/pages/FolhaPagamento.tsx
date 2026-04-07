@@ -193,7 +193,7 @@ export default function FolhaPagamento() {
   const hoje = new Date();
   const [mesAno, setMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
   const [loading, setLoading] = useState(false);
-  const [aba, setAba] = useState<'clt' | 'freelancers'>('clt');
+  const [aba, setAba] = useState<'clt' | 'freelancers' | 'dobras'>('clt');
 
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
@@ -213,6 +213,10 @@ export default function FolhaPagamento() {
 
   // Campos editáveis do fechamento semanal (combustível, extra, desconto, obs)
   const [editFechamento, setEditFechamento] = useState<Record<string, { combustivel: string; extra: string; desconto: string; obs: string }>>({});
+
+  // Interface DobraSemanalCLT (used inline in tab)
+  // Valores editados pelo gestor (valorDia, valorNoite, totalBruto overrides)
+  const [editDobras, setEditDobras] = useState<Record<string, { valorBruto?: string; valorTransporte?: string; obs?: string }>>({});
 
   useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
 
@@ -634,8 +638,11 @@ export default function FolhaPagamento() {
         </div>
 
         {/* Abas */}
-        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0' }}>
+        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', flexWrap: 'wrap' }}>
           <button style={s.tab(aba === 'clt')} onClick={() => setAba('clt')}>🧾 Colaboradores CLT</button>
+          <button style={s.tab(aba === 'dobras')} onClick={() => setAba('dobras')}>
+            📅 Dobras Semanais
+          </button>
           <button style={s.tab(aba === 'freelancers')} onClick={() => setAba('freelancers')}>
             🎯 Freelancers {fechamentosFreelancer.length > 0 ? `(${fechamentosFreelancer.length} semana${fechamentosFreelancer.length > 1 ? 's' : ''})` : ''}
           </button>
@@ -759,6 +766,369 @@ export default function FolhaPagamento() {
             )}
           </>
         )}
+
+
+        {/* ── ABA DOBRAS SEMANAIS ─────────────────────────────── */}
+        {aba === 'dobras' && (() => {
+          const [anoM, mesM] = mesAno.split('-').map(Number);
+
+          interface SemanaInfo { label: string; inicio: string; fim: string; proxSeg: string; }
+          const semanas: SemanaInfo[] = [];
+          const primDia = new Date(anoM, mesM - 1, 1);
+          const ultDia = new Date(anoM, mesM, 0);
+          let cur = new Date(primDia);
+          // Start from Monday of first week
+          const dow0 = cur.getDay();
+          if (dow0 !== 1) cur.setDate(cur.getDate() + (dow0 === 0 ? -6 : 1 - dow0));
+          while (cur <= ultDia) {
+            const seg = new Date(cur);
+            const dom = new Date(cur); dom.setDate(dom.getDate() + 6);
+            const fimReal = dom > ultDia ? new Date(ultDia) : new Date(dom);
+            const inicioStr = seg.toISOString().split('T')[0];
+            const fimStr = fimReal.toISOString().split('T')[0];
+            // proxSeg after fim
+            const ps = new Date(fimReal);
+            const pdow = ps.getDay();
+            ps.setDate(ps.getDate() + (pdow === 1 ? 0 : pdow === 0 ? 1 : 8 - pdow));
+            semanas.push({
+              label: `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')} – ${fimReal.getDate().toString().padStart(2,'0')}/${(fimReal.getMonth()+1).toString().padStart(2,'0')}`,
+              inicio: inicioStr,
+              fim: fimStr,
+              proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
+            });
+            cur.setDate(cur.getDate() + 7);
+          }
+
+          const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+          const AREA_COR: Record<string,string> = { 'Bar':'#ad1457','Cozinha':'#e65100','Salão':'#2e7d32','Operações':'#1565c0','Gerência':'#37474f','Pizzaria':'#6a1b9a','Caixa':'#558b2f' };
+          const corArea = (a: string) => AREA_COR[a] || '#455a64';
+
+          // Build all people (colaboradores + freelancers) for this view
+          interface PessoaDobra {
+            id: string; nome: string; chavePix?: string; cargo?: string;
+            tipoContrato: string; area?: string; funcao?: string;
+            valorDia: number; valorNoite: number; valorDobra: number; valorTransporte: number;
+          }
+          const pessoas: PessoaDobra[] = [
+            ...colaboradores.map(c => ({
+              id: c.id, nome: c.nome, chavePix: c.chavePix, cargo: c.cargo,
+              tipoContrato: c.tipoContrato || 'CLT',
+              area: (c as any).area, funcao: (c as any).funcao,
+              valorDia: (c as any).valorDia || 0, valorNoite: (c as any).valorNoite || 0,
+              valorDobra: 0, valorTransporte: (c as any).valorTransporte || 0,
+            })),
+            ...freelancers.map(f => ({
+              id: f.id, nome: f.nome, chavePix: f.chavePix, cargo: f.cargo,
+              tipoContrato: 'Freelancer', area: (f as any).area, funcao: (f as any).cargo || f.cargo,
+              valorDia: 0, valorNoite: 0, valorDobra: f.valorDobra || 120, valorTransporte: 0,
+            })),
+          ].sort((a,b) => {
+            const aa = a.area || 'zzz', ba = b.area || 'zzz';
+            return aa !== ba ? aa.localeCompare(ba) : a.nome.localeCompare(b.nome);
+          });
+
+          const areasP = [...new Set(pessoas.map(p => p.area || 'Sem Área'))].sort();
+
+          return (
+            <div style={{ borderRadius: '0 8px 8px 8px' }}>
+              <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', borderLeft: '4px solid #2e7d32', borderRadius: '0 0 4px 4px', marginBottom: '8px', fontSize: '12px', color: '#1b5e20' }}>
+                📅 <strong>Dobras Semanais</strong> — controle semanal de turnos (CLT dobras + Freelancers). Valores editáveis. Marque como Pago para registrar data e log.
+              </div>
+
+              {loading ? (
+                <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
+              ) : semanas.map(sem => {
+                // Pessoas que trabalharam nesta semana
+                interface LinhaCalc {
+                  pessoa: PessoaDobra;
+                  dC: number; nC: number; dnC: number;
+                  codigos: string[];
+                  totalBruto: number;
+                  totalTransporte: number;
+                }
+                const linhas: LinhaCalc[] = pessoas.map(p => {
+                  let dC=0, nC=0, dnC=0;
+                  const codigos: string[] = [];
+                  // Get days in this week
+                  const d1 = new Date(sem.inicio + 'T12:00:00');
+                  const d2 = new Date(sem.fim + 'T12:00:00');
+                  for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) {
+                    const ds = d.toISOString().split('T')[0];
+                    const esc = escalas.find(e => e.colaboradorId === p.id && e.data === ds);
+                    if (!esc || esc.turno === 'Folga') { codigos.push('—'); continue; }
+                    if (esc.turno === 'Dia') { dC++; codigos.push('D'); }
+                    else if (esc.turno === 'Noite') { nC++; codigos.push('N'); }
+                    else if (esc.turno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
+                  }
+                  let totalBruto = 0;
+                  if (p.tipoContrato === 'CLT') {
+                    const vDia = p.valorDia, vNoite = p.valorNoite;
+                    const dobrasCalc = (vDia + vNoite) * dnC + vDia * (dC - dnC) + vNoite * (nC - dnC);
+                    totalBruto = dobrasCalc;
+                  } else {
+                    const vd = p.valorDobra || 120;
+                    const dobrasCalc = dnC + (dC - dnC) * 0.5 + (nC - dnC) * 0.5;
+                    totalBruto = vd * dobrasCalc;
+                  }
+                  const diasTrab = codigos.filter(c => c !== '—').length;
+                  const totalTransporte = p.valorTransporte * diasTrab;
+                  return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte };
+                }).filter(l => l.dC + l.nC + l.dnC > 0);
+
+                if (linhas.length === 0) return null;
+
+                const semTotalBruto = linhas.reduce((s, l) => s + l.totalBruto, 0);
+                const semTotalTransp = linhas.reduce((s, l) => s + l.totalTransporte, 0);
+
+                return (
+                  <div key={sem.inicio} style={{ ...s.card, marginBottom: '20px', borderTop: '3px solid #1565c0' }}>
+                    {/* Header semana */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <h4 style={{ margin: 0, color: '#1565c0', fontSize: '15px' }}>
+                          📅 Semana {sem.label}
+                        </h4>
+                        <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+                          💳 Pagto na <strong>{sem.proxSeg}</strong>
+                          {' · '}CLT: <strong style={{ color: '#1976d2' }}>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato==='CLT').reduce((s,l)=>s+l.totalBruto,0))}</strong>
+                          {' · '}Free: <strong style={{ color: '#c2185b' }}>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato!=='CLT').reduce((s,l)=>s+l.totalBruto,0))}</strong>
+                          {semTotalTransp > 0 && <> · 🚗 <strong style={{ color: '#1565c0' }}>{fmtMoeda(semTotalTransp)}</strong></>}
+                          {' · '}Total: <strong style={{ color: '#1b5e20' }}>{fmtMoeda(semTotalBruto + semTotalTransp)}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabela por área */}
+                    {areasP.map(area => {
+                      const gp = linhas.filter(l => (l.pessoa.area || 'Sem Área') === area);
+                      if (gp.length === 0) return null;
+                      const ac = corArea(area);
+                      const areaTotal = gp.reduce((s,l)=>s+l.totalBruto+l.totalTransporte,0);
+                      return (
+                        <div key={area} style={{ marginBottom: '16px' }}>
+                          <div style={{ backgroundColor: ac, color: 'white', padding: '5px 12px', borderRadius: '4px 4px 0 0', fontWeight: 'bold', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
+                            <span>📍 {area}</span>
+                            <span style={{ opacity: 0.9 }}>{fmtMoeda(areaTotal)}</span>
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                              <thead>
+                                <tr style={{ backgroundColor: '#f5f5f5' }}>
+                                  <th style={{ ...s.th, backgroundColor: ac, textAlign: 'left', minWidth: '130px' }}>Nome</th>
+                                  <th style={{ ...s.th, backgroundColor: ac, minWidth: '40px' }}>Tipo</th>
+                                  <th style={{ ...s.th, backgroundColor: ac, textAlign: 'left', minWidth: '80px' }}>Função</th>
+                                  {(() => {
+                                    const days: string[] = [];
+                                    const d1 = new Date(sem.inicio + 'T12:00:00');
+                                    const d2 = new Date(sem.fim + 'T12:00:00');
+                                    for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) {
+                                      days.push(d.toISOString().split('T')[0]);
+                                    }
+                                    return days.map(ds => {
+                                      const dow = new Date(ds + 'T12:00:00').getDay();
+                                      return <th key={ds} style={{ ...s.thC, backgroundColor: dow===0||dow===6?'#546e7a':ac, minWidth: '40px', fontSize: '10px' }}>
+                                        {parseInt(ds.split('-')[2])}/{parseInt(ds.split('-')[1])}
+                                        <div style={{ fontSize: '9px', opacity: 0.85 }}>{DIAS_ABR[dow]}</div>
+                                      </th>;
+                                    });
+                                  })()}
+                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>D</th>
+                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>N</th>
+                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>DN</th>
+                                  <th style={{ ...s.th, backgroundColor: '#1b5e20', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Bruto (R$)</th>
+                                  <th style={{ ...s.th, backgroundColor: '#1565c0', textAlign: 'right', minWidth: '70px', fontSize: '11px' }}>🚗 Transp</th>
+                                  <th style={{ ...s.th, backgroundColor: '#2e7d32', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Total</th>
+                                  <th style={{ ...s.th, backgroundColor: '#37474f', textAlign: 'center', minWidth: '80px', fontSize: '10px' }}>Status</th>
+                                  <th style={{ ...s.th, backgroundColor: '#37474f', textAlign: 'left', minWidth: '100px', fontSize: '10px' }}>PIX</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {gp.map((l, li) => {
+                                  const p = l.pessoa;
+                                  const editKey = `${sem.inicio}_${p.id}`;
+                                  const ed = editDobras[editKey] || {};
+                                  const brutoEditado = ed.valorBruto !== undefined ? (parseFloat(ed.valorBruto) || 0) : l.totalBruto;
+                                  const transpEditado = ed.valorTransporte !== undefined ? (parseFloat(ed.valorTransporte) || 0) : l.totalTransporte;
+                                  const totalEdit = brutoEditado + transpEditado;
+                                  // payment log from folhasDB or local state
+                                  const folhaSalva = folhasDB.find(f => f.colaboradorId === p.id && f.mes === mesAno && f.semana === sem.inicio);
+                                  const isPago = folhaSalva?.pago || false;
+                                  const dataPgto = folhaSalva?.dataPagamento;
+                                  const cod = l.codigos;
+                                  const days2: string[] = [];
+                                  const d1 = new Date(sem.inicio + 'T12:00:00');
+                                  const d2 = new Date(sem.fim + 'T12:00:00');
+                                  for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) days2.push(d.toISOString().split('T')[0]);
+
+                                  return (
+                                    <tr key={p.id} style={{ backgroundColor: li % 2 === 0 ? '#fafafa' : 'white' }}>
+                                      <td style={{ ...s.td, fontWeight: 'bold', borderLeft: `3px solid ${corArea(p.area||'')}` }}>
+                                        {p.nome.split(' ').slice(0,2).join(' ')}
+                                      </td>
+                                      <td style={{ ...s.td, textAlign: 'center' }}>
+                                        <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '9px', fontWeight: 'bold',
+                                          backgroundColor: p.tipoContrato==='CLT' ? '#e8f5e9' : '#fff3e0',
+                                          color: p.tipoContrato==='CLT' ? '#2e7d32' : '#e65100' }}>
+                                          {p.tipoContrato==='CLT' ? 'CLT' : 'Free'}
+                                        </span>
+                                      </td>
+                                      <td style={{ ...s.td, fontSize: '11px', color: '#555' }}>{p.funcao || p.cargo || '—'}</td>
+                                      {days2.map((ds, di) => {
+                                        const c = cod[di] || '—';
+                                        let bg = 'transparent', tc = '#bbb';
+                                        if (c==='D') { bg='#fff9c4'; tc='#f57f17'; }
+                                        else if (c==='N') { bg='#e8eaf6'; tc='#3949ab'; }
+                                        else if (c==='DN') { bg='#e8f5e9'; tc='#2e7d32'; }
+                                        return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px' }}>
+                                          <span style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
+                                        </td>;
+                                      })}
+                                      <td style={{ ...s.td, fontWeight: 'bold', color: '#f57f17' }}>{l.dC}</td>
+                                      <td style={{ ...s.td, fontWeight: 'bold', color: '#3949ab' }}>{l.nC}</td>
+                                      <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32' }}>{l.dnC}</td>
+                                      {/* Bruto editável */}
+                                      <td style={{ ...s.td, textAlign: 'right', padding: '4px 4px' }}>
+                                        <input
+                                          type="number" step="0.01" min="0"
+                                          value={ed.valorBruto !== undefined ? ed.valorBruto : l.totalBruto.toFixed(2)}
+                                          onChange={e => setEditDobras(prev => ({ ...prev, [editKey]: { ...prev[editKey], valorBruto: e.target.value } }))}
+                                          style={{ width: '75px', padding: '3px 5px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '12px', textAlign: 'right', backgroundColor: ed.valorBruto !== undefined ? '#fff9e0' : 'white' }}
+                                        />
+                                      </td>
+                                      {/* Transporte editável */}
+                                      <td style={{ ...s.td, textAlign: 'right', padding: '4px 4px' }}>
+                                        <input
+                                          type="number" step="0.50" min="0"
+                                          value={ed.valorTransporte !== undefined ? ed.valorTransporte : l.totalTransporte.toFixed(2)}
+                                          onChange={e => setEditDobras(prev => ({ ...prev, [editKey]: { ...prev[editKey], valorTransporte: e.target.value } }))}
+                                          style={{ width: '65px', padding: '3px 5px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '12px', textAlign: 'right', backgroundColor: ed.valorTransporte !== undefined ? '#e3f2fd' : 'white' }}
+                                        />
+                                      </td>
+                                      <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                                        {fmtMoeda(totalEdit)}
+                                      </td>
+                                      {/* Status pago */}
+                                      <td style={{ ...s.td, textAlign: 'center' }}>
+                                        <button
+                                          onClick={async () => {
+                                            const novoPago = !isPago;
+                                            setSalvando(true);
+                                            try {
+                                              const payload = {
+                                                colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
+                                                pago: novoPago,
+                                                dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
+                                                valorBruto: brutoEditado, valorTransporte: transpEditado,
+                                                totalFinal: totalEdit,
+                                                obs: ed.obs || '',
+                                              };
+                                              await fetch(`${apiUrl}/folha-pagamento`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                                body: JSON.stringify(payload),
+                                              });
+                                              await carregarDados();
+                                            } catch { alert('Erro ao salvar status'); }
+                                            finally { setSalvando(false); }
+                                          }}
+                                          disabled={salvando}
+                                          style={{ ...s.btn(isPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}
+                                        >
+                                          {isPago ? '✅ Pago' : '⏳ Pagar'}
+                                        </button>
+                                        {isPago && dataPgto && (
+                                          <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{dataPgto}</div>
+                                        )}
+                                      </td>
+                                      <td style={{ ...s.td, fontSize: '11px' }}>
+                                        {p.chavePix ? (
+                                          <span
+                                            onClick={() => navigator.clipboard.writeText(p.chavePix!)}
+                                            style={{ cursor: 'pointer', color: '#1976d2', fontSize: '11px' }}
+                                            title="Clique para copiar PIX"
+                                          >💳 {p.chavePix}</span>
+                                        ) : <span style={{ color: '#bbb' }}>—</span>}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                              <tfoot>
+                                <tr style={{ backgroundColor: '#e8f5e9', borderTop: `2px solid ${ac}` }}>
+                                  <td colSpan={3} style={{ padding: '6px 10px', fontWeight: 'bold', color: ac, fontSize: '12px' }}>Subtotal {area}</td>
+                                  {(() => {
+                                    const days3: string[] = [];
+                                    const d1 = new Date(sem.inicio + 'T12:00:00');
+                                    const d2 = new Date(sem.fim + 'T12:00:00');
+                                    for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) days3.push(d.toISOString().split('T')[0]);
+                                    return <td colSpan={days3.length + 3} />;
+                                  })()}
+                                  <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', fontSize: '12px' }}>
+                                    {fmtMoeda(gp.reduce((s,l) => {
+                                      const ek = `${sem.inicio}_${l.pessoa.id}`;
+                                      const ed = editDobras[ek] || {};
+                                      return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
+                                    }, 0))}
+                                  </td>
+                                  <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0', fontSize: '12px' }}>
+                                    {fmtMoeda(gp.reduce((s,l) => {
+                                      const ek = `${sem.inicio}_${l.pessoa.id}`;
+                                      const ed = editDobras[ek] || {};
+                                      return s + (ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : l.totalTransporte);
+                                    }, 0))}
+                                  </td>
+                                  <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                                    {fmtMoeda(gp.reduce((s,l) => {
+                                      const ek = `${sem.inicio}_${l.pessoa.id}`;
+                                      const ed = editDobras[ek] || {};
+                                      const br = ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto;
+                                      const tr = ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : l.totalTransporte;
+                                      return s + br + tr;
+                                    }, 0))}
+                                  </td>
+                                  <td colSpan={2} />
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Rodapé semana */}
+                    <div style={{ marginTop: '8px', padding: '10px 14px', backgroundColor: '#1565c0', borderRadius: '6px', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontSize: '12px', opacity: 0.9 }}>💳 Pagto previsto na <strong>{sem.proxSeg}</strong></span>
+                      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px' }}>CLT: <strong>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato==='CLT').reduce((s,l) => {
+                          const ek = `${sem.inicio}_${l.pessoa.id}`;
+                          const ed = editDobras[ek] || {};
+                          return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
+                        }, 0))}</strong></span>
+                        <span style={{ fontSize: '12px' }}>Free: <strong>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato!=='CLT').reduce((s,l) => {
+                          const ek = `${sem.inicio}_${l.pessoa.id}`;
+                          const ed = editDobras[ek] || {};
+                          return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
+                        }, 0))}</strong></span>
+                        {semTotalTransp > 0 && <span style={{ fontSize: '12px' }}>🚗: <strong>{fmtMoeda(linhas.reduce((s,l) => {
+                          const ek = `${sem.inicio}_${l.pessoa.id}`;
+                          const ed = editDobras[ek] || {};
+                          return s + (ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : l.totalTransporte);
+                        }, 0))}</strong></span>}
+                        <span style={{ fontSize: '15px', fontWeight: 'bold' }}>Total: {fmtMoeda(linhas.reduce((s,l) => {
+                          const ek = `${sem.inicio}_${l.pessoa.id}`;
+                          const ed = editDobras[ek] || {};
+                          const br = ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto;
+                          const tr = ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : l.totalTransporte;
+                          return s + br + tr;
+                        }, 0))}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* ── ABA FREELANCERS ──────────────────────────────────── */}
         {aba === 'freelancers' && (
