@@ -1,316 +1,291 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
-import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 
-/* ─── Tipos ─────────────────────────────────────────────────────────────── */
+/* ─── Types ──────────────────────────────────────────────────────────────── */
 interface ExtratoItem {
   id: string;
   colaboradorId: string;
-  colaboradorNome: string;
-  tipoContrato?: string;
-  cargo?: string;
-  area?: string;
+  nomeColaborador?: string;
   mes: string;
   semana?: string;
-  tipo: 'pagamento' | 'desconto' | 'saida' | 'adiantamento' | 'inss' | 'transporte' | 'variavel';
+  tipoContrato?: string;
+  tipo: 'credito' | 'debito';
   descricao: string;
   valor: number;
-  sinal: 1 | -1;  // 1=crédito, -1=débito
   pago: boolean;
   dataPagamento?: string;
-  obs?: string;
-  createdAt?: string;
-}
-
-interface Colaborador {
-  id: string;
-  nome: string;
-  cargo?: string;
-  funcao?: string;
-  area?: string;
-  tipoContrato?: string;
-  chavePix?: string;
-}
-
-interface FolhaDB {
-  id: string;
-  colaboradorId: string;
-  mes: string;
-  semana?: string;
-  pago: boolean;
-  dataPagamento?: string;
-  saldoFinal?: number;
   valorBruto?: number;
   valorTransporte?: number;
   totalFinal?: number;
+  saldoFinal?: number;
   obs?: string;
   updatedAt?: string;
-  createdAt?: string;
+  unitId?: string;
 }
 
-/* ─── Helpers ────────────────────────────────────────────────────────────── */
+/* ─── Helpers ─────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
 const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
-const fmtMoedaAbs = (v: number) => 'R$ ' + fmt(Math.abs(v));
 
-/* ─── Component ─────────────────────────────────────────────────────────── */
+/* ─── Component ──────────────────────────────────────────────────────────── */
 export const Extrato: React.FC = () => {
+  const navigate = useNavigate();
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
-  const unitId = activeUnit?.id || (user as any)?.unitId || '';
+  const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   const hoje = new Date();
   const [mesAno, setMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
   const [loading, setLoading] = useState(false);
-  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
-  const [folhasDB, setFolhasDB] = useState<FolhaDB[]>([]);
-  const [saidas, setSaidas] = useState<any[]>([]);
+  const [items, setItems] = useState<ExtratoItem[]>([]);
+  const [detalheItem, setDetalheItem] = useState<ExtratoItem | null>(null);
 
-  const [filtroColab, setFiltroColab] = useState('todos');
-  const [filtroTipo, setFiltroTipo] = useState('todos');
-  const [filtroStatus, setFiltroStatus] = useState('todos');
-  const [filtroContrato, setFiltroContrato] = useState('todos');
+  // Filters
+  const [filtroColaborador, setFiltroColaborador] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<'todos' | 'credito' | 'debito'>('todos');
+  const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
 
   const token = () => localStorage.getItem('auth_token');
 
-  useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
+  useEffect(() => {
+    if (unitId) carregarDados();
+  }, [unitId, mesAno]);
 
   const carregarDados = async () => {
     setLoading(true);
     try {
-      const [ano, mes] = mesAno.split('-').map(Number);
-      const dataInicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
-      const dataFim = new Date(ano, mes, 0).toISOString().split('T')[0];
-
-      const [rC, rF, rS] = await Promise.all([
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
-        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+      const [rF, rC] = await Promise.all([
+        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, {
+          headers: { Authorization: `Bearer ${token()}` },
+        }).catch(() => null),
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+          headers: { Authorization: `Bearer ${token()}` },
+        }).catch(() => null),
       ]);
 
-      const dC = await rC.json();
-      setColaboradores(Array.isArray(dC) ? dC.filter((c: Colaborador) => c.nome) : []);
+      let colabs: any[] = [];
+      if (rC?.ok) {
+        const d = await rC.json();
+        colabs = Array.isArray(d) ? d : [];
+      }
 
       if (rF?.ok) {
         const dF = await rF.json();
-        setFolhasDB(Array.isArray(dF) ? dF : []);
-      } else {
-        setFolhasDB([]);
-      }
+        const rawItems: any[] = Array.isArray(dF) ? dF : [];
 
-      if (rS?.ok) {
-        const dS = await rS.json();
-        setSaidas(Array.isArray(dS) ? dS : []);
+        // Enrich with colaborador info and build extrato items
+        const enriched: ExtratoItem[] = rawItems.map(item => {
+          const colab = colabs.find((c: any) => c.id === item.colaboradorId);
+          const nome = colab?.nome || item.colaboradorId;
+          const tipoContrato = colab?.tipoContrato || (item.semana ? 'Freelancer' : 'CLT');
+          const valorPagar = R(item.totalFinal) || R(item.saldoFinal) || 0;
+
+          return {
+            id: item.id,
+            colaboradorId: item.colaboradorId,
+            nomeColaborador: nome,
+            mes: item.mes,
+            semana: item.semana || undefined,
+            tipoContrato,
+            tipo: 'credito' as const,
+            descricao: item.semana
+              ? `Dobras semanais ${item.semana} (${tipoContrato})`
+              : `Pagamento mensal CLT – ${item.mes}`,
+            valor: valorPagar,
+            pago: item.pago === true,
+            dataPagamento: item.dataPagamento || undefined,
+            valorBruto: R(item.valorBruto),
+            valorTransporte: R(item.valorTransporte),
+            totalFinal: R(item.totalFinal),
+            saldoFinal: R(item.saldoFinal),
+            obs: item.obs || '',
+            updatedAt: item.updatedAt,
+            unitId: item.unitId,
+          };
+        });
+
+        setItems(enriched.sort((a, b) => {
+          // Sort by name then mes desc
+          const nameComp = (a.nomeColaborador || '').localeCompare(b.nomeColaborador || '');
+          if (nameComp !== 0) return nameComp;
+          return (b.mes || '').localeCompare(a.mes || '');
+        }));
       } else {
-        setSaidas([]);
+        setItems([]);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
 
-  // Build extrato items from folhasDB + saidas
-  const extratoItems = useMemo((): ExtratoItem[] => {
-    const colabMap: Record<string, Colaborador> = {};
-    for (const c of colaboradores) colabMap[c.id] = c;
+  /* ── Filtered items ─────────────────────────────────────── */
+  const filteredItems = useMemo(() => items.filter(item => {
+    if (filtroColaborador && !item.nomeColaborador?.toLowerCase().includes(filtroColaborador.toLowerCase())) return false;
+    if (filtroTipo !== 'todos' && item.tipo !== filtroTipo) return false;
+    if (filtroContrato !== 'todos' && item.tipoContrato !== filtroContrato) return false;
+    if (filtroStatus === 'pago' && !item.pago) return false;
+    if (filtroStatus === 'pendente' && item.pago) return false;
+    return true;
+  }), [items, filtroColaborador, filtroTipo, filtroContrato, filtroStatus]);
 
-    const items: ExtratoItem[] = [];
-
-    // From folha-pagamento records
-    for (const f of folhasDB) {
-      const colab = colabMap[f.colaboradorId];
-      const nome = colab?.nome || f.colaboradorId;
-      const base: Omit<ExtratoItem, 'id' | 'tipo' | 'descricao' | 'valor' | 'sinal'> = {
-        colaboradorId: f.colaboradorId,
-        colaboradorNome: nome,
-        tipoContrato: colab?.tipoContrato,
-        cargo: colab?.cargo || colab?.funcao,
-        area: colab?.area,
-        mes: f.mes,
-        semana: f.semana,
-        pago: f.pago || false,
-        dataPagamento: f.dataPagamento,
-        obs: f.obs,
-        createdAt: f.updatedAt || f.createdAt,
-      };
-
-      // Pagamento principal
-      const total = R(f.totalFinal || f.saldoFinal || 0);
-      if (total !== 0) {
-        items.push({
-          ...base,
-          id: `${f.id}_pgto`,
-          tipo: 'pagamento',
-          descricao: f.semana
-            ? `Pagamento semanal — semana ${f.semana}`
-            : `Folha mensal — ${f.mes}`,
-          valor: total,
-          sinal: 1,
-        });
+  /* ── Summary per collaborator ───────────────────────────── */
+  const summaryByColab = useMemo(() => {
+    const map: Record<string, {
+      nome: string; tipoContrato: string;
+      creditos: number; debitos: number; saldo: number;
+      pago: number; pendente: number; count: number;
+    }> = {};
+    for (const item of filteredItems) {
+      const id = item.colaboradorId;
+      if (!map[id]) {
+        map[id] = {
+          nome: item.nomeColaborador || id,
+          tipoContrato: item.tipoContrato || '—',
+          creditos: 0, debitos: 0, saldo: 0, pago: 0, pendente: 0, count: 0,
+        };
       }
-
-      // Transporte
-      if (R(f.valorTransporte) > 0) {
-        items.push({
-          ...base,
-          id: `${f.id}_transp`,
-          tipo: 'transporte',
-          descricao: `Transporte — ${f.semana ? 'semana ' + f.semana : f.mes}`,
-          valor: R(f.valorTransporte),
-          sinal: 1,
-        });
-      }
+      const v = item.valor;
+      if (item.tipo === 'credito') { map[id].creditos += v; map[id].saldo += v; }
+      else { map[id].debitos += v; map[id].saldo -= v; }
+      if (item.pago) map[id].pago += v; else map[id].pendente += v;
+      map[id].count++;
     }
+    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [filteredItems]);
 
-    // From saidas
-    for (const s of saidas) {
-      const colab = colabMap[s.colaboradorId];
-      const nome = colab?.nome || s.colaborador || s.favorecido || s.colaboradorId;
-      items.push({
-        id: s.id,
-        colaboradorId: s.colaboradorId,
-        colaboradorNome: nome,
-        tipoContrato: colab?.tipoContrato,
-        cargo: colab?.cargo || colab?.funcao,
-        area: colab?.area,
-        mes: mesAno,
-        tipo: 'saida',
-        descricao: s.descricao || s.tipo || 'Saída',
-        valor: R(s.valor),
-        sinal: -1,  // saídas são débitos / pagamentos realizados
-        pago: !!s.dataPagamento,
-        dataPagamento: s.dataPagamento,
-        obs: s.observacao,
-        createdAt: s.createdAt || s.timestamp,
-      });
-    }
+  /* ── Totals ─────────────────────────────────────────────── */
+  const totals = useMemo(() => ({
+    totalCreditos: filteredItems.filter(i => i.tipo === 'credito').reduce((s, i) => s + i.valor, 0),
+    totalDebitos: filteredItems.filter(i => i.tipo === 'debito').reduce((s, i) => s + i.valor, 0),
+    totalPago: filteredItems.filter(i => i.pago).reduce((s, i) => s + i.valor, 0),
+    totalPendente: filteredItems.filter(i => !i.pago).reduce((s, i) => s + i.valor, 0),
+  }), [filteredItems]);
 
-    return items.sort((a, b) => {
-      // Sort: by date desc, then by name
-      const da = a.dataPagamento || a.createdAt || a.mes;
-      const db = b.dataPagamento || b.createdAt || b.mes;
-      if (da !== db) return db.localeCompare(da);
-      return a.colaboradorNome.localeCompare(b.colaboradorNome);
-    });
-  }, [folhasDB, saidas, colaboradores, mesAno]);
-
-  const filtered = useMemo(() => {
-    return extratoItems.filter(item => {
-      if (filtroColab !== 'todos' && item.colaboradorId !== filtroColab) return false;
-      if (filtroTipo !== 'todos' && item.tipo !== filtroTipo) return false;
-      if (filtroStatus === 'pago' && !item.pago) return false;
-      if (filtroStatus === 'pendente' && item.pago) return false;
-      if (filtroContrato !== 'todos' && item.tipoContrato !== filtroContrato) return false;
-      return true;
-    });
-  }, [extratoItems, filtroColab, filtroTipo, filtroStatus, filtroContrato]);
-
-  // Summary by collaborator
-  const resumoPorColab = useMemo(() => {
-    const map: Record<string, { nome: string; tipoContrato?: string; cargo?: string; creditos: number; debitos: number; saldo: number; pago: number; pendente: number }> = {};
-    for (const item of filtered) {
-      if (!map[item.colaboradorId]) {
-        map[item.colaboradorId] = { nome: item.colaboradorNome, tipoContrato: item.tipoContrato, cargo: item.cargo, creditos: 0, debitos: 0, saldo: 0, pago: 0, pendente: 0 };
-      }
-      const v = item.valor * item.sinal;
-      if (v >= 0) map[item.colaboradorId].creditos += v;
-      else map[item.colaboradorId].debitos += Math.abs(v);
-      map[item.colaboradorId].saldo += v;
-      if (item.pago) map[item.colaboradorId].pago += Math.abs(v);
-      else map[item.colaboradorId].pendente += Math.abs(v);
-    }
-    return Object.entries(map).map(([id, v]) => ({ id, ...v })).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [filtered]);
-
-  const totalCreditos = filtered.filter(i => i.sinal > 0).reduce((s, i) => s + i.valor, 0);
-  const totalDebitos = filtered.filter(i => i.sinal < 0).reduce((s, i) => s + i.valor, 0);
-  const totalPago = filtered.filter(i => i.pago).reduce((s, i) => s + i.valor * i.sinal, 0);
-  const totalPendente = filtered.filter(i => !i.pago).reduce((s, i) => s + Math.abs(i.valor), 0);
-
-  const tipoLabel: Record<string, { label: string; cor: string; bg: string }> = {
-    pagamento:    { label: 'Pagamento',    cor: '#2e7d32', bg: '#e8f5e9' },
-    desconto:     { label: 'Desconto',     cor: '#c62828', bg: '#fce4ec' },
-    saida:        { label: 'Saída',        cor: '#e65100', bg: '#fff3e0' },
-    adiantamento: { label: 'Adiantamento', cor: '#f57f17', bg: '#fff9c4' },
-    inss:         { label: 'INSS',         cor: '#6a1b9a', bg: '#f3e5f5' },
-    transporte:   { label: 'Transporte',   cor: '#1565c0', bg: '#e3f2fd' },
-    variavel:     { label: 'Variável',     cor: '#00838f', bg: '#e0f7fa' },
-  };
-
+  /* ── Export XLSX ────────────────────────────────────────── */
   const exportarXLSX = () => {
-    const ws = XLSX.utils.json_to_sheet(filtered.map(i => ({
-      'Colaborador': i.colaboradorNome,
-      'Tipo Contrato': i.tipoContrato || '',
-      'Cargo/Função': i.cargo || '',
-      'Área': i.area || '',
+    const data = filteredItems.map(i => ({
+      'Colaborador': i.nomeColaborador,
+      'Tipo Contrato': i.tipoContrato,
       'Mês': i.mes,
-      'Semana': i.semana || '',
-      'Tipo': tipoLabel[i.tipo]?.label || i.tipo,
+      'Semana': i.semana || '—',
+      'Tipo': i.tipo === 'credito' ? 'Crédito' : 'Débito',
       'Descrição': i.descricao,
       'Valor (R$)': i.valor,
-      'C/D': i.sinal === 1 ? 'Crédito' : 'Débito',
+      'Bruto (R$)': i.valorBruto || 0,
+      'Transporte (R$)': i.valorTransporte || 0,
       'Status': i.pago ? 'Pago' : 'Pendente',
-      'Data Pgto': i.dataPagamento || '',
-      'Obs': i.obs || '',
-    })));
+      'Data Pgto': i.dataPagamento || '—',
+      'Observação': i.obs || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Extrato ${mesAno}`);
+
+    // Summary sheet
+    const wsSumm = XLSX.utils.json_to_sheet(summaryByColab.map(s => ({
+      'Colaborador': s.nome,
+      'Tipo Contrato': s.tipoContrato,
+      'Total Créditos': s.creditos,
+      'Total Débitos': s.debitos,
+      'Saldo': s.saldo,
+      'Pago': s.pago,
+      'Pendente': s.pendente,
+    })));
+    XLSX.utils.book_append_sheet(wb, wsSumm, 'Resumo');
     XLSX.writeFile(wb, `extrato-pagamentos-${mesAno}.xlsx`);
   };
 
+  /* ── Styles ─────────────────────────────────────────────── */
   const s = {
     card: { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
     label: { fontSize: '13px', fontWeight: 'bold' as const, marginBottom: '4px', color: '#444', display: 'block' },
-    input: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
-    select: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
+    input: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '13px', width: '100%' },
+    select: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '13px', width: '100%' },
     btn: (bg: string) => ({ padding: '8px 16px', border: 'none', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: bg, color: 'white' }),
-    th: { backgroundColor: '#1565c0', color: 'white', padding: '8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'left' as const },
-    thC: { backgroundColor: '#1565c0', color: 'white', padding: '8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'center' as const },
-    td: { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const },
-    tdR: { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'right' as const },
+    th: { backgroundColor: '#1565c0', color: 'white', padding: '8px 10px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'left' as const },
+    thC: { backgroundColor: '#1565c0', color: 'white', padding: '8px 10px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'center' as const },
+    thR: { backgroundColor: '#1565c0', color: 'white', padding: '8px 10px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'right' as const },
+    td: { padding: '8px 10px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const },
+    tdR: { padding: '8px 10px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'right' as const },
+    tdC: { padding: '8px 10px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'center' as const },
+    badge: (bg: string, color: string) => ({ backgroundColor: bg, color, padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' as const }),
   };
 
-  const colabsUnicos = useMemo(() => {
-    const seen = new Set<string>();
-    return extratoItems
-      .filter(i => { if (seen.has(i.colaboradorId)) return false; seen.add(i.colaboradorId); return true; })
-      .map(i => ({ id: i.colaboradorId, nome: i.colaboradorNome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [extratoItems]);
+  /* ── Modal Detalhe ─────────────────────────────────────── */
+  const ModalDetalhe = ({ item, onClose }: { item: ExtratoItem; onClose: () => void }) => (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}>
+      <div style={{ ...s.card, maxWidth: '480px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, color: '#1565c0' }}>📋 Detalhes do Lançamento</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <tbody>
+            {[
+              { label: 'Colaborador', value: item.nomeColaborador },
+              { label: 'Tipo Contrato', value: item.tipoContrato },
+              { label: 'Mês', value: item.mes },
+              { label: 'Semana', value: item.semana || 'Mensal' },
+              { label: 'Tipo', value: item.tipo === 'credito' ? '📈 Crédito' : '📉 Débito' },
+              { label: 'Descrição', value: item.descricao },
+              { label: 'Valor Total', value: fmtMoeda(item.valor) },
+              { label: 'Bruto', value: item.valorBruto ? fmtMoeda(item.valorBruto) : '—' },
+              { label: 'Transporte', value: item.valorTransporte ? fmtMoeda(item.valorTransporte) : '—' },
+              { label: 'Status', value: item.pago ? '✅ Pago' : '⏳ Pendente' },
+              { label: 'Data Pagamento', value: item.dataPagamento || '—' },
+              { label: 'Observação', value: item.obs || '—' },
+              { label: 'Atualizado em', value: item.updatedAt ? new Date(item.updatedAt).toLocaleString('pt-BR') : '—' },
+            ].map((row, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
+                <td style={{ padding: '7px 10px', fontWeight: 'bold', color: '#555', width: '40%' }}>{row.label}</td>
+                <td style={{ padding: '7px 10px', color: '#333' }}>{row.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ marginTop: '14px', textAlign: 'right' }}>
+          <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="📋 Extrato de Pagamentos" showBack={true} />
+      {detalheItem && <ModalDetalhe item={detalheItem} onClose={() => setDetalheItem(null)} />}
 
-      <div style={{ flex: 1, padding: '20px', maxWidth: '1600px', margin: '0 auto', width: '100%' }}>
+      <div style={{ flex: 1, padding: '20px', maxWidth: '1500px', margin: '0 auto', width: '100%' }}>
 
-        {/* Filtros */}
+        {/* ── Filtros ──────────────────────────────────────── */}
         <div style={{ ...s.card, marginBottom: '16px', display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
             <label style={s.label}>Mês / Ano</label>
             <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
           </div>
-          <div>
+          <div style={{ flex: 1, minWidth: '180px' }}>
             <label style={s.label}>Colaborador</label>
-            <select value={filtroColab} onChange={e => setFiltroColab(e.target.value)} style={{ ...s.select, width: '200px' }}>
-              <option value="todos">Todos</option>
-              {colabsUnicos.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            <input type="text" placeholder="Buscar por nome..." value={filtroColaborador}
+              onChange={e => setFiltroColaborador(e.target.value)} style={s.input} />
           </div>
           <div>
-            <label style={s.label}>Tipo Lançamento</label>
-            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={{ ...s.select, width: '150px' }}>
+            <label style={s.label}>Tipo</label>
+            <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
               <option value="todos">Todos</option>
-              {Object.entries(tipoLabel).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              <option value="credito">Crédito</option>
+              <option value="debito">Débito</option>
             </select>
           </div>
           <div>
             <label style={s.label}>Contrato</label>
-            <select value={filtroContrato} onChange={e => setFiltroContrato(e.target.value)} style={{ ...s.select, width: '130px' }}>
+            <select value={filtroContrato} onChange={e => setFiltroContrato(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
               <option value="todos">Todos</option>
               <option value="CLT">CLT</option>
               <option value="Freelancer">Freelancer</option>
@@ -318,203 +293,183 @@ export const Extrato: React.FC = () => {
           </div>
           <div>
             <label style={s.label}>Status</label>
-            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ ...s.select, width: '130px' }}>
+            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
               <option value="todos">Todos</option>
               <option value="pago">Pagos</option>
               <option value="pendente">Pendentes</option>
             </select>
           </div>
           <button onClick={carregarDados} style={s.btn('#1976d2')}>🔄 Atualizar</button>
-          <button onClick={exportarXLSX} disabled={filtered.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
+          <button onClick={exportarXLSX} disabled={filteredItems.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
+          <button onClick={() => navigate('/modulos/folha-pagamento')} style={s.btn('#00838f')}>💳 Folha</button>
         </div>
 
-        {/* Cards resumo */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '18px' }}>
+        {/* ── Summary Cards ────────────────────────────────── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '18px' }}>
           {[
-            { label: 'Total Créditos', val: fmtMoeda(totalCreditos), cor: '#2e7d32' },
-            { label: 'Total Débitos', val: fmtMoeda(totalDebitos), cor: '#c62828' },
-            { label: 'Saldo', val: fmtMoeda(totalCreditos - totalDebitos), cor: totalCreditos - totalDebitos >= 0 ? '#1976d2' : '#c62828' },
-            { label: 'Pago', val: fmtMoeda(Math.abs(totalPago)), cor: '#43a047' },
-            { label: 'Pendente', val: fmtMoeda(totalPendente), cor: '#f57f17' },
-            { label: 'Lançamentos', val: `${filtered.length}`, cor: '#6a1b9a' },
+            { label: 'Total Créditos', val: fmtMoeda(totals.totalCreditos), cor: '#2e7d32' },
+            { label: 'Total Débitos', val: fmtMoeda(totals.totalDebitos), cor: '#c62828' },
+            { label: 'Total Pago', val: fmtMoeda(totals.totalPago), cor: '#1565c0' },
+            { label: 'Total Pendente', val: fmtMoeda(totals.totalPendente), cor: '#f57f17' },
+            { label: 'Lançamentos', val: `${filteredItems.length}`, cor: '#6a1b9a' },
+            { label: 'Colaboradores', val: `${summaryByColab.length}`, cor: '#00838f' },
           ].map(c => (
             <div key={c.label} style={{ ...s.card, borderLeft: `4px solid ${c.cor}` }}>
               <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
-              <div style={{ fontSize: '14px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+              <div style={{ fontSize: '15px', fontWeight: 'bold', color: c.cor, marginTop: '2px' }}>{c.val}</div>
             </div>
           ))}
         </div>
 
-        {loading ? (
-          <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando dados...</div>
-        ) : (
-          <>
-            {/* Resumo por colaborador */}
-            {resumoPorColab.length > 0 && (
-              <div style={{ ...s.card, marginBottom: '16px' }}>
-                <h4 style={{ margin: '0 0 12px 0', color: '#1565c0', fontSize: '14px' }}>📊 Resumo por Colaborador</h4>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Colaborador</th>
-                        <th style={s.thC}>Tipo</th>
-                        <th style={s.th}>Cargo / Função</th>
-                        <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#2e7d32' }}>Créditos</th>
-                        <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Débitos</th>
-                        <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Saldo</th>
-                        <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Pago</th>
-                        <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#f57f17' }}>Pendente</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {resumoPorColab.map((r, i) => (
-                        <tr key={r.id} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
-                          <td style={{ ...s.td, fontWeight: 'bold' }}>{r.nome}</td>
-                          <td style={{ ...s.td, textAlign: 'center' }}>
-                            <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                              backgroundColor: r.tipoContrato === 'CLT' ? '#e8f5e9' : '#fff3e0',
-                              color: r.tipoContrato === 'CLT' ? '#2e7d32' : '#e65100' }}>
-                              {r.tipoContrato || '—'}
-                            </span>
-                          </td>
-                          <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{r.cargo || '—'}</td>
-                          <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(r.creditos)}</td>
-                          <td style={{ ...s.tdR, color: '#c62828' }}>{r.debitos > 0 ? fmtMoeda(r.debitos) : '—'}</td>
-                          <td style={{ ...s.tdR, fontWeight: 'bold', color: r.saldo >= 0 ? '#1976d2' : '#c62828' }}>{fmtMoeda(r.saldo)}</td>
-                          <td style={{ ...s.tdR, color: '#43a047' }}>{r.pago > 0 ? fmtMoeda(r.pago) : '—'}</td>
-                          <td style={{ ...s.tdR, color: r.pendente > 0 ? '#f57f17' : '#bbb', fontWeight: r.pendente > 0 ? 'bold' : 'normal' }}>
-                            {r.pendente > 0 ? fmtMoeda(r.pendente) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
-                        <td style={{ padding: '8px' }} colSpan={3}>TOTAIS</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalCreditos)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>{fmtMoeda(totalDebitos)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9' }}>{fmtMoeda(totalCreditos - totalDebitos)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(Math.abs(totalPago))}</td>
-                        <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80' }}>{fmtMoeda(totalPendente)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Lançamentos detalhados */}
-            <div style={{ ...s.card }}>
-              <h4 style={{ margin: '0 0 12px 0', color: '#1565c0', fontSize: '14px' }}>
-                📋 Lançamentos Detalhados — {filtered.length} registros
-              </h4>
-              {filtered.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px', color: '#999' }}>
-                  Nenhum lançamento encontrado para os filtros selecionados.
-                </div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Colaborador</th>
-                        <th style={s.thC}>Contrato</th>
-                        <th style={s.th}>Cargo</th>
-                        <th style={s.th}>Mês</th>
-                        <th style={s.th}>Semana</th>
-                        <th style={s.thC}>Tipo</th>
-                        <th style={s.th}>Descrição</th>
-                        <th style={{ ...s.th, textAlign: 'right' }}>Valor</th>
-                        <th style={s.thC}>C/D</th>
-                        <th style={s.thC}>Status</th>
-                        <th style={s.th}>Data Pgto</th>
-                        <th style={s.th}>Obs</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((item, idx) => {
-                        const tl = tipoLabel[item.tipo] || { label: item.tipo, cor: '#666', bg: '#f5f5f5' };
-                        return (
-                          <tr key={item.id} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}
-                            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
-                            onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#fafafa' : 'white')}>
-                            <td style={{ ...s.td, fontWeight: 'bold' }}>{item.colaboradorNome}</td>
-                            <td style={{ ...s.td, textAlign: 'center' }}>
-                              <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                                backgroundColor: item.tipoContrato === 'CLT' ? '#e8f5e9' : '#fff3e0',
-                                color: item.tipoContrato === 'CLT' ? '#2e7d32' : '#e65100' }}>
-                                {item.tipoContrato || '—'}
-                              </span>
-                            </td>
-                            <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{item.cargo || '—'}</td>
-                            <td style={{ ...s.td, fontSize: '11px' }}>{item.mes}</td>
-                            <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{item.semana || '—'}</td>
-                            <td style={{ ...s.td, textAlign: 'center' }}>
-                              <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                                backgroundColor: tl.bg, color: tl.cor }}>
-                                {tl.label}
-                              </span>
-                            </td>
-                            <td style={{ ...s.td, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.descricao}
-                            </td>
-                            <td style={{ ...s.tdR, fontWeight: 'bold', color: item.sinal > 0 ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
-                              {item.sinal > 0 ? '+' : '−'} {fmtMoedaAbs(item.valor)}
-                            </td>
-                            <td style={{ ...s.td, textAlign: 'center' }}>
-                              <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
-                                backgroundColor: item.sinal > 0 ? '#e8f5e9' : '#fce4ec',
-                                color: item.sinal > 0 ? '#2e7d32' : '#c62828' }}>
-                                {item.sinal > 0 ? 'CR' : 'DB'}
-                              </span>
-                            </td>
-                            <td style={{ ...s.td, textAlign: 'center' }}>
-                              <span style={{ padding: '2px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                                backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4',
-                                color: item.pago ? '#2e7d32' : '#f57f17' }}>
-                                {item.pago ? '✅ Pago' : '⏳ Pendente'}
-                              </span>
-                            </td>
-                            <td style={{ ...s.td, fontSize: '11px', color: item.dataPagamento ? '#2e7d32' : '#bbb' }}>
-                              {item.dataPagamento || '—'}
-                            </td>
-                            <td style={{ ...s.td, fontSize: '11px', color: '#666', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.obs || '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
-                        <td style={{ padding: '8px' }} colSpan={7}>TOTAL</td>
-                        <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>
-                          {fmtMoeda(filtered.reduce((s, i) => s + i.valor * i.sinal, 0))}
-                        </td>
-                        <td colSpan={4} />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* Legend */}
-            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '11px' }}>
-              {Object.entries(tipoLabel).map(([k, v]) => (
-                <span key={k} style={{ padding: '3px 8px', borderRadius: '10px', backgroundColor: v.bg, color: v.cor, fontWeight: 'bold', border: `1px solid ${v.cor}` }}>
-                  {v.label}
-                </span>
-              ))}
-              <span style={{ color: '#666', marginLeft: '8px' }}>CR = Crédito (a pagar) · DB = Débito (já pago / descontado)</span>
-            </div>
-          </>
+        {/* ── Summary per collaborator ─────────────────────── */}
+        {summaryByColab.length > 0 && (
+          <div style={{ ...s.card, marginBottom: '18px', overflowX: 'auto' }}>
+            <h4 style={{ margin: '0 0 12px 0', color: '#1565c0', fontSize: '14px' }}>📊 Resumo por Colaborador</h4>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Colaborador</th>
+                  <th style={s.thC}>Contrato</th>
+                  <th style={s.thR}>Créditos</th>
+                  <th style={s.thR}>Débitos</th>
+                  <th style={s.thR}>Saldo</th>
+                  <th style={s.thR}>✅ Pago</th>
+                  <th style={s.thR}>⏳ Pendente</th>
+                  <th style={s.thC}>Lançamentos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryByColab.map((row, i) => (
+                  <tr key={row.nome + i} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
+                    <td style={{ ...s.td, fontWeight: 'bold' }}>{row.nome}</td>
+                    <td style={s.tdC}>
+                      <span style={row.tipoContrato === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                        {row.tipoContrato}
+                      </span>
+                    </td>
+                    <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(row.creditos)}</td>
+                    <td style={{ ...s.tdR, color: '#c62828' }}>{row.debitos > 0 ? fmtMoeda(row.debitos) : '—'}</td>
+                    <td style={{ ...s.tdR, fontWeight: 'bold', color: row.saldo >= 0 ? '#1565c0' : '#c62828' }}>{fmtMoeda(row.saldo)}</td>
+                    <td style={{ ...s.tdR, color: '#1565c0' }}>{row.pago > 0 ? fmtMoeda(row.pago) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#f57f17' }}>{row.pendente > 0 ? fmtMoeda(row.pendente) : '—'}</td>
+                    <td style={{ ...s.tdC, color: '#666' }}>{row.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
+                  <td style={{ padding: '8px 10px' }} colSpan={2}>TOTAIS ({summaryByColab.length} colaboradores)</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(summaryByColab.reduce((s, r) => s + r.creditos, 0))}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#ef9a9a' }}>{fmtMoeda(summaryByColab.reduce((s, r) => s + r.debitos, 0))}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#90caf9' }}>{fmtMoeda(summaryByColab.reduce((s, r) => s + r.saldo, 0))}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totals.totalPago)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#ffcc80' }}>{fmtMoeda(totals.totalPendente)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>{filteredItems.length}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         )}
+
+        {/* ── Detailed table ───────────────────────────────── */}
+        <div style={{ ...s.card, overflowX: 'auto' }}>
+          <h4 style={{ margin: '0 0 12px 0', color: '#1565c0', fontSize: '14px' }}>
+            📄 Lançamentos Detalhados
+            {filteredItems.length > 0 && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#666' }}>({filteredItems.length} registros)</span>}
+          </h4>
+
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
+          ) : filteredItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+              <div style={{ fontSize: '40px', marginBottom: '12px' }}>📋</div>
+              <p style={{ margin: 0 }}>Nenhum lançamento encontrado para o período.</p>
+              <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#bbb' }}>
+                Os registros aparecem aqui quando pagamentos são marcados na <strong>Folha de Pagamento</strong>.
+              </p>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Colaborador</th>
+                  <th style={s.thC}>Contrato</th>
+                  <th style={s.thC}>Mês</th>
+                  <th style={s.thC}>Semana</th>
+                  <th style={s.thC}>Tipo</th>
+                  <th style={s.th}>Descrição</th>
+                  <th style={s.thR}>Bruto</th>
+                  <th style={s.thR}>Transp.</th>
+                  <th style={s.thR}>Total</th>
+                  <th style={s.thC}>Status</th>
+                  <th style={s.thC}>Data Pgto</th>
+                  <th style={s.thC}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item, i) => (
+                  <tr key={item.id} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}
+                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = i % 2 === 0 ? '#fafafa' : 'white')}>
+                    <td style={{ ...s.td, fontWeight: 'bold' }}>{item.nomeColaborador}</td>
+                    <td style={s.tdC}>
+                      <span style={item.tipoContrato === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                        {item.tipoContrato || '—'}
+                      </span>
+                    </td>
+                    <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>{item.mes}</td>
+                    <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>{item.semana || '—'}</td>
+                    <td style={s.tdC}>
+                      <span style={item.tipo === 'credito' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fce4ec', '#c62828')}>
+                        {item.tipo === 'credito' ? '📈 C' : '📉 D'}
+                      </span>
+                    </td>
+                    <td style={{ ...s.td, maxWidth: '200px', fontSize: '11px', color: '#555' }}>{item.descricao}</td>
+                    <td style={{ ...s.tdR, color: '#1976d2' }}>{item.valorBruto ? fmtMoeda(item.valorBruto) : '—'}</td>
+                    <td style={{ ...s.tdR, color: '#1565c0' }}>{item.valorTransporte ? fmtMoeda(item.valorTransporte) : '—'}</td>
+                    <td style={{ ...s.tdR, fontWeight: 'bold', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
+                      {fmtMoeda(item.valor)}
+                    </td>
+                    <td style={s.tdC}>
+                      <span style={item.pago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
+                        {item.pago ? '✅ Pago' : '⏳ Pend.'}
+                      </span>
+                    </td>
+                    <td style={{ ...s.tdC, fontSize: '11px', color: item.dataPagamento ? '#2e7d32' : '#bbb' }}>
+                      {item.dataPagamento || '—'}
+                    </td>
+                    <td style={s.tdC}>
+                      <button onClick={() => setDetalheItem(item)}
+                        style={{ ...s.btn('#1976d2'), padding: '3px 8px', fontSize: '11px' }}
+                        title="Ver detalhes">
+                        📋
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
+                  <td colSpan={8} style={{ padding: '8px 10px', fontSize: '13px' }}>
+                    TOTAIS ({filteredItems.length} lançamentos)
+                  </td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>
+                    {fmtMoeda(filteredItems.reduce((s, i) => s + i.valor, 0))}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        <div style={{ marginTop: '12px', fontSize: '11px', color: '#888', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
+          ℹ️ <strong>Nota:</strong> O Extrato registra automaticamente os pagamentos lançados na <strong>Folha de Pagamento</strong> (abas CLT, Dobras Semanais e Freelancers).
+          Para ver pagamentos, acesse a Folha e marque os pagamentos como <em>Pago</em>.
+        </div>
       </div>
+
       <Footer showLinks={true} />
     </div>
   );
 };
-
-export default Extrato;

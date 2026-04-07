@@ -1404,13 +1404,19 @@ export default function FolhaPagamento() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                           <thead>
                             <tr>
-                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total', 'Ações'].map(h => (
+                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total', 'Status', 'Ações'].map(h => (
                                 <th key={h} style={s.th}>{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
-                            {fech.freelancers.map((fr, fi) => (
+                            {fech.freelancers.map((fr, fi) => {
+                              const frFolhaSalva = folhasDB.find((f: any) =>
+                                f.colaboradorId === fr.id && f.mes === mesAno && f.semana === fech.dataFechamento
+                              );
+                              const frIsPago = frFolhaSalva?.pago || fr.pago || false;
+                              const frDataPgto = frFolhaSalva?.dataPagamento;
+                              return (
                               <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
                                 <td style={{ ...s.td, fontWeight: 'bold' }}>{fr.nome}</td>
                                 <td style={{ ...s.td, fontSize: '11px' }}>
@@ -1429,6 +1435,14 @@ export default function FolhaPagamento() {
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1976d2', fontSize: '13px' }}>
                                   {fmtMoeda(fr.total)}
                                 </td>
+                                <td style={{ ...s.td, textAlign: 'center' }}>
+                                  <span style={frIsPago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
+                                    {frIsPago ? '✅ Pago' : '⏳ Pend.'}
+                                  </span>
+                                  {frIsPago && frDataPgto && (
+                                    <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{frDataPgto}</div>
+                                  )}
+                                </td>
                                 <td style={s.td}>
                                   <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                     <button
@@ -1446,20 +1460,50 @@ export default function FolhaPagamento() {
                                       title="Ver detalhamento">
                                       📋 Ver
                                     </button>
+                                    <button
+                                      disabled={salvando}
+                                      onClick={async () => {
+                                        const novoPago = !frIsPago;
+                                        setSalvando(true);
+                                        try {
+                                          const payload = {
+                                            colaboradorId: fr.id, mes: mesAno,
+                                            semana: fech.dataFechamento, unitId,
+                                            pago: novoPago,
+                                            dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
+                                            valorBruto: fr.total, valorTransporte: 0,
+                                            totalFinal: fr.total,
+                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras × R$${fmt(fr.valorDobra)}`,
+                                          };
+                                          const resp = await fetch(`${apiUrl}/folha-pagamento`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                            body: JSON.stringify(payload),
+                                          });
+                                          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                                          await carregarDados();
+                                        } catch (err) { alert('Erro ao salvar status: ' + err); }
+                                        finally { setSalvando(false); }
+                                      }}
+                                      style={{ ...s.btn(frIsPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}
+                                    >
+                                      {frIsPago ? '↩ Desfazer' : '✅ Pagar'}
+                                    </button>
                                     {fr.chavePix && (
                                       <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
-                                        style={{ ...s.btn('#43a047'), padding: '3px 8px', fontSize: '11px' }}>
+                                        style={{ ...s.btn('#1565c0'), padding: '3px 8px', fontSize: '11px' }}>
                                         💳 PIX
                                       </button>
                                     )}
                                   </div>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                           <tfoot>
                             <tr style={{ backgroundColor: '#880e4f', color: 'white', fontWeight: 'bold' }}>
-                              <td style={{ padding: '8px' }} colSpan={5}>SEMANA {fech.semanaLabel}</td>
+                              <td style={{ padding: '8px' }} colSpan={6}>SEMANA {fech.semanaLabel}</td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#f48fb1' }}>
                                 {fmtMoeda(fech.totalSemana)}
                               </td>
