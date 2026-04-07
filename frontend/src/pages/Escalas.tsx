@@ -60,9 +60,10 @@ function diasDoMes(ano: number, mes: number): Date[] {
 }
 function fmtIso(d: Date) { return d.toISOString().split('T')[0]; }
 function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
-function fmtBRL(v: number) {
-  return 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-}
+// fmtBRL kept for possible future use
+// function fmtBRL(v: number) {
+//   return 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+// }
 
 const DS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const DF = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
@@ -104,11 +105,12 @@ function proximaSegunda(dataRef: Date): Date {
   return d;
 }
 
-function proxDataPagtoStr(dias: Date[]): string {
-  const ultimo = dias[dias.length - 1];
-  const seg = proximaSegunda(ultimo);
-  return `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')}/${seg.getFullYear()}`;
-}
+// proxDataPagtoStr moved to FolhaPagamento
+// function proxDataPagtoStr(dias: Date[]): string {
+//   const ultimo = dias[dias.length - 1];
+//   const seg = proximaSegunda(ultimo);
+//   return `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')}/${seg.getFullYear()}`;
+// }
 
 const TURNO_BADGE: Record<string, { bg: string; cor: string; label: string }> = {
   Dia:      { bg:'#fff9c4', cor:'#f57f17', label:'D' },
@@ -155,7 +157,7 @@ export const Escalas: React.FC = () => {
   const [loading,       setLoading]= useState(false);
   const [salvando,      setSalvando]=useState(false);
 
-  type AbaType = 'mensal' | 'lancamento' | 'presencas' | 'pagamento';
+  type AbaType = 'mensal' | 'lancamento' | 'presencas';
   const [aba, setAba] = useState<AbaType>('mensal');
 
   const [filtroArea,   setFiltroArea]  = useState('Todos');
@@ -581,7 +583,6 @@ export const Escalas: React.FC = () => {
             { key:'mensal',    label:'📋 Visão Mensal' },
             { key:'lancamento',label:'✏️ Lançar Turnos' },
             { key:'presencas', label:'✅ Presenças/Faltas' },
-            { key:'pagamento', label:'💰 Resumo Pagamento' },
           ] as {key:AbaType;label:string}[]).map(({key,label})=>(
             <button key={key} style={s.tab(aba===key)} onClick={()=>setAba(key)}>{label}</button>
           ))}
@@ -777,7 +778,6 @@ export const Escalas: React.FC = () => {
                               <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>D</th>
                               <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>N</th>
                               <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>DN</th>
-                              <th style={{ ...s.th, backgroundColor:'#1b5e20', minWidth:'70px', fontSize:'10px' }}>Prévia R$</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -805,63 +805,20 @@ export const Escalas: React.FC = () => {
                                   <td style={{ ...s.td, fontWeight:'bold', color:'#f57f17' }}>{calc.dC}</td>
                                   <td style={{ ...s.td, fontWeight:'bold', color:'#3949ab' }}>{calc.nC}</td>
                                   <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32' }}>{calc.dnC}</td>
-                                  <td style={{ ...s.td, fontWeight:'bold', color:'#1b5e20', fontSize:'11px', whiteSpace:'nowrap' as const }}>
-                                    {calc.totalBruto > 0 ? fmtBRL(calc.totalBruto) : '—'}
-                                  </td>
                                 </tr>
                               );
                             })}
                           </tbody>
-                          <tfoot>
-                            <tr style={{ backgroundColor:'#e3f2fd', borderTop:'2px solid ' + areaColor }}>
-                              <td colSpan={3+semAtual.dias.length} style={{ padding:'6px 10px', fontWeight:'bold', color:areaColor, fontSize:'12px' }}>
-                                Subtotal {area}
-                              </td>
-                              <td colSpan={3} style={{ padding:'6px 4px', textAlign:'center' as const }}></td>
-                              <td style={{ padding:'6px 6px', fontWeight:'bold', color:'#1b5e20', textAlign:'right' as const, fontSize:'12px', whiteSpace:'nowrap' as const }}>
-                                {fmtBRL(gp.reduce((acc,p)=>acc+calcPagamentoSemana(p,semAtual.dias).totalBruto,0))}
-                              </td>
-                            </tr>
-                          </tfoot>
+
                         </table>
                       </div>
                     </div>
                   );
                 })}
 
-                {/* Total geral da semana */}
-                <div style={{ marginTop:'16px', padding:'14px 18px', backgroundColor:'#1565c0', borderRadius:'8px', color:'white', display:'flex', justifyContent:'space-between', flexWrap:'wrap', gap:'12px' }}>
-                  <div>
-                    <div style={{ fontSize:'12px', opacity:0.85 }}>💰 Prévia Pagamento — Semana {semAtual.label}</div>
-                    <div style={{ fontSize:'11px', opacity:0.7 }}>Pagto na {proxDataPagtoStr(semAtual.dias)}</div>
-                  </div>
-                  {(() => {
-                    const clt  = todosFiltered.filter(p=>p.tipoContrato==='CLT');
-                    const free = todosFiltered.filter(p=>p.tipoContrato!=='CLT');
-                    const totCLT  = clt.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalBruto,0);
-                    const totFree = free.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalBruto,0);
-                    const totTransp = todosFiltered.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalTransporte,0);
-                    return (
-                      <div style={{ display:'flex', gap:'20px', flexWrap:'wrap' }}>
-                        {totCLT>0 && <div style={{ textAlign:'center' as const }}>
-                          <div style={{ fontSize:'11px', opacity:0.8 }}>CLT Dobras</div>
-                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totCLT)}</div>
-                        </div>}
-                        {totFree>0 && <div style={{ textAlign:'center' as const }}>
-                          <div style={{ fontSize:'11px', opacity:0.8 }}>Freelancers</div>
-                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totFree)}</div>
-                        </div>}
-                        {totTransp>0 && <div style={{ textAlign:'center' as const }}>
-                          <div style={{ fontSize:'11px', opacity:0.8 }}>🚗 Transporte</div>
-                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totTransp)}</div>
-                        </div>}
-                        <div style={{ textAlign:'center' as const, borderLeft:'1px solid rgba(255,255,255,0.3)', paddingLeft:'20px' }}>
-                          <div style={{ fontSize:'11px', opacity:0.8 }}>Total Semana</div>
-                          <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totCLT+totFree+totTransp)}</div>
-                        </div>
-                      </div>
-                    );
-                  })()}
+                {/* Info - ver Folha de Pagamento para valores */}
+                <div style={{ marginTop:'12px', padding:'10px 14px', backgroundColor:'#e8f5e9', borderRadius:'6px', borderLeft:'4px solid #2e7d32', fontSize:'12px', color:'#1b5e20' }}>
+                  💡 Os valores de pagamento estão disponíveis em <strong>Folha de Pagamento → Dobras Semanais</strong>.
                 </div>
               </>
             )}
@@ -997,258 +954,6 @@ export const Escalas: React.FC = () => {
           </div>
         )}
 
-        {/* ─── ABA PAGAMENTO ──────────────────────────────────── */}
-        {aba==='pagamento' && (
-          <div style={{ ...s.card, borderRadius:'0 8px 8px 8px' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'16px', flexWrap:'wrap', gap:'8px' }}>
-              <div>
-                <h3 style={{ margin:'0 0 4px 0', color:'#1b5e20', fontSize:'16px' }}>💰 Resumo de Pagamentos — {mesAno}</h3>
-                <p style={{ color:'#666', fontSize:'12px', margin:0 }}>
-                  CLT: variável (dobras) pago segunda-feira seguinte. Freelancer: D/N = 0,5 dobra; DN = 1 dobra. Transporte por dia trabalhado.
-                </p>
-              </div>
-            </div>
-
-            {semanas.map((sem,si)=>{
-              const pagamentos = todosFiltered
-                .map(p=>({ p, calc:calcPagamentoSemana(p,sem.dias) }))
-                .filter(({calc})=>calc.totalBruto>0 || calc.totalTransporte>0);
-
-              if (pagamentos.length===0) return null;
-
-              const totalBruto = pagamentos.reduce((s,{calc})=>s+calc.totalBruto,0);
-              const totalTransp = pagamentos.reduce((s,{calc})=>s+calc.totalTransporte,0);
-              const totalGeral = totalBruto + totalTransp;
-              const totalCLT = pagamentos.filter(({p})=>p.tipoContrato==='CLT').reduce((s,{calc})=>s+calc.totalBruto,0);
-              const totalFree = pagamentos.filter(({p})=>p.tipoContrato!=='CLT').reduce((s,{calc})=>s+calc.totalBruto,0);
-
-              // Agrupa por área
-              const porArea:Record<string,typeof pagamentos[0][]>={};
-              for (const pg of pagamentos){
-                const a=areaDe(pg.p)||'Sem Área';
-                if(!porArea[a]) porArea[a]=[];
-                porArea[a].push(pg);
-              }
-
-              return (
-                <div key={si} style={{ marginBottom:'32px', border:'1px solid #e0e0e0', borderRadius:'10px', overflow:'hidden', boxShadow:'0 2px 6px rgba(0,0,0,0.06)' }}>
-                  {/* Header da semana */}
-                  <div style={{ backgroundColor:'#1565c0', color:'white', padding:'10px 16px', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'8px' }}>
-                    <div>
-                      <strong style={{ fontSize:'14px' }}>📅 Semana {sem.label}</strong>
-                      <span style={{ marginLeft:'12px', fontSize:'12px', opacity:0.9 }}>
-                        💳 Pagto na <strong>{proxDataPagtoStr(sem.dias)}</strong>
-                      </span>
-                    </div>
-                    <div style={{ display:'flex', gap:'16px', fontSize:'12px', flexWrap:'wrap' }}>
-                      {totalCLT>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>CLT: <strong>{fmtBRL(totalCLT)}</strong></span>}
-                      {totalFree>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>Free: <strong>{fmtBRL(totalFree)}</strong></span>}
-                      {totalTransp>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>🚗 <strong>{fmtBRL(totalTransp)}</strong></span>}
-                      <span style={{ backgroundColor:'rgba(255,255,255,0.25)', padding:'2px 8px', borderRadius:'6px', fontWeight:'bold' }}>
-                        Total: {fmtBRL(totalGeral)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Tabela por área */}
-                  {Object.entries(porArea).sort(([a],[b])=>a.localeCompare(b)).map(([area,pgs])=>{
-                    const areaColor = corArea(area);
-                    const subTotal = pgs.reduce((s,{calc})=>s+calc.totalBruto+calc.totalTransporte,0);
-                    return (
-                      <div key={area}>
-                        <div style={{ backgroundColor:'#f5f5f5', padding:'5px 14px', fontWeight:'bold', fontSize:'12px', color:areaColor, borderBottom:'1px solid #e0e0e0', borderLeft:`4px solid ${areaColor}` }}>
-                          📍 {area} — <span style={{ color:'#1b5e20' }}>{fmtBRL(subTotal)}</span>
-                        </div>
-                        <div style={{ overflowX:'auto' }}>
-                          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
-                            <thead>
-                              <tr style={{ backgroundColor:'#fafafa', borderBottom:'1px solid #e0e0e0' }}>
-                                <th style={{ padding:'6px 10px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Nome</th>
-                                <th style={{ padding:'6px 6px', textAlign:'center', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Tipo</th>
-                                <th style={{ padding:'6px 6px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Função</th>
-                                {/* Dias da semana com código */}
-                                {sem.dias.map(d=>(
-                                  <th key={fmtIso(d)} style={{ padding:'6px 3px', textAlign:'center', fontWeight:'bold', color:'#555', fontSize:'10px', minWidth:'36px' }}>
-                                    {d.getDate()}/{d.getMonth()+1}
-                                    <div style={{ fontSize:'8px', fontWeight:'normal', color:'#888' }}>{DS[d.getDay()]}</div>
-                                  </th>
-                                ))}
-                                <th style={{ padding:'6px 4px', textAlign:'center', fontWeight:'bold', color:'#2e7d32', fontSize:'10px', minWidth:'28px' }}>DN</th>
-                                <th style={{ padding:'6px 6px', textAlign:'right', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Bruto</th>
-                                <th style={{ padding:'6px 6px', textAlign:'right', fontWeight:'bold', color:'#1565c0', fontSize:'11px' }}>🚗</th>
-                                <th style={{ padding:'6px 10px', textAlign:'right', fontWeight:'bold', color:'#1b5e20', fontSize:'12px' }}>Total</th>
-                                <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>PIX</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {pgs.map(({p,calc},i)=>{
-                                const tipo=p.tipoContrato||'CLT';
-                                const cor=corFuncao(p);
-                                return (
-                                  <tr key={p.id} style={{ backgroundColor:i%2===0?'#fafafa':'white', borderBottom:'1px solid #f0f0f0' }}>
-                                    <td style={{ padding:'7px 10px', fontWeight:'bold', borderLeft:`3px solid ${cor}`, fontSize:'12px' }}>
-                                      {p.nome.split(' ').slice(0,2).join(' ')}
-                                    </td>
-                                    <td style={{ padding:'6px', textAlign:'center' as const }}>
-                                      <span style={{ padding:'1px 5px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold',
-                                        backgroundColor:tipo==='CLT'?'#e8f5e9':'#fff3e0',
-                                        color:tipo==='CLT'?'#2e7d32':'#e65100' }}>
-                                        {tipo==='CLT'?'CLT':'Free'}
-                                      </span>
-                                    </td>
-                                    <td style={{ padding:'6px 6px', fontSize:'11px', color:'#555' }}>{funcaoDe(p)}</td>
-                                    {/* Célula por dia com D/N/DN/— + presença */}
-                                    {sem.dias.map((d,di)=>{
-                                      const ds=fmtIso(d);
-                                      const pr=presencaMap[p.id]?.[ds];
-                                      const cod = calc.codigos[di] || '—';
-                                      let bg='transparent', textCor='#bbb';
-                                      if (cod==='D')  { bg='#fff9c4'; textCor='#f57f17'; }
-                                      else if(cod==='N')  { bg='#e8eaf6'; textCor='#3949ab'; }
-                                      else if(cod==='DN') { bg='#e8f5e9'; textCor='#2e7d32'; }
-                                      const pb=pr?PRES_BADGE[pr]:null;
-                                      return (
-                                        <td key={ds} style={{ padding:'4px 2px', textAlign:'center' as const }}>
-                                          <div style={{ display:'inline-flex', flexDirection:'column', alignItems:'center',
-                                            backgroundColor:bg, color:textCor, borderRadius:'4px', padding:'2px 4px', minWidth:'28px', fontSize:'11px', fontWeight:'bold' }}>
-                                            {cod}
-                                            {pb&&<span style={{ fontSize:'8px' }}>{pb.icon}</span>}
-                                          </div>
-                                        </td>
-                                      );
-                                    })}
-                                    <td style={{ padding:'6px 4px', textAlign:'center' as const, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }}>{calc.dnC}</td>
-                                    <td style={{ padding:'6px 6px', textAlign:'right' as const, fontWeight:'bold', fontSize:'12px', color:'#333' }}>
-                                      {fmtBRL(calc.totalBruto)}
-                                    </td>
-                                    <td style={{ padding:'6px 6px', textAlign:'right' as const, fontSize:'12px', color:'#1565c0' }}>
-                                      {calc.totalTransporte > 0 ? fmtBRL(calc.totalTransporte) : <span style={{ color:'#ccc' }}>—</span>}
-                                    </td>
-                                    <td style={{ padding:'6px 10px', textAlign:'right' as const, fontWeight:'bold', fontSize:'13px', color:'#1b5e20' }}>
-                                      {fmtBRL(calc.totalBruto + calc.totalTransporte)}
-                                    </td>
-                                    <td style={{ padding:'6px 8px', fontSize:'11px' }}>
-                                      {p.chavePix
-                                        ? <span style={{ color:'#1976d2', fontSize:'11px' }}>PIX: {p.chavePix}</span>
-                                        : <span style={{ color:'#999' }}>—</span>}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                            <tfoot>
-                              <tr style={{ backgroundColor:'#e8f5e9', borderTop:'2px solid #2e7d32' }}>
-                                <td colSpan={3+sem.dias.length+1} style={{ padding:'7px 10px', fontWeight:'bold', color:areaColor, fontSize:'12px' }}>
-                                  Subtotal {area}
-                                </td>
-                                <td style={{ padding:'7px 6px', textAlign:'right' as const, fontWeight:'bold', fontSize:'12px' }}>
-                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalBruto,0))}
-                                </td>
-                                <td style={{ padding:'7px 6px', textAlign:'right' as const, fontWeight:'bold', color:'#1565c0', fontSize:'12px' }}>
-                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalTransporte,0))}
-                                </td>
-                                <td style={{ padding:'7px 10px', textAlign:'right' as const, fontWeight:'bold', fontSize:'13px', color:'#1b5e20' }}>
-                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalBruto+calc.totalTransporte,0))}
-                                </td>
-                                <td></td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Rodapé da semana */}
-                  <div style={{ padding:'10px 16px', backgroundColor:'#e3f2fd', display:'flex', justifyContent:'flex-end', alignItems:'center', gap:'20px', flexWrap:'wrap' }}>
-                    {totalCLT>0 && <span style={{ fontSize:'12px', color:'#1565c0' }}>CLT Dobras: <strong>{fmtBRL(totalCLT)}</strong></span>}
-                    {totalFree>0 && <span style={{ fontSize:'12px', color:'#e65100' }}>Freelancers: <strong>{fmtBRL(totalFree)}</strong></span>}
-                    {totalTransp>0 && <span style={{ fontSize:'12px', color:'#1565c0' }}>🚗 Transporte: <strong>{fmtBRL(totalTransp)}</strong></span>}
-                    <span style={{ fontSize:'15px', fontWeight:'bold', color:'#1b5e20' }}>
-                      Total a Pagar: {fmtBRL(totalGeral)}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Resumo total do mês */}
-            <div style={{ padding:'18px', backgroundColor:'#1565c0', borderRadius:'10px', color:'white', marginTop:'8px' }}>
-              <h4 style={{ margin:'0 0 14px 0', fontSize:'15px' }}>📊 Resumo Total do Mês — {mesAno}</h4>
-              {(() => {
-                let totCLT=0, totFree=0, totTransp=0;
-                for (const p of todosFiltered){
-                  for (const sem of semanas){
-                    const calc=calcPagamentoSemana(p,sem.dias);
-                    if(p.tipoContrato==='CLT') totCLT+=calc.totalBruto;
-                    else totFree+=calc.totalBruto;
-                    totTransp+=calc.totalTransporte;
-                  }
-                }
-                const totGeral=totCLT+totFree+totTransp;
-                return (
-                  <div style={{ display:'flex', gap:'14px', flexWrap:'wrap' }}>
-                    <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
-                      <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>Variável CLT (dobras)</div>
-                      <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totCLT)}</div>
-                      <div style={{ fontSize:'11px', opacity:0.7, marginTop:'2px' }}>{todosFiltered.filter(p=>p.tipoContrato==='CLT').length} colaboradores</div>
-                    </div>
-                    <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
-                      <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>Freelancers</div>
-                      <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totFree)}</div>
-                      <div style={{ fontSize:'11px', opacity:0.7, marginTop:'2px' }}>{freelancers.length} freelancers</div>
-                    </div>
-                    {totTransp>0 && (
-                      <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
-                        <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>🚗 Transporte</div>
-                        <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totTransp)}</div>
-                      </div>
-                    )}
-                    <div style={{ backgroundColor:'rgba(255,255,255,0.3)', borderRadius:'8px', padding:'12px 20px', minWidth:'160px', borderLeft:'3px solid rgba(255,255,255,0.6)' }}>
-                      <div style={{ fontSize:'12px', opacity:0.85, marginBottom:'4px' }}>💰 Total Geral</div>
-                      <div style={{ fontSize:'24px', fontWeight:'bold' }}>{fmtBRL(totGeral)}</div>
-                    </div>
-
-                    {/* Previsão por área */}
-                    <div style={{ flex:1, minWidth:'300px' }}>
-                      <div style={{ fontSize:'12px', opacity:0.85, marginBottom:'8px' }}>Por Área:</div>
-                      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-                        {areasUnicas.map(area=>{
-                          const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);
-                          let totArea=0;
-                          for (const p of gp){
-                            for (const sem of semanas){
-                              const c=calcPagamentoSemana(p,sem.dias);
-                              totArea+=c.totalBruto+c.totalTransporte;
-                            }
-                          }
-                          if (totArea===0) return null;
-                          return (
-                            <div key={area} style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'6px', padding:'6px 12px', textAlign:'center' as const }}>
-                              <div style={{ fontSize:'10px', opacity:0.8 }}>{area}</div>
-                              <div style={{ fontSize:'14px', fontWeight:'bold' }}>{fmtBRL(totArea)}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Observação sobre Eric Andrade / Admins */}
-            {colaboradores.some(c=>(c.cargo||'').toLowerCase().includes('admin') || (c.funcao||'').toLowerCase().includes('admin')) && (
-              <div style={{ marginTop:'16px', padding:'12px 16px', backgroundColor:'#fff3e0', borderRadius:'8px', borderLeft:'4px solid #e65100' }}>
-                <strong style={{ color:'#e65100' }}>ℹ️ Atenção:</strong>
-                <span style={{ fontSize:'13px', color:'#555', marginLeft:'8px' }}>
-                  Colaboradores com função <em>Administrador/Gerência</em> e <code>ativo=false</code> não aparecem no grid de escala, mas podem estar listados no sistema de usuários.
-                  Para ocultar da escala, certifique-se de que o campo <strong>Ativo = false</strong> no cadastro do colaborador.
-                </span>
-              </div>
-            )}
-          </div>
-        )}
 
       </div>
       <Footer showLinks={true} />

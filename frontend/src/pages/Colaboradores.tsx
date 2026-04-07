@@ -21,17 +21,18 @@ interface Colaborador {
   estado: string;
   cep: string;
   tipoContrato: 'CLT' | 'Freelancer';
-  cargo: string;        // cargo administrativo (mantido só no cadastro)
-  tipo: string;         // retrocompat
-  funcao: string;       // função exibida na escala (personalizável por colaborador)
-  area: string;         // área de trabalho: Salão, Cozinha, Operações, Gerência...
+  cargo: string;           // cargo administrativo — exibido apenas no cadastro
+  tipo: string;            // retrocompat
+  funcao: string;          // função exibida na escala (personalizável)
+  area: string;            // área: Salão, Cozinha, Operações, Gerência, Bar...
   valorDia: number;
   valorNoite: number;
-  valorTransporte: number;
+  valorTransporte: number; // R$ por dia trabalhado (ida+volta)
   valeAlimentacao: boolean;
   salario: number;
   chavePix: string;
   dataAdmissao: string;
+  dataDemissao?: string;   // preenchido quando desligado
   diasDisponiveis: string[];
   podeTrabalharDia: boolean;
   podeTrabalharNoite: boolean;
@@ -64,12 +65,17 @@ interface FuncaoEscala {
 
 /* ─── Constantes ──────────────────────────────────────────────────────────── */
 const TIPOS_CARGO = [
-  'Caixa', 'Garçom', 'Garçonete', 'Ajudante de Cozinha', 'Cozinheiro',
+  'Administrador', 'Caixa', 'Garçom', 'Garçonete', 'Ajudante de Cozinha', 'Cozinheiro',
   'Pizzaiolo', 'Ajudante de Pizzaiolo', 'Bartender', 'Gerente', 'Supervisor',
   'Entregador', 'Motoboy', 'Porteiro', 'Segurança', 'Limpeza', 'Outro',
 ];
 
-const AREAS_PADRAO = ['Salão', 'Cozinha', 'Operações', 'Gerência', 'Bar', 'Outro'];
+const AREAS_PADRAO = ['Salão', 'Cozinha', 'Operações', 'Gerência', 'Bar', 'Pizzaria', 'Caixa', 'Outro'];
+
+const FUNCOES_LISTA = [
+  'Pizzaiolo', 'Motoboy', 'Cozinheiro', 'Auxiliar de Cozinha', 'Garçom', 'Garçonete',
+  'Caixa', 'Bartender', 'Gerente', 'Atendente', 'Freelancer',
+];
 
 const DIAS_SEMANA_PT = [
   { valor: 'segunda', label: 'Seg', dow: 1 },
@@ -84,15 +90,20 @@ const DIAS_SEMANA_PT = [
 const DIAS_SEMANA_FULL = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 
 const FUNCOES_ESCALA_PADRAO: Omit<FuncaoEscala, 'id' | 'unitId'>[] = [
-  { nome: 'Pizzaiolo',    area: 'Cozinha',    cor: '#e65100', diasTrabalho: [2,3,4,5,6], turnoNoite: [2,3,4,5,6] },
-  { nome: 'Motoboy',      area: 'Operações',  cor: '#1565c0', diasTrabalho: [2,3,4,5,6], turnoNoite: [4,5,6] },
-  { nome: 'Cozinheiro',   area: 'Cozinha',    cor: '#6a1b9a', diasTrabalho: [2,3,4,5,6], turnoNoite: [4,5,6] },
-  { nome: 'Garçom',       area: 'Salão',      cor: '#2e7d32', diasTrabalho: [2,3,4,5,6], turnoNoite: [] },
-  { nome: 'Garçonete',    area: 'Salão',      cor: '#00838f', diasTrabalho: [2,3,4,5,6], turnoNoite: [] },
-  { nome: 'Caixa',        area: 'Salão',      cor: '#558b2f', diasTrabalho: [2,3,4,5,6], turnoNoite: [] },
-  { nome: 'Bartender',    area: 'Bar',        cor: '#ad1457', diasTrabalho: [4,5,6,0],   turnoNoite: [4,5,6,0] },
-  { nome: 'Gerente',      area: 'Gerência',   cor: '#37474f', diasTrabalho: [2,3,4,5,6], turnoNoite: [4,5,6] },
-  { nome: 'Freelancer',   area: 'Salão',      cor: '#c2185b', diasTrabalho: [4,5,6,0],   turnoNoite: [4,5,6,0] },
+  { nome: 'Pizzaiolo',          area: 'Pizzaria',   cor: '#e65100', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [2,3,4,5,6,0] },
+  { nome: 'Motoboy',            area: 'Operações',  cor: '#1565c0', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [4,5,6,0] },
+  { nome: 'Cozinheiro',         area: 'Cozinha',    cor: '#6a1b9a', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [4,5,6,0] },
+  { nome: 'Auxiliar de Cozinha',area: 'Cozinha',    cor: '#8e24aa', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [4,5,6,0] },
+  { nome: 'Garçom',             area: 'Salão',      cor: '#2e7d32', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [4,5,6,0] },
+  { nome: 'Garçonete',          area: 'Salão',      cor: '#00838f', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [4,5,6,0] },
+  { nome: 'Caixa',              area: 'Caixa',      cor: '#558b2f', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [] },
+  { nome: 'Bartender',          area: 'Bar',        cor: '#ad1457', diasTrabalho: [4,5,6,0],      turnoNoite: [4,5,6,0] },
+  { nome: 'Atendente',          area: 'Salão',      cor: '#0277bd', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [] },
+  { nome: 'Gerente',            area: 'Gerência',   cor: '#37474f', diasTrabalho: [2,3,4,5,6],    turnoNoite: [4,5,6] },
+  // CLT final de semana
+  { nome: 'Bartender FDS',      area: 'Bar',        cor: '#c2185b', diasTrabalho: [5,6,0],        turnoNoite: [5,6,0] },
+  // Freelancer genérico
+  { nome: 'Freelancer',         area: 'Salão',      cor: '#f06292', diasTrabalho: [4,5,6,0],      turnoNoite: [4,5,6,0] },
 ];
 
 const ESTADO_INICIAL: Partial<Colaborador> = {
@@ -150,6 +161,7 @@ export default function Colaboradores() {
   const [funcoes, setFuncoes]           = useState<FuncaoEscala[]>([]);
   const [loading, setLoading]           = useState(false);
   const [salvando, setSalvando]         = useState(false);
+  const [msg, setMsg]                   = useState('');
 
   type AbaType = 'lista' | 'novo' | 'freelancers' | 'regras';
   const [aba, setAba] = useState<AbaType>('lista');
@@ -183,6 +195,11 @@ export default function Colaboradores() {
 
   const token = () => localStorage.getItem('auth_token');
 
+  const mostrarMsg = (texto: string) => {
+    setMsg(texto);
+    setTimeout(() => setMsg(''), 3500);
+  };
+
   const carregarColaboradores = async () => {
     setLoading(true);
     try {
@@ -191,6 +208,7 @@ export default function Colaboradores() {
       });
       if (r.ok) {
         const d = await r.json();
+        // Retorna todos (ativos e inativos) para poder filtrar no front
         setColaboradores(Array.isArray(d) ? d : d.colaboradores || []);
       }
     } catch (e) { console.error(e); }
@@ -218,8 +236,15 @@ export default function Colaboradores() {
   /* ── Helpers ────────────────────────────────────────────────── */
   const celularDe = (c: Partial<Colaborador>) => c.celular || c.telefone || '';
   const cargoDe   = (c: Partial<Colaborador>) => c.cargo   || c.tipo     || 'Outro';
-  const funcaoDe  = (c: Partial<Colaborador>) => c.funcao  || cargoDe(c);
+  const funcaoDe  = (c: Partial<Colaborador>) => c.funcao  || '';
   const areaDe    = (c: Partial<Colaborador>) => c.area    || '';
+
+  // Todas as opções de função disponíveis
+  const funcoesOpcoes = useMemo(() => {
+    const fromDB = funcoes.map(f => f.nome);
+    const all = [...new Set([...fromDB, ...FUNCOES_LISTA])].sort();
+    return all;
+  }, [funcoes]);
 
   /* ── CRUD Colaborador ─────────────────────────────────────── */
   const handleCriarColaborador = async () => {
@@ -234,7 +259,7 @@ export default function Colaboradores() {
       unitId,
       cargo,
       tipo: cargo,
-      funcao:  novoColab.funcao  || cargo,
+      funcao:  novoColab.funcao  || '',
       area:    novoColab.area    || '',
       celular: novoColab.celular || '',
       telefone: novoColab.celular || '',
@@ -247,7 +272,7 @@ export default function Colaboradores() {
         body: JSON.stringify(payload),
       });
       if (res.ok) {
-        alert('Colaborador cadastrado com sucesso!');
+        mostrarMsg('✅ Colaborador cadastrado com sucesso!');
         setNovoColab(ESTADO_INICIAL);
         setAba('lista');
         carregarColaboradores();
@@ -266,7 +291,7 @@ export default function Colaboradores() {
       ...colaboradorEditando,
       cargo,
       tipo: cargo,
-      funcao: colaboradorEditando.funcao || cargo,
+      funcao: colaboradorEditando.funcao || '',
       area:   colaboradorEditando.area   || '',
       telefone: colaboradorEditando.celular || colaboradorEditando.telefone || '',
     };
@@ -278,7 +303,7 @@ export default function Colaboradores() {
         body: JSON.stringify(payload),
       });
       if (res.ok) {
-        alert('Colaborador atualizado com sucesso!');
+        mostrarMsg('✅ Colaborador atualizado com sucesso!');
         setColaboradorEditando(null);
         carregarColaboradores();
       } else {
@@ -290,14 +315,47 @@ export default function Colaboradores() {
   };
 
   const handleDeletarColaborador = async (id: string) => {
-    if (!window.confirm('Deletar este colaborador?')) return;
+    if (!window.confirm('Deletar este colaborador permanentemente?')) return;
     try {
       const res = await fetch(`${apiUrl}/colaboradores/${id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
       });
-      if (res.ok) carregarColaboradores();
+      if (res.ok) { mostrarMsg('🗑️ Colaborador removido.'); carregarColaboradores(); }
       else alert('Erro ao deletar colaborador');
     } catch { alert('Erro ao deletar colaborador'); }
+  };
+
+  const handleDesligar = async (colab: Colaborador) => {
+    const dataDemissao = window.prompt('Data de demissão (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+    if (!dataDemissao) return;
+    setSalvando(true);
+    try {
+      await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...colab, ativo: false, dataDemissao }),
+      });
+      mostrarMsg('✅ Colaborador desligado.');
+      setColaboradorEditando(null);
+      carregarColaboradores();
+    } catch { alert('Erro ao desligar'); }
+    finally { setSalvando(false); }
+  };
+
+  const handleReativar = async (colab: Colaborador) => {
+    if (!window.confirm(`Reativar ${colab.nome}?`)) return;
+    setSalvando(true);
+    try {
+      await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...colab, ativo: true, dataDemissao: '' }),
+      });
+      mostrarMsg('✅ Colaborador reativado.');
+      setColaboradorEditando(null);
+      carregarColaboradores();
+    } catch { alert('Erro ao reativar'); }
+    finally { setSalvando(false); }
   };
 
   /* ── CRUD Freelancers ─────────────────────────────────────── */
@@ -314,7 +372,7 @@ export default function Colaboradores() {
         body: JSON.stringify({ ...formFree, unitId }),
       });
       if (res.ok) {
-        alert(isEdit ? 'Freelancer atualizado!' : 'Freelancer cadastrado!');
+        mostrarMsg(isEdit ? '✅ Freelancer atualizado!' : '✅ Freelancer cadastrado!');
         setFormFree(FREELANCER_INICIAL);
         setFreelancerEditando(null);
         carregarFreelancers();
@@ -331,6 +389,7 @@ export default function Colaboradores() {
     await fetch(`${apiUrl}/freelancers/${id}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
     });
+    mostrarMsg('🗑️ Freelancer removido.');
     carregarFreelancers();
   };
 
@@ -346,16 +405,13 @@ export default function Colaboradores() {
         unitId,
         ...(isEdit ? { id: funcaoEditando!.id } : {}),
       };
-      const url = isEdit
-        ? `${apiUrl}/funcoes-escala`   // PUT não existe, reutiliza POST com id
-        : `${apiUrl}/funcoes-escala`;
-      const res = await fetch(url, {
+      const res = await fetch(`${apiUrl}/funcoes-escala`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (res.ok) {
-        alert(isEdit ? 'Função atualizada!' : 'Função criada!');
+        mostrarMsg(isEdit ? '✅ Função atualizada!' : '✅ Função criada!');
         setFormFuncao({ nome: '', area: 'Salão', cor: '#1976d2', diasTrabalho: [2,3,4,5,6], turnoNoite: [] });
         setFuncaoEditando(null);
         carregarFuncoes();
@@ -372,11 +428,12 @@ export default function Colaboradores() {
     await fetch(`${apiUrl}/funcoes-escala/${id}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
     });
+    mostrarMsg('🗑️ Função removida.');
     carregarFuncoes();
   };
 
   const handleImportarFuncoesPadrao = async () => {
-    if (!window.confirm('Importar funções padrão para esta unidade? Funções com mesmo nome serão atualizadas.')) return;
+    if (!window.confirm(`Importar ${FUNCOES_ESCALA_PADRAO.length} funções padrão? Funções existentes com mesmo nome serão atualizadas.`)) return;
     setSalvando(true);
     let criados = 0;
     for (const f of FUNCOES_ESCALA_PADRAO) {
@@ -391,7 +448,7 @@ export default function Colaboradores() {
       } catch { /* skip */ }
     }
     setSalvando(false);
-    alert(`✅ ${criados} funções importadas!`);
+    mostrarMsg(`✅ ${criados} funções importadas!`);
     carregarFuncoes();
   };
 
@@ -400,12 +457,13 @@ export default function Colaboradores() {
     return colaboradores.filter(c => {
       const matchTipo  = !filtroTipo || cargoDe(c) === filtroTipo;
       const matchArea  = !filtroArea || (c.area || '') === filtroArea;
-      const matchAtivo = c.ativo === filtroAtivo;
+      const matchAtivo = filtroAtivo ? c.ativo !== false : c.ativo === false;
       const q = busca.toLowerCase();
       const matchBusca = !busca ||
         (c.nome || '').toLowerCase().includes(q) ||
         (c.cpf  || '').replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
-        celularDe(c).replace(/\D/g,'').includes(q.replace(/\D/g,''));
+        celularDe(c).replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
+        (c.funcao || '').toLowerCase().includes(q);
       return matchTipo && matchArea && matchAtivo && matchBusca;
     });
   }, [colaboradores, filtroTipo, filtroArea, filtroAtivo, busca]);
@@ -490,65 +548,88 @@ export default function Colaboradores() {
             <option value="Freelancer">Freelancer</option>
           </select>
         </div>
-        {/* Cargo (admin, mantido só no cadastro) */}
+        {/* Cargo (admin only) */}
         <div style={S.formGroup}>
-          <label style={S.label}>Cargo (administrativo)</label>
+          <label style={S.label}>Cargo <span style={{ color:'#888', fontWeight:'normal', fontSize:'11px' }}>(administrativo — não aparece na escala)</span></label>
           <select value={cargoDe(data)} style={S.input}
             onChange={e => onChange({ cargo: e.target.value, tipo: e.target.value })}>
             {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-        {/* Função (exibida na escala) */}
+        {/* Função (exibida na escala) — SELECT com opções */}
         <div style={S.formGroup}>
-          <label style={S.label}>Função na Escala <span style={{ color: '#1976d2' }}>(exibida no grid)</span></label>
-          <input type="text" list="funcoes-list" value={funcaoDe(data)} style={S.input}
-            placeholder="Ex: Garçom, Pizzaiolo, Caixa..."
-            onChange={e => onChange({ funcao: e.target.value })} />
-          <datalist id="funcoes-list">
-            {funcoes.map(f => <option key={f.id} value={f.nome} />)}
-            {FUNCOES_ESCALA_PADRAO.map(f => <option key={f.nome} value={f.nome} />)}
-          </datalist>
-          <small style={{ color: '#888', fontSize: '11px' }}>Pode ser diferente do cargo. Personalizada por colaborador.</small>
+          <label style={S.label}>Função na Escala <span style={{ color:'#1976d2', fontSize:'11px' }}>(exibida no grid de escalas)</span></label>
+          <select value={funcaoDe(data)} style={S.input}
+            onChange={e => onChange({ funcao: e.target.value })}>
+            <option value="">— Selecione a função —</option>
+            {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <small style={{ color: '#888', fontSize: '11px' }}>
+            Diferente do cargo. Personalizada por colaborador. Cadastre mais em <em>Funções/Regras</em>.
+          </small>
         </div>
-        {/* Área */}
+        {/* Área — SELECT com opções */}
         <div style={S.formGroup}>
-          <label style={S.label}>Área de Trabalho</label>
-          <input type="text" list="areas-list" value={areaDe(data)} style={S.input}
-            placeholder="Ex: Salão, Cozinha, Operações..."
-            onChange={e => onChange({ area: e.target.value })} />
-          <datalist id="areas-list">
-            {AREAS_PADRAO.map(a => <option key={a} value={a} />)}
-          </datalist>
+          <label style={S.label}>Área de Trabalho <span style={{ color:'#1976d2', fontSize:'11px' }}>(agrupamento na escala)</span></label>
+          <select value={areaDe(data)} style={S.input}
+            onChange={e => onChange({ area: e.target.value })}>
+            <option value="">— Selecione a área —</option>
+            {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
+            {/* Áreas customizadas do cadastro de funções */}
+            {funcoes.map(f => f.area).filter(a => a && !AREAS_PADRAO.includes(a))
+              .filter((v,i,arr) => arr.indexOf(v) === i)
+              .map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
         </div>
-        {/* Financeiro */}
+        {/* Datas */}
         <div style={S.formGroup}>
           <label style={S.label}>Data de Admissão</label>
           <input type="date" value={data.dataAdmissao || ''} style={S.input}
             onChange={e => onChange({ dataAdmissao: e.target.value })} />
         </div>
         <div style={S.formGroup}>
-          <label style={S.label}>Salário (R$)</label>
+          <label style={{ ...S.label, color: data.ativo === false ? '#c62828' : '#444' }}>
+            Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
+          </label>
+          <input type="date" value={data.dataDemissao || ''} style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
+            onChange={e => onChange({ dataDemissao: e.target.value })} />
+        </div>
+        {/* Status */}
+        <div style={S.formGroup}>
+          <label style={S.label}>Status</label>
+          <select value={data.ativo === false ? 'inativo' : 'ativo'} style={S.input}
+            onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
+            <option value="ativo">● Ativo</option>
+            <option value="inativo">○ Inativo / Desligado</option>
+          </select>
+        </div>
+        {/* Financeiro */}
+        <div style={S.formGroup}>
+          <label style={S.label}>Salário Base (R$)</label>
           <input type="number" step="0.01" value={data.salario || 0} style={S.input}
             onFocus={e => e.target.select()}
             onChange={e => onChange({ salario: parseFloat(e.target.value) || 0 })} />
         </div>
         <div style={S.formGroup}>
-          <label style={S.label}>Valor Dia (R$)</label>
+          <label style={S.label}>Valor Dia / Dobra-Dia (R$)</label>
           <input type="number" step="0.01" value={data.valorDia || 0} style={S.input}
             onFocus={e => e.target.select()}
             onChange={e => onChange({ valorDia: parseFloat(e.target.value) || 0 })} />
+          <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
-          <label style={S.label}>Valor Noite (R$)</label>
+          <label style={S.label}>Valor Noite / Dobra-Noite (R$)</label>
           <input type="number" step="0.01" value={data.valorNoite || 0} style={S.input}
             onFocus={e => e.target.select()}
             onChange={e => onChange({ valorNoite: parseFloat(e.target.value) || 0 })} />
+          <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
-          <label style={S.label}>Transporte Ida+Volta (R$)</label>
-          <input type="number" step="0.01" value={data.valorTransporte || 0} style={S.input}
+          <label style={S.label}>Transporte Ida+Volta por dia (R$)</label>
+          <input type="number" step="0.50" value={data.valorTransporte || 0} style={S.input}
             onFocus={e => e.target.select()}
             onChange={e => onChange({ valorTransporte: parseFloat(e.target.value) || 0 })} />
+          <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Chave PIX</label>
@@ -616,6 +697,15 @@ export default function Colaboradores() {
       <Header title="👥 Gestão de Colaboradores" showBack={true} />
       <div style={S.container}>
 
+        {/* Toast */}
+        {msg && (
+          <div style={{ position:'fixed', top:'70px', right:'20px', backgroundColor:'#2e7d32', color:'white',
+            padding:'12px 20px', borderRadius:'8px', fontWeight:'bold', fontSize:'14px', zIndex:9999,
+            boxShadow:'0 4px 12px rgba(0,0,0,0.3)' }}>
+            {msg}
+          </div>
+        )}
+
         {/* ABAS */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '0', borderBottom: '2px solid #ddd', flexWrap: 'wrap' }}>
           {([
@@ -638,7 +728,7 @@ export default function Colaboradores() {
         {aba === 'lista' && (
           <div style={S.tabContent}>
             <div style={S.filtrosContainer}>
-              <input type="text" placeholder="🔍 Buscar por nome, CPF ou celular..."
+              <input type="text" placeholder="🔍 Buscar por nome, CPF, celular ou função..."
                 value={busca} onChange={e => setBusca(e.target.value)} style={S.inputBusca} />
               <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={S.select}>
                 <option value="">Todos os cargos</option>
@@ -650,9 +740,16 @@ export default function Colaboradores() {
               </select>
               <select value={filtroAtivo ? 'ativo' : 'inativo'}
                 onChange={e => setFiltroAtivo(e.target.value === 'ativo')} style={S.select}>
-                <option value="ativo">Ativos</option>
-                <option value="inativo">Inativos</option>
+                <option value="ativo">● Ativos</option>
+                <option value="inativo">○ Desligados</option>
               </select>
+            </div>
+
+            {/* Legenda rápida */}
+            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', fontSize:'11px', color:'#666', flexWrap:'wrap' }}>
+              <span>Total: <strong>{colaboradoresFiltrados.length}</strong></span>
+              <span>CLT: <strong>{colaboradoresFiltrados.filter(c=>c.tipoContrato==='CLT').length}</strong></span>
+              <span>Freelancer: <strong>{colaboradoresFiltrados.filter(c=>c.tipoContrato==='Freelancer').length}</strong></span>
             </div>
 
             {loading ? (
@@ -662,10 +759,10 @@ export default function Colaboradores() {
             ) : (
               <div style={S.gridContainer}>
                 {colaboradoresFiltrados.map(colab => (
-                  <div key={colab.id} style={S.card}>
+                  <div key={colab.id} style={{ ...S.card, opacity: colab.ativo === false ? 0.7 : 1, borderLeft: colab.ativo === false ? '4px solid #c62828' : undefined }}>
                     <div style={S.cardHeader}>
-                      <h3 style={{ margin: 0, fontSize: '15px' }}>{colab.nome}</h3>
-                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0, fontSize: '14px' }}>{colab.nome}</h3>
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
                         <span style={{ ...S.badge, backgroundColor: colab.tipoContrato === 'CLT' ? '#28a745' : '#fd7e14' }}>
                           {colab.tipoContrato}
                         </span>
@@ -674,45 +771,73 @@ export default function Colaboradores() {
                             {colab.area}
                           </span>
                         )}
+                        {colab.ativo === false && (
+                          <span style={{ ...S.badge, backgroundColor: '#c62828', fontSize: '10px' }}>
+                            Desligado
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div style={S.cardBody}>
-                      <div style={S.cardRow}>
-                        <span style={S.cardLabel}>Cargo:</span>
-                        <span style={{ fontSize: '12px' }}>{cargoDe(colab)}</span>
-                      </div>
-                      {colab.funcao && colab.funcao !== cargoDe(colab) && (
-                        <div style={S.cardRow}>
-                          <span style={S.cardLabel}>Função:</span>
-                          <span style={{ fontSize: '12px', color: '#1976d2', fontWeight: 'bold' }}>{colab.funcao}</span>
+                      {/* Função na escala — destaque */}
+                      {colab.funcao && (
+                        <div style={{ backgroundColor:'#e3f2fd', borderRadius:'4px', padding:'4px 8px', marginBottom:'6px', fontSize:'12px' }}>
+                          <span style={{ color:'#888', fontSize:'11px' }}>Função: </span>
+                          <strong style={{ color:'#1565c0' }}>{colab.funcao}</strong>
                         </div>
                       )}
                       <div style={S.cardRow}>
+                        <span style={S.cardLabel}>Cargo:</span>
+                        <span style={{ fontSize: '12px', color:'#666' }}>{cargoDe(colab)}</span>
+                      </div>
+                      <div style={S.cardRow}>
                         <span style={S.cardLabel}>CPF:</span>
-                        <span>{colab.cpf || '—'}</span>
+                        <span style={{ fontSize:'12px' }}>{colab.cpf || '—'}</span>
                       </div>
                       <div style={S.cardRow}>
                         <span style={S.cardLabel}>Celular:</span>
-                        <span>{celularDe(colab) || '—'}</span>
+                        <span style={{ fontSize:'12px' }}>{(colab.celular || colab.telefone) || '—'}</span>
                       </div>
                       {colab.chavePix && (
                         <div style={S.cardRow}>
                           <span style={S.cardLabel}>PIX:</span>
-                          <span style={{ color: '#666', fontSize: '12px' }}>{colab.chavePix}</span>
+                          <span style={{ color: '#1976d2', fontSize: '12px' }}>{colab.chavePix}</span>
                         </div>
                       )}
-                      <div style={{ borderTop: '1px solid #f0f0f0', marginTop: '8px', paddingTop: '8px' }}>
-                        <div style={S.cardRow}>
-                          <span style={S.cardLabel}>Dia:</span>
-                          <span style={{ fontWeight: 'bold', color: '#1976d2' }}>{fmt(colab.valorDia)}</span>
-                          <span style={{ ...S.cardLabel, marginLeft: '12px' }}>Noite:</span>
-                          <span style={{ fontWeight: 'bold', color: '#7b1fa2' }}>{fmt(colab.valorNoite)}</span>
-                        </div>
+                      <div style={{ borderTop: '1px solid #f0f0f0', marginTop: '6px', paddingTop: '6px' }}>
+                        {(colab.valorDia > 0 || colab.valorNoite > 0) && (
+                          <div style={S.cardRow}>
+                            <span style={S.cardLabel}>Dobra:</span>
+                            <span style={{ fontSize:'12px', color:'#1976d2' }}>D={fmt(colab.valorDia)}</span>
+                            <span style={{ fontSize:'12px', color:'#7b1fa2', marginLeft:'6px' }}>N={fmt(colab.valorNoite)}</span>
+                          </div>
+                        )}
+                        {colab.valorTransporte > 0 && (
+                          <div style={S.cardRow}>
+                            <span style={S.cardLabel}>Transp:</span>
+                            <span style={{ fontSize:'12px', color:'#666' }}>{fmt(colab.valorTransporte)}/dia</span>
+                          </div>
+                        )}
+                        {colab.dataAdmissao && (
+                          <div style={S.cardRow}>
+                            <span style={S.cardLabel}>Admissão:</span>
+                            <span style={{ fontSize:'11px', color:'#888' }}>{colab.dataAdmissao}</span>
+                          </div>
+                        )}
+                        {colab.dataDemissao && (
+                          <div style={S.cardRow}>
+                            <span style={{ ...S.cardLabel, color:'#c62828' }}>Demissão:</span>
+                            <span style={{ fontSize:'11px', color:'#c62828' }}>{colab.dataDemissao}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div style={S.cardActions}>
                       <button onClick={() => setColaboradorEditando(colab)} style={S.botaoEditar}>✏️ Editar</button>
-                      <button onClick={() => handleDeletarColaborador(colab.id)} style={S.botaoDeletar}>🗑️</button>
+                      {colab.ativo !== false
+                        ? <button onClick={() => handleDesligar(colab)} style={{ ...S.botaoDeletar, backgroundColor:'#e65100', fontSize:'11px' }}>Desligar</button>
+                        : <button onClick={() => handleReativar(colab)} style={{ ...S.botaoDeletar, backgroundColor:'#2e7d32', fontSize:'11px' }}>Reativar</button>
+                      }
                     </div>
                   </div>
                 ))}
@@ -724,15 +849,15 @@ export default function Colaboradores() {
         {/* ── ABA NOVO COLABORADOR ──────────────────────────────── */}
         {aba === 'novo' && (
           <div style={{ ...S.tabContent, ...S.formularioContainer }}>
-            <h2 style={{ marginTop: 0 }}>Novo Colaborador</h2>
+            <h2 style={{ marginTop: 0, color:'#1565c0' }}>➕ Novo Colaborador</h2>
             <CamposBasicos    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <CamposEndereco   data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <CamposContratacao data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <CamposJornada    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-              <button onClick={() => setAba('lista')} style={S.botaoCancelar}>Cancelar</button>
+              <button onClick={() => { setNovoColab(ESTADO_INICIAL); setAba('lista'); }} style={S.botaoCancelar}>Cancelar</button>
               <button onClick={handleCriarColaborador} disabled={salvando} style={S.botaoSalvar}>
-                {salvando ? '⏳...' : '💾 Salvar Colaborador'}
+                {salvando ? '⏳ Salvando...' : '💾 Salvar Colaborador'}
               </button>
             </div>
           </div>
@@ -741,8 +866,11 @@ export default function Colaboradores() {
         {/* ── ABA FREELANCERS ───────────────────────────────────── */}
         {aba === 'freelancers' && (
           <div style={S.tabContent}>
+            <div style={{ padding:'10px 14px', backgroundColor:'#fff3e0', borderRadius:'6px', borderLeft:'4px solid #e65100', marginBottom:'16px', fontSize:'13px' }}>
+              <strong style={{ color:'#e65100' }}>ℹ️ Segregação:</strong> Freelancers cadastrados aqui aparecem na <strong>Gestão de Escalas</strong> junto com os CLTs, agrupados por área. Os valores acordados (valorDobra) só são visíveis em <strong>Folha de Pagamento</strong>.
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-              <h3 style={{ margin: 0 }}>🎯 Freelancers Cadastrados</h3>
+              <h3 style={{ margin: 0 }}>🎯 Freelancers Cadastrados ({freelancers.length})</h3>
               <button onClick={() => { setFormFree(FREELANCER_INICIAL); setFreelancerEditando(null); }}
                 style={S.btnPrimary}>➕ Novo Freelancer</button>
             </div>
@@ -801,21 +929,20 @@ export default function Colaboradores() {
                       onChange={e => setFormFree({ ...formFree, nome: e.target.value })} />
                   </div>
                   <div style={S.formGroup}>
-                    <label style={S.label}>Função <span style={{ color: '#1976d2' }}>(escala)</span></label>
-                    <input type="text" list="funcoes-free-list" value={formFree.funcao || formFree.cargo || ''} style={S.input}
-                      placeholder="Ex: Garçom, Bartender..."
-                      onChange={e => setFormFree({ ...formFree, funcao: e.target.value, cargo: e.target.value })} />
-                    <datalist id="funcoes-free-list">
-                      {funcoes.map(f => <option key={f.id} value={f.nome} />)}
-                    </datalist>
+                    <label style={S.label}>Função <span style={{ color: '#1976d2', fontSize:'11px' }}>(escala)</span></label>
+                    <select value={formFree.funcao || formFree.cargo || ''} style={S.input}
+                      onChange={e => setFormFree({ ...formFree, funcao: e.target.value, cargo: e.target.value })}>
+                      <option value="">— Selecione —</option>
+                      {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Área</label>
-                    <input type="text" list="areas-free-list" value={(formFree as any).area || ''} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, area: e.target.value } as any)} />
-                    <datalist id="areas-free-list">
-                      {AREAS_PADRAO.map(a => <option key={a} value={a} />)}
-                    </datalist>
+                    <select value={(formFree as any).area || ''} style={S.input}
+                      onChange={e => setFormFree({ ...formFree, area: e.target.value } as any)}>
+                      <option value="">— Selecione —</option>
+                      {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Chave PIX</label>
@@ -836,8 +963,8 @@ export default function Colaboradores() {
                     <label style={S.label}>Status</label>
                     <select value={formFree.ativo ? 'true' : 'false'} style={S.input}
                       onChange={e => setFormFree({ ...formFree, ativo: e.target.value === 'true' })}>
-                      <option value="true">Ativo</option>
-                      <option value="false">Inativo</option>
+                      <option value="true">● Ativo</option>
+                      <option value="false">○ Inativo</option>
                     </select>
                   </div>
                 </div>
@@ -862,29 +989,31 @@ export default function Colaboradores() {
               <h3 style={{ margin: 0 }}>📖 Funções de Escala — Regras por Função</h3>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={handleImportarFuncoesPadrao} disabled={salvando} style={{ ...S.btnPrimary, backgroundColor: '#43a047' }}>
-                  {salvando ? '⏳...' : '📥 Importar Padrões'}
+                  {salvando ? '⏳...' : `📥 Importar ${FUNCOES_ESCALA_PADRAO.length} Padrões`}
                 </button>
                 <button onClick={() => { setFormFuncao({ nome: '', area: 'Salão', cor: '#1976d2', diasTrabalho: [2,3,4,5,6], turnoNoite: [] }); setFuncaoEditando(null); }}
                   style={S.btnPrimary}>➕ Nova Função</button>
               </div>
             </div>
 
-            <p style={{ color: '#666', fontSize: '13px', margin: '0 0 16px 0', lineHeight: 1.6 }}>
-              Define <strong>dias de trabalho</strong> e <strong>turnos padrão</strong> para cada função.
-              A geração automática de escalas usa essas regras. Cada colaborador pode ter uma função personalizada
-              diferente do cargo cadastrado.
-            </p>
+            <div style={{ padding:'10px 14px', backgroundColor:'#e8f5e9', borderRadius:'6px', marginBottom:'16px', fontSize:'13px', lineHeight:1.7 }}>
+              <strong style={{ color:'#1b5e20' }}>ℹ️ Como funciona:</strong><br/>
+              • <strong>Função</strong> = o que aparece na escala (ex: Pizzaiolo, Bartender). Diferente do cargo administrativo.<br/>
+              • <strong>Dias de trabalho</strong> definem quando a geração automática de escala cria turnos.<br/>
+              • <strong>Turno noite</strong> nos dias marcados = dobra (D+N) na geração automática.<br/>
+              • Cargos só de final de semana (Bartender FDS): marque apenas Sáb e Dom.
+            </div>
 
             {/* Tabela de funções */}
             {funcoes.length > 0 && (
               <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
                       <th style={{ padding: '8px 12px', textAlign: 'left' }}>Função</th>
                       <th style={{ padding: '8px 12px', textAlign: 'left' }}>Área</th>
                       {DIAS_SEMANA_FULL.map(d => (
-                        <th key={d} style={{ padding: '8px 6px', textAlign: 'center', minWidth: '64px' }}>{d.slice(0, 3)}</th>
+                        <th key={d} style={{ padding: '8px 6px', textAlign: 'center', minWidth: '60px', fontSize:'11px' }}>{d.slice(0, 3)}</th>
                       ))}
                       <th style={{ padding: '8px 12px', textAlign: 'center' }}>Ações</th>
                     </tr>
@@ -901,14 +1030,14 @@ export default function Colaboradores() {
                           const noite    = (f.turnoNoite   || []).includes(dow);
                           const turno    = !trabalha ? '' : noite ? 'DiaNoite' : 'Dia';
                           const colors: Record<string, { bg: string; color: string; label: string }> = {
-                            '': { bg: '#f5f5f5', color: '#bbb', label: '🏖' },
-                            Dia: { bg: '#fff9c4', color: '#f57f17', label: '☀️' },
-                            DiaNoite: { bg: '#e8f5e9', color: '#2e7d32', label: '2x' },
+                            '':       { bg: '#f5f5f5', color: '#ccc', label: '—' },
+                            Dia:      { bg: '#fff9c4', color: '#f57f17', label: '☀️D' },
+                            DiaNoite: { bg: '#e8f5e9', color: '#2e7d32', label: 'DN' },
                           };
                           const b = colors[turno] || colors[''];
                           return (
-                            <td key={dow} style={{ padding: '6px', textAlign: 'center' }}>
-                              <span style={{ backgroundColor: b.bg, color: b.color, padding: '2px 6px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold' }}>
+                            <td key={dow} style={{ padding: '5px', textAlign: 'center' }}>
+                              <span style={{ backgroundColor: b.bg, color: b.color, padding: '2px 5px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold' }}>
                                 {b.label}
                               </span>
                             </td>
@@ -932,7 +1061,7 @@ export default function Colaboradores() {
             {funcoes.length === 0 && (
               <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#fff3e0', borderRadius: '8px', marginBottom: '20px' }}>
                 <p style={{ color: '#e65100', margin: 0 }}>
-                  Nenhuma função cadastrada. Clique em <strong>"Importar Padrões"</strong> para importar as funções padrão, ou cadastre manualmente.
+                  Nenhuma função cadastrada. Clique em <strong>"Importar Padrões"</strong> para importar 12 funções padrão (CLT + Freelancer), ou cadastre manualmente.
                 </p>
               </div>
             )}
@@ -951,11 +1080,10 @@ export default function Colaboradores() {
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Área</label>
-                    <input type="text" list="areas-funcao-list" value={formFuncao.area || ''} style={S.input}
-                      onChange={e => setFormFuncao({ ...formFuncao, area: e.target.value })} />
-                    <datalist id="areas-funcao-list">
-                      {AREAS_PADRAO.map(a => <option key={a} value={a} />)}
-                    </datalist>
+                    <select value={formFuncao.area || 'Salão'} style={S.input}
+                      onChange={e => setFormFuncao({ ...formFuncao, area: e.target.value })}>
+                      {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Cor (calendário)</label>
@@ -993,7 +1121,7 @@ export default function Colaboradores() {
                 </div>
 
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={S.label}>Dias com turno noite / dobra:</label>
+                  <label style={S.label}>Dias com turno noite / dobra <span style={{ color:'#3949ab', fontSize:'11px' }}>(D+N = dobra no lançamento automático)</span>:</label>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
                     {DIAS_SEMANA_FULL.map((d, dow) => {
                       const ativo = (formFuncao.turnoNoite || []).includes(dow);
@@ -1027,17 +1155,6 @@ export default function Colaboradores() {
                 </div>
               </form>
             </div>
-
-            {/* Info de uso */}
-            <div style={{ marginTop: '20px', padding: '14px', backgroundColor: '#e3f2fd', borderRadius: '8px', borderLeft: '4px solid #1976d2' }}>
-              <strong style={{ color: '#1565c0' }}>ℹ️ Como funciona:</strong>
-              <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px', fontSize: '13px', lineHeight: 1.8, color: '#444' }}>
-                <li>Cada função define os <strong>dias padrão de trabalho</strong> e se faz <strong>turno noite</strong> (dobra).</li>
-                <li>No cadastro do colaborador, atribua uma <strong>Função na Escala</strong> — pode ser diferente do cargo.</li>
-                <li>A <strong>geração automática de escala</strong> usa essas regras para criar os turnos do mês.</li>
-                <li>Freelancers podem ter qualquer função — útil para cargos de <strong>final de semana apenas</strong>.</li>
-              </ul>
-            </div>
           </div>
         )}
       </div>
@@ -1046,7 +1163,10 @@ export default function Colaboradores() {
       {colaboradorEditando && (
         <div style={S.modal}>
           <div style={S.modalContent}>
-            <h2 style={{ marginTop: 0 }}>✏️ Editar Colaborador</h2>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
+              <h2 style={{ margin: 0 }}>✏️ Editar Colaborador</h2>
+              <button onClick={() => setColaboradorEditando(null)} style={{ background:'none', border:'none', fontSize:'22px', cursor:'pointer', color:'#666' }}>✕</button>
+            </div>
             <CamposBasicos
               data={colaboradorEditando}
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
@@ -1059,24 +1179,28 @@ export default function Colaboradores() {
             <CamposJornada
               data={colaboradorEditando}
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
-            <div style={{ marginTop: '12px', marginBottom: '8px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={colaboradorEditando.ativo}
-                  onChange={e => setColaboradorEditando({ ...colaboradorEditando, ativo: e.target.checked })} />
-                <span style={S.label}>Colaborador ativo</span>
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
-              <button onClick={() => setColaboradorEditando(null)} style={S.botaoCancelar}>Cancelar</button>
-              <button onClick={handleEditarColaborador} disabled={salvando} style={S.botaoSalvar}>
-                {salvando ? '⏳...' : '💾 Salvar Alterações'}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap:'wrap' }}>
+              <button onClick={() => setColaboradorEditando(null)} style={{ ...S.botaoCancelar, flex:'none', padding:'10px 16px' }}>Cancelar</button>
+              <button onClick={handleEditarColaborador} disabled={salvando} style={{ ...S.botaoSalvar, flex:1 }}>
+                {salvando ? '⏳ Salvando...' : '💾 Salvar Alterações'}
               </button>
+              {colaboradorEditando.ativo !== false ? (
+                <button onClick={() => handleDesligar(colaboradorEditando)} disabled={salvando}
+                  style={{ ...S.botaoCancelar, backgroundColor:'#e65100', flex:'none', padding:'10px 14px', fontSize:'13px' }}>
+                  🚪 Desligar
+                </button>
+              ) : (
+                <button onClick={() => handleReativar(colaboradorEditando)} disabled={salvando}
+                  style={{ ...S.botaoCancelar, backgroundColor:'#2e7d32', flex:'none', padding:'10px 14px', fontSize:'13px' }}>
+                  ♻️ Reativar
+                </button>
+              )}
               <button onClick={() => {
-                if (window.confirm('Deletar este colaborador?')) {
+                if (window.confirm('Deletar este colaborador permanentemente?')) {
                   handleDeletarColaborador(colaboradorEditando.id);
                   setColaboradorEditando(null);
                 }
-              }} style={{ ...S.botaoCancelar, backgroundColor: '#dc3545', color: 'white', flex: 0.4 }}>
+              }} style={{ ...S.botaoCancelar, backgroundColor: '#dc3545', flex:'none', padding:'10px 14px' }}>
                 🗑️
               </button>
             </div>
@@ -1094,19 +1218,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   pageWrapper:        { display: 'flex', flexDirection: 'column', minHeight: '100vh' },
   container:          { padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%', flex: 1 },
   tabContent:         { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '0 8px 8px 8px', padding: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
-  filtrosContainer:   { display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' },
+  filtrosContainer:   { display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' },
   inputBusca:         { flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: '4px', minWidth: '220px' },
   select:             { padding: '10px', border: '1px solid #ccc', borderRadius: '4px', backgroundColor: 'white', cursor: 'pointer' },
-  gridContainer:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' },
+  gridContainer:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' },
   card:               { border: '1px solid #ddd', borderRadius: '8px', padding: '14px', backgroundColor: '#fff', boxShadow: '0 2px 4px rgba(0,0,0,0.08)' },
   cardHeader:         { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', borderBottom: '1px solid #eee', paddingBottom: '8px', gap: '8px' },
   cardBody:           { marginBottom: '10px', fontSize: '13px' },
   cardRow:            { display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '3px' },
-  cardLabel:          { color: '#888', fontWeight: 600, fontSize: '12px', minWidth: '52px' },
+  cardLabel:          { color: '#888', fontWeight: 600, fontSize: '11px', minWidth: '56px' },
   cardActions:        { display: 'flex', gap: '8px', paddingTop: '8px', borderTop: '1px solid #eee' },
   badge:              { padding: '3px 8px', borderRadius: '4px', color: 'white', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' },
-  botaoEditar:        { flex: 1, padding: '7px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
-  botaoDeletar:       { padding: '7px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
+  botaoEditar:        { flex: 1, padding: '7px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
+  botaoDeletar:       { padding: '7px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
   formularioContainer:{ backgroundColor: '#f9f9f9', borderRadius: '8px' },
   secao:              { marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #e0e0e0' },
   secaoTitulo:        { margin: '0 0 12px 0', fontSize: '14px', fontWeight: 'bold', color: '#555' },
@@ -1118,5 +1242,5 @@ const styles: { [key: string]: React.CSSProperties } = {
   botaoCancelar:      { flex: 1, padding: '11px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' },
   btnPrimary:         { padding: '9px 18px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
   modal:              { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-  modalContent:       { backgroundColor: 'white', padding: '24px', borderRadius: '8px', maxWidth: '720px', maxHeight: '90vh', overflowY: 'auto', width: '96%', boxShadow: '0 4px 20px rgba(0,0,0,0.25)' },
+  modalContent:       { backgroundColor: 'white', padding: '24px', borderRadius: '8px', maxWidth: '760px', maxHeight: '92vh', overflowY: 'auto', width: '96%', boxShadow: '0 4px 20px rgba(0,0,0,0.25)' },
 };
