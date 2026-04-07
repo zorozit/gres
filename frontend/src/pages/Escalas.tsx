@@ -3,38 +3,43 @@ import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 
-/* ─── Feriados Nacionais Brasil 2026 ─────────────────────────────────────── */
+/* ─── Feriados 2026 ──────────────────────────────────────────────────────── */
 const FERIADOS_2026: Record<string, string> = {
-  '2026-01-01': 'Confraternização Universal',
-  '2026-02-16': 'Carnaval',
-  '2026-02-17': 'Carnaval',
-  '2026-02-18': 'Quarta-feira de Cinzas (meio dia)',
-  '2026-04-03': 'Sexta-feira Santa',
-  '2026-04-05': 'Páscoa',
-  '2026-04-21': 'Tiradentes',
-  '2026-05-01': 'Dia do Trabalho',
-  '2026-06-04': 'Corpus Christi',
-  '2026-09-07': 'Independência do Brasil',
-  '2026-10-12': 'Nossa Sra. Aparecida',
-  '2026-11-02': 'Finados',
-  '2026-11-15': 'Proclamação da República',
-  '2026-11-20': 'Dia da Consciência Negra',
-  '2026-12-25': 'Natal',
+  '2026-01-01':'Confraternização','2026-02-16':'Carnaval','2026-02-17':'Carnaval',
+  '2026-02-18':'Quarta-feira Cinzas','2026-04-03':'Sexta-feira Santa',
+  '2026-04-05':'Páscoa','2026-04-21':'Tiradentes','2026-05-01':'Dia do Trabalho',
+  '2026-06-04':'Corpus Christi','2026-09-07':'Independência','2026-10-12':'N.S. Aparecida',
+  '2026-11-02':'Finados','2026-11-15':'Proclamação da República',
+  '2026-11-20':'Consciência Negra','2026-12-25':'Natal',
 };
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
-interface Colaborador {
+interface Pessoa {
   id: string;
   nome: string;
-  cargo: string;
-  funcao?: string;    // função na escala (personalizável)
-  area?: string;      // área de trabalho
-  tipoContrato?: string;
-  podeTrabalharNoite?: boolean;
-  ativo?: boolean;
-  unitId?: string;
+  cargo?: string;
+  funcao?: string;
+  area?: string;
+  tipoContrato?: string; // 'CLT' | 'Freelancer'
   chavePix?: string;
   telefone?: string;
+  valorDia?: number;
+  valorNoite?: number;
+  valorDobra?: number;   // freelancer: R$ por dobra (D ou N = 0.5 dobra)
+  valorTransporte?: number;
+  salario?: number;
+  ativo?: boolean;
+  unitId?: string;
+}
+
+interface Escala {
+  id: string;
+  colaboradorId: string;
+  data: string;
+  turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
+  presenca?: 'presente' | 'falta' | 'falta_justificada';
+  observacao?: string;
+  unitId?: string;
 }
 
 interface FuncaoEscala {
@@ -46,31 +51,6 @@ interface FuncaoEscala {
   turnoNoite: number[];
 }
 
-interface Escala {
-  id: string;
-  colaboradorId: string;
-  colaboradorNome?: string;
-  cargo?: string;
-  data: string;
-  turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
-  observacao?: string;
-  presenca?: 'presente' | 'falta' | 'falta_justificada';
-  unitId?: string;
-}
-
-interface Freelancer {
-  id: string;
-  nome: string;
-  chavePix?: string;
-  telefone?: string;
-  valorDobra?: number;
-  cargo?: string;
-  funcao?: string;
-  area?: string;
-  ativo: boolean;
-  unitId?: string;
-}
-
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
 function diasDoMes(ano: number, mes: number): Date[] {
   const dias: Date[] = [];
@@ -78,25 +58,85 @@ function diasDoMes(ano: number, mes: number): Date[] {
   while (d.getMonth() === mes - 1) { dias.push(new Date(d)); d.setDate(d.getDate() + 1); }
   return dias;
 }
+function fmtIso(d: Date) { return d.toISOString().split('T')[0]; }
+function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function fmtBRL(v: number) {
+  return 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
 
-function fmtData(d: Date) { return d.toISOString().split('T')[0]; }
+const DS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const DF = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 
-const DIAS_SEMANA       = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-const DIAS_SEMANA_FULL  = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+// Agrupa dias em semanas de Segunda (fecha Domingo)
+function semanasDoMes(ano: number, mes: number): { label: string; dias: Date[]; segunda: Date }[] {
+  const todos = diasDoMes(ano, mes);
+  const semanas: { label: string; dias: Date[]; segunda: Date }[] = [];
+  const primeiro = todos[0];
+  let seg = new Date(primeiro);
+  const dow0 = seg.getDay();
+  const diff = dow0 === 0 ? -6 : 1 - dow0;
+  seg.setDate(seg.getDate() + diff);
 
-const BADGE_TURNO: Record<string, { bg: string; color: string; label: string }> = {
-  Dia:      { bg: '#fff9c4', color: '#f57f17', label: '☀️ Dia' },
-  Noite:    { bg: '#e8eaf6', color: '#3949ab', label: '🌙 Noite' },
-  DiaNoite: { bg: '#e8f5e9', color: '#2e7d32', label: '☀️🌙 Dobra' },
-  Folga:    { bg: '#fce4ec', color: '#c62828', label: '🏖 Folga' },
-  '':       { bg: '#f5f5f5', color: '#9e9e9e', label: '—' },
+  while (seg <= todos[todos.length - 1]) {
+    const diasSem: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(seg, i);
+      if (d.getMonth() === mes - 1) diasSem.push(d);
+    }
+    if (diasSem.length > 0) {
+      const domFim = addDays(seg, 6);
+      semanas.push({
+        label: `${seg.getDate()}/${mes} – ${domFim.getDate()}/${domFim.getMonth() + 1}`,
+        dias: diasSem,
+        segunda: new Date(seg),
+      });
+    }
+    seg = addDays(seg, 7);
+  }
+  return semanas;
+}
+
+function proximaSegunda(dataRef: Date): Date {
+  const d = new Date(dataRef);
+  const dow = d.getDay();
+  const dias = dow === 1 ? 0 : dow === 0 ? 1 : 8 - dow;
+  d.setDate(d.getDate() + dias);
+  return d;
+}
+
+function proxDataPagtoStr(dias: Date[]): string {
+  const ultimo = dias[dias.length - 1];
+  const seg = proximaSegunda(ultimo);
+  return `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')}/${seg.getFullYear()}`;
+}
+
+const TURNO_BADGE: Record<string, { bg: string; cor: string; label: string }> = {
+  Dia:      { bg:'#fff9c4', cor:'#f57f17', label:'D' },
+  Noite:    { bg:'#e8eaf6', cor:'#3949ab', label:'N' },
+  DiaNoite: { bg:'#e8f5e9', cor:'#2e7d32', label:'DN' },
+  Folga:    { bg:'#fce4ec', cor:'#c62828', label:'F' },
+  '':       { bg:'#f5f5f5', cor:'#bbb',    label:'—' },
 };
 
-const PRESENCA_BADGE: Record<string, { bg: string; color: string; icon: string }> = {
-  presente:         { bg: '#e8f5e9', color: '#2e7d32', icon: '✅' },
-  falta:            { bg: '#fce4ec', color: '#c62828', icon: '❌' },
-  falta_justificada:{ bg: '#fff3e0', color: '#e65100', icon: '⚠️' },
+const PRES_BADGE: Record<string, { bg: string; cor: string; icon: string }> = {
+  presente:           { bg:'#e8f5e9', cor:'#2e7d32', icon:'✅' },
+  falta:              { bg:'#fce4ec', cor:'#c62828', icon:'❌' },
+  falta_justificada:  { bg:'#fff3e0', cor:'#e65100', icon:'⚠️' },
 };
+
+// Cor da área
+const AREA_CORES: Record<string, string> = {
+  'Bar':        '#ad1457',
+  'Cozinha':    '#e65100',
+  'Salão':      '#2e7d32',
+  'Operações':  '#1565c0',
+  'Gerência':   '#37474f',
+  'Pizzaria':   '#6a1b9a',
+  'Caixa':      '#558b2f',
+};
+function corArea(area: string): string {
+  return AREA_CORES[area] || '#455a64';
+}
 
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export const Escalas: React.FC = () => {
@@ -105,748 +145,1111 @@ export const Escalas: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
 
   const hoje = new Date();
-  const [mesAno, setMesAno]   = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
-  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
-  const [freelancers, setFreelancers]     = useState<Freelancer[]>([]);
-  const [escalas, setEscalas]             = useState<Escala[]>([]);
-  const [funcoes, setFuncoes]             = useState<FuncaoEscala[]>([]);
-  const [loading, setLoading]             = useState(false);
-  const [salvando, setSalvando]           = useState(false);
+  const [mesAno, setMesAno] = useState(
+    `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`
+  );
+  const [colaboradores, setColabs] = useState<Pessoa[]>([]);
+  const [freelancers,   setFreels] = useState<Pessoa[]>([]);
+  const [escalas,       setEscalas]= useState<Escala[]>([]);
+  const [funcoes,       setFuncoes]= useState<FuncaoEscala[]>([]);
+  const [loading,       setLoading]= useState(false);
+  const [salvando,      setSalvando]=useState(false);
 
-  type AbaType = 'mensal' | 'presencas' | 'editar';
-  const [aba, setAba]                     = useState<AbaType>('mensal');
-  const [filtroArea, setFiltroArea]       = useState('Todos');
-  const [filtroFuncao, setFiltroFuncao]   = useState('Todos');
-  const [mostrarFolgas, setMostrarFolgas] = useState(false);
+  type AbaType = 'mensal' | 'lancamento' | 'presencas' | 'pagamento';
+  const [aba, setAba] = useState<AbaType>('mensal');
 
-  // Form edição manual
-  const [formEscala, setFormEscala] = useState({
-    colaboradorId: '', data: fmtData(hoje), turno: 'Dia', observacao: '',
-  });
+  const [filtroArea,   setFiltroArea]  = useState('Todos');
+  const [filtroFuncao, setFiltroFuncao]= useState('Todos');
+  const [semanaIdx,    setSemanaIdx]   = useState(0);
 
-  // Presenças — mapa local: colaboradorId → data → presenca
+  // Turnos editáveis
+  const [turnos, setTurnos] = useState<Record<string, {dia: boolean; noite: boolean}>>({});
+  // Presenças
   const [presencaMap, setPresencaMap] = useState<Record<string, Record<string, string>>>({});
-  const [salvandoPresenca, setSalvandoPresenca] = useState(false);
+  const [salvandoPres, setSalvandoPres] = useState(false);
 
   const [ano, mes] = mesAno.split('-').map(Number);
-  const dias = useMemo(() => diasDoMes(ano, mes), [ano, mes]);
+  const dias   = useMemo(() => diasDoMes(ano, mes), [ano, mes]);
+  const semanas= useMemo(() => semanasDoMes(ano, mes), [ano, mes]);
 
-  useEffect(() => {
-    if (unitId) { fetchColaboradores(); fetchEscalas(); fetchFreelancers(); fetchFuncoes(); }
-  }, [unitId, mesAno]);
-
-  /* ── Fetch ──────────────────────────────────────────────── */
   const token = () => localStorage.getItem('auth_token');
 
-  const fetchColaboradores = async () => {
+  /* ── Load ────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (unitId) { fetchAll(); }
+  }, [unitId, mesAno]);
+
+  // Sync semana idx to current week
+  useEffect(() => {
+    const isoHoje = fmtIso(hoje);
+    const idx = semanas.findIndex(s =>
+      s.dias.some(d => fmtIso(d) === isoHoje)
+    );
+    if (idx >= 0) setSemanaIdx(idx);
+    else setSemanaIdx(0);
+  }, [semanas]);
+
+  const fetchAll = async () => {
+    setLoading(true);
+    await Promise.all([fetchColabs(), fetchFreels(), fetchEscalas(), fetchFuncoes()]);
+    setLoading(false);
+  };
+
+  const fetchColabs = async () => {
     try {
-      const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
+      const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
-      setColaboradores((Array.isArray(d) ? d : []).filter((c: Colaborador) => c.ativo !== false));
-    } catch (e) { console.error(e); }
+      setColabs((Array.isArray(d)?d:[]).filter((c:Pessoa)=>c.ativo!==false));
+    } catch(e){console.error(e);}
+  };
+
+  const fetchFreels = async () => {
+    try {
+      const r = await fetch(`${apiUrl}/freelancers?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
+      if (r.ok) {
+        const d = await r.json();
+        const lista = (Array.isArray(d)?d:[]).filter((f:Pessoa)=>f.ativo!==false);
+        setFreels(lista.map((f:any)=>({ ...f, tipoContrato:'Freelancer' })));
+      }
+    } catch(e){console.error(e);}
   };
 
   const fetchEscalas = async () => {
-    setLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
+      const r = await fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
-      const lista: Escala[] = Array.isArray(d) ? d : [];
+      const lista:Escala[] = Array.isArray(d)?d:[];
       setEscalas(lista);
-      // Reconstituir mapa de presenças das escalas salvas
-      const pm: Record<string, Record<string, string>> = {};
+      // Rebuild presenca map
+      const pm:Record<string,Record<string,string>>={};
       for (const e of lista) {
         if (e.presenca) {
-          if (!pm[e.colaboradorId]) pm[e.colaboradorId] = {};
-          pm[e.colaboradorId][e.data] = e.presenca;
+          if (!pm[e.colaboradorId]) pm[e.colaboradorId]={};
+          pm[e.colaboradorId][e.data]=e.presenca;
         }
       }
       setPresencaMap(pm);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  };
-
-  const fetchFreelancers = async () => {
-    try {
-      const r = await fetch(`${apiUrl}/freelancers?unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
-      if (r.ok) { const d = await r.json(); setFreelancers(Array.isArray(d) ? d : []); }
-    } catch (e) { console.error(e); }
+      // Rebuild turno state
+      const tv:Record<string,{dia:boolean;noite:boolean}>={};
+      for (const e of lista) {
+        const k = `${e.colaboradorId}_${e.data}`;
+        tv[k]={ dia: e.turno==='Dia'||e.turno==='DiaNoite', noite: e.turno==='Noite'||e.turno==='DiaNoite' };
+      }
+      setTurnos(tv);
+    } catch(e){console.error(e);}
   };
 
   const fetchFuncoes = async () => {
     try {
-      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
-      if (r.ok) { const d = await r.json(); setFuncoes(Array.isArray(d) ? d : []); }
-    } catch (e) { console.error(e); }
+      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
+      if (r.ok) { const d=await r.json(); setFuncoes(Array.isArray(d)?d:[]); }
+    } catch(e){console.error(e);}
   };
 
-  /* ── Helpers de função/regra ─────────────────────────────── */
-  const funcaoDe = (c: Colaborador) => c.funcao || c.cargo || '';
-  const areaDe   = (c: Colaborador) => c.area || '';
+  /* ── Helpers ─────────────────────────────────────────────── */
+  const funcaoDe = (p:Pessoa) => p.funcao || p.cargo || '';
+  const areaDe   = (p:Pessoa) => p.area   || '';
 
-  const regraByFuncao = useCallback((funcaoNome: string): FuncaoEscala | undefined => {
-    return funcoes.find(f => f.nome.toLowerCase() === funcaoNome.toLowerCase())
-      || funcoes.find(f => funcaoNome.toLowerCase().includes(f.nome.toLowerCase()));
-  }, [funcoes]);
+  const regraByFuncao = useCallback((fn:string): FuncaoEscala|undefined => {
+    return funcoes.find(f=>f.nome.toLowerCase()===fn.toLowerCase())
+      || funcoes.find(f=>fn.toLowerCase().includes(f.nome.toLowerCase()));
+  },[funcoes]);
 
-  const turnoEsperado = useCallback((c: Colaborador, dow: number): string => {
-    const regra = regraByFuncao(funcaoDe(c));
-    if (!regra) {
-      if (dow === 0 || dow === 1) return '';
-      return 'Dia';
+  const corFuncao = useCallback((p:Pessoa):string => {
+    const r = regraByFuncao(funcaoDe(p));
+    if (r?.cor) return r.cor;
+    return corArea(areaDe(p)) || (p.tipoContrato==='Freelancer' ? '#c2185b' : '#1976d2');
+  },[regraByFuncao]);
+
+  // Todos (CLT + Freelancers) para o grid, ordenados por área e nome
+  const todos = useMemo<Pessoa[]>(()=>{
+    const combined = [...colaboradores,...freelancers];
+    return combined.sort((a,b)=>{
+      const aArea = areaDe(a)||'zzz';
+      const bArea = areaDe(b)||'zzz';
+      if (aArea !== bArea) return aArea.localeCompare(bArea);
+      return a.nome.localeCompare(b.nome);
+    });
+  },[colaboradores,freelancers]);
+
+  const todosFiltered = useMemo(()=>todos.filter(p=>{
+    const matchArea   = filtroArea==='Todos' || (areaDe(p)||'Sem Área')===filtroArea;
+    const matchFuncao = filtroFuncao==='Todos' || funcaoDe(p)===filtroFuncao;
+    return matchArea && matchFuncao;
+  }),[todos,filtroArea,filtroFuncao]);
+
+  const areasUnicas = useMemo(()=>{
+    const s=new Set(todos.map(p=>areaDe(p)||'Sem Área'));
+    return Array.from(s).sort();
+  },[todos]);
+
+  const funcoesUnicas = useMemo(()=>{
+    const s=new Set(todos.map(p=>funcaoDe(p)).filter(Boolean));
+    return ['Todos',...Array.from(s).sort()];
+  },[todos]);
+
+  const escalasMap = useMemo(()=>{
+    const m:Record<string,Record<string,Escala>>={};
+    for (const e of escalas){
+      if (!m[e.colaboradorId]) m[e.colaboradorId]={};
+      m[e.colaboradorId][e.data]=e;
     }
-    if (!(regra.diasTrabalho || []).includes(dow)) return '';
-    if ((regra.turnoNoite || []).includes(dow)) return 'DiaNoite';
-    return 'Dia';
-  }, [regraByFuncao]);
+    return m;
+  },[escalas]);
 
-  const corFuncao = useCallback((c: Colaborador): string => {
-    const regra = regraByFuncao(funcaoDe(c));
-    return regra?.cor || '#1976d2';
-  }, [regraByFuncao]);
+  /* ── Toggle turno ────────────────────────────────────────── */
+  const toggleTurno = async (pessoaId:string, data:string, tipo:'dia'|'noite') => {
+    const k = `${pessoaId}_${data}`;
+    const cur = turnos[k] || {dia:false,noite:false};
+    const next = { ...cur, [tipo]: !cur[tipo] };
+    setTurnos(prev=>({...prev,[k]:next}));
 
-  /* ── Gerar automático ────────────────────────────────────── */
-  const gerarEscalaAutomatica = async () => {
+    let turno: string;
+    if (next.dia && next.noite) turno = 'DiaNoite';
+    else if (next.dia) turno = 'Dia';
+    else if (next.noite) turno = 'Noite';
+    else turno = 'Folga';
+
+    setSalvando(true);
+    try {
+      const existente = escalasMap[pessoaId]?.[data];
+      if (existente) {
+        if (turno === 'Folga') {
+          await fetch(`${apiUrl}/escalas/${existente.id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token()}` } });
+        } else {
+          await fetch(`${apiUrl}/escalas/${existente.id}`, {
+            method:'PUT',
+            headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+            body: JSON.stringify({ turno }),
+          });
+        }
+      } else if (turno !== 'Folga') {
+        await fetch(`${apiUrl}/escalas`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno }),
+        });
+      }
+      await fetchEscalas();
+    } catch(e){ console.error(e); }
+    finally { setSalvando(false); }
+  };
+
+  /* ── Presença ciclo ──────────────────────────────────────── */
+  const handlePresenca = useCallback(async (pessoaId:string, data:string, cur:string) => {
+    const ciclo = ['','presente','falta','falta_justificada'];
+    const next = ciclo[(ciclo.indexOf(cur)+1)%ciclo.length];
+    setPresencaMap(prev=>({...prev,[pessoaId]:{...(prev[pessoaId]||{}),[data]:next}}));
+    setSalvandoPres(true);
+    try {
+      const esc = escalasMap[pessoaId]?.[data];
+      if (esc) {
+        await fetch(`${apiUrl}/escalas/${esc.id}`, {
+          method:'PUT',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+          body: JSON.stringify({ presenca: next }),
+        });
+      } else if (next) {
+        await fetch(`${apiUrl}/escalas`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno:'Dia', presenca:next }),
+        });
+      }
+    } catch(e){ console.error(e); }
+    finally { setSalvandoPres(false); }
+  },[escalasMap,apiUrl,unitId]);
+
+  /* ── Gerar automático ──────────────────────────────────────  */
+  const gerarAuto = async () => {
     if (!window.confirm(`Gerar escala automática para ${mesAno}?\nEscalas existentes não serão sobrescritas.`)) return;
     setSalvando(true);
-    let criados = 0;
-    const todosColabs = [
-      ...colaboradores,
-      ...freelancers.filter(f => f.ativo).map(f => ({
-        id: f.id, nome: f.nome, cargo: f.cargo || '', funcao: f.funcao || f.cargo || '',
-        area: (f as any).area || '', tipoContrato: 'Freelancer', ativo: true,
-      } as Colaborador)),
-    ];
-    for (const colab of todosColabs) {
+    let criados=0;
+    for (const p of todos) {
+      const fn = funcaoDe(p);
+      const regra = regraByFuncao(fn);
       for (const dia of dias) {
         const dow = dia.getDay();
-        const dataStr = fmtData(dia);
-        if (escalas.some(e => e.colaboradorId === colab.id && e.data === dataStr)) continue;
-        const turno = turnoEsperado(colab, dow);
-        if (!turno) continue;
+        const ds  = fmtIso(dia);
+        if (escalasMap[p.id]?.[ds]) continue;
+        let turno: string;
+        if (regra) {
+          if (!(regra.diasTrabalho||[]).includes(dow)) continue;
+          turno = (regra.turnoNoite||[]).includes(dow) ? 'DiaNoite' : 'Dia';
+        } else {
+          if (dow===0||dow===1) continue;
+          turno = 'Dia';
+        }
         try {
-          await fetch(`${apiUrl}/escalas`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-            body: JSON.stringify({ unitId, colaboradorId: colab.id, data: dataStr, turno }),
+          await fetch(`${apiUrl}/escalas`,{
+            method:'POST',
+            headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},
+            body: JSON.stringify({ unitId, colaboradorId:p.id, data:ds, turno }),
           });
           criados++;
-        } catch (e) { console.error(e); }
+        } catch{}
       }
     }
-    alert(`✅ ${criados} turnos criados automaticamente.`);
+    alert(`✅ ${criados} turnos criados.`);
     setSalvando(false);
     fetchEscalas();
   };
 
-  /* ── Salvar turno manual ─────────────────────────────────── */
-  const handleSalvarEscalaManual = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formEscala.colaboradorId || !formEscala.data) { alert('Preencha colaborador e data.'); return; }
-    setSalvando(true);
-    try {
-      const existente = escalas.find(x => x.colaboradorId === formEscala.colaboradorId && x.data === formEscala.data);
-      if (existente) {
-        await fetch(`${apiUrl}/escalas/${existente.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
-      }
-      if (formEscala.turno !== 'Folga') {
-        await fetch(`${apiUrl}/escalas`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({ ...formEscala, unitId }),
-        });
-      }
-      alert('✅ Escala salva!');
-      setFormEscala({ colaboradorId: '', data: fmtData(hoje), turno: 'Dia', observacao: '' });
-      fetchEscalas();
-    } catch { alert('Erro ao salvar escala'); }
-    finally { setSalvando(false); }
-  };
+  /* ── Calcular pagamento semanal ───────────────────────────── */
+  interface CalcResult {
+    dobras: number;
+    totalDia: number;
+    totalNoite: number;
+    totalBruto: number;
+    totalTransporte: number;
+    descricao: string;
+    codigos: string[];
+    dataPagto: string;
+    dC: number; nC: number; dnC: number;
+  }
 
-  /* ── Pontuar presença ────────────────────────────────────── */
-  const handlePresenca = useCallback(async (colaboradorId: string, data: string, valor: string) => {
-    // Atualiza localmente imediato
-    setPresencaMap(prev => ({
-      ...prev,
-      [colaboradorId]: { ...(prev[colaboradorId] || {}), [data]: valor },
-    }));
-    // Persiste na escala correspondente
-    setSalvandoPresenca(true);
-    try {
-      const escala = escalas.find(e => e.colaboradorId === colaboradorId && e.data === data);
-      if (escala) {
-        await fetch(`${apiUrl}/escalas/${escala.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({ ...escala, presenca: valor }),
-        });
-      } else if (valor !== '') {
-        // Cria escala de presença sem turno definido
-        await fetch(`${apiUrl}/escalas`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({ unitId, colaboradorId, data, turno: 'Dia', presenca: valor }),
-        });
-      }
-    } catch (e) { console.error('Erro ao salvar presença:', e); }
-    finally { setSalvandoPresenca(false); }
-  }, [escalas, apiUrl, unitId]);
-
-  /* ── Mapas memoizados ────────────────────────────────────── */
-  const escalasMap = useMemo(() => {
-    const m: Record<string, Record<string, Escala>> = {};
-    for (const e of escalas) {
-      if (!m[e.colaboradorId]) m[e.colaboradorId] = {};
-      m[e.colaboradorId][e.data] = e;
+  const calcPagamentoSemana = useCallback((pessoa:Pessoa, diasSem:Date[]): CalcResult => {
+    let dC=0, nC=0, dnC=0;
+    const codigos: string[]=[];
+    for (const d of diasSem) {
+      const ds = fmtIso(d);
+      const esc = escalasMap[pessoa.id]?.[ds];
+      if (!esc || esc.turno==='Folga') { codigos.push('—'); continue; }
+      if (esc.turno==='Dia')      { dC++;          codigos.push('D');  }
+      else if (esc.turno==='Noite')    { nC++;          codigos.push('N');  }
+      else if (esc.turno==='DiaNoite') { dnC++; dC++; nC++; codigos.push('DN');}
     }
-    return m;
-  }, [escalas]);
+    const isCLT = pessoa.tipoContrato==='CLT';
+    let totalBruto = 0, totalDia = 0, totalNoite = 0;
+    let descricao = '';
 
-  // Todos os colaboradores (CLT + Freelancers) para o grid
-  const todosColaboradores = useMemo<Colaborador[]>(() => [
-    ...colaboradores,
-    ...freelancers.filter(f => f.ativo).map(f => ({
-      id: f.id, nome: f.nome, cargo: f.cargo || '', funcao: f.funcao || f.cargo || '',
-      area: (f as any).area || '', tipoContrato: 'Freelancer', ativo: true,
-    } as Colaborador)),
-  ], [colaboradores, freelancers]);
-
-  // Agrupado por Área
-  const colabsPorArea = useMemo(() => {
-    const areas: Record<string, Colaborador[]> = {};
-    for (const c of todosColaboradores) {
-      const a = areaDe(c) || 'Sem Área';
-      if (!areas[a]) areas[a] = [];
-      areas[a].push(c);
+    if (isCLT) {
+      const vDia   = pessoa.valorDia   || 0;
+      const vNoite = pessoa.valorNoite || 0;
+      totalDia   = vDia   * (dC - dnC);  // apenas dias simples
+      totalNoite = vNoite * (nC - dnC);  // apenas noites simples
+      const totalDobra = (vDia + vNoite) * dnC; // dobra = dia + noite
+      totalBruto = totalDia + totalNoite + totalDobra;
+      descricao = dnC>0
+        ? `${dnC} dobra(s) × (D${vDia}+N${vNoite}) + ${dC-dnC}×D${vDia} + ${nC-dnC}×N${vNoite}`
+        : `${dC}×D R$${vDia} + ${nC}×N R$${vNoite}`;
+    } else {
+      // Freelancer: DN=1 dobra, D=0.5, N=0.5
+      const vd = pessoa.valorDobra || 120;
+      const diasSimples = dC - dnC;   // só dia
+      const noitesSimples = nC - dnC; // só noite
+      const dobrasCalc = dnC + diasSimples * 0.5 + noitesSimples * 0.5;
+      totalBruto = vd * dobrasCalc;
+      totalDia   = vd * (diasSimples * 0.5 + dnC * 0.5);
+      totalNoite = vd * (noitesSimples * 0.5 + dnC * 0.5);
+      descricao = `${dobrasCalc.toFixed(1)} dobras × R$${vd}`;
     }
-    return areas;
-  }, [todosColaboradores]);
 
-  const areasOrdenadas = useMemo(() => Object.keys(colabsPorArea).sort(), [colabsPorArea]);
+    // Transporte: por dia trabalhado
+    const diasTrabalhados = codigos.filter(c=>c!=='—').length;
+    const totalTransporte = (pessoa.valorTransporte || 0) * diasTrabalhados;
 
-  // Filtro de área e função
-  const colaboradoresFiltrados = useMemo(() => {
-    return todosColaboradores.filter(c => {
-      const matchArea   = filtroArea   === 'Todos' || (areaDe(c) || 'Sem Área') === filtroArea;
-      const matchFuncao = filtroFuncao === 'Todos' || funcaoDe(c) === filtroFuncao;
-      return matchArea && matchFuncao;
-    });
-  }, [todosColaboradores, filtroArea, filtroFuncao]);
+    const ultimoDiaSem = diasSem[diasSem.length-1];
+    const proxSeg = proximaSegunda(ultimoDiaSem);
+    const dataPagto = fmtIso(proxSeg);
 
-  // Resumos
-  const resumos = useMemo(() => {
-    return todosColaboradores.map(c => {
-      let dia = 0, noite = 0, dobra = 0, presentes = 0, faltas = 0, faltasJ = 0;
-      for (const d of dias) {
-        const ds  = fmtData(d);
-        const esc = escalasMap[c.id]?.[ds];
-        if (esc?.turno === 'Dia') dia++;
-        else if (esc?.turno === 'Noite') noite++;
-        else if (esc?.turno === 'DiaNoite') dobra++;
-        const p = presencaMap[c.id]?.[ds];
-        if (p === 'presente') presentes++;
-        else if (p === 'falta') faltas++;
-        else if (p === 'falta_justificada') faltasJ++;
-      }
-      return { id: c.id, nome: c.nome, dia, noite, dobra, presentes, faltas, faltasJ };
-    });
-  }, [todosColaboradores, dias, escalasMap, presencaMap]);
+    return { dobras: dnC, totalDia, totalNoite, totalBruto, totalTransporte,
+             descricao, codigos, dataPagto, dC, nC, dnC };
+  },[escalasMap]);
 
-  // Funções únicas para filtro
-  const funcoesUnicas = useMemo(() => {
-    const s = new Set(todosColaboradores.map(c => funcaoDe(c)).filter(Boolean));
-    return ['Todos', ...Array.from(s).sort()];
-  }, [todosColaboradores]);
-
-  /* ── Badge de célula ─────────────────────────────────────── */
-  const badgeCell = useCallback((
-    turno: string | undefined,
-    presenca: string | undefined,
-    dow: number,
-    c: Colaborador,
-    dataStr: string,
-  ) => {
-    const isFeriado = !!FERIADOS_2026[dataStr];
-    const esperado  = turnoEsperado(c, dow);
-    const real      = turno || (dow === 0 || dow === 1 ? 'Folga' : '');
-    const b         = BADGE_TURNO[real] || BADGE_TURNO[''];
-    const diverge   = turno && turno !== esperado && esperado !== '';
-    const pb        = presenca ? PRESENCA_BADGE[presenca] : null;
-
-    return (
-      <span style={{
-        display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
-        padding: '2px 4px', borderRadius: '6px',
-        backgroundColor: isFeriado && !turno ? '#fce4ec' : b.bg,
-        color: isFeriado && !turno ? '#c62828' : b.color,
-        fontSize: '9px', fontWeight: 'bold',
-        border: diverge ? '2px solid #e53935' : isFeriado ? '1px dashed #e53935' : 'none',
-        minWidth: '30px',
-      }} title={isFeriado ? FERIADOS_2026[dataStr] : undefined}>
-        {isFeriado && !turno ? '🎉' : b.label.split(' ')[0]}
-        {pb && <span style={{ fontSize: '8px', marginTop: '1px' }}>{pb.icon}</span>}
-      </span>
-    );
-  }, [turnoEsperado]);
+  /* ── Resumo mensal por pessoa ─────────────────────────────── */
+  const resumos = useMemo(()=>todos.map(p=>{
+    let diaT=0,noiteT=0,dobraT=0,presenteT=0,faltaT=0,faltaJT=0;
+    for (const d of dias){
+      const ds=fmtIso(d);
+      const esc=escalasMap[p.id]?.[ds];
+      if(esc?.turno==='Dia') diaT++;
+      else if(esc?.turno==='Noite') noiteT++;
+      else if(esc?.turno==='DiaNoite') dobraT++;
+      const pr=presencaMap[p.id]?.[ds];
+      if(pr==='presente') presenteT++;
+      else if(pr==='falta') faltaT++;
+      else if(pr==='falta_justificada') faltaJT++;
+    }
+    return {id:p.id,nome:p.nome,diaT,noiteT,dobraT,presenteT,faltaT,faltaJT};
+  }),[todos,dias,escalasMap,presencaMap]);
 
   /* ── Estilos ─────────────────────────────────────────────── */
   const s = {
-    card:   { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
-    tab:    (a: boolean) => ({
-      padding: '10px 18px', border: 'none', cursor: 'pointer', fontWeight: 'bold' as const,
-      borderRadius: '4px 4px 0 0',
-      backgroundColor: a ? '#1976d2' : '#e0e0e0',
-      color: a ? 'white' : '#333',
-      fontSize: '13px',
-    }),
-    th:     { backgroundColor: '#1565c0', color: 'white', padding: '7px 5px', fontSize: '10px', whiteSpace: 'nowrap' as const, textAlign: 'center' as const },
-    td:     { padding: '4px 2px', borderBottom: '1px solid #f0f0f0', fontSize: '10px', textAlign: 'center' as const, verticalAlign: 'middle' as const },
-    label:  { fontSize: '13px', fontWeight: 'bold' as const, marginBottom: '4px', color: '#444', display: 'block' },
-    input:  { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
-    select: { padding: '9px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '14px', width: '100%' },
-    btn:    (bg: string) => ({ padding: '9px 18px', border: 'none', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: bg, color: 'white' }),
+    card:  { backgroundColor:'white', border:'1px solid #e0e0e0', borderRadius:'8px', padding:'16px', boxShadow:'0 2px 4px rgba(0,0,0,0.06)' },
+    tab:   (a:boolean)=>({ padding:'10px 18px', border:'none', cursor:'pointer', fontWeight:'bold' as const,
+              borderRadius:'4px 4px 0 0', fontSize:'13px',
+              backgroundColor:a?'#1976d2':'#e0e0e0', color:a?'white':'#333' }),
+    th:    { backgroundColor:'#1565c0', color:'white', padding:'7px 5px', fontSize:'10px', whiteSpace:'nowrap' as const, textAlign:'center' as const },
+    td:    { padding:'4px 3px', borderBottom:'1px solid #f0f0f0', fontSize:'11px', textAlign:'center' as const, verticalAlign:'middle' as const },
+    label: { fontSize:'13px', fontWeight:'bold' as const, marginBottom:'4px', color:'#444', display:'block' },
+    input: { padding:'9px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'14px', width:'100%' },
+    sel:   { padding:'9px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'14px', width:'100%' },
+    btn:   (bg:string)=>({ padding:'9px 18px', border:'none', borderRadius:'4px', fontSize:'13px', fontWeight:'bold' as const, cursor:'pointer', backgroundColor:bg, color:'white' }),
   };
 
-  /* ── Render ──────────────────────────────────────────────── */
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
-      <Header title="📅 Gestão de Escalas" showBack={true} />
-      <div style={{ flex: 1, padding: '20px', maxWidth: '1700px', margin: '0 auto', width: '100%' }}>
+  /* ─── Célula de turno (botões D / N) ─────────────────────── */
+  const CelulaTurno = ({ pessoaId, data, disabled }: { pessoaId:string; data:string; disabled?:boolean }) => {
+    const k = `${pessoaId}_${data}`;
+    const cur = turnos[k] || {dia:false,noite:false};
+    const isFeriado = !!FERIADOS_2026[data];
+    return (
+      <td style={{ ...s.td, backgroundColor: isFeriado?'#fff3e0':undefined, padding:'3px 2px' }}>
+        <div style={{ display:'flex', gap:'2px', justifyContent:'center' }}>
+          <button
+            disabled={disabled}
+            onClick={()=>!disabled&&toggleTurno(pessoaId,data,'dia')}
+            style={{
+              width:'22px', height:'22px', border:'none', borderRadius:'3px', cursor:'pointer', fontSize:'11px',
+              fontWeight:'bold',
+              backgroundColor: cur.dia ? '#fff9c4' : '#f5f5f5',
+              color: cur.dia ? '#f57f17' : '#ccc',
+              outline: cur.dia ? '2px solid #f57f17' : 'none',
+            }}
+            title={`${data} — Dia`}
+          >D</button>
+          <button
+            disabled={disabled}
+            onClick={()=>!disabled&&toggleTurno(pessoaId,data,'noite')}
+            style={{
+              width:'22px', height:'22px', border:'none', borderRadius:'3px', cursor:'pointer', fontSize:'11px',
+              fontWeight:'bold',
+              backgroundColor: cur.noite ? '#e8eaf6' : '#f5f5f5',
+              color: cur.noite ? '#3949ab' : '#ccc',
+              outline: cur.noite ? '2px solid #3949ab' : 'none',
+            }}
+            title={`${data} — Noite`}
+          >N</button>
+        </div>
+      </td>
+    );
+  };
 
-        {/* Controles */}
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
+  /* ─── Render ─────────────────────────────────────────────── */
+  const semAtual = semanas[semanaIdx] || semanas[0];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', minHeight:'100vh', backgroundColor:'#f4f6f9' }}>
+      <Header title="📅 Gestão de Escalas" showBack={true} />
+      <div style={{ flex:1, padding:'20px', maxWidth:'1800px', margin:'0 auto', width:'100%' }}>
+
+        {/* Controles globais */}
+        <div style={{ display:'flex', gap:'12px', flexWrap:'wrap', alignItems:'flex-end', marginBottom:'16px' }}>
           <div>
             <label style={s.label}>Mês / Ano</label>
-            <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)}
-              style={{ ...s.input, width: '160px' }} />
+            <input type="month" value={mesAno} onChange={e=>setMesAno(e.target.value)} style={{ ...s.input, width:'160px' }} />
           </div>
           <div>
             <label style={s.label}>Área</label>
-            <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)}
-              style={{ ...s.select, width: '150px' }}>
+            <select value={filtroArea} onChange={e=>setFiltroArea(e.target.value)} style={{ ...s.sel, width:'150px' }}>
               <option value="Todos">Todas as áreas</option>
-              {areasOrdenadas.map(a => <option key={a} value={a}>{a}</option>)}
+              {areasUnicas.map(a=><option key={a} value={a}>{a}</option>)}
             </select>
           </div>
           <div>
             <label style={s.label}>Função</label>
-            <select value={filtroFuncao} onChange={e => setFiltroFuncao(e.target.value)}
-              style={{ ...s.select, width: '160px' }}>
-              {funcoesUnicas.map(f => <option key={f} value={f}>{f}</option>)}
+            <select value={filtroFuncao} onChange={e=>setFiltroFuncao(e.target.value)} style={{ ...s.sel, width:'160px' }}>
+              {funcoesUnicas.map(f=><option key={f} value={f}>{f}</option>)}
             </select>
           </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', paddingBottom: '4px' }}>
-            <input type="checkbox" checked={mostrarFolgas} onChange={e => setMostrarFolgas(e.target.checked)} />
-            Mostrar Folgas
-          </label>
-          <button onClick={fetchEscalas} style={s.btn('#1976d2')}>🔄 Atualizar</button>
-          <button onClick={gerarEscalaAutomatica} disabled={salvando} style={s.btn('#43a047')}>
-            {salvando ? '⏳...' : '⚡ Gerar Auto'}
+          <button onClick={fetchAll} style={s.btn('#1976d2')}>🔄 Atualizar</button>
+          <button onClick={gerarAuto} disabled={salvando} style={s.btn('#43a047')}>
+            {salvando?'⏳...':'⚡ Gerar Auto'}
           </button>
-          {salvandoPresenca && (
-            <span style={{ fontSize: '12px', color: '#1976d2', paddingBottom: '6px' }}>💾 Salvando presença...</span>
-          )}
+          {(salvando||salvandoPres) && <span style={{ fontSize:'12px', color:'#1976d2', paddingBottom:'6px' }}>💾 Salvando...</span>}
+        </div>
+
+        {/* Resumo rápido */}
+        <div style={{ display:'flex', gap:'10px', marginBottom:'12px', flexWrap:'wrap' }}>
+          <div style={{ backgroundColor:'white', border:'1px solid #e0e0e0', borderRadius:'6px', padding:'8px 14px', fontSize:'12px' }}>
+            <strong style={{ color:'#1565c0' }}>👥 Equipe:</strong> {colaboradores.length} CLT + {freelancers.length} Freelancers
+          </div>
+          <div style={{ backgroundColor:'white', border:'1px solid #e0e0e0', borderRadius:'6px', padding:'8px 14px', fontSize:'12px' }}>
+            <strong style={{ color:'#2e7d32' }}>📅 Mês:</strong> {mesAno}
+          </div>
+          {areasUnicas.map(a=>(
+            <div key={a} style={{ backgroundColor:'white', border:`1px solid ${corArea(a)}`, borderLeft:`4px solid ${corArea(a)}`, borderRadius:'6px', padding:'8px 12px', fontSize:'12px' }}>
+              <strong style={{ color:corArea(a) }}>{a}:</strong>{' '}
+              {todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===a).length} pessoas
+            </div>
+          ))}
         </div>
 
         {/* Abas */}
-        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', flexWrap: 'wrap' }}>
-          <button style={s.tab(aba === 'mensal')}   onClick={() => setAba('mensal')}>📋 Visão Mensal</button>
-          <button style={s.tab(aba === 'presencas')} onClick={() => setAba('presencas')}>✅ Presenças / Faltas</button>
-          <button style={s.tab(aba === 'editar')}   onClick={() => setAba('editar')}>✏️ Lançar Turno</button>
+        <div style={{ display:'flex', gap:'4px', borderBottom:'2px solid #e0e0e0', flexWrap:'wrap' }}>
+          {([
+            { key:'mensal',    label:'📋 Visão Mensal' },
+            { key:'lancamento',label:'✏️ Lançar Turnos' },
+            { key:'presencas', label:'✅ Presenças/Faltas' },
+            { key:'pagamento', label:'💰 Resumo Pagamento' },
+          ] as {key:AbaType;label:string}[]).map(({key,label})=>(
+            <button key={key} style={s.tab(aba===key)} onClick={()=>setAba(key)}>{label}</button>
+          ))}
         </div>
 
-        {/* ── ABA MENSAL ────────────────────────────────────────── */}
-        {aba === 'mensal' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', overflowX: 'auto' }}>
-            {loading ? (
-              <p style={{ textAlign: 'center', padding: '30px', color: '#999' }}>Carregando escalas...</p>
-            ) : (
+        {/* ─── ABA MENSAL ─────────────────────────────────────── */}
+        {aba==='mensal' && (
+          <div style={{ ...s.card, borderRadius:'0 8px 8px 8px', overflowX:'auto' }}>
+            {loading ? <p style={{ textAlign:'center', padding:'30px', color:'#999' }}>Carregando...</p> : (
               <>
                 {/* Legenda */}
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px', alignItems: 'center', fontSize: '12px' }}>
-                  {Object.entries(BADGE_TURNO).filter(([k]) => k).map(([k, v]) => (
-                    <span key={k} style={{ backgroundColor: v.bg, color: v.color, padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
-                      {v.label}
-                    </span>
+                <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'12px', fontSize:'12px', alignItems:'center' }}>
+                  {Object.entries(TURNO_BADGE).filter(([k])=>k).map(([k,v])=>(
+                    <span key={k} style={{ backgroundColor:v.bg, color:v.cor, padding:'2px 8px', borderRadius:'10px', fontWeight:'bold', border:`1px solid ${v.cor}` }}>{v.label} = {k}</span>
                   ))}
-                  <span style={{ backgroundColor: '#fce4ec', color: '#c62828', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold', border: '1px dashed #e53935' }}>🎉 Feriado</span>
-                  <span style={{ color: '#e53935', fontWeight: 'bold', fontSize: '11px' }}>🔴 borda = diverge padrão</span>
+                  <span style={{ backgroundColor:'#fce4ec', color:'#c62828', padding:'2px 8px', borderRadius:'10px', fontWeight:'bold', border:'1px dashed #e53935' }}>🎉 Feriado</span>
+                  <span style={{ color:'#666', fontSize:'11px', marginLeft:'8px' }}>D=Dia | N=Noite | DN=Dobra | F=Folga</span>
                 </div>
 
-                {/* Grid agrupado por Área */}
-                {areasOrdenadas
-                  .filter(area => filtroArea === 'Todos' || area === filtroArea)
-                  .map(area => {
-                    const colabsArea = colaboradoresFiltrados.filter(c => (areaDe(c) || 'Sem Área') === area);
-                    if (colabsArea.length === 0) return null;
-                    return (
-                      <div key={area} style={{ marginBottom: '28px' }}>
-                        {/* Header da área */}
-                        <div style={{
-                          backgroundColor: '#1565c0', color: 'white',
-                          padding: '8px 14px', borderRadius: '6px 6px 0 0',
-                          fontWeight: 'bold', fontSize: '13px',
-                          display: 'flex', alignItems: 'center', gap: '8px',
-                        }}>
-                          📍 {area}
-                          <span style={{ fontSize: '11px', opacity: 0.8 }}>({colabsArea.length} colaboradores)</span>
-                        </div>
-
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
+                {areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
+                  const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);
+                  if (gp.length===0) return null;
+                  const areaColor = corArea(area);
+                  return (
+                    <div key={area} style={{ marginBottom:'28px' }}>
+                      <div style={{ backgroundColor:areaColor, color:'white', padding:'8px 14px', borderRadius:'6px 6px 0 0', fontWeight:'bold', fontSize:'13px', display:'flex', alignItems:'center', gap:'8px' }}>
+                        <span>📍 {area}</span>
+                        <span style={{ opacity:0.8, fontSize:'11px' }}>({gp.length} pessoas)</span>
+                        <span style={{ marginLeft:'auto', fontSize:'11px', opacity:0.8 }}>
+                          {gp.filter(p=>p.tipoContrato==='CLT').length} CLT · {gp.filter(p=>p.tipoContrato!=='CLT').length} Free
+                        </span>
+                      </div>
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'10px' }}>
                           <thead>
                             <tr>
-                              <th style={{ ...s.th, textAlign: 'left', minWidth: '120px', fontSize: '11px', backgroundColor: '#1565c0' }}>Nome</th>
-                              <th style={{ ...s.th, textAlign: 'left', minWidth: '60px', fontSize: '10px', backgroundColor: '#1565c0' }}>Tipo</th>
-                              <th style={{ ...s.th, textAlign: 'left', minWidth: '80px', fontSize: '10px', backgroundColor: '#1565c0' }}>Função</th>
-                              {dias.map(d => {
-                                const ds  = fmtData(d);
-                                const dow = d.getDay();
-                                const isFeriado  = !!FERIADOS_2026[ds];
-                                const isWeekend  = dow === 0 || dow === 6;
-                                const isFolgaDia = dow === 0 || dow === 1;
+                              <th style={{ ...s.th, textAlign:'left', minWidth:'110px', fontSize:'11px', backgroundColor:areaColor }}>Nome</th>
+                              <th style={{ ...s.th, minWidth:'32px', fontSize:'10px', backgroundColor:areaColor }}>Tipo</th>
+                              <th style={{ ...s.th, textAlign:'left', minWidth:'70px', fontSize:'10px', backgroundColor:areaColor }}>Função</th>
+                              {dias.map(d=>{
+                                const ds=fmtIso(d); const dow=d.getDay();
+                                const isFer=!!FERIADOS_2026[ds];
+                                const isWkd=dow===0||dow===6;
                                 return (
-                                  <th key={ds} title={isFeriado ? FERIADOS_2026[ds] : DIAS_SEMANA_FULL[dow]} style={{
-                                    ...s.th, minWidth: '38px', padding: '4px 2px',
-                                    backgroundColor: isFeriado ? '#b71c1c' : isFolgaDia ? '#37474f' : isWeekend ? '#1976d2' : '#1565c0',
+                                  <th key={ds} title={isFer?FERIADOS_2026[ds]:DF[dow]} style={{
+                                    ...s.th, minWidth:'28px', padding:'3px 1px',
+                                    backgroundColor: isFer?'#b71c1c':isWkd?'#37474f':areaColor,
+                                    fontSize:'9px',
                                   }}>
-                                    <div style={{ fontSize: '10px' }}>{d.getDate()}</div>
-                                    <div style={{ fontSize: '8px', opacity: 0.85 }}>{DIAS_SEMANA[dow]}</div>
-                                    {isFeriado && <div style={{ fontSize: '7px' }}>🎉</div>}
+                                    <div>{d.getDate()}</div>
+                                    <div style={{ opacity:0.85 }}>{DS[dow]}</div>
+                                    {isFer&&<div>🎉</div>}
                                   </th>
                                 );
                               })}
-                              <th style={{ ...s.th, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '9px' }}>☀️</th>
-                              <th style={{ ...s.th, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '9px' }}>🌙</th>
-                              <th style={{ ...s.th, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '9px' }}>2x</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'24px', fontSize:'9px' }}>D</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'24px', fontSize:'9px' }}>N</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'24px', fontSize:'9px' }}>DN</th>
+                              <th style={{ ...s.th, backgroundColor:'#1b5e20', minWidth:'24px', fontSize:'9px' }}>✅</th>
+                              <th style={{ ...s.th, backgroundColor:'#c62828', minWidth:'24px', fontSize:'9px' }}>❌</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {colabsArea.map((c, ci) => {
-                              const r  = resumos.find(x => x.id === c.id);
-                              const cor = corFuncao(c);
-                              const tipo = c.tipoContrato || 'CLT';
+                            {gp.map((p,ci)=>{
+                              const r=resumos.find(x=>x.id===p.id);
+                              const cor=corFuncao(p);
+                              const tipo=p.tipoContrato||'CLT';
                               return (
-                                <tr key={c.id} style={{ backgroundColor: ci % 2 === 0 ? '#fafafa' : 'white' }}>
-                                  <td style={{ ...s.td, textAlign: 'left', fontWeight: 'bold', paddingLeft: '8px', fontSize: '11px', borderLeft: `3px solid ${cor}` }}>
-                                    {c.nome.split(' ').slice(0, 2).join(' ')}
+                                <tr key={p.id} style={{ backgroundColor:ci%2===0?'#fafafa':'white' }}>
+                                  <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }}>
+                                    {p.nome.split(' ').slice(0,2).join(' ')}
                                   </td>
-                                  <td style={{ ...s.td, textAlign: 'left', fontSize: '10px' }}>
-                                    <span style={{
-                                      padding: '1px 5px', borderRadius: '8px', fontSize: '9px', fontWeight: 'bold',
-                                      backgroundColor: tipo === 'CLT' ? '#e8f5e9' : '#fff3e0',
-                                      color: tipo === 'CLT' ? '#2e7d32' : '#e65100',
-                                    }}>{tipo === 'CLT' ? 'CLT' : 'Free'}</span>
+                                  <td style={s.td}>
+                                    <span style={{ padding:'1px 4px', borderRadius:'6px', fontSize:'9px', fontWeight:'bold',
+                                      backgroundColor:tipo==='CLT'?'#e8f5e9':'#fff3e0',
+                                      color:tipo==='CLT'?'#2e7d32':'#e65100' }}>
+                                      {tipo==='CLT'?'CLT':'Free'}
+                                    </span>
                                   </td>
-                                  <td style={{ ...s.td, textAlign: 'left', fontSize: '10px', color: '#555' }}>
-                                    {funcaoDe(c)}
-                                  </td>
-                                  {dias.map(d => {
-                                    const ds  = fmtData(d);
-                                    const esc = escalasMap[c.id]?.[ds];
-                                    const presenca = presencaMap[c.id]?.[ds];
-                                    const isFolga  = !mostrarFolgas && !esc?.turno && (d.getDay() === 0 || d.getDay() === 1);
+                                  <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555', paddingLeft:'4px' }}>{funcaoDe(p)}</td>
+                                  {dias.map(d=>{
+                                    const ds=fmtIso(d);
+                                    const esc=escalasMap[p.id]?.[ds];
+                                    const pr=presencaMap[p.id]?.[ds];
+                                    const b=TURNO_BADGE[esc?.turno||'']||TURNO_BADGE[''];
+                                    const pb=pr?PRES_BADGE[pr]:null;
+                                    const isFer=!!FERIADOS_2026[ds];
                                     return (
-                                      <td key={ds} style={{
-                                        ...s.td,
-                                        backgroundColor: FERIADOS_2026[ds] ? '#fff3e0' : undefined,
-                                      }}>
-                                        {!isFolga && badgeCell(esc?.turno, presenca, d.getDay(), c, ds)}
+                                      <td key={ds} style={{ ...s.td, backgroundColor:isFer?'#fff9e0':undefined, padding:'2px 1px' }}>
+                                        {esc?.turno && esc.turno!=='Folga' ? (
+                                          <div style={{ display:'inline-flex', flexDirection:'column', alignItems:'center',
+                                            backgroundColor:b.bg, color:b.cor, borderRadius:'4px',
+                                            padding:'1px 3px', fontSize:'9px', fontWeight:'bold', minWidth:'20px', lineHeight:'1.2' }}>
+                                            <span>{b.label}</span>
+                                            {pb&&<span style={{ fontSize:'7px' }}>{pb.icon}</span>}
+                                          </div>
+                                        ) : esc?.turno==='Folga' ? (
+                                          <span style={{ fontSize:'9px', color:'#c62828' }}>F</span>
+                                        ) : isFer?(
+                                          <span style={{ fontSize:'9px' }}>🎉</span>
+                                        ) : <span style={{ color:'#ddd', fontSize:'9px' }}>·</span>}
                                       </td>
                                     );
                                   })}
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#f57f17', fontSize: '11px' }}>{(r?.dia || 0) + (r?.dobra || 0)}</td>
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#3949ab', fontSize: '11px' }}>{(r?.noite || 0) + (r?.dobra || 0)}</td>
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32', fontSize: '11px' }}>{r?.dobra || 0}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#f57f17', fontSize:'10px' }}>{(r?.diaT||0)+(r?.dobraT||0)}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#3949ab', fontSize:'10px' }}>{(r?.noiteT||0)+(r?.dobraT||0)}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'10px' }}>{r?.dobraT||0}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'10px' }}>{r?.presenteT||0}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'10px' }}>{(r?.faltaT||0)+(r?.faltaJT||0)}</td>
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
                       </div>
-                    );
-                  })}
+                    </div>
+                  );
+                })}
 
                 {/* Feriados do mês */}
-                {dias.some(d => FERIADOS_2026[fmtData(d)]) && (
-                  <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#fff3e0', borderRadius: '6px', borderLeft: '4px solid #e65100' }}>
-                    <strong style={{ color: '#e65100', fontSize: '13px' }}>🎉 Feriados em {mesAno}:</strong>
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '6px' }}>
-                      {dias.filter(d => FERIADOS_2026[fmtData(d)]).map(d => {
-                        const ds = fmtData(d);
-                        return (
-                          <span key={ds} style={{ fontSize: '12px', backgroundColor: 'white', padding: '3px 8px', borderRadius: '4px', border: '1px solid #e65100' }}>
-                            <strong>{d.getDate()}/{mes}</strong> – {FERIADOS_2026[ds]}
-                          </span>
-                        );
+                {dias.some(d=>FERIADOS_2026[fmtIso(d)]) && (
+                  <div style={{ marginTop:'14px', padding:'12px', backgroundColor:'#fff3e0', borderRadius:'6px', borderLeft:'4px solid #e65100' }}>
+                    <strong style={{ color:'#e65100', fontSize:'13px' }}>🎉 Feriados em {mesAno}:</strong>
+                    <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'6px' }}>
+                      {dias.filter(d=>FERIADOS_2026[fmtIso(d)]).map(d=>{
+                        const ds=fmtIso(d);
+                        return <span key={ds} style={{ fontSize:'12px', backgroundColor:'white', padding:'3px 8px', borderRadius:'4px', border:'1px solid #e65100' }}>
+                          <strong>{d.getDate()}/{mes}</strong> – {FERIADOS_2026[ds]}
+                        </span>;
                       })}
                     </div>
                   </div>
                 )}
-
-                {/* Resumo por colaborador */}
-                <div style={{ marginTop: '20px' }}>
-                  <h4 style={{ margin: '0 0 10px 0', color: '#333' }}>Resumo por Colaborador</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' }}>
-                    {resumos.filter(r => {
-                      const c = todosColaboradores.find(x => x.id === r.id);
-                      if (!c) return false;
-                      const matchArea   = filtroArea   === 'Todos' || (areaDe(c) || 'Sem Área') === filtroArea;
-                      const matchFuncao = filtroFuncao === 'Todos' || funcaoDe(c) === filtroFuncao;
-                      return matchArea && matchFuncao;
-                    }).map(r => {
-                      const c   = todosColaboradores.find(x => x.id === r.id)!;
-                      const cor = corFuncao(c);
-                      return (
-                        <div key={r.id} style={{ ...s.card, padding: '10px', borderLeft: `3px solid ${cor}` }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '12px', marginBottom: '2px' }}>{r.nome.split(' ')[0]}</div>
-                          <div style={{ fontSize: '10px', color: '#666', marginBottom: '4px' }}>{funcaoDe(c)}</div>
-                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                            <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#fff9c4', color: '#f57f17' }}>
-                              ☀️{(r.dia || 0) + (r.dobra || 0)}
-                            </span>
-                            <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#e8eaf6', color: '#3949ab' }}>
-                              🌙{(r.noite || 0) + (r.dobra || 0)}
-                            </span>
-                            <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>
-                              2x{r.dobra || 0}
-                            </span>
-                          </div>
-                          {(r.presentes > 0 || r.faltas > 0 || r.faltasJ > 0) && (
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
-                              {r.presentes > 0  && <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>✅{r.presentes}</span>}
-                              {r.faltas   > 0  && <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#fce4ec', color: '#c62828' }}>❌{r.faltas}</span>}
-                              {r.faltasJ  > 0  && <span style={{ padding: '1px 4px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#fff3e0', color: '#e65100' }}>⚠️{r.faltasJ}</span>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               </>
             )}
           </div>
         )}
 
-        {/* ── ABA PRESENÇAS / FALTAS ─────────────────────────────── */}
-        {aba === 'presencas' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', overflowX: 'auto' }}>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap' }}>
-              <h3 style={{ margin: 0 }}>✅ Controle de Presenças — {mesAno}</h3>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '12px', alignItems: 'center' }}>
-                <span style={{ backgroundColor: PRESENCA_BADGE.presente.bg, color: PRESENCA_BADGE.presente.color, padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>✅ Presente</span>
-                <span style={{ backgroundColor: PRESENCA_BADGE.falta.bg, color: PRESENCA_BADGE.falta.color, padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>❌ Falta</span>
-                <span style={{ backgroundColor: PRESENCA_BADGE.falta_justificada.bg, color: PRESENCA_BADGE.falta_justificada.color, padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>⚠️ Falta Justificada</span>
-                <span style={{ color: '#999', fontSize: '11px' }}>— = não marcado</span>
-              </div>
+        {/* ─── ABA LANÇAMENTO DE TURNOS ───────────────────────── */}
+        {aba==='lancamento' && (
+          <div style={{ ...s.card, borderRadius:'0 8px 8px 8px' }}>
+            {/* Seletor de semana */}
+            <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'16px', flexWrap:'wrap' }}>
+              <strong style={{ fontSize:'13px', color:'#1565c0' }}>📅 Semana:</strong>
+              {semanas.map((sem,i)=>(
+                <button key={i} onClick={()=>setSemanaIdx(i)} style={{
+                  padding:'5px 12px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:'bold',
+                  backgroundColor: i===semanaIdx ? '#1976d2' : '#e0e0e0',
+                  color: i===semanaIdx ? 'white' : '#333',
+                }}>{sem.label}</button>
+              ))}
+              {salvando && <span style={{ fontSize:'11px', color:'#1976d2' }}>💾 Salvando...</span>}
             </div>
 
-            <p style={{ color: '#666', fontSize: '12px', margin: '0 0 14px 0' }}>
-              Clique em uma célula de dia para alternar: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>
-            </p>
-
-            {loading ? (
-              <p style={{ textAlign: 'center', color: '#999' }}>Carregando...</p>
-            ) : (
+            {semAtual && (
               <>
-                {areasOrdenadas
-                  .filter(area => filtroArea === 'Todos' || area === filtroArea)
-                  .map(area => {
-                    const colabsArea = colaboradoresFiltrados.filter(c => (areaDe(c) || 'Sem Área') === area);
-                    if (colabsArea.length === 0) return null;
+                <p style={{ fontSize:'12px', color:'#666', margin:'0 0 12px 0', backgroundColor:'#e3f2fd', padding:'8px 12px', borderRadius:'6px' }}>
+                  💡 Clique <strong style={{ color:'#f57f17' }}>D</strong> = Dia, <strong style={{ color:'#3949ab' }}>N</strong> = Noite. D+N ativo = Dobra. Desmarcar remove o turno.
+                </p>
 
-                    // Dias do mês que têm pelo menos 1 escala nessa área (ou todos os dias do mês)
-                    return (
-                      <div key={area} style={{ marginBottom: '28px' }}>
-                        <div style={{
-                          backgroundColor: '#2e7d32', color: 'white',
-                          padding: '8px 14px', borderRadius: '6px 6px 0 0',
-                          fontWeight: 'bold', fontSize: '13px',
-                        }}>
-                          📍 {area}
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
+                {areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
+                  const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);
+                  if (gp.length===0) return null;
+                  const areaColor = corArea(area);
+                  return (
+                    <div key={area} style={{ marginBottom:'28px' }}>
+                      <div style={{ backgroundColor:areaColor, color:'white', padding:'7px 12px', borderRadius:'6px 6px 0 0', fontWeight:'bold', fontSize:'13px', display:'flex', alignItems:'center', gap:'8px' }}>
+                        📍 {area}
+                        <span style={{ opacity:0.8, fontSize:'11px' }}>({gp.length})</span>
+                      </div>
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
                           <thead>
                             <tr>
-                              <th style={{ ...s.th, textAlign: 'left', minWidth: '130px', backgroundColor: '#2e7d32' }}>Nome</th>
-                              <th style={{ ...s.th, textAlign: 'left', minWidth: '70px', backgroundColor: '#2e7d32' }}>Função</th>
-                              {dias.map(d => {
-                                const ds  = fmtData(d);
-                                const dow = d.getDay();
-                                const isFeriado = !!FERIADOS_2026[ds];
-                                const isWeekend = dow === 0 || dow === 6;
+                              <th style={{ ...s.th, textAlign:'left', minWidth:'140px', fontSize:'11px', backgroundColor:areaColor }}>Nome</th>
+                              <th style={{ ...s.th, minWidth:'32px', fontSize:'10px', backgroundColor:areaColor }}>Tipo</th>
+                              <th style={{ ...s.th, textAlign:'left', minWidth:'80px', fontSize:'10px', backgroundColor:areaColor }}>Função</th>
+                              {semAtual.dias.map(d=>{
+                                const ds=fmtIso(d); const dow=d.getDay();
+                                const isFer=!!FERIADOS_2026[ds];
+                                const isWkd=dow===0||dow===6;
                                 return (
-                                  <th key={ds} style={{
-                                    ...s.th, minWidth: '34px', padding: '4px 2px',
-                                    backgroundColor: isFeriado ? '#b71c1c' : isWeekend ? '#388e3c' : '#2e7d32',
+                                  <th key={ds} title={isFer?FERIADOS_2026[ds]:DF[dow]} style={{
+                                    ...s.th, minWidth:'52px', padding:'5px 3px',
+                                    backgroundColor:isFer?'#b71c1c':isWkd?'#37474f':areaColor,
                                   }}>
-                                    <div style={{ fontSize: '10px' }}>{d.getDate()}</div>
-                                    <div style={{ fontSize: '8px', opacity: 0.85 }}>{DIAS_SEMANA[dow]}</div>
+                                    <div style={{ fontSize:'11px' }}>{d.getDate()}/{d.getMonth()+1}</div>
+                                    <div style={{ fontSize:'9px', opacity:0.85 }}>{DF[dow].slice(0,3)}</div>
+                                    {isFer&&<div style={{ fontSize:'8px' }}>🎉</div>}
                                   </th>
                                 );
                               })}
-                              <th style={{ ...s.th, backgroundColor: '#1b5e20', minWidth: '30px', fontSize: '9px' }}>✅</th>
-                              <th style={{ ...s.th, backgroundColor: '#1b5e20', minWidth: '30px', fontSize: '9px' }}>❌</th>
-                              <th style={{ ...s.th, backgroundColor: '#1b5e20', minWidth: '30px', fontSize: '9px' }}>⚠️</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>D</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>N</th>
+                              <th style={{ ...s.th, backgroundColor:'#0d47a1', minWidth:'32px' }}>DN</th>
+                              <th style={{ ...s.th, backgroundColor:'#1b5e20', minWidth:'70px', fontSize:'10px' }}>Prévia R$</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {colabsArea.map((c, ci) => {
-                              const r = resumos.find(x => x.id === c.id);
+                            {gp.map((p,ci)=>{
+                              const calc = calcPagamentoSemana(p, semAtual.dias);
+                              const cor=corFuncao(p);
+                              const tipo=p.tipoContrato||'CLT';
                               return (
-                                <tr key={c.id} style={{ backgroundColor: ci % 2 === 0 ? '#fafafa' : 'white' }}>
-                                  <td style={{ ...s.td, textAlign: 'left', fontWeight: 'bold', paddingLeft: '8px', fontSize: '11px', borderLeft: `3px solid ${corFuncao(c)}` }}>
-                                    {c.nome.split(' ').slice(0, 2).join(' ')}
+                                <tr key={p.id} style={{ backgroundColor:ci%2===0?'#fafafa':'white' }}>
+                                  <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'12px', borderLeft:`3px solid ${cor}` }}>
+                                    {p.nome.split(' ').slice(0,2).join(' ')}
+                                    {p.chavePix && <span style={{ display:'block', fontSize:'9px', color:'#1976d2', fontWeight:'normal' }}>PIX</span>}
                                   </td>
-                                  <td style={{ ...s.td, textAlign: 'left', fontSize: '10px', color: '#555' }}>
-                                    {funcaoDe(c)}
+                                  <td style={s.td}>
+                                    <span style={{ padding:'1px 4px', borderRadius:'6px', fontSize:'9px', fontWeight:'bold',
+                                      backgroundColor:tipo==='CLT'?'#e8f5e9':'#fff3e0',
+                                      color:tipo==='CLT'?'#2e7d32':'#e65100' }}>
+                                      {tipo==='CLT'?'CLT':'Free'}
+                                    </span>
                                   </td>
-                                  {dias.map(d => {
-                                    const ds  = fmtData(d);
-                                    const esc = escalasMap[c.id]?.[ds];
-                                    const p   = presencaMap[c.id]?.[ds] || '';
-                                    const temEscala = !!esc?.turno && esc.turno !== 'Folga';
-                                    // Só pode pontuar dias com escala
-                                    const ciclo: string[] = ['', 'presente', 'falta', 'falta_justificada'];
-                                    const next = ciclo[(ciclo.indexOf(p) + 1) % ciclo.length];
-
-                                    const pb = p ? PRESENCA_BADGE[p] : null;
-                                    return (
-                                      <td key={ds} style={{
-                                        ...s.td,
-                                        cursor: temEscala ? 'pointer' : 'default',
-                                        backgroundColor: FERIADOS_2026[ds] ? '#fff3e0' : pb ? pb.bg : undefined,
-                                        opacity: temEscala ? 1 : 0.35,
-                                      }}
-                                        title={temEscala ? `${esc?.turno || ''} — clique para pontuar` : 'Sem escala neste dia'}
-                                        onClick={() => { if (temEscala) handlePresenca(c.id, ds, next); }}
-                                      >
-                                        {pb ? (
-                                          <span style={{ fontSize: '11px', color: pb.color, fontWeight: 'bold' }}>{pb.icon}</span>
-                                        ) : temEscala ? (
-                                          <span style={{ fontSize: '9px', color: '#bbb' }}>—</span>
-                                        ) : null}
-                                      </td>
-                                    );
-                                  })}
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32', fontSize: '11px' }}>{r?.presentes || 0}</td>
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#c62828', fontSize: '11px' }}>{r?.faltas || 0}</td>
-                                  <td style={{ ...s.td, fontWeight: 'bold', color: '#e65100', fontSize: '11px' }}>{r?.faltasJ || 0}</td>
+                                  <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555', paddingLeft:'4px' }}>{funcaoDe(p)}</td>
+                                  {semAtual.dias.map(d=>(
+                                    <CelulaTurno key={fmtIso(d)} pessoaId={p.id} data={fmtIso(d)} disabled={salvando} />
+                                  ))}
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#f57f17' }}>{calc.dC}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#3949ab' }}>{calc.nC}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32' }}>{calc.dnC}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#1b5e20', fontSize:'11px', whiteSpace:'nowrap' as const }}>
+                                    {calc.totalBruto > 0 ? fmtBRL(calc.totalBruto) : '—'}
+                                  </td>
                                 </tr>
                               );
                             })}
                           </tbody>
+                          <tfoot>
+                            <tr style={{ backgroundColor:'#e3f2fd', borderTop:'2px solid ' + areaColor }}>
+                              <td colSpan={3+semAtual.dias.length} style={{ padding:'6px 10px', fontWeight:'bold', color:areaColor, fontSize:'12px' }}>
+                                Subtotal {area}
+                              </td>
+                              <td colSpan={3} style={{ padding:'6px 4px', textAlign:'center' as const }}></td>
+                              <td style={{ padding:'6px 6px', fontWeight:'bold', color:'#1b5e20', textAlign:'right' as const, fontSize:'12px', whiteSpace:'nowrap' as const }}>
+                                {fmtBRL(gp.reduce((acc,p)=>acc+calcPagamentoSemana(p,semAtual.dias).totalBruto,0))}
+                              </td>
+                            </tr>
+                          </tfoot>
                         </table>
                       </div>
+                    </div>
+                  );
+                })}
+
+                {/* Total geral da semana */}
+                <div style={{ marginTop:'16px', padding:'14px 18px', backgroundColor:'#1565c0', borderRadius:'8px', color:'white', display:'flex', justifyContent:'space-between', flexWrap:'wrap', gap:'12px' }}>
+                  <div>
+                    <div style={{ fontSize:'12px', opacity:0.85 }}>💰 Prévia Pagamento — Semana {semAtual.label}</div>
+                    <div style={{ fontSize:'11px', opacity:0.7 }}>Pagto na {proxDataPagtoStr(semAtual.dias)}</div>
+                  </div>
+                  {(() => {
+                    const clt  = todosFiltered.filter(p=>p.tipoContrato==='CLT');
+                    const free = todosFiltered.filter(p=>p.tipoContrato!=='CLT');
+                    const totCLT  = clt.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalBruto,0);
+                    const totFree = free.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalBruto,0);
+                    const totTransp = todosFiltered.reduce((a,p)=>a+calcPagamentoSemana(p,semAtual.dias).totalTransporte,0);
+                    return (
+                      <div style={{ display:'flex', gap:'20px', flexWrap:'wrap' }}>
+                        {totCLT>0 && <div style={{ textAlign:'center' as const }}>
+                          <div style={{ fontSize:'11px', opacity:0.8 }}>CLT Dobras</div>
+                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totCLT)}</div>
+                        </div>}
+                        {totFree>0 && <div style={{ textAlign:'center' as const }}>
+                          <div style={{ fontSize:'11px', opacity:0.8 }}>Freelancers</div>
+                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totFree)}</div>
+                        </div>}
+                        {totTransp>0 && <div style={{ textAlign:'center' as const }}>
+                          <div style={{ fontSize:'11px', opacity:0.8 }}>🚗 Transporte</div>
+                          <div style={{ fontSize:'16px', fontWeight:'bold' }}>{fmtBRL(totTransp)}</div>
+                        </div>}
+                        <div style={{ textAlign:'center' as const, borderLeft:'1px solid rgba(255,255,255,0.3)', paddingLeft:'20px' }}>
+                          <div style={{ fontSize:'11px', opacity:0.8 }}>Total Semana</div>
+                          <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totCLT+totFree+totTransp)}</div>
+                        </div>
+                      </div>
                     );
-                  })}
+                  })()}
+                </div>
               </>
             )}
           </div>
         )}
 
-        {/* ── ABA EDITAR TURNO ──────────────────────────────────── */}
-        {aba === 'editar' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', maxWidth: '700px' }}>
-            <h3 style={{ marginTop: 0 }}>✏️ Lançar / Editar Turno Manual</h3>
-            <p style={{ color: '#666', fontSize: '13px' }}>
-              Registre exceções: folga inesperada, turno extra ou troca de horário.
-              Salvar como <strong>Folga</strong> remove o turno existente.
-            </p>
-            <form onSubmit={handleSalvarEscalaManual}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={s.label}>Colaborador / Freelancer *</label>
-                  <select value={formEscala.colaboradorId}
-                    onChange={e => setFormEscala({ ...formEscala, colaboradorId: e.target.value })}
-                    style={s.select} required>
-                    <option value="">Selecione...</option>
-                    {areasOrdenadas.map(area => {
-                      const colabsArea = todosColaboradores.filter(c => (areaDe(c) || 'Sem Área') === area);
-                      if (colabsArea.length === 0) return null;
-                      return (
-                        <optgroup key={area} label={`— ${area} —`}>
-                          {colabsArea.map(c => (
-                            <option key={c.id} value={c.id}>
-                              {c.nome} — {funcaoDe(c)} ({c.tipoContrato || 'CLT'})
-                            </option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  </select>
-                </div>
-                <div>
-                  <label style={s.label}>Data *</label>
-                  <input type="date" value={formEscala.data}
-                    onChange={e => setFormEscala({ ...formEscala, data: e.target.value })}
-                    style={s.input} required />
-                  {formEscala.data && (
-                    <small style={{ color: '#666', fontSize: '11px' }}>
-                      {DIAS_SEMANA_FULL[new Date(formEscala.data + 'T12:00:00').getDay()]}
-                      {FERIADOS_2026[formEscala.data] && <span style={{ color: '#c62828' }}> 🎉 {FERIADOS_2026[formEscala.data]}</span>}
-                    </small>
-                  )}
-                </div>
-                <div>
-                  <label style={s.label}>Turno *</label>
-                  <select value={formEscala.turno}
-                    onChange={e => setFormEscala({ ...formEscala, turno: e.target.value })}
-                    style={s.select} required>
-                    <option value="Dia">☀️ Dia</option>
-                    <option value="Noite">🌙 Noite</option>
-                    <option value="DiaNoite">☀️🌙 Dobra (Dia + Noite)</option>
-                    <option value="Folga">🏖 Folga (remover turno)</option>
-                  </select>
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={s.label}>Observação</label>
-                  <input type="text" placeholder="Ex: Folga por atestado, dobra extra..." value={formEscala.observacao}
-                    onChange={e => setFormEscala({ ...formEscala, observacao: e.target.value })}
-                    style={s.input} />
-                </div>
-              </div>
-              <div style={{ marginTop: '16px', display: 'flex', gap: '10px' }}>
-                <button type="submit" disabled={salvando} style={s.btn('#1976d2')}>
-                  {salvando ? '⏳ Salvando...' : '💾 Salvar'}
-                </button>
-                <button type="button"
-                  onClick={() => setFormEscala({ colaboradorId: '', data: fmtData(hoje), turno: 'Dia', observacao: '' })}
-                  style={s.btn('#9e9e9e')}>
-                  ✕ Limpar
-                </button>
-              </div>
-            </form>
+        {/* ─── ABA PRESENÇAS ──────────────────────────────────── */}
+        {aba==='presencas' && (
+          <div style={{ ...s.card, borderRadius:'0 8px 8px 8px', overflowX:'auto' }}>
+            <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'14px', flexWrap:'wrap' }}>
+              <strong style={{ color:'#2e7d32', fontSize:'13px' }}>📅 Semana:</strong>
+              {semanas.map((sem,i)=>(
+                <button key={i} onClick={()=>setSemanaIdx(i)} style={{
+                  padding:'5px 12px', border:'none', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:'bold',
+                  backgroundColor:i===semanaIdx?'#2e7d32':'#e0e0e0', color:i===semanaIdx?'white':'#333',
+                }}>{sem.label}</button>
+              ))}
+              {salvandoPres && <span style={{ fontSize:'11px', color:'#1976d2' }}>💾...</span>}
+            </div>
 
-            {/* Info: Regras de função disponíveis */}
-            {funcoes.length > 0 && (
-              <div style={{ marginTop: '20px', padding: '14px', backgroundColor: '#e3f2fd', borderRadius: '8px', borderLeft: '4px solid #1976d2' }}>
-                <strong style={{ color: '#1565c0', fontSize: '13px' }}>📖 Funções configuradas ({funcoes.length}):</strong>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-                  {funcoes.map(f => (
-                    <span key={f.id} style={{
-                      padding: '3px 10px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                      backgroundColor: f.cor + '22', color: f.cor, border: `1px solid ${f.cor}`,
-                    }}>
-                      {f.nome} {f.area ? `(${f.area})` : ''}
-                    </span>
-                  ))}
+            <p style={{ color:'#666', fontSize:'12px', margin:'0 0 14px 0', backgroundColor:'#e8f5e9', padding:'8px 12px', borderRadius:'6px' }}>
+              🖱️ Clique na célula para ciclar: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>. Apenas dias com turno lançado podem ser pontuados.
+            </p>
+
+            {semAtual && areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
+              const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);
+              if (gp.length===0) return null;
+              const areaColor = corArea(area);
+              return (
+                <div key={area} style={{ marginBottom:'24px' }}>
+                  <div style={{ backgroundColor:areaColor, color:'white', padding:'7px 12px', borderRadius:'6px 6px 0 0', fontWeight:'bold', fontSize:'13px' }}>
+                    📍 {area}
+                  </div>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...s.th, textAlign:'left', minWidth:'130px', backgroundColor:areaColor, fontSize:'11px' }}>Nome</th>
+                        <th style={{ ...s.th, textAlign:'left', minWidth:'70px', backgroundColor:areaColor, fontSize:'10px' }}>Função</th>
+                        {semAtual.dias.map(d=>{
+                          const ds=fmtIso(d); const dow=d.getDay();
+                          const isFer=!!FERIADOS_2026[ds];
+                          return (
+                            <th key={ds} style={{ ...s.th, minWidth:'48px', backgroundColor:isFer?'#b71c1c':dow===0||dow===6?'#546e7a':areaColor }}>
+                              <div style={{ fontSize:'11px' }}>{d.getDate()}/{d.getMonth()+1}</div>
+                              <div style={{ fontSize:'8px', opacity:0.85 }}>{DS[dow]}</div>
+                              {isFer&&<div style={{ fontSize:'7px' }}>🎉</div>}
+                            </th>
+                          );
+                        })}
+                        <th style={{ ...s.th, backgroundColor:'#1b5e20', minWidth:'28px', fontSize:'9px' }}>✅</th>
+                        <th style={{ ...s.th, backgroundColor:'#c62828', minWidth:'28px', fontSize:'9px' }}>❌</th>
+                        <th style={{ ...s.th, backgroundColor:'#e65100', minWidth:'28px', fontSize:'9px' }}>⚠️</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gp.map((p,ci)=>{
+                        const cor=corFuncao(p);
+                        let pT=0,fT=0,fjT=0;
+                        for (const d of semAtual.dias){
+                          const pr=presencaMap[p.id]?.[fmtIso(d)];
+                          if(pr==='presente')pT++;
+                          else if(pr==='falta')fT++;
+                          else if(pr==='falta_justificada')fjT++;
+                        }
+                        return (
+                          <tr key={p.id} style={{ backgroundColor:ci%2===0?'#fafafa':'white' }}>
+                            <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }}>
+                              {p.nome.split(' ').slice(0,2).join(' ')}
+                            </td>
+                            <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555' }}>{funcaoDe(p)}</td>
+                            {semAtual.dias.map(d=>{
+                              const ds=fmtIso(d);
+                              const esc=escalasMap[p.id]?.[ds];
+                              const temEscala=!!esc?.turno&&esc.turno!=='Folga';
+                              const cur=presencaMap[p.id]?.[ds]||'';
+                              const pb=cur?PRES_BADGE[cur]:null;
+                              // Show turno code too
+                              const tb=esc?.turno?TURNO_BADGE[esc.turno]:null;
+                              return (
+                                <td key={ds} style={{ ...s.td, cursor:temEscala?'pointer':'default',
+                                  backgroundColor:FERIADOS_2026[ds]?'#fff9e0':pb?pb.bg:undefined,
+                                  opacity:temEscala?1:0.4, minWidth:'48px' }}
+                                  title={temEscala?(esc?.turno+' — clique para pontuar'):'Sem escala'}
+                                  onClick={()=>temEscala&&handlePresenca(p.id,ds,cur)}>
+                                  {temEscala ? (
+                                    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
+                                      {tb && <span style={{ fontSize:'9px', backgroundColor:tb.bg, color:tb.cor, padding:'0 3px', borderRadius:'3px', fontWeight:'bold' }}>{tb.label}</span>}
+                                      {pb ? <span style={{ fontSize:'13px' }}>{pb.icon}</span>
+                                           : <span style={{ fontSize:'10px', color:'#bbb' }}>—</span>}
+                                    </div>
+                                  ) : null}
+                                </td>
+                              );
+                            })}
+                            <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }}>{pT}</td>
+                            <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'11px' }}>{fT}</td>
+                            <td style={{ ...s.td, fontWeight:'bold', color:'#e65100', fontSize:'11px' }}>{fjT}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <p style={{ margin: '8px 0 0 0', fontSize: '11px', color: '#666' }}>
-                  Para editar as regras de função, acesse <strong>Gestão de Colaboradores → Funções/Regras</strong>.
+              );
+            })}
+
+            {/* Resumo mensal de presenças */}
+            <div style={{ marginTop:'20px', padding:'14px', backgroundColor:'#f9f9f9', borderRadius:'8px', border:'1px solid #e0e0e0' }}>
+              <h4 style={{ margin:'0 0 10px 0', color:'#333', fontSize:'14px' }}>📊 Resumo Mensal de Presenças — {mesAno}</h4>
+              <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
+                {resumos.filter(r=>{
+                  const p=todos.find(x=>x.id===r.id);
+                  if (!p) return false;
+                  const matchArea=filtroArea==='Todos'||(areaDe(p)||'Sem Área')===filtroArea;
+                  return matchArea && (r.presenteT+r.faltaT+r.faltaJT)>0;
+                }).map(r=>{
+                  const p=todos.find(x=>x.id===r.id)!;
+                  const cor=corFuncao(p);
+                  return (
+                    <div key={r.id} style={{ backgroundColor:'white', border:`1px solid ${cor}`, borderLeft:`4px solid ${cor}`, borderRadius:'6px', padding:'8px 12px', minWidth:'130px' }}>
+                      <div style={{ fontWeight:'bold', fontSize:'12px' }}>{r.nome.split(' ')[0]}</div>
+                      <div style={{ fontSize:'10px', color:'#666', marginBottom:'4px' }}>{funcaoDe(p)}</div>
+                      <div style={{ display:'flex', gap:'6px', flexWrap:'wrap' }}>
+                        <span style={{ padding:'1px 5px', borderRadius:'6px', fontSize:'10px', fontWeight:'bold', backgroundColor:'#e8f5e9', color:'#2e7d32' }}>✅{r.presenteT}</span>
+                        {r.faltaT>0 && <span style={{ padding:'1px 5px', borderRadius:'6px', fontSize:'10px', fontWeight:'bold', backgroundColor:'#fce4ec', color:'#c62828' }}>❌{r.faltaT}</span>}
+                        {r.faltaJT>0 && <span style={{ padding:'1px 5px', borderRadius:'6px', fontSize:'10px', fontWeight:'bold', backgroundColor:'#fff3e0', color:'#e65100' }}>⚠️{r.faltaJT}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── ABA PAGAMENTO ──────────────────────────────────── */}
+        {aba==='pagamento' && (
+          <div style={{ ...s.card, borderRadius:'0 8px 8px 8px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'16px', flexWrap:'wrap', gap:'8px' }}>
+              <div>
+                <h3 style={{ margin:'0 0 4px 0', color:'#1b5e20', fontSize:'16px' }}>💰 Resumo de Pagamentos — {mesAno}</h3>
+                <p style={{ color:'#666', fontSize:'12px', margin:0 }}>
+                  CLT: variável (dobras) pago segunda-feira seguinte. Freelancer: D/N = 0,5 dobra; DN = 1 dobra. Transporte por dia trabalhado.
                 </p>
+              </div>
+            </div>
+
+            {semanas.map((sem,si)=>{
+              const pagamentos = todosFiltered
+                .map(p=>({ p, calc:calcPagamentoSemana(p,sem.dias) }))
+                .filter(({calc})=>calc.totalBruto>0 || calc.totalTransporte>0);
+
+              if (pagamentos.length===0) return null;
+
+              const totalBruto = pagamentos.reduce((s,{calc})=>s+calc.totalBruto,0);
+              const totalTransp = pagamentos.reduce((s,{calc})=>s+calc.totalTransporte,0);
+              const totalGeral = totalBruto + totalTransp;
+              const totalCLT = pagamentos.filter(({p})=>p.tipoContrato==='CLT').reduce((s,{calc})=>s+calc.totalBruto,0);
+              const totalFree = pagamentos.filter(({p})=>p.tipoContrato!=='CLT').reduce((s,{calc})=>s+calc.totalBruto,0);
+
+              // Agrupa por área
+              const porArea:Record<string,typeof pagamentos[0][]>={};
+              for (const pg of pagamentos){
+                const a=areaDe(pg.p)||'Sem Área';
+                if(!porArea[a]) porArea[a]=[];
+                porArea[a].push(pg);
+              }
+
+              return (
+                <div key={si} style={{ marginBottom:'32px', border:'1px solid #e0e0e0', borderRadius:'10px', overflow:'hidden', boxShadow:'0 2px 6px rgba(0,0,0,0.06)' }}>
+                  {/* Header da semana */}
+                  <div style={{ backgroundColor:'#1565c0', color:'white', padding:'10px 16px', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'8px' }}>
+                    <div>
+                      <strong style={{ fontSize:'14px' }}>📅 Semana {sem.label}</strong>
+                      <span style={{ marginLeft:'12px', fontSize:'12px', opacity:0.9 }}>
+                        💳 Pagto na <strong>{proxDataPagtoStr(sem.dias)}</strong>
+                      </span>
+                    </div>
+                    <div style={{ display:'flex', gap:'16px', fontSize:'12px', flexWrap:'wrap' }}>
+                      {totalCLT>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>CLT: <strong>{fmtBRL(totalCLT)}</strong></span>}
+                      {totalFree>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>Free: <strong>{fmtBRL(totalFree)}</strong></span>}
+                      {totalTransp>0 && <span style={{ backgroundColor:'rgba(255,255,255,0.15)', padding:'2px 8px', borderRadius:'6px' }}>🚗 <strong>{fmtBRL(totalTransp)}</strong></span>}
+                      <span style={{ backgroundColor:'rgba(255,255,255,0.25)', padding:'2px 8px', borderRadius:'6px', fontWeight:'bold' }}>
+                        Total: {fmtBRL(totalGeral)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tabela por área */}
+                  {Object.entries(porArea).sort(([a],[b])=>a.localeCompare(b)).map(([area,pgs])=>{
+                    const areaColor = corArea(area);
+                    const subTotal = pgs.reduce((s,{calc})=>s+calc.totalBruto+calc.totalTransporte,0);
+                    return (
+                      <div key={area}>
+                        <div style={{ backgroundColor:'#f5f5f5', padding:'5px 14px', fontWeight:'bold', fontSize:'12px', color:areaColor, borderBottom:'1px solid #e0e0e0', borderLeft:`4px solid ${areaColor}` }}>
+                          📍 {area} — <span style={{ color:'#1b5e20' }}>{fmtBRL(subTotal)}</span>
+                        </div>
+                        <div style={{ overflowX:'auto' }}>
+                          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                            <thead>
+                              <tr style={{ backgroundColor:'#fafafa', borderBottom:'1px solid #e0e0e0' }}>
+                                <th style={{ padding:'6px 10px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Nome</th>
+                                <th style={{ padding:'6px 6px', textAlign:'center', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Tipo</th>
+                                <th style={{ padding:'6px 6px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Função</th>
+                                {/* Dias da semana com código */}
+                                {sem.dias.map(d=>(
+                                  <th key={fmtIso(d)} style={{ padding:'6px 3px', textAlign:'center', fontWeight:'bold', color:'#555', fontSize:'10px', minWidth:'36px' }}>
+                                    {d.getDate()}/{d.getMonth()+1}
+                                    <div style={{ fontSize:'8px', fontWeight:'normal', color:'#888' }}>{DS[d.getDay()]}</div>
+                                  </th>
+                                ))}
+                                <th style={{ padding:'6px 4px', textAlign:'center', fontWeight:'bold', color:'#2e7d32', fontSize:'10px', minWidth:'28px' }}>DN</th>
+                                <th style={{ padding:'6px 6px', textAlign:'right', fontWeight:'bold', color:'#555', fontSize:'11px' }}>Bruto</th>
+                                <th style={{ padding:'6px 6px', textAlign:'right', fontWeight:'bold', color:'#1565c0', fontSize:'11px' }}>🚗</th>
+                                <th style={{ padding:'6px 10px', textAlign:'right', fontWeight:'bold', color:'#1b5e20', fontSize:'12px' }}>Total</th>
+                                <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:'bold', color:'#555', fontSize:'11px' }}>PIX</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pgs.map(({p,calc},i)=>{
+                                const tipo=p.tipoContrato||'CLT';
+                                const cor=corFuncao(p);
+                                return (
+                                  <tr key={p.id} style={{ backgroundColor:i%2===0?'#fafafa':'white', borderBottom:'1px solid #f0f0f0' }}>
+                                    <td style={{ padding:'7px 10px', fontWeight:'bold', borderLeft:`3px solid ${cor}`, fontSize:'12px' }}>
+                                      {p.nome.split(' ').slice(0,2).join(' ')}
+                                    </td>
+                                    <td style={{ padding:'6px', textAlign:'center' as const }}>
+                                      <span style={{ padding:'1px 5px', borderRadius:'8px', fontSize:'9px', fontWeight:'bold',
+                                        backgroundColor:tipo==='CLT'?'#e8f5e9':'#fff3e0',
+                                        color:tipo==='CLT'?'#2e7d32':'#e65100' }}>
+                                        {tipo==='CLT'?'CLT':'Free'}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding:'6px 6px', fontSize:'11px', color:'#555' }}>{funcaoDe(p)}</td>
+                                    {/* Célula por dia com D/N/DN/— + presença */}
+                                    {sem.dias.map((d,di)=>{
+                                      const ds=fmtIso(d);
+                                      const pr=presencaMap[p.id]?.[ds];
+                                      const cod = calc.codigos[di] || '—';
+                                      let bg='transparent', textCor='#bbb';
+                                      if (cod==='D')  { bg='#fff9c4'; textCor='#f57f17'; }
+                                      else if(cod==='N')  { bg='#e8eaf6'; textCor='#3949ab'; }
+                                      else if(cod==='DN') { bg='#e8f5e9'; textCor='#2e7d32'; }
+                                      const pb=pr?PRES_BADGE[pr]:null;
+                                      return (
+                                        <td key={ds} style={{ padding:'4px 2px', textAlign:'center' as const }}>
+                                          <div style={{ display:'inline-flex', flexDirection:'column', alignItems:'center',
+                                            backgroundColor:bg, color:textCor, borderRadius:'4px', padding:'2px 4px', minWidth:'28px', fontSize:'11px', fontWeight:'bold' }}>
+                                            {cod}
+                                            {pb&&<span style={{ fontSize:'8px' }}>{pb.icon}</span>}
+                                          </div>
+                                        </td>
+                                      );
+                                    })}
+                                    <td style={{ padding:'6px 4px', textAlign:'center' as const, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }}>{calc.dnC}</td>
+                                    <td style={{ padding:'6px 6px', textAlign:'right' as const, fontWeight:'bold', fontSize:'12px', color:'#333' }}>
+                                      {fmtBRL(calc.totalBruto)}
+                                    </td>
+                                    <td style={{ padding:'6px 6px', textAlign:'right' as const, fontSize:'12px', color:'#1565c0' }}>
+                                      {calc.totalTransporte > 0 ? fmtBRL(calc.totalTransporte) : <span style={{ color:'#ccc' }}>—</span>}
+                                    </td>
+                                    <td style={{ padding:'6px 10px', textAlign:'right' as const, fontWeight:'bold', fontSize:'13px', color:'#1b5e20' }}>
+                                      {fmtBRL(calc.totalBruto + calc.totalTransporte)}
+                                    </td>
+                                    <td style={{ padding:'6px 8px', fontSize:'11px' }}>
+                                      {p.chavePix
+                                        ? <span style={{ color:'#1976d2', fontSize:'11px' }}>PIX: {p.chavePix}</span>
+                                        : <span style={{ color:'#999' }}>—</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr style={{ backgroundColor:'#e8f5e9', borderTop:'2px solid #2e7d32' }}>
+                                <td colSpan={3+sem.dias.length+1} style={{ padding:'7px 10px', fontWeight:'bold', color:areaColor, fontSize:'12px' }}>
+                                  Subtotal {area}
+                                </td>
+                                <td style={{ padding:'7px 6px', textAlign:'right' as const, fontWeight:'bold', fontSize:'12px' }}>
+                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalBruto,0))}
+                                </td>
+                                <td style={{ padding:'7px 6px', textAlign:'right' as const, fontWeight:'bold', color:'#1565c0', fontSize:'12px' }}>
+                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalTransporte,0))}
+                                </td>
+                                <td style={{ padding:'7px 10px', textAlign:'right' as const, fontWeight:'bold', fontSize:'13px', color:'#1b5e20' }}>
+                                  {fmtBRL(pgs.reduce((s,{calc})=>s+calc.totalBruto+calc.totalTransporte,0))}
+                                </td>
+                                <td></td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Rodapé da semana */}
+                  <div style={{ padding:'10px 16px', backgroundColor:'#e3f2fd', display:'flex', justifyContent:'flex-end', alignItems:'center', gap:'20px', flexWrap:'wrap' }}>
+                    {totalCLT>0 && <span style={{ fontSize:'12px', color:'#1565c0' }}>CLT Dobras: <strong>{fmtBRL(totalCLT)}</strong></span>}
+                    {totalFree>0 && <span style={{ fontSize:'12px', color:'#e65100' }}>Freelancers: <strong>{fmtBRL(totalFree)}</strong></span>}
+                    {totalTransp>0 && <span style={{ fontSize:'12px', color:'#1565c0' }}>🚗 Transporte: <strong>{fmtBRL(totalTransp)}</strong></span>}
+                    <span style={{ fontSize:'15px', fontWeight:'bold', color:'#1b5e20' }}>
+                      Total a Pagar: {fmtBRL(totalGeral)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Resumo total do mês */}
+            <div style={{ padding:'18px', backgroundColor:'#1565c0', borderRadius:'10px', color:'white', marginTop:'8px' }}>
+              <h4 style={{ margin:'0 0 14px 0', fontSize:'15px' }}>📊 Resumo Total do Mês — {mesAno}</h4>
+              {(() => {
+                let totCLT=0, totFree=0, totTransp=0;
+                for (const p of todosFiltered){
+                  for (const sem of semanas){
+                    const calc=calcPagamentoSemana(p,sem.dias);
+                    if(p.tipoContrato==='CLT') totCLT+=calc.totalBruto;
+                    else totFree+=calc.totalBruto;
+                    totTransp+=calc.totalTransporte;
+                  }
+                }
+                const totGeral=totCLT+totFree+totTransp;
+                return (
+                  <div style={{ display:'flex', gap:'14px', flexWrap:'wrap' }}>
+                    <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
+                      <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>Variável CLT (dobras)</div>
+                      <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totCLT)}</div>
+                      <div style={{ fontSize:'11px', opacity:0.7, marginTop:'2px' }}>{todosFiltered.filter(p=>p.tipoContrato==='CLT').length} colaboradores</div>
+                    </div>
+                    <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
+                      <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>Freelancers</div>
+                      <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totFree)}</div>
+                      <div style={{ fontSize:'11px', opacity:0.7, marginTop:'2px' }}>{freelancers.length} freelancers</div>
+                    </div>
+                    {totTransp>0 && (
+                      <div style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'8px', padding:'12px 18px', minWidth:'140px' }}>
+                        <div style={{ fontSize:'11px', opacity:0.85, marginBottom:'4px' }}>🚗 Transporte</div>
+                        <div style={{ fontSize:'20px', fontWeight:'bold' }}>{fmtBRL(totTransp)}</div>
+                      </div>
+                    )}
+                    <div style={{ backgroundColor:'rgba(255,255,255,0.3)', borderRadius:'8px', padding:'12px 20px', minWidth:'160px', borderLeft:'3px solid rgba(255,255,255,0.6)' }}>
+                      <div style={{ fontSize:'12px', opacity:0.85, marginBottom:'4px' }}>💰 Total Geral</div>
+                      <div style={{ fontSize:'24px', fontWeight:'bold' }}>{fmtBRL(totGeral)}</div>
+                    </div>
+
+                    {/* Previsão por área */}
+                    <div style={{ flex:1, minWidth:'300px' }}>
+                      <div style={{ fontSize:'12px', opacity:0.85, marginBottom:'8px' }}>Por Área:</div>
+                      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                        {areasUnicas.map(area=>{
+                          const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);
+                          let totArea=0;
+                          for (const p of gp){
+                            for (const sem of semanas){
+                              const c=calcPagamentoSemana(p,sem.dias);
+                              totArea+=c.totalBruto+c.totalTransporte;
+                            }
+                          }
+                          if (totArea===0) return null;
+                          return (
+                            <div key={area} style={{ backgroundColor:'rgba(255,255,255,0.15)', borderRadius:'6px', padding:'6px 12px', textAlign:'center' as const }}>
+                              <div style={{ fontSize:'10px', opacity:0.8 }}>{area}</div>
+                              <div style={{ fontSize:'14px', fontWeight:'bold' }}>{fmtBRL(totArea)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Observação sobre Eric Andrade / Admins */}
+            {colaboradores.some(c=>(c.cargo||'').toLowerCase().includes('admin') || (c.funcao||'').toLowerCase().includes('admin')) && (
+              <div style={{ marginTop:'16px', padding:'12px 16px', backgroundColor:'#fff3e0', borderRadius:'8px', borderLeft:'4px solid #e65100' }}>
+                <strong style={{ color:'#e65100' }}>ℹ️ Atenção:</strong>
+                <span style={{ fontSize:'13px', color:'#555', marginLeft:'8px' }}>
+                  Colaboradores com função <em>Administrador/Gerência</em> e <code>ativo=false</code> não aparecem no grid de escala, mas podem estar listados no sistema de usuários.
+                  Para ocultar da escala, certifique-se de que o campo <strong>Ativo = false</strong> no cadastro do colaborador.
+                </span>
               </div>
             )}
           </div>
         )}
+
       </div>
       <Footer showLinks={true} />
     </div>
