@@ -497,7 +497,7 @@ exports.handler = async (event) => {
         nome, email, telefone, celular, cpf,
         tipoContrato, cargo, tipo, funcao, area,
         valorDia, valorNoite, valorTransporte, valeAlimentacao,
-        salario, chavePix, dataAdmissao, dataNascimento,
+        salario, chavePix, dataAdmissao, dataDemissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
         diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
         ativo
@@ -536,6 +536,7 @@ exports.handler = async (event) => {
           salario:          salario          !== undefined ? (parseFloat(salario)          || 0) : (original.Item.salario          || 0),
           chavePix:         chavePix         !== undefined ? chavePix         : (original.Item.chavePix         || ''),
           dataAdmissao:     dataAdmissao     || original.Item.dataAdmissao     || '',
+          dataDemissao:     dataDemissao     !== undefined ? dataDemissao : (original.Item.dataDemissao || ''),
           dataNascimento:   dataNascimento   || original.Item.dataNascimento   || '',
           endereco:         endereco         !== undefined ? endereco     : (original.Item.endereco     || ''),
           numero:           numero           !== undefined ? numero       : (original.Item.numero       || ''),
@@ -1064,44 +1065,62 @@ exports.handler = async (event) => {
     }
 
     // ── FOLHA DE PAGAMENTO ──────────────────────────────────────────────
-    // POST /folha-pagamento — salva status de pagamento
+    // POST /folha-pagamento — salva status de pagamento (mensal CLT ou semanal dobra)
     if (rawPath === '/folha-pagamento' && httpMethod === 'POST') {
-      const { colaboradorId, mes, unitId, pago, dataPagamento, saldoFinal } = body;
+      const { colaboradorId, mes, semana, unitId, pago, dataPagamento, saldoFinal,
+              valorBruto, valorTransporte, totalFinal, obs } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
+        // id includes semana when it's a weekly dobra payment
+        const itemId = semana ? `${colaboradorId}_${mes}_${semana}` : `${colaboradorId}_${mes}`;
+        const now = new Date().toISOString();
         const item = {
-          id: `${colaboradorId}_${mes}`,
-          colaboradorId, mes, unitId: unitId || '',
+          id: itemId,
+          colaboradorId, mes, semana: semana || null,
+          unitId: unitId || '',
           pago: pago === true,
-          dataPagamento: dataPagamento || null,
+          dataPagamento: pago ? (dataPagamento || now.split('T')[0]) : null,
           saldoFinal: parseFloat(saldoFinal) || 0,
-          updatedAt: new Date().toISOString()
+          valorBruto: parseFloat(valorBruto) || 0,
+          valorTransporte: parseFloat(valorTransporte) || 0,
+          totalFinal: parseFloat(totalFinal) || 0,
+          obs: obs || '',
+          updatedAt: now,
+          // Histórico analítico: append ao log
+          logPagamentos: pago ? [{ data: now.split('T')[0], valor: parseFloat(totalFinal) || parseFloat(saldoFinal) || 0, obs: obs || 'Pagamento registrado' }] : []
         };
+        // If marking as pago, preserve previous log entries
+        if (pago) {
+          try {
+            const existing = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
+            if (existing.Item && Array.isArray(existing.Item.logPagamentos)) {
+              item.logPagamentos = [...existing.Item.logPagamentos, ...item.logPagamentos];
+            }
+          } catch (_) { /* ignore */ }
+        }
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
-        return response(200, { success: true });
+        return response(200, { success: true, id: itemId });
       } catch (err) {
         console.error('folha-pagamento error:', err);
         return response(500, { error: 'Erro ao salvar folha: ' + err.message });
       }
     }
 
-    // GET /folha-pagamento?unitId=xxx&mes=2026-03
+    // GET /folha-pagamento?unitId=xxx&mes=2026-03[&colaboradorId=xxx]
     if (rawPath === '/folha-pagamento' && httpMethod === 'GET') {
-      const { unitId, mes } = queryParams;
+      const { unitId, mes, colaboradorId } = queryParams;
       try {
         let items = [];
-        if (mes && unitId) {
+        const filters = [];
+        const exprVals = {};
+        if (mes) { filters.push('mes = :m'); exprVals[':m'] = mes; }
+        if (unitId) { filters.push('unitId = :u'); exprVals[':u'] = unitId; }
+        if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+        if (filters.length > 0) {
           const r = await dynamodb.scan({
             TableName: 'gres-prod-folha-pagamento',
-            FilterExpression: 'mes = :m AND unitId = :u',
-            ExpressionAttributeValues: { ':m': mes, ':u': unitId }
-          }).promise();
-          items = r.Items || [];
-        } else if (mes) {
-          const r = await dynamodb.scan({
-            TableName: 'gres-prod-folha-pagamento',
-            FilterExpression: 'mes = :m',
-            ExpressionAttributeValues: { ':m': mes }
+            FilterExpression: filters.join(' AND '),
+            ExpressionAttributeValues: exprVals,
           }).promise();
           items = r.Items || [];
         } else {
@@ -1112,6 +1131,25 @@ exports.handler = async (event) => {
       } catch (err) {
         console.error('folha-pagamento GET error:', err);
         return response(500, { error: 'Erro ao buscar folha: ' + err.message });
+      }
+    }
+
+    // GET /folha-pagamento/historico?unitId=xxx&colaboradorId=xxx — histórico analítico
+    if (rawPath === '/folha-pagamento/historico' && httpMethod === 'GET') {
+      const { unitId, colaboradorId } = queryParams;
+      try {
+        const filters = [];
+        const exprVals = {};
+        if (unitId) { filters.push('unitId = :u'); exprVals[':u'] = unitId; }
+        if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+        const r = await dynamodb.scan({
+          TableName: 'gres-prod-folha-pagamento',
+          ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
+        }).promise();
+        const items = (r.Items || []).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao buscar histórico: ' + err.message });
       }
     }
 

@@ -192,10 +192,40 @@ export const Motoboys: React.FC = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const url = unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`;
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      const d = await r.json();
-      setMotoboys(Array.isArray(d) ? d : []);
+      // Load from both /motoboys table AND from /colaboradores (funcao=Motoboy)
+      const [rM, rC] = await Promise.all([
+        fetch(unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
+      ]);
+      const dM = await rM.json();
+      const motosDB: Motoboy[] = Array.isArray(dM) ? dM : [];
+      // Also get motoboys from colaboradores table (funcao or cargo = Motoboy/Entregador)
+      let motosFromColabs: Motoboy[] = [];
+      if (rC?.ok) {
+        const dC = await rC.json();
+        const colabs = Array.isArray(dC) ? dC : [];
+        motosFromColabs = colabs
+          .filter((c: any) => {
+            const fn = (c.funcao || c.cargo || '').toLowerCase();
+            return fn.includes('motoboy') || fn.includes('entregador');
+          })
+          .filter((c: any) => !motosDB.some(m => m.id === c.id || m.cpf === c.cpf))
+          .map((c: any): Motoboy => ({
+            id: c.id, nome: c.nome, cpf: c.cpf,
+            telefone: c.celular || c.telefone || '',
+            placa: c.placa || '',
+            dataAdmissao: c.dataAdmissao,
+            dataDemissao: c.dataDemissao,
+            comissao: c.comissao || 0,
+            chavePix: c.chavePix || '',
+            unitId: c.unitId,
+            vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
+            salario: c.salario || 0,
+            periculosidade: c.periculosidade || 30,
+            ativo: c.ativo !== false,
+          }));
+      }
+      setMotoboys([...motosDB, ...motosFromColabs]);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
