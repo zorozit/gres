@@ -1,20 +1,28 @@
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { UnitSelector } from '../components/UnitSelector';
 import '../styles/Modules.css';
 
+const ADMIN_ROLES = ['Administrador', 'Gerente', 'admin', 'gerente', 'ADMIN', 'GERENTE', 'Manager'];
+const ADMIN_ONLY_ROLES = ['Administrador', 'admin', 'ADMIN'];
+
 export const Modules: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout } = useAuth();
+  const { email, logout, user } = useAuth();
+  const userRole = (user as any)?.perfil || localStorage.getItem('user_role') || '';
+  const isAdminOrGerente = ADMIN_ROLES.includes(userRole);
+  const isAdminOnly = ADMIN_ONLY_ROLES.includes(userRole);
 
-  const modules = [
+  const allModules = [
     {
       id: 'dashboard',
       icon: '📊',
       title: 'Dashboard Operacional',
       description: 'Visualize métricas e indicadores em tempo real',
       path: '/dashboard',
-      color: '#667eea'
+      color: '#667eea',
+      adminRequired: true,
     },
     {
       id: 'caixa',
@@ -22,7 +30,8 @@ export const Modules: React.FC = () => {
       title: 'Controle de Caixa',
       description: 'Gerencie aberturas, recebimentos e fechamentos',
       path: '/modulos/caixa',
-      color: '#f093fb'
+      color: '#f093fb',
+      adminRequired: false,
     },
     {
       id: 'escalas',
@@ -30,7 +39,8 @@ export const Modules: React.FC = () => {
       title: 'Gestão de Escalas',
       description: 'Organize turnos e presenças de colaboradores',
       path: '/modulos/escalas',
-      color: '#4facfe'
+      color: '#4facfe',
+      adminRequired: false,
     },
     {
       id: 'saidas',
@@ -38,7 +48,8 @@ export const Modules: React.FC = () => {
       title: 'Registro de Saídas',
       description: 'Controle despesas e saídas operacionais',
       path: '/modulos/saidas',
-      color: '#43e97b'
+      color: '#43e97b',
+      adminRequired: false,
     },
     {
       id: 'motoboys',
@@ -46,7 +57,8 @@ export const Modules: React.FC = () => {
       title: 'Gestão de Motoboys',
       description: 'Administre entregas e comissões',
       path: '/modulos/motoboys',
-      color: '#fa709a'
+      color: '#fa709a',
+      adminRequired: false,
     },
     {
       id: 'colaboradores',
@@ -54,7 +66,26 @@ export const Modules: React.FC = () => {
       title: 'Gestão de Colaboradores',
       description: 'Gerencie dados e históricos de funcionários',
       path: '/modulos/colaboradores',
-      color: '#30cfd0'
+      color: '#30cfd0',
+      adminRequired: false,
+    },
+    {
+      id: 'folha-pagamento',
+      icon: '💳',
+      title: 'Folha de Pagamento',
+      description: 'Calcule e gerencie pagamentos de colaboradores',
+      path: '/modulos/folha-pagamento',
+      color: '#2e7d32',
+      adminRequired: true,
+    },
+    {
+      id: 'extrato',
+      icon: '📋',
+      title: 'Extrato de Pagamentos',
+      description: 'Histórico analítico de pagamentos e descontos',
+      path: '/modulos/extrato',
+      color: '#00838f',
+      adminRequired: true,
     },
     {
       id: 'unidades',
@@ -62,7 +93,8 @@ export const Modules: React.FC = () => {
       title: 'Cadastro de Unidades',
       description: 'Gerencie as unidades de restaurante',
       path: '/modulos/unidades',
-      color: '#ff6b9d'
+      color: '#ff6b9d',
+      superAdminRequired: true,
     },
     {
       id: 'usuarios',
@@ -70,7 +102,8 @@ export const Modules: React.FC = () => {
       title: 'Gestão de Usuários',
       description: 'Controle de acesso e permissões',
       path: '/modulos/usuarios',
-      color: '#c44569'
+      color: '#c44569',
+      superAdminRequired: true,
     },
     {
       id: 'usuarios-edicao',
@@ -78,9 +111,17 @@ export const Modules: React.FC = () => {
       title: 'Edição de Usuários',
       description: 'Editar usuários e vincular a unidades',
       path: '/modulos/usuarios-edicao',
-      color: '#8e44ad'
+      color: '#8e44ad',
+      superAdminRequired: true,
     }
   ];
+
+  // Filter modules based on role
+  const modules = allModules.filter(m => {
+    if ((m as any).superAdminRequired) return isAdminOnly;
+    if ((m as any).adminRequired) return isAdminOrGerente;
+    return true;
+  });
 
   return (
     <div className="modules-container">
@@ -88,7 +129,16 @@ export const Modules: React.FC = () => {
         <div className="header-content">
           <h1>GIRES - Gestão Inteligente para Restaurantes</h1>
           <div className="user-info">
-            <span>{email}</span>
+            <span style={{ fontSize: '13px' }}>
+              {email}
+              {userRole && (
+                <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '10px',
+                  backgroundColor: isAdminOrGerente ? '#e8f5e9' : '#fff3e0',
+                  color: isAdminOrGerente ? '#2e7d32' : '#e65100', fontSize: '11px', fontWeight: 'bold' }}>
+                  {userRole}
+                </span>
+              )}
+            </span>
             <button onClick={logout} className="logout-btn">Sair</button>
           </div>
         </div>

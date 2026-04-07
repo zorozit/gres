@@ -27,7 +27,7 @@ function App() {
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute adminOnly={true}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -120,7 +120,7 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>
         </UnitProvider>
       </AuthProvider>
