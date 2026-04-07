@@ -411,7 +411,7 @@ exports.handler = async (event) => {
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
       const {
         nome, email, telefone, celular, cpf,
-        tipoContrato, cargo, tipo,
+        tipoContrato, cargo, tipo, funcao, area,
         valorDia, valorNoite, valorTransporte, valeAlimentacao,
         salario, chavePix, dataAdmissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
@@ -450,6 +450,8 @@ exports.handler = async (event) => {
           tipoContrato:     tipoContrato || 'CLT',
           cargo:            cargoFinal,
           tipo:             cargoFinal,            // retrocompat
+          funcao:           funcao || cargoFinal || '',  // função para escala
+          area:             area || '',            // área de trabalho (Salão, Cozinha, etc)
           valorDia:         parseFloat(valorDia)          || 0,
           valorNoite:       parseFloat(valorNoite)        || 0,
           valorTransporte:  parseFloat(valorTransporte)   || 0,
@@ -493,7 +495,7 @@ exports.handler = async (event) => {
 
       const {
         nome, email, telefone, celular, cpf,
-        tipoContrato, cargo, tipo,
+        tipoContrato, cargo, tipo, funcao, area,
         valorDia, valorNoite, valorTransporte, valeAlimentacao,
         salario, chavePix, dataAdmissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
@@ -525,6 +527,8 @@ exports.handler = async (event) => {
           tipoContrato:     tipoContrato     || original.Item.tipoContrato || 'CLT',
           cargo:            cargoFinal       || original.Item.cargo || original.Item.tipo || '',
           tipo:             cargoFinal       || original.Item.tipo  || original.Item.cargo || '',
+          funcao:           funcao           !== undefined ? funcao : (original.Item.funcao || cargoFinal || original.Item.cargo || ''),
+          area:             area             !== undefined ? area   : (original.Item.area   || ''),
           valorDia:         valorDia         !== undefined ? (parseFloat(valorDia)         || 0) : (original.Item.valorDia         || 0),
           valorNoite:       valorNoite       !== undefined ? (parseFloat(valorNoite)       || 0) : (original.Item.valorNoite       || 0),
           valorTransporte:  valorTransporte  !== undefined ? (parseFloat(valorTransporte)  || 0) : (original.Item.valorTransporte  || 0),
@@ -595,6 +599,58 @@ exports.handler = async (event) => {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar colaboradores' });
       }
+    }
+
+    // ── FUNÇÕES DE ESCALA (regras por função/área) ─────────────────────────────
+    // POST /funcoes-escala — salva regra de função
+    if (rawPath === '/funcoes-escala' && httpMethod === 'POST') {
+      const { id, nome, area, cor, diasTrabalho, turnoNoite, unitId: fUnitId } = body;
+      if (!nome || !fUnitId) return response(400, { error: 'nome e unitId são obrigatórios' });
+      try {
+        const itemId = id || ('func-' + require('crypto').randomBytes(4).toString('hex'));
+        const item = {
+          id: itemId, nome, area: area || '', cor: cor || '#1976d2',
+          diasTrabalho: Array.isArray(diasTrabalho) ? diasTrabalho : [2,3,4,5,6],
+          turnoNoite: Array.isArray(turnoNoite) ? turnoNoite : [],
+          unitId: resolveUnitId(fUnitId),
+          updatedAt: new Date().toISOString()
+        };
+        await dynamodb.put({ TableName: 'gres-prod-funcoes-escala', Item: item }).promise();
+        return response(201, { success: true, id: itemId, item });
+      } catch (err) {
+        console.error('funcoes-escala POST error:', err);
+        return response(500, { error: 'Erro ao salvar função: ' + err.message });
+      }
+    }
+    // GET /funcoes-escala?unitId=xxx
+    if (rawPath === '/funcoes-escala' && httpMethod === 'GET') {
+      const fUnitId = queryParams.unitId;
+      try {
+        let items = [];
+        if (fUnitId) {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-funcoes-escala',
+            FilterExpression: 'unitId = :uid',
+            ExpressionAttributeValues: { ':uid': resolveUnitId(fUnitId) }
+          }).promise();
+          items = r.Items || [];
+        } else {
+          const r = await dynamodb.scan({ TableName: 'gres-prod-funcoes-escala' }).promise();
+          items = r.Items || [];
+        }
+        return response(200, items.sort((a,b) => (a.area||'').localeCompare(b.area||'') || (a.nome||'').localeCompare(b.nome||'')));
+      } catch (err) {
+        console.error('funcoes-escala GET error:', err);
+        return response(500, { error: 'Erro ao buscar funções: ' + err.message });
+      }
+    }
+    // DELETE /funcoes-escala/{id}
+    if (rawPath.includes('/funcoes-escala/') && httpMethod === 'DELETE') {
+      const fid = rawPath.split('/').pop();
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-funcoes-escala', Key: { id: fid } }).promise();
+        return response(200, { success: true });
+      } catch (err) { return response(500, { error: err.message }); }
     }
 
     // POST MOTOBOYS — ID = mot-{uuid}; obrigatório = CPF + telefone
@@ -908,6 +964,27 @@ exports.handler = async (event) => {
       } catch (err) {
         console.error('DynamoDB error:', err);
         return response(500, { error: 'Erro ao buscar escalas' });
+      }
+    }
+
+    // PUT ESCALA — atualiza turno, presença ou observação
+    if (rawPath.match(/\/escalas\/.+/) && httpMethod === 'PUT') {
+      const escId = rawPath.split('/').pop();
+      if (!escId) return response(400, { error: 'ID obrigatório' });
+      try {
+        const original = await dynamodb.get({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+        if (!original.Item) return response(404, { error: 'Escala não encontrada' });
+        const updated = {
+          ...original.Item,
+          ...(body.turno      !== undefined ? { turno: body.turno }           : {}),
+          ...(body.observacao !== undefined ? { observacao: body.observacao } : {}),
+          ...(body.presenca   !== undefined ? { presenca: body.presenca }     : {}),
+          updatedAt: new Date().toISOString(),
+        };
+        await dynamodb.put({ TableName: 'gres-prod-escalas', Item: updated }).promise();
+        return response(200, { success: true, id: escId });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar escala: ' + err.message });
       }
     }
 
