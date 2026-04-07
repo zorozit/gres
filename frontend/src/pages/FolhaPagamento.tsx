@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
@@ -182,6 +183,7 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
 /* ─── Component ─────────────────────────────────────────────────────────── */
 
 export default function FolhaPagamento() {
+  const navigate = useNavigate();
   const { activeUnit } = useUnit();
   const { user } = useAuth();
   const unitId = activeUnit?.id || (user as any)?.unitId || '';
@@ -205,6 +207,7 @@ export default function FolhaPagamento() {
   const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
   const [historicoColabId, setHistoricoColabId] = useState<string | null>(null);
   const [historicoItems, setHistoricoItems] = useState<any[]>([]);
+  const [detalheFreelancer, setDetalheFreelancer] = useState<{fr: any; semana: string; escalas: any[]} | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [salvando, setSalvando] = useState(false);
@@ -690,11 +693,101 @@ export default function FolhaPagamento() {
     </div>
   );
 
+
+  /* ── Modal detalhe Freelancer ────────────────────────────── */
+  const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[] }; onClose: () => void }) => {
+    const { fr, semana, escalas: escs } = data;
+    const valorDobra = R(fr.valorDobra || fr.valorDia) || 120;
+    const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const linhas = escs.map(e => {
+      const dow = new Date(e.data + 'T12:00:00').getDay();
+      const turnoLabel = e.turno === 'DiaNoite' ? 'DN (Dobra)' : e.turno === 'Dia' ? 'Dia (0.5 dobra)' : e.turno === 'Noite' ? 'Noite (0.5 dobra)' : e.turno;
+      const dobras = e.turno === 'DiaNoite' ? 1 : (e.turno === 'Dia' || e.turno === 'Noite') ? 0.5 : 0;
+      const valor = dobras * valorDobra;
+      return { data: e.data, dia: DIAS_ABR[dow], turno: turnoLabel, dobras, valor };
+    }).filter(l => l.dobras > 0);
+    const totalDobras = linhas.reduce((s, l) => s + l.dobras, 0);
+    const totalValor = linhas.reduce((s, l) => s + l.valor, 0);
+    const transp = R(fr.valorTransporte) * linhas.length;
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+        <div style={{ ...s.card, maxWidth: '500px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ margin: 0, color: '#c2185b' }}>🎯 Detalhamento Freelancer</h3>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
+            <strong>{fr.nome}</strong> · Semana {semana} · R$ {fmt(valorDobra)}/dobra
+          </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '12px' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#c2185b', color: 'white' }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Data</th>
+                <th style={{ padding: '6px 8px' }}>Dia</th>
+                <th style={{ padding: '6px 8px' }}>Turno</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Dobras</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l, i) => (
+                <tr key={i} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white', borderBottom: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{l.data}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 'bold', color: '#555' }}>{l.dia}</td>
+                  <td style={{ padding: '6px 8px' }}>
+                    <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                      backgroundColor: l.dobras === 1 ? '#e8f5e9' : '#fff9c4',
+                      color: l.dobras === 1 ? '#2e7d32' : '#f57f17' }}>
+                      {l.turno}
+                    </span>
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold' }}>{l.dobras}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1976d2', fontWeight: 'bold' }}>{fmtMoeda(l.valor)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ backgroundColor: '#880e4f', color: 'white', fontWeight: 'bold' }}>
+                <td colSpan={3} style={{ padding: '8px' }}>SUBTOTAL DOBRAS</td>
+                <td style={{ padding: '8px', textAlign: 'right' }}>{totalDobras}</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#f48fb1' }}>{fmtMoeda(totalValor)}</td>
+              </tr>
+              {transp > 0 && (
+                <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
+                  <td colSpan={4} style={{ padding: '6px 8px' }}>🚗 Transporte ({linhas.length} dias × R$ {fmt(R(fr.valorTransporte))})</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#90caf9' }}>+{fmtMoeda(transp)}</td>
+                </tr>
+              )}
+              <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold', fontSize: '14px' }}>
+                <td colSpan={4} style={{ padding: '8px' }}>TOTAL A PAGAR</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalValor + transp)}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {fr.chavePix && (
+            <div style={{ padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '6px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <strong>💳 PIX:</strong> {fr.chavePix}
+              <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
+                style={{ ...s.btn('#43a047'), padding: '4px 10px', fontSize: '11px' }}>📋 Copiar</button>
+            </div>
+          )}
+
+          <div style={{ marginTop: '12px', textAlign: 'right' }}>
+            <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ── Render ──────────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
+      {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
       {historicoColabId && (
         <ModalHistorico
           items={historicoItems}
@@ -714,6 +807,9 @@ export default function FolhaPagamento() {
           <button onClick={carregarDados} style={s.btn('#1976d2')}>🔄 Atualizar</button>
           <button onClick={exportarXLSX} disabled={folhasFiltradas.length === 0 && fechamentosFreelancer.length === 0} style={s.btn('#7b1fa2')}>
             📥 XLSX
+          </button>
+          <button onClick={() => navigate('/modulos/extrato')} style={s.btn('#00838f')}>
+            📋 Extrato
           </button>
         </div>
 
@@ -1334,12 +1430,29 @@ export default function FolhaPagamento() {
                                   {fmtMoeda(fr.total)}
                                 </td>
                                 <td style={s.td}>
-                                  {fr.chavePix && (
-                                    <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
-                                      style={{ ...s.btn('#43a047'), padding: '3px 8px', fontSize: '11px' }}>
-                                      📋 PIX
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                    <button
+                                      onClick={() => {
+                                        const fechFim = new Date(fech.dataFechamento + 'T12:00:00');
+                                        const fechIni = new Date(fechFim);
+                                        fechIni.setDate(fechIni.getDate() - 6);
+                                        const isoIni = fechIni.toISOString().split('T')[0];
+                                        const escalasSemana = escalas.filter(e =>
+                                          e.colaboradorId === fr.id && e.data >= isoIni && e.data <= fech.dataFechamento
+                                        );
+                                        setDetalheFreelancer({ fr, semana: fech.semanaLabel, escalas: escalasSemana });
+                                      }}
+                                      style={{ ...s.btn('#c2185b'), padding: '3px 8px', fontSize: '11px' }}
+                                      title="Ver detalhamento">
+                                      📋 Ver
                                     </button>
-                                  )}
+                                    {fr.chavePix && (
+                                      <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
+                                        style={{ ...s.btn('#43a047'), padding: '3px 8px', fontSize: '11px' }}>
+                                        💳 PIX
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))}
