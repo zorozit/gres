@@ -64,11 +64,11 @@ export const Header: React.FC<HeaderProps> = ({ title, showBack = true }) => {
 
 const styles = {
   header: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: '#1a2e44',
     color: 'white',
-    padding: '15px 20px',
-    borderBottom: '3px solid #3498db',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    padding: '14px 20px',
+    borderBottom: '3px solid #1976d2',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
     marginBottom: '20px',
   },
   headerContent: {
@@ -98,8 +98,10 @@ const styles = {
   },
   title: {
     margin: 0,
-    fontSize: '24px',
+    fontSize: '20px',
     fontWeight: 'bold',
+    color: 'white',
+    letterSpacing: '0.3px',
   },
   rightSection: {
     display: 'flex',

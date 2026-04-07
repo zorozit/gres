@@ -11,7 +11,7 @@ export const Footer: React.FC<FooterProps> = ({ showLinks = true }) => {
     <footer style={styles.footer}>
       <div style={styles.footerContent}>
         <div style={styles.footerSection}>
-          <h4 style={styles.sectionTitle}>GRES - Sistema de Gestão de Restaurantes</h4>
+          <h4 style={styles.sectionTitle}>GIRES - Gestão Inteligente para Restaurantes</h4>
           <p style={styles.sectionText}>
             Versão 1.0.0 | © {currentYear} - Todos os direitos reservados
           </p>

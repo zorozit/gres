@@ -28,7 +28,7 @@ export const Login: React.FC = () => {
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-          <h1>🍽️ GRES</h1>
+          <h1>🍽️ GIRES</h1>
           <p>Gestão de Restaurantes</p>
         </div>
 

@@ -144,7 +144,7 @@ function corArea(area: string): string {
 export const Escalas: React.FC = () => {
   const { activeUnit } = useUnit();
   const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
-  const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
+  const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   const hoje = new Date();
   const [mesAno, setMesAno] = useState(
@@ -300,6 +300,7 @@ export const Escalas: React.FC = () => {
 
   /* ── Toggle turno ────────────────────────────────────────── */
   const toggleTurno = async (pessoaId:string, data:string, tipo:'dia'|'noite') => {
+    if (!unitId) { alert('Selecione uma unidade antes de lançar turnos.'); return; }
     const k = `${pessoaId}_${data}`;
     const cur = turnos[k] || {dia:false,noite:false};
     const next = { ...cur, [tipo]: !cur[tipo] };
@@ -316,23 +317,34 @@ export const Escalas: React.FC = () => {
       const existente = escalasMap[pessoaId]?.[data];
       if (existente) {
         if (turno === 'Folga') {
-          await fetch(`${apiUrl}/escalas/${existente.id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token()}` } });
+          const r = await fetch(`${apiUrl}/escalas/${existente.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token()}` }
+          });
+          if (!r.ok) throw new Error(`DELETE falhou: ${r.status}`);
         } else {
-          await fetch(`${apiUrl}/escalas/${existente.id}`, {
-            method:'PUT',
-            headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+          const r = await fetch(`${apiUrl}/escalas/${existente.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
             body: JSON.stringify({ turno }),
           });
+          if (!r.ok) throw new Error(`PUT falhou: ${r.status}`);
         }
       } else if (turno !== 'Folga') {
-        await fetch(`${apiUrl}/escalas`, {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno }),
+        const r = await fetch(`${apiUrl}/escalas`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+          body: JSON.stringify({ unitId, colaboradorId: pessoaId, data, turno }),
         });
+        if (!r.ok) throw new Error(`POST falhou: ${r.status}`);
       }
       await fetchEscalas();
-    } catch(e){ console.error(e); }
+    } catch(e) {
+      console.error('Erro ao salvar turno:', e);
+      // Revert optimistic update on error
+      setTurnos(prev => ({ ...prev, [k]: cur }));
+      alert(`Erro ao salvar turno: ${e instanceof Error ? e.message : e}`);
+    }
     finally { setSalvando(false); }
   };
 

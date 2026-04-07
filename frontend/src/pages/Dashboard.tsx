@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { useUnit } from '../contexts/UnitContext';
+import { useAuth } from '../contexts/AuthContext';
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
@@ -34,9 +35,14 @@ function getSemanasDoMes(ano: number, mes: number): { label: string; inicio: str
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const { activeUnit, setActiveUnit } = useUnit();
+  const { user } = useAuth();
   const [unidades, setUnidades] = React.useState<any[]>([]);
   const [selectedUnit, setSelectedUnit] = React.useState(activeUnit?.id || '');
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
+
+  // Role check: only Admin and Gerente can see the full dashboard with chart
+  const userRole = (user as any)?.perfil || localStorage.getItem('user_role') || '';
+  const isAdminOrGerente = ['Administrador', 'Gerente', 'admin', 'gerente', 'ADMIN', 'GERENTE'].includes(userRole);
 
   const hoje = new Date();
   const [mesAno, setMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
@@ -160,23 +166,25 @@ export const Dashboard: React.FC = () => {
 
   const maxVal = useMemo(() => Math.max(...weeklyData.map(d => Math.max(d.faturamento, d.custo)), 1), [weeklyData]);
 
-  const modules = [
-    { icon: '💰', title: 'Controle de Caixa', desc: 'Gerencie aberturas, recebimentos e fechamentos', path: '/modulos/caixa' },
-    { icon: '📅', title: 'Gestão de Escalas', desc: 'Organize turnos e presenças de colaboradores', path: '/modulos/escalas' },
-    { icon: '💸', title: 'Registro de Saídas', desc: 'Controle despesas e saídas operacionais', path: '/modulos/saidas' },
-    { icon: '👥', title: 'Gestão de Colaboradores', desc: 'Gerencie dados e históricos de funcionários', path: '/modulos/colaboradores' },
-    { icon: '💳', title: 'Folha de Pagamento', desc: 'Calcule e gerencie pagamentos de colaboradores', path: '/modulos/folha-pagamento' },
-    { icon: '🏍️', title: 'Gestão de Motoboys', desc: 'Administre entregas e comissões', path: '/modulos/motoboys' },
-    { icon: '📋', title: 'Extrato de Pagamentos', desc: 'Histórico analítico de pagamentos e descontos', path: '/modulos/extrato' },
-    { icon: '🏢', title: 'Gestão de Unidades', desc: 'Administre as unidades do restaurante', path: '/modulos/unidades' },
-    { icon: '👨‍💼', title: 'Gestão de Usuários', desc: 'Gerencie usuários e permissões do sistema', path: '/modulos/usuarios' },
+  const allModules = [
+    { icon: '💰', title: 'Controle de Caixa', desc: 'Gerencie aberturas, recebimentos e fechamentos', path: '/modulos/caixa', roles: [] },
+    { icon: '📅', title: 'Gestão de Escalas', desc: 'Organize turnos e presenças de colaboradores', path: '/modulos/escalas', roles: [] },
+    { icon: '💸', title: 'Registro de Saídas', desc: 'Controle despesas e saídas operacionais', path: '/modulos/saidas', roles: [] },
+    { icon: '👥', title: 'Gestão de Colaboradores', desc: 'Gerencie dados e históricos de funcionários', path: '/modulos/colaboradores', roles: [] },
+    { icon: '💳', title: 'Folha de Pagamento', desc: 'Calcule e gerencie pagamentos de colaboradores', path: '/modulos/folha-pagamento', roles: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'] },
+    { icon: '🏍️', title: 'Gestão de Motoboys', desc: 'Administre entregas e comissões', path: '/modulos/motoboys', roles: [] },
+    { icon: '📋', title: 'Extrato de Pagamentos', desc: 'Histórico analítico de pagamentos e descontos', path: '/modulos/extrato', roles: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'] },
+    { icon: '🏢', title: 'Gestão de Unidades', desc: 'Administre as unidades do restaurante', path: '/modulos/unidades', roles: ['admin', 'Administrador', 'ADMIN'] },
+    { icon: '👨‍💼', title: 'Gestão de Usuários', desc: 'Gerencie usuários e permissões do sistema', path: '/modulos/usuarios', roles: ['admin', 'Administrador', 'ADMIN'] },
   ];
+  // Filter modules based on role: empty roles = visible to all
+  const modules = allModules.filter(m => m.roles.length === 0 || m.roles.includes(userRole));
 
   const CHART_HEIGHT = 180;
 
   return (
     <div style={styles.pageWrapper}>
-      <Header title="🍽️ GRES - Gestão de Restaurantes" showBack={false} />
+      <Header title="🍽️ GIRES - Gestão Inteligente para Restaurantes" showBack={false} />
       
       <main style={styles.container}>
         {unidades.length > 0 && (
@@ -192,12 +200,19 @@ export const Dashboard: React.FC = () => {
         )}
         
         <div style={styles.welcomeSection}>
-          <h2 style={styles.welcomeTitle}>Bem-vindo ao GRES! 👋</h2>
-          <p style={styles.welcomeText}>Sistema de Gestão Operacional para Redes de Restaurantes</p>
+          <h2 style={styles.welcomeTitle}>Bem-vindo ao GIRES! 👋</h2>
+          <p style={styles.welcomeText}>Gestão Inteligente para Restaurantes</p>
+          {userRole && (
+            <div style={{ marginTop: '8px', display: 'inline-block', padding: '4px 14px', borderRadius: '12px',
+              backgroundColor: isAdminOrGerente ? '#e8f5e9' : '#fff3e0',
+              color: isAdminOrGerente ? '#2e7d32' : '#e65100', fontSize: '13px', fontWeight: 'bold' }}>
+              {isAdminOrGerente ? '🔑' : '👤'} Perfil: {userRole}
+            </div>
+          )}
         </div>
 
-        {/* ── Dashboard Semanal ─────────────────────────────────── */}
-        {unitId && (
+        {/* ── Dashboard Semanal (Admin/Gerente only) ──────────────── */}
+        {unitId && isAdminOrGerente && (
           <div style={{ marginBottom: '40px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
               <h3 style={{ ...styles.sectionTitle, margin: 0, borderBottom: 'none', paddingBottom: 0 }}>

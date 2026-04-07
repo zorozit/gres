@@ -86,7 +86,7 @@ export const Modules: React.FC = () => {
     <div className="modules-container">
       <header className="modules-header">
         <div className="header-content">
-          <h1>GRES - Gestão de Restaurantes</h1>
+          <h1>GIRES - Gestão Inteligente para Restaurantes</h1>
           <div className="user-info">
             <span>{email}</span>
             <button onClick={logout} className="logout-btn">Sair</button>
