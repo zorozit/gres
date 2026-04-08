@@ -4,8 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import '../styles/Login.css';
 
 export const Login: React.FC = () => {
-  const [email, setEmail] = useState('admin@gres.com');
-  const [password, setPassword] = useState('GresAdmin123!@#');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login, error } = useAuth();
   const navigate = useNavigate();
@@ -26,10 +26,28 @@ export const Login: React.FC = () => {
 
   return (
     <div className="login-container">
+      {/* Floating module icons animation */}
+      <div className="floating-icons">
+        <div className="icon-float" style={{ animationDelay: '0s', top: '10%', left: '10%' }}>💰</div>
+        <div className="icon-float" style={{ animationDelay: '0.5s', top: '20%', right: '15%' }}>📅</div>
+        <div className="icon-float" style={{ animationDelay: '1s', bottom: '15%', left: '15%' }}>📊</div>
+        <div className="icon-float" style={{ animationDelay: '1.5s', bottom: '25%', right: '10%' }}>🏍️</div>
+        <div className="icon-float" style={{ animationDelay: '2s', top: '40%', left: '5%' }}>👥</div>
+        <div className="icon-float" style={{ animationDelay: '2.5s', top: '60%', right: '8%' }}>🏢</div>
+      </div>
+
       <div className="login-card">
         <div className="login-header">
-          <h1>🍽️ GIRES</h1>
-          <p>Gestão de Restaurantes</p>
+          <div className="logo-container">
+            <div className="logo-icon">🍽️</div>
+            <h1>GIRES</h1>
+          </div>
+          <p className="subtitle">Gestão Inteligente de Restaurantes</p>
+          <div className="feature-badges">
+            <span className="badge">📈 Analytics</span>
+            <span className="badge">⚡ Real-time</span>
+            <span className="badge">🔐 Seguro</span>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
@@ -66,14 +84,50 @@ export const Login: React.FC = () => {
             className="login-button"
             disabled={isLoading}
           >
-            {isLoading ? 'Entrando...' : 'Entrar'}
+            {isLoading ? (
+              <>
+                <span className="spinner"></span>
+                Entrando...
+              </>
+            ) : (
+              <>
+                <span>🔓</span>
+                Acessar Sistema
+              </>
+            )}
           </button>
         </form>
 
-        <div className="login-info">
-          <p><strong>Credenciais de Teste:</strong></p>
-          <p>Email: admin@gres.com</p>
-          <p>Senha: GresAdmin123!@#</p>
+        <div className="login-footer">
+          <div className="modules-preview">
+            <p className="modules-title">Módulos Disponíveis</p>
+            <div className="modules-grid">
+              <div className="module-item" title="Dashboard Operacional">
+                <span className="module-icon">📊</span>
+                <span className="module-name">Dashboard</span>
+              </div>
+              <div className="module-item" title="Controle de Caixa">
+                <span className="module-icon">💰</span>
+                <span className="module-name">Caixa</span>
+              </div>
+              <div className="module-item" title="Gestão de Escalas">
+                <span className="module-icon">📅</span>
+                <span className="module-name">Escalas</span>
+              </div>
+              <div className="module-item" title="Folha de Pagamento">
+                <span className="module-icon">💵</span>
+                <span className="module-name">Pagamento</span>
+              </div>
+              <div className="module-item" title="Gestão de Motoboys">
+                <span className="module-icon">🏍️</span>
+                <span className="module-name">Motoboys</span>
+              </div>
+              <div className="module-item" title="Colaboradores">
+                <span className="module-icon">👥</span>
+                <span className="module-name">Equipe</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
