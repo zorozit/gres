@@ -105,13 +105,29 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      
+      // Preparar payload com campos corretos
+      const senhaFinal = novoUsuario.senha || gerarSenhaAleatoria();
+      const payload = {
+        nome: novoUsuario.nome,
+        cpf: novoUsuario.cpf,
+        celular: novoUsuario.celular,
+        email: novoUsuario.email || `${novoUsuario.cpf.replace(/\D/g, '')}@temp.com`, // Gera email temporário se não informado
+        perfil: novoUsuario.perfil,
+        unitId: novoUsuario.unitIds[0] || '', // Primeira unidade como principal
+        unitIds: novoUsuario.unitIds, // Array de todas as unidades
+        ativo: novoUsuario.ativo,
+        senha: senhaFinal
+      };
+      
+      console.log('📤 Enviando payload:', payload);
+      
       const response = await fetch(`${apiUrl}/usuarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(novoUsuario)
+        body: JSON.stringify(payload)
       });
       if (response.ok) {
-        const senhaGerada = novoUsuario.senha || gerarSenhaAleatoria();
         setNovoUsuario({
           nome: '',
           cpf: '',
@@ -125,7 +141,7 @@ export const Usuarios: React.FC = () => {
           senhaConfirmacao: ''
         });
         carregarUsuarios();
-        alert(`✅ Usuário criado com sucesso!\n\n📧 Email: ${novoUsuario.email || 'N/A'}\n🔑 Senha: ${senhaGerada}\n\n⚠️ Anote a senha e envie ao usuário!`);
+        alert(`✅ Usuário criado com sucesso!\n\n📧 Email: ${payload.email}\n🔑 Senha: ${senhaFinal}\n\n⚠️ Anote a senha e envie ao usuário!`);
       } else {
         const erro = await response.text();
         alert('Erro ao criar usuário: ' + erro);
@@ -170,10 +186,28 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const payload = { ...usuarioEditando };
+      
+      const unitIds: string[] = Array.isArray(usuarioEditando.unitIds) 
+        ? usuarioEditando.unitIds 
+        : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
+      
+      const payload: any = {
+        nome: usuarioEditando.nome,
+        cpf: usuarioEditando.cpf,
+        celular: usuarioEditando.celular,
+        email: usuarioEditando.email || `${usuarioEditando.cpf.replace(/\D/g, '')}@temp.com`,
+        perfil: usuarioEditando.perfil,
+        unitId: unitIds[0] || '',
+        unitIds: unitIds,
+        ativo: usuarioEditando.ativo
+      };
+      
       if (novaSenha) {
         payload.senha = novaSenha;
       }
+      
+      console.log('📤 Atualizando usuário:', payload);
+      
       const response = await fetch(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
