@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { DashboardPercentuais } from '../components/DashboardPercentuais';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
-const fmtMoeda = (v: number) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function getSemanasDoMes(ano: number, mes: number): { label: string; inicio: string; fim: string }[] {
   const semanas: { label: string; inicio: string; fim: string }[] = [];
@@ -164,8 +164,6 @@ export const Dashboard: React.FC = () => {
     });
   }, [mesAno, caixaData, colaboradores, escalas]);
 
-  const maxVal = useMemo(() => Math.max(...weeklyData.map(d => Math.max(d.faturamento, d.custo)), 1), [weeklyData]);
-
   const allModules = [
     { icon: '💰', title: 'Controle de Caixa', desc: 'Gerencie aberturas, recebimentos e fechamentos', path: '/modulos/caixa', roles: [] },
     { icon: '📅', title: 'Gestão de Escalas', desc: 'Organize turnos e presenças de colaboradores', path: '/modulos/escalas', roles: [] },
@@ -179,8 +177,6 @@ export const Dashboard: React.FC = () => {
   ];
   // Filter modules based on role: empty roles = visible to all
   const modules = allModules.filter(m => m.roles.length === 0 || m.roles.includes(userRole));
-
-  const CHART_HEIGHT = 180;
 
   return (
     <div style={styles.pageWrapper}>
@@ -211,12 +207,12 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
 
-        {/* ── Dashboard Semanal (Admin/Gerente only) ──────────────── */}
+        {/* ── Dashboard com Percentuais (Admin/Gerente only) ──────────────── */}
         {unitId && isAdminOrGerente && (
           <div style={{ marginBottom: '40px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
               <h3 style={{ ...styles.sectionTitle, margin: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                📊 Faturamento vs Custo Semanal
+                📊 Análise de Custos (% sobre Faturamento)
               </h3>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>Mês:</label>
@@ -235,115 +231,14 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : weeklyData.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '30px', color: '#999', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-                Selecione uma unidade para ver o dashboard semanal.
+                Selecione uma unidade para ver o dashboard.
               </div>
             ) : (
-              <>
-                {/* Summary cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                  {[
-                    { label: 'Faturamento Total', val: fmtMoeda(weeklyData.reduce((s, d) => s + d.faturamento, 0)), cor: '#2e7d32' },
-                    { label: 'Custo CLT', val: fmtMoeda(weeklyData.reduce((s, d) => s + d.custoCLT, 0)), cor: '#1565c0' },
-                    { label: 'Custo Freelancers', val: fmtMoeda(weeklyData.reduce((s, d) => s + d.custoFree, 0)), cor: '#c2185b' },
-                    { label: 'Custo Total', val: fmtMoeda(weeklyData.reduce((s, d) => s + d.custo, 0)), cor: '#e65100' },
-                    { label: 'Resultado', val: fmtMoeda(weeklyData.reduce((s, d) => s + d.lucro, 0)), cor: weeklyData.reduce((s, d) => s + d.lucro, 0) >= 0 ? '#1976d2' : '#c62828' },
-                  ].map(c => (
-                    <div key={c.label} style={{ backgroundColor: 'white', border: '1px solid #e0e0e0', borderLeft: `4px solid ${c.cor}`, borderRadius: '8px', padding: '12px 14px' }}>
-                      <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
-                      <div style={{ fontSize: '14px', fontWeight: 'bold', color: c.cor, marginTop: '4px' }}>{c.val}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Bar chart */}
-                <div style={{ backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', overflowX: 'auto' }}>
-                  {/* Legend */}
-                  <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
-                    {[
-                      { cor: '#2e7d32', label: '🟢 Faturamento (Caixa)' },
-                      { cor: '#1565c0', label: '🔵 Custo CLT' },
-                      { cor: '#c2185b', label: '🔴 Custo Freelancers' },
-                    ].map(l => (
-                      <span key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ width: '14px', height: '14px', backgroundColor: l.cor, borderRadius: '3px', display: 'inline-block' }} />
-                        {l.label}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', minWidth: `${weeklyData.length * 130}px` }}>
-                    {weeklyData.map((d, i) => {
-                      const fH = maxVal > 0 ? Math.round((d.faturamento / maxVal) * CHART_HEIGHT) : 0;
-                      const cCLTH = maxVal > 0 ? Math.round((d.custoCLT / maxVal) * CHART_HEIGHT) : 0;
-                      const cFreeH = maxVal > 0 ? Math.round((d.custoFree / maxVal) * CHART_HEIGHT) : 0;
-                      const isPositive = d.lucro >= 0;
-                      return (
-                        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '110px' }}>
-                          {/* Bars */}
-                          <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: `${CHART_HEIGHT + 10}px`, paddingTop: '10px' }}>
-                            {/* Faturamento */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <span style={{ fontSize: '9px', color: '#2e7d32', fontWeight: 'bold', marginBottom: '2px' }}>
-                                {d.faturamento > 0 ? fmtMoeda(d.faturamento).replace('R$ ', '') : '—'}
-                              </span>
-                              <div style={{
-                                width: '28px', height: `${Math.max(fH, 2)}px`,
-                                backgroundColor: '#2e7d32', borderRadius: '3px 3px 0 0',
-                                transition: 'height 0.3s ease',
-                              }} title={`Faturamento: ${fmtMoeda(d.faturamento)}`} />
-                            </div>
-                            {/* Custo CLT */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <span style={{ fontSize: '9px', color: '#1565c0', fontWeight: 'bold', marginBottom: '2px' }}>
-                                {d.custoCLT > 0 ? fmtMoeda(d.custoCLT).replace('R$ ', '') : '—'}
-                              </span>
-                              <div style={{
-                                width: '28px', height: `${Math.max(cCLTH, 2)}px`,
-                                backgroundColor: '#1565c0', borderRadius: '3px 3px 0 0',
-                                transition: 'height 0.3s ease',
-                              }} title={`Custo CLT: ${fmtMoeda(d.custoCLT)}`} />
-                            </div>
-                            {/* Custo Free */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <span style={{ fontSize: '9px', color: '#c2185b', fontWeight: 'bold', marginBottom: '2px' }}>
-                                {d.custoFree > 0 ? fmtMoeda(d.custoFree).replace('R$ ', '') : '—'}
-                              </span>
-                              <div style={{
-                                width: '28px', height: `${Math.max(cFreeH, 2)}px`,
-                                backgroundColor: '#c2185b', borderRadius: '3px 3px 0 0',
-                                transition: 'height 0.3s ease',
-                              }} title={`Custo Free: ${fmtMoeda(d.custoFree)}`} />
-                            </div>
-                          </div>
-
-                          {/* Baseline */}
-                          <div style={{ width: '100%', height: '2px', backgroundColor: '#e0e0e0', marginBottom: '6px' }} />
-
-                          {/* Week label */}
-                          <div style={{ fontSize: '10px', color: '#555', textAlign: 'center', fontWeight: 'bold' }}>
-                            {d.label}
-                          </div>
-
-                          {/* Resultado */}
-                          <div style={{
-                            fontSize: '10px', fontWeight: 'bold', marginTop: '4px',
-                            color: isPositive ? '#2e7d32' : '#c62828',
-                            backgroundColor: isPositive ? '#e8f5e9' : '#fce4ec',
-                            padding: '2px 6px', borderRadius: '8px',
-                          }}>
-                            {isPositive ? '+' : ''}{fmtMoeda(d.lucro).replace('R$ ', 'R$')}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ marginTop: '12px', fontSize: '11px', color: '#888', borderTop: '1px solid #f0f0f0', paddingTop: '8px' }}>
-                    ⚠️ <strong>Nota:</strong> Faturamento = soma dos registros de Caixa (entradas). Custo = estimativa semanal baseada nas escalas lançadas (CLT inclui salário proporcional + dobras + transporte; Freelancer = dobras × valor + transporte).
-                    Valores precisos estão na <span style={{ color: '#1976d2', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate('/modulos/folha-pagamento')}>Folha de Pagamento</span>.
-                  </div>
-                </div>
-              </>
+              <DashboardPercentuais 
+                weeklyData={weeklyData}
+                colaboradores={colaboradores}
+                escalas={escalas}
+              />
             )}
           </div>
         )}
