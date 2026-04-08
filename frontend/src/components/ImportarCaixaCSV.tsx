@@ -67,29 +67,52 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
     return parseFloat(valorStr.replace(',', '.'));
   };
 
-  // Processar CSV
+  // Detectar separador (vírgula ou TAB)
+  const detectarSeparador = (texto: string): string => {
+    const primeiraLinha = texto.split('\n')[0];
+    // Se tem TAB, é do Excel
+    if (primeiraLinha.includes('\t')) return '\t';
+    // Se tem vírgula, é CSV
+    if (primeiraLinha.includes(',')) return ',';
+    // Padrão: vírgula
+    return ',';
+  };
+
+  // Processar CSV ou dados do Excel (TAB)
   const processarCSV = () => {
     try {
-      const linhas = csvText.trim().split('\n');
+      const linhas = csvText.trim().split('\n').filter(l => l.trim());
       if (linhas.length < 2) {
-        alert('CSV deve conter ao menos o cabeçalho e uma linha de dados');
+        alert('❌ Dados devem conter ao menos o cabeçalho e uma linha de dados');
         return;
       }
 
-      const cabecalho = linhas[0].split(',');
+      const separador = detectarSeparador(csvText);
+      console.log('🔍 Separador detectado:', separador === '\t' ? 'TAB (Excel)' : 'VÍRGULA (CSV)');
+
+      const cabecalho = linhas[0].split(separador).map(c => c.trim());
       const movimentos: MovimentoCSV[] = [];
 
+      // Validar colunas obrigatórias
+      const colunasObrigatorias = ['data', 'periodo'];
+      const colunasFaltando = colunasObrigatorias.filter(col => !cabecalho.includes(col));
+      if (colunasFaltando.length > 0) {
+        alert(`❌ Colunas obrigatórias faltando: ${colunasFaltando.join(', ')}\n\n` +
+              `Colunas encontradas: ${cabecalho.join(', ')}`);
+        return;
+      }
+
       for (let i = 1; i < linhas.length; i++) {
-        const valores = linhas[i].split(',');
+        const valores = linhas[i].split(separador).map(v => v.trim());
         const mov: any = {};
 
         cabecalho.forEach((campo, idx) => {
-          mov[campo] = valores[idx];
+          mov[campo] = valores[idx] || '';
         });
 
         movimentos.push({
           data: mov.data,
-          diaSemana: parseInt(mov.diaSemana),
+          diaSemana: parseInt(mov.diaSemana) || 0,
           periodo: mov.periodo,
           abertura: parseValor(mov.abertura),
           maq1: parseValor(mov.maq1),
@@ -113,9 +136,27 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
 
       setPreview(movimentos);
       setErrors([]);
+      alert(`✅ ${movimentos.length} movimentos processados com sucesso!`);
     } catch (error) {
-      alert('Erro ao processar CSV: ' + (error as Error).message);
+      alert('❌ Erro ao processar dados: ' + (error as Error).message);
     }
+  };
+
+  // Upload de arquivo CSV
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const texto = e.target?.result as string;
+      setCsvText(texto);
+      alert('✅ Arquivo carregado! Clique em "🔍 Processar e Visualizar"');
+    };
+    reader.onerror = () => {
+      alert('❌ Erro ao ler arquivo');
+    };
+    reader.readAsText(file, 'UTF-8');
   };
 
   // Importar movimentos
@@ -231,13 +272,35 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
             </p>
           </div>
 
+          {/* Upload de arquivo */}
+          <div style={styles.section}>
+            <h3 style={styles.sectionTitle}>2️⃣ Fazer Upload do Arquivo</h3>
+            <input
+              type="file"
+              accept=".csv,.txt"
+              onChange={handleFileUpload}
+              style={styles.fileInput}
+              disabled={importing}
+            />
+            <p style={styles.hint}>
+              📎 Selecione um arquivo CSV ou TXT do seu computador
+            </p>
+          </div>
+
           {/* Área de texto para colar CSV */}
           <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>2️⃣ Colar Dados CSV</h3>
+            <h3 style={styles.sectionTitle}>3️⃣ OU Cole Dados do Excel/Planilha</h3>
+            <p style={styles.hint}>
+              💡 <strong>Como colar do Excel:</strong><br/>
+              1. Selecione as células no Excel (incluindo cabeçalho)<br/>
+              2. Pressione Ctrl+C (copiar)<br/>
+              3. Cole aqui no campo abaixo (Ctrl+V)<br/>
+              4. O sistema detecta automaticamente se é CSV (vírgula) ou Excel (TAB)
+            </p>
             <textarea
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
-              placeholder="Cole aqui os dados CSV...&#10;Exemplo:&#10;data,diaSemana,periodo,abertura,maq1,...&#10;01/01/2026,5,Dia,100.00,500.00,..."
+              placeholder="Cole aqui os dados da planilha...&#10;&#10;Colunas obrigatórias: data, periodo&#10;&#10;Exemplo (copie do Excel e cole aqui):&#10;data	diaSemana	periodo	abertura	maq1	maq2...&#10;01/01/2026	5	Dia	100.00	500.00	300.00..."
               style={styles.textarea}
               disabled={importing}
             />
@@ -254,33 +317,37 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
           {preview.length > 0 && (
             <div style={styles.section}>
               <h3 style={styles.sectionTitle}>
-                3️⃣ Preview ({preview.length} movimentos)
+                4️⃣ Preview ({preview.length} movimentos) ✅
               </h3>
               <div style={styles.previewContainer}>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeader}>
-                      <th>Data</th>
-                      <th>Período</th>
-                      <th>Total</th>
-                      <th>Sangria</th>
-                      <th>Sistema</th>
-                      <th>Dif</th>
-                      <th>Resp.</th>
+                      <th style={{padding: '8px'}}>Data</th>
+                      <th style={{padding: '8px'}}>Período</th>
+                      <th style={{padding: '8px'}}>Total</th>
+                      <th style={{padding: '8px'}}>Sangria</th>
+                      <th style={{padding: '8px'}}>Sistema</th>
+                      <th style={{padding: '8px'}}>Dif</th>
+                      <th style={{padding: '8px'}}>Resp.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {preview.slice(0, 10).map((mov, idx) => (
                       <tr key={idx} style={styles.tableRow}>
-                        <td>{mov.data}</td>
-                        <td>{mov.periodo}</td>
-                        <td>R$ {mov.total.toFixed(2)}</td>
-                        <td>R$ {mov.sangria.toFixed(2)}</td>
-                        <td>R$ {mov.sistema.toFixed(2)}</td>
-                        <td style={{ color: mov.diferenca >= 0 ? 'green' : 'red' }}>
+                        <td style={{padding: '8px'}}>{mov.data}</td>
+                        <td style={{padding: '8px'}}>{mov.periodo}</td>
+                        <td style={{padding: '8px'}}>R$ {mov.total.toFixed(2)}</td>
+                        <td style={{padding: '8px'}}>R$ {mov.sangria.toFixed(2)}</td>
+                        <td style={{padding: '8px'}}>R$ {mov.sistema.toFixed(2)}</td>
+                        <td style={{ 
+                          padding: '8px',
+                          color: mov.diferenca >= 0 ? 'green' : 'red',
+                          fontWeight: 'bold'
+                        }}>
                           R$ {mov.diferenca.toFixed(2)}
                         </td>
-                        <td>{mov.conferencia}</td>
+                        <td style={{padding: '8px'}}>{mov.conferencia}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -297,7 +364,7 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
           {/* Botão de importação */}
           {preview.length > 0 && (
             <div style={styles.section}>
-              <h3 style={styles.sectionTitle}>4️⃣ Importar</h3>
+              <h3 style={styles.sectionTitle}>5️⃣ Importar para o Sistema</h3>
               <button
                 onClick={importar}
                 style={{
@@ -453,7 +520,17 @@ const styles = {
     borderRadius: '6px',
     fontSize: '14px',
     fontWeight: 'bold',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    marginTop: '8px'
+  },
+  fileInput: {
+    padding: '10px',
+    fontSize: '14px',
+    border: '2px dashed #2196f3',
+    borderRadius: '6px',
+    width: '100%',
+    cursor: 'pointer',
+    backgroundColor: '#f0f7ff'
   },
   previewContainer: {
     maxHeight: '300px',
