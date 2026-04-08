@@ -61,21 +61,37 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
     return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
   };
 
-  // Converter valor
+  // Converter valor (suporta vírgula e ponto como decimal)
   const parseValor = (valorStr: string): number => {
-    if (!valorStr || valorStr.trim() === '') return 0;
-    return parseFloat(valorStr.replace(',', '.'));
+    if (!valorStr || valorStr.trim() === '' || valorStr === '-') return 0;
+    
+    // Remove pontos usados como separador de milhares (ex: 1.360,45)
+    // Substitui vírgula decimal por ponto (ex: 87,55 -> 87.55)
+    const normalizado = valorStr
+      .replace(/\./g, '')  // Remove pontos (separador de milhares)
+      .replace(/,/g, '.');  // Troca vírgula por ponto (decimal)
+    
+    const numero = parseFloat(normalizado);
+    return isNaN(numero) ? 0 : numero;
   };
 
-  // Detectar separador (vírgula ou TAB)
+  // Detectar separador (ponto-vírgula, vírgula ou TAB)
   const detectarSeparador = (texto: string): string => {
     const primeiraLinha = texto.split('\n')[0];
-    // Se tem TAB, é do Excel
-    if (primeiraLinha.includes('\t')) return '\t';
-    // Se tem vírgula, é CSV
-    if (primeiraLinha.includes(',')) return ',';
-    // Padrão: vírgula
-    return ',';
+    
+    // Contar ocorrências de cada separador
+    const countPontoVirgula = (primeiraLinha.match(/;/g) || []).length;
+    const countVirgula = (primeiraLinha.match(/,/g) || []).length;
+    const countTab = (primeiraLinha.match(/\t/g) || []).length;
+    
+    // Escolher o separador mais frequente
+    if (countPontoVirgula > countVirgula && countPontoVirgula > countTab) {
+      return ';';
+    } else if (countTab > 0) {
+      return '\t';
+    } else {
+      return ',';
+    }
   };
 
   // Processar CSV ou dados do Excel (TAB)
@@ -88,7 +104,12 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
       }
 
       const separador = detectarSeparador(csvText);
-      console.log('🔍 Separador detectado:', separador === '\t' ? 'TAB (Excel)' : 'VÍRGULA (CSV)');
+      const nomesSeparadores: { [key: string]: string } = {
+        ';': 'PONTO-VÍRGULA (;)',
+        '\t': 'TAB (Excel)',
+        ',': 'VÍRGULA (,)'
+      };
+      console.log('🔍 Separador detectado:', nomesSeparadores[separador] || separador);
 
       const cabecalho = linhas[0].split(separador).map(c => c.trim());
       const movimentos: MovimentoCSV[] = [];
