@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { MovimentosCaixa } from './MovimentosCaixa';
+import { ImportarCaixaCSV } from '../components/ImportarCaixaCSV';
 
 interface RegistroCaixa {
   id: string;
@@ -50,6 +51,7 @@ export default function Caixa() {
   const [loading, setLoading] = useState(false);
   const [registroEditando, setRegistroEditando] = useState<Partial<RegistroCaixa> | null>(null);
   const [abaSelecionada, setAbaSelecionada] = useState<'novo' | 'movimentos'>('novo');
+  const [modalImportarAberto, setModalImportarAberto] = useState(false);
   const [novoRegistro, setNovoRegistro] = useState<Partial<RegistroCaixa>>({
     periodo: 'Dia',
     abertura: 0,
@@ -307,17 +309,41 @@ export default function Caixa() {
       <div style={styles.container}>
 
         {/* ABAS */}
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #ddd' }}>
-          {(['novo', 'movimentos'] as const).map(aba => (
-            <button key={aba} onClick={() => setAbaSelecionada(aba)} style={{
-              padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 'bold',
-              borderRadius: '4px 4px 0 0',
-              backgroundColor: abaSelecionada === aba ? '#007bff' : '#f0f0f0',
-              color: abaSelecionada === aba ? 'white' : '#333',
-            }}>
-              {aba === 'novo' ? '📝 Novo Registro' : '📊 Movimentos'}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #ddd', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            {(['novo', 'movimentos'] as const).map(aba => (
+              <button key={aba} onClick={() => setAbaSelecionada(aba)} style={{
+                padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 'bold',
+                borderRadius: '4px 4px 0 0',
+                backgroundColor: abaSelecionada === aba ? '#007bff' : '#f0f0f0',
+                color: abaSelecionada === aba ? 'white' : '#333',
+              }}>
+                {aba === 'novo' ? '📝 Novo Registro' : '📊 Movimentos'}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setModalImportarAberto(true)}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#4CAF50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              transition: 'all 0.3s'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+          >
+            📥 Importar CSV
+          </button>
         </div>
 
         {abaSelecionada === 'movimentos' && <MovimentosCaixa />}
@@ -618,6 +644,19 @@ export default function Caixa() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de Importação CSV */}
+      {modalImportarAberto && (
+        <ImportarCaixaCSV
+          unitId={unitId}
+          onImportSuccess={() => {
+            setModalImportarAberto(false);
+            carregarRegistros();
+            alert('✅ Dados importados! Atualizando lista...');
+          }}
+          onClose={() => setModalImportarAberto(false)}
+        />
       )}
 
       <Footer showLinks={true} />
