@@ -10,8 +10,10 @@ interface Usuario {
   celular: string;
   email?: string;
   perfil: string;
-  unitId: string;
+  unitId: string | string[]; // Pode ser uma unidade ou múltiplas
+  unitIds?: string[]; // Lista de unidades
   ativo: boolean;
+  senha?: string;
 }
 
 export const Usuarios: React.FC = () => {
@@ -26,9 +28,14 @@ export const Usuarios: React.FC = () => {
     email: '',
     perfil: 'operador',
     unitId: '',
+    unitIds: [] as string[],
     ativo: true,
-    senha: ''
+    senha: '',
+    senhaConfirmacao: ''
   });
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [novaSenha, setNovaSenha] = useState('');
+  const [confirmaNovaSenha, setConfirmaNovaSenha] = useState('');
   const [loading, setLoading] = useState(true);
   const [unidades, setUnidades] = useState<any[]>([]);
 
@@ -80,8 +87,18 @@ export const Usuarios: React.FC = () => {
       return;
     }
 
-    if (!novoUsuario.unitId) {
-      alert('Selecione uma unidade');
+    if (novoUsuario.unitIds.length === 0) {
+      alert('Selecione ao menos uma unidade');
+      return;
+    }
+
+    if (novoUsuario.senha && novoUsuario.senha !== novoUsuario.senhaConfirmacao) {
+      alert('As senhas não coincidem');
+      return;
+    }
+
+    if (novoUsuario.senha && novoUsuario.senha.length < 6) {
+      alert('A senha deve ter no mínimo 6 caracteres');
       return;
     }
 
@@ -94,6 +111,7 @@ export const Usuarios: React.FC = () => {
         body: JSON.stringify(novoUsuario)
       });
       if (response.ok) {
+        const senhaGerada = novoUsuario.senha || gerarSenhaAleatoria();
         setNovoUsuario({
           nome: '',
           cpf: '',
@@ -101,18 +119,30 @@ export const Usuarios: React.FC = () => {
           email: '',
           perfil: 'operador',
           unitId: '',
+          unitIds: [],
           ativo: true,
-          senha: ''
+          senha: '',
+          senhaConfirmacao: ''
         });
         carregarUsuarios();
-        alert('Usuário criado com sucesso!');
+        alert(`✅ Usuário criado com sucesso!\n\n📧 Email: ${novoUsuario.email || 'N/A'}\n🔑 Senha: ${senhaGerada}\n\n⚠️ Anote a senha e envie ao usuário!`);
       } else {
-        alert('Erro ao criar usuário');
+        const erro = await response.text();
+        alert('Erro ao criar usuário: ' + erro);
       }
     } catch (error) {
       console.error('Erro ao criar usuário:', error);
       alert('Erro ao criar usuário');
     }
+  };
+
+  const gerarSenhaAleatoria = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let senha = '';
+    for (let i = 0; i < 8; i++) {
+      senha += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return senha;
   };
 
   const handleSalvarEdicao = async () => {
@@ -121,25 +151,46 @@ export const Usuarios: React.FC = () => {
       return;
     }
 
-    if (!usuarioEditando.unitId) {
-      alert('Selecione uma unidade');
+    const unitIds = usuarioEditando.unitIds || (usuarioEditando.unitId ? [usuarioEditando.unitId] : []);
+    if (unitIds.length === 0) {
+      alert('Selecione ao menos uma unidade');
+      return;
+    }
+
+    if (novaSenha && novaSenha !== confirmaNovaSenha) {
+      alert('As senhas não coincidem');
+      return;
+    }
+
+    if (novaSenha && novaSenha.length < 6) {
+      alert('A senha deve ter no mínimo 6 caracteres');
       return;
     }
 
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
+      const payload = { ...usuarioEditando };
+      if (novaSenha) {
+        payload.senha = novaSenha;
+      }
       const response = await fetch(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(usuarioEditando)
+        body: JSON.stringify(payload)
       });
       if (response.ok) {
+        const mensagem = novaSenha 
+          ? `✅ Usuário atualizado com sucesso!\n\n🔑 Nova senha: ${novaSenha}\n\n⚠️ Anote e envie ao usuário!`
+          : 'Usuário atualizado com sucesso!';
         setUsuarioEditando(null);
+        setNovaSenha('');
+        setConfirmaNovaSenha('');
         carregarUsuarios();
-        alert('Usuário atualizado com sucesso!');
+        alert(mensagem);
       } else {
-        alert('Erro ao atualizar usuário');
+        const erro = await response.text();
+        alert('Erro ao atualizar usuário: ' + erro);
       }
     } catch (error) {
       console.error('Erro ao atualizar usuário:', error);
@@ -270,17 +321,62 @@ export const Usuarios: React.FC = () => {
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>Unidade: * (obrigatório)</label>
-              <select 
-                value={novoUsuario.unitId}
-                onChange={(e) => setNovoUsuario({...novoUsuario, unitId: e.target.value})}
-                style={styles.input}
-              >
-                <option value="">Selecione uma unidade</option>
+              <label style={styles.label}>Unidades: * (selecione uma ou mais)</label>
+              <div style={styles.checkboxGroup}>
                 {unidades.map((unit: any) => (
-                  <option key={unit.id} value={unit.id}>{unit.nome}</option>
+                  <div key={unit.id} style={styles.checkbox}>
+                    <input 
+                      type="checkbox"
+                      checked={novoUsuario.unitIds.includes(unit.id)}
+                      onChange={(e) => {
+                        const newUnitIds = e.target.checked 
+                          ? [...novoUsuario.unitIds, unit.id]
+                          : novoUsuario.unitIds.filter(id => id !== unit.id);
+                        setNovoUsuario({...novoUsuario, unitIds: newUnitIds});
+                      }}
+                    />
+                    <label>{unit.nome}</label>
+                  </div>
                 ))}
-              </select>
+              </div>
+              {novoUsuario.unitIds.length > 0 && (
+                <small style={{color: '#666', marginTop: '4px', display: 'block'}}>
+                  ✅ {novoUsuario.unitIds.length} unidade(s) selecionada(s)
+                </small>
+              )}
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Senha: (opcional - se não informada, será gerada automaticamente)</label>
+              <input 
+                type={mostrarSenha ? "text" : "password"}
+                value={novoUsuario.senha}
+                onChange={(e) => setNovoUsuario({...novoUsuario, senha: e.target.value})}
+                style={styles.input}
+                placeholder="Mínimo 6 caracteres"
+              />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Confirmar Senha:</label>
+              <input 
+                type={mostrarSenha ? "text" : "password"}
+                value={novoUsuario.senhaConfirmacao}
+                onChange={(e) => setNovoUsuario({...novoUsuario, senhaConfirmacao: e.target.value})}
+                style={styles.input}
+                placeholder="Digite a senha novamente"
+              />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.checkbox}>
+                <input 
+                  type="checkbox"
+                  checked={mostrarSenha}
+                  onChange={(e) => setMostrarSenha(e.target.checked)}
+                />
+                <span style={{marginLeft: '8px'}}>👁️ Mostrar senha</span>
+              </label>
             </div>
 
             <button onClick={handleSalvarNovoUsuario} style={styles.botaoSalvar}>💾 Criar Usuário</button>
@@ -374,17 +470,64 @@ export const Usuarios: React.FC = () => {
               </select>
             </div>
             <div style={styles.formGroup}>
-              <label style={styles.label}>Unidade: * (obrigatório)</label>
-              <select 
-                value={usuarioEditando.unitId}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, unitId: e.target.value})}
+              <label style={styles.label}>Unidades: * (selecione uma ou mais)</label>
+              <div style={styles.checkboxGroup}>
+                {unidades.map((unit: any) => {
+                  const unitIds: string[] = Array.isArray(usuarioEditando.unitIds) 
+                    ? usuarioEditando.unitIds 
+                    : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
+                  return (
+                    <div key={unit.id} style={styles.checkbox}>
+                      <input 
+                        type="checkbox"
+                        checked={unitIds.includes(unit.id)}
+                        onChange={(e) => {
+                          const newUnitIds: string[] = e.target.checked 
+                            ? [...unitIds, unit.id]
+                            : unitIds.filter((id) => id !== unit.id);
+                          setUsuarioEditando({...usuarioEditando, unitIds: newUnitIds, unitId: newUnitIds[0] || ''});
+                        }}
+                      />
+                      <label>{unit.nome}</label>
+                    </div>
+                  );
+                })}
+              </div>
+              {(usuarioEditando.unitIds?.length || 0) > 0 && (
+                <small style={{color: '#666', marginTop: '4px', display: 'block'}}>
+                  ✅ {usuarioEditando.unitIds?.length || 0} unidade(s) selecionada(s)
+                </small>
+              )}
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>🔑 Redefinir Senha: (deixe em branco para manter a atual)</label>
+              <input 
+                type="password"
+                value={novaSenha}
+                onChange={(e) => setNovaSenha(e.target.value)}
                 style={styles.input}
-              >
-                <option value="">Selecione uma unidade</option>
-                {unidades.map((unit: any) => (
-                  <option key={unit.id} value={unit.id}>{unit.nome}</option>
-                ))}
-              </select>
+                placeholder="Nova senha (mínimo 6 caracteres)"
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Confirmar Nova Senha:</label>
+              <input 
+                type="password"
+                value={confirmaNovaSenha}
+                onChange={(e) => setConfirmaNovaSenha(e.target.value)}
+                style={styles.input}
+                placeholder="Digite a senha novamente"
+              />
+              {novaSenha && novaSenha === confirmaNovaSenha && novaSenha.length >= 6 && (
+                <small style={{color: 'green', marginTop: '4px', display: 'block'}}>
+                  ✅ Senhas coincidem
+                </small>
+              )}
+              {novaSenha && novaSenha !== confirmaNovaSenha && (
+                <small style={{color: 'red', marginTop: '4px', display: 'block'}}>
+                  ❌ Senhas não coincidem
+                </small>
+              )}
             </div>
             <div style={styles.formGroup}>
               <label style={styles.label}>Ativo:</label>
@@ -398,12 +541,18 @@ export const Usuarios: React.FC = () => {
               </select>
             </div>
             <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
-              <button onClick={() => setUsuarioEditando(null)} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
+              <button onClick={() => {
+                setUsuarioEditando(null);
+                setNovaSenha('');
+                setConfirmaNovaSenha('');
+              }} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
               <button onClick={handleSalvarEdicao} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
               <button onClick={() => {
                 if (usuarioEditando.id && window.confirm('Tem certeza que deseja deletar este usuário?')) {
                   handleDeletarUsuario(usuarioEditando.id);
                   setUsuarioEditando(null);
+                  setNovaSenha('');
+                  setConfirmaNovaSenha('');
                 }
               }} style={{flex: 1, padding: '10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Deletar</button>
             </div>
