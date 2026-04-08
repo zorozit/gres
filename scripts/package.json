@@ -1,0 +1,12 @@
+{
+  "name": "gres-scripts",
+  "version": "1.0.0",
+  "description": "Scripts de importação e manutenção do GRES",
+  "main": "importar-caixa-porta.js",
+  "scripts": {
+    "import-caixa": "node importar-caixa-porta.js"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1693.0"
+  }
+}
