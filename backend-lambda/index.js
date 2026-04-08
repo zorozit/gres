@@ -1,10 +1,12 @@
-const AWS = require('aws-sdk');
+// Import only specific services to avoid loading all AWS SDK clients
+const DynamoDB = require('aws-sdk/clients/dynamodb');
+const CognitoIdentityServiceProvider = require('aws-sdk/clients/cognitoidentityserviceprovider');
 
-const cognito = new AWS.CognitoIdentityServiceProvider({
+const cognito = new CognitoIdentityServiceProvider({
   region: 'us-east-2'
 });
 
-const dynamodb = new AWS.DynamoDB.DocumentClient({
+const dynamodb = new DynamoDB.DocumentClient({
   region: 'us-east-2'
 });
 
