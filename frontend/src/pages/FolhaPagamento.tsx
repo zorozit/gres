@@ -106,6 +106,7 @@ interface FechamentoSemanalFreelancer {
     totalLiquido: number;           // total dobras + transporteSaldo - saidasDesconto
     saidasDesconto: number;         // total de saídas "A receber" (descontos gerais)
     saidasDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes desconto
+    pendentesAnteriores: any[];     // Saídas pendentes de meses anteriores a descontar
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
@@ -219,6 +220,8 @@ export default function FolhaPagamento() {
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
   // Saídas do período para cruzamento com motoboys
   const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
+  // Saídas pendentes de meses anteriores (pago=false)
+  const [saidasPendentesAnt, setSaidasPendentesAnt] = useState<any[]>([]);
 
   const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
   const [historicoColabId, setHistoricoColabId] = useState<string | null>(null);
@@ -263,12 +266,18 @@ export default function FolhaPagamento() {
       const dataInicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
       const dataFim = new Date(ano, mes, 0).toISOString().split('T')[0];
 
-      const [rC, rM, rF, rE, rS] = await Promise.all([
+      // Previous 3 months to catch pending saídas
+      const prevDate = new Date(ano, mes - 4, 1);
+      const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-01`;
+
+      const [rC, rM, rF, rE, rS, rSPend] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+        // Pending saídas from previous 3 months
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
       ]);
 
       const dC = await rC.json();
@@ -314,6 +323,16 @@ export default function FolhaPagamento() {
       } else {
         setSaidasPeriodo([]);
       }
+
+      // Carregar saídas pendentes de meses anteriores
+      if (rSPend?.ok) {
+        const dSP = await rSPend.json();
+        // Only keep ones with pago !== true (pending)
+        const pendentes = (Array.isArray(dSP) ? dSP : []).filter((s: any) => s.pago === false);
+        setSaidasPendentesAnt(pendentes);
+      } else {
+        setSaidasPendentesAnt([]);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -331,7 +350,7 @@ export default function FolhaPagamento() {
     if (freelancers.length > 0) {
       calcularFechamentosFreelancer();
     }
-  }, [freelancers, escalas, mesAno]);
+  }, [freelancers, escalas, mesAno, saidasPendentesAnt]);
 
   /* ── Cálculo CLT ─────────────────────────────────────────── */
   const calcularTodasFolhas = (): FolhaMensal[] => {
@@ -486,6 +505,9 @@ export default function FolhaPagamento() {
           data: saidaData(s),
         }));
 
+        // Saídas pendentes de meses anteriores para este freelancer
+        const pendentesAnteriores = saidasPendentesAnt.filter((s: any) => s.colaboradorId === f.id);
+
         // Líquido = dobras + saldo de transporte (já subtraído o adiantado) - descontos gerais
         const totalLiquido = parseFloat((total + transporteSaldo - saidasDesconto).toFixed(2));
 
@@ -497,6 +519,7 @@ export default function FolhaPagamento() {
           transporteAdiantado, transporteSaldo,
           total, totalLiquido, saidasDesconto, saidasDetalhe,
           diasCodigo, diasTrabalhados,
+          pendentesAnteriores,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -535,7 +558,7 @@ export default function FolhaPagamento() {
   // Recalcular fechamentos quando editFechamento, saidas ou escalas mudam
   useEffect(() => {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
-  }, [editFechamento, freelancers, escalas, saidasPeriodo]);
+  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
@@ -979,6 +1002,60 @@ export default function FolhaPagamento() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Pendências de meses anteriores */}
+          {fr.pendentesAnteriores && fr.pendentesAnteriores.length > 0 && (
+            <div style={{ marginTop: '12px', backgroundColor: '#fff9c4', borderRadius: '6px', padding: '10px', fontSize: '12px', borderLeft: '4px solid #f9a825' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <strong style={{ color: '#f57f17' }}>⏳ Pendências de meses anteriores ({fr.pendentesAnteriores.length}):</strong>
+                <span style={{ fontSize: '11px', color: '#5d4037' }}>
+                  Total: <strong>{fmtMoeda(fr.pendentesAnteriores.reduce((s: number, x: any) => s + R(x.valor), 0))}</strong>
+                </span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f9a825', color: 'white' }}>
+                    <th style={{ padding: '4px 6px', textAlign: 'left' }}>Tipo</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'left' }}>Descrição</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Valor</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'center' }}>Data orig.</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fr.pendentesAnteriores.map((p: any, idx: number) => (
+                    <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fffde7' : 'white', borderBottom: '1px solid #fff176' }}>
+                      <td style={{ padding: '4px 6px' }}>
+                        <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                          backgroundColor: '#fff3e0', color: '#e65100' }}>
+                          {p.tipo || p.origem || 'Pendente'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '4px 6px', color: '#555' }}>{p.descricao || '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold', color: '#c62828' }}>
+                        −{fmtMoeda(R(p.valor))}
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>
+                        {p.dataPagamento || p.data || '—'}
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => { onClose(); navigate('/modulos/extrato'); }}
+                          style={{ padding: '2px 6px', fontSize: '10px', border: 'none', borderRadius: '4px', backgroundColor: '#f57c00', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}
+                          title="Editar no Extrato de Pagamentos"
+                        >
+                          ✏️ Extrato
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#5d4037', fontStyle: 'italic' }}>
+                💡 Para descontar: vá ao Extrato de Pagamentos → filtre por "{fr.nome}" → clique ✏️ para editar e marcar como Pago quando descontado.
+              </div>
             </div>
           )}
 
@@ -1648,7 +1725,66 @@ export default function FolhaPagamento() {
                     <li><strong>Ajuste manual</strong>: use os campos <em>Extra / Desconto</em> no cabe\u00e7alho de cada semana para corre\u00e7\u00f5es avulsas que n\u00e3o se enquadram nos tipos acima.</li>
                   </ul>
                 </div>
-                {/* Total do mês */}
+                {/* ── Checklist de Pendências de meses anteriores ────────── */}
+                {(() => {
+                  const colabsComPendencia = freelancers.map(fr => {
+                    const pends = saidasPendentesAnt.filter((s: any) => s.colaboradorId === fr.id);
+                    return { fr, pends };
+                  }).filter(x => x.pends.length > 0);
+
+                  if (colabsComPendencia.length === 0) return null;
+
+                  const totalPendente = colabsComPendencia.reduce(
+                    (sum, x) => sum + x.pends.reduce((s: number, p: any) => s + R(p.valor), 0), 0
+                  );
+
+                  return (
+                    <div style={{ ...s.card, marginBottom: '16px', borderLeft: '4px solid #f9a825', backgroundColor: '#fffde7' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                        <h4 style={{ margin: 0, color: '#f57f17', fontSize: '14px' }}>
+                          ⏳ Checklist de Pendências — Saídas a Descontar no Próximo Pagamento
+                        </h4>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '12px', color: '#5d4037', fontWeight: 'bold' }}>
+                            Total: {fmtMoeda(totalPendente)}
+                          </span>
+                          <button
+                            onClick={() => navigate('/modulos/extrato')}
+                            style={{ padding: '4px 10px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#f57c00', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}
+                          >
+                            ✏️ Editar no Extrato
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#5d4037', marginBottom: '10px', fontStyle: 'italic' }}>
+                        Estas saídas foram lançadas em meses anteriores e marcadas como <strong>Pendente</strong>.
+                        Para descontá-las: no Extrato de Pagamentos, filtre o colaborador → clique <strong>✏️</strong> na saída → marque como <strong>Pago</strong> quando descontar.
+                      </div>
+                      {colabsComPendencia.map(({ fr, pends }) => (
+                        <div key={fr.id} style={{ marginBottom: '10px', borderBottom: '1px solid #fff176', paddingBottom: '8px' }}>
+                          <div style={{ fontWeight: 'bold', color: '#5d4037', marginBottom: '4px', fontSize: '12px' }}>
+                            👤 {fr.nome}
+                            <span style={{ marginLeft: '8px', fontWeight: 'normal', color: '#888' }}>
+                              ({pends.length} item{pends.length > 1 ? 's' : ''} · {fmtMoeda(pends.reduce((s: number, p: any) => s + R(p.valor), 0))})
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {pends.map((p: any, i: number) => (
+                              <div key={i} style={{ backgroundColor: '#fff8e1', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', border: '1px solid #ffe082', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: '#e65100', fontWeight: 'bold' }}>{p.tipo || p.origem || 'Saída'}</span>
+                                <span style={{ color: '#555' }}>{p.descricao || '—'}</span>
+                                <span style={{ color: '#c62828', fontWeight: 'bold' }}>−{fmtMoeda(R(p.valor))}</span>
+                                <span style={{ color: '#888', fontFamily: 'monospace' }}>{(p.dataPagamento || p.data || '').substring(0, 10)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Total do m\u00eas */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '16px', paddingTop: '12px' }}>
                   <div style={{ ...s.card, borderLeft: '4px solid #c2185b' }}>
                     <div style={{ fontSize: '11px', color: '#666' }}>Total L\u00edquido Freelancers</div>
@@ -1712,8 +1848,16 @@ export default function FolhaPagamento() {
                               const frIsPago = frFolhaSalva?.pago || fr.pago || false;
                               const frDataPgto = frFolhaSalva?.dataPagamento;
                               return (
-                              <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
-                                <td style={{ ...s.td, fontWeight: 'bold' }}>{fr.nome}</td>
+                              <tr key={fr.id} style={{ backgroundColor: (fr.pendentesAnteriores?.length > 0) ? '#fffde7' : (fi % 2 === 0 ? '#fafafa' : 'white'), borderLeft: fr.pendentesAnteriores?.length > 0 ? '3px solid #f9a825' : '3px solid transparent' }}>
+                                <td style={{ ...s.td, fontWeight: 'bold' }}>
+                                  {fr.nome}
+                                  {fr.pendentesAnteriores?.length > 0 && (
+                                    <span style={{ marginLeft: '6px', fontSize: '10px', color: '#f57f17', fontWeight: 'bold' }}
+                                      title={`${fr.pendentesAnteriores.length} pendência(s) de meses anteriores a descontar`}>
+                                      ⏳ {fr.pendentesAnteriores.length} pend.
+                                    </span>
+                                  )}
+                                </td>
                                 <td style={{ ...s.td, fontSize: '11px' }}>
                                   {fr.chavePix && <div>💳 {fr.chavePix}</div>}
                                   {fr.telefone && <div>📱 {fr.telefone}</div>}
