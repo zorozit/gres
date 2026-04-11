@@ -147,6 +147,32 @@ const formatarCelular = (v: string) => {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
+/* Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
+const dataISOParaPt = (iso: string): string => {
+  if (!iso) return '';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return iso; // já está em outro formato, devolve como está
+};
+
+/* Auto-formata enquanto o usuário digita → DD/MM/YYYY */
+const formatarData = (v: string): string => {
+  const d = v.replace(/\D/g, '').slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+};
+
+/* Converte DD/MM/YYYY → YYYY-MM-DD para persistência; retorna '' se inválido */
+const dataPtParaISO = (pt: string): string => {
+  const m = pt.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return '';
+  const [, dd, mm, yyyy] = m;
+  const d = new Date(`${yyyy}-${mm}-${dd}`);
+  if (isNaN(d.getTime())) return '';
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Colaboradores() {
   const { activeUnit } = useUnit();
@@ -513,8 +539,19 @@ export default function Colaboradores() {
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Data de Nascimento</label>
-          <input type="date" value={data.dataNascimento || ''} style={S.input}
-            onChange={e => onChange({ dataNascimento: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataNascimento || '')}
+            style={S.input}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataNascimento: iso || fmt2 });
+            }}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={{ ...S.label, color: '#999' }}>E-mail (opcional)</label>
@@ -597,15 +634,37 @@ export default function Colaboradores() {
         {/* Datas */}
         <div style={S.formGroup}>
           <label style={S.label}>Data de Admissão</label>
-          <input type="date" value={data.dataAdmissao || ''} style={S.input}
-            onChange={e => onChange({ dataAdmissao: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataAdmissao || '')}
+            style={S.input}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataAdmissao: iso || fmt2 });
+            }}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={{ ...S.label, color: data.ativo === false ? '#c62828' : '#444' }}>
             Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
           </label>
-          <input type="date" value={data.dataDemissao || ''} style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
-            onChange={e => onChange({ dataDemissao: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataDemissao || '')}
+            style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataDemissao: iso || fmt2 });
+            }}
+          />
         </div>
         {/* Status */}
         <div style={S.formGroup}>
