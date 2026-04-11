@@ -149,12 +149,16 @@ export const Extrato: React.FC = () => {
           if (!saida.colaboradorId && !saida.colabId) continue;
           const colabId = saida.colaboradorId || saida.colabId;
           const colab = colabs.find((c: any) => c.id === colabId);
-          const nome = colab?.nome || saida.favorecido || colabId;
+          const nome = colab?.nome || saida.colaborador || saida.favorecido || colabId;
           const tipoContrato = colab?.tipoContrato || '—';
-          const tipo = saida.tipo || saida.origem || saida.referencia;
-          const isDebito = tipo === 'A receber'; // collaborator owes restaurant
-          const saidaMes = (saida.dataPagamento || '').substring(0, 7);
+          const tipo = saida.tipo || saida.origem || saida.referencia || 'A pagar';
+          // Use dataPagamento OR data (creation date) to determine month
+          const saidaDataEfetiva = saida.dataPagamento || saida.data || '';
+          const saidaMes = saidaDataEfetiva.substring(0, 7);
           if (saidaMes !== mesAno) continue;
+          // Tipos que são débito (colaborador deve ao restaurante)
+          const TIPOS_DEBITO = ['A receber', 'Caixinha', 'Consumo Interno'];
+          const isDebito = TIPOS_DEBITO.includes(tipo);
 
           allItems.push({
             id: saida.id || `saida_${colabId}_${saida.dataPagamento}`,
@@ -168,7 +172,7 @@ export const Extrato: React.FC = () => {
             descricao: saida.descricao || tipo || 'Saída',
             valor: R(saida.valor),
             pago: true, // saídas are always already recorded/paid
-            dataPagamento: saida.dataPagamento,
+            dataPagamento: saidaDataEfetiva,
             tipoSaida: tipo,
             obs: saida.observacao || '',
             updatedAt: saida.updatedAt || saida.dataPagamento,
