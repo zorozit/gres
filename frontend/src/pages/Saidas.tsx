@@ -7,24 +7,26 @@ import * as XLSX from 'xlsx';
 /*
   Conceito de saída / pagamento:
   ─────────────────────────────────────────────────────────────────
-  tipo          │ sinal  │ significado
-  ──────────────┼────────┼───────────────────────────────────────
-  A pagar       │ (−)    │ restaurante deve ao colaborador (adiantamento, comissão, etc.)
-  A receber     │ (+)    │ colaborador deve ao restaurante (vale, empréstimo, etc.)
-  Sangria       │ (−)    │ retirada de dinheiro físico do caixa
-  PIX           │ (−)    │ pagamento via PIX (pode ser antecipação ou despesa)
-  Caixa         │ (−/+)  │ entrada/saída no caixa (depende do contexto)
+  tipo                   │ sinal  │ significado
+  ───────────────────────┼────────┼─────────────────────────────────
+  A pagar                │ (−)    │ restaurante deve ao colaborador (adiantamento, comissão, etc.)
+  Adiantamento Transporte│ (−)    │ transporte pago antecipado; abatido automaticamente na folha
+  A receber              │ (+)    │ colaborador deve ao restaurante (vale, empréstimo, etc.)
+  Sangria                │ (−)    │ retirada de dinheiro físico do caixa
+  PIX                    │ (−)    │ pagamento via PIX (pode ser antecipação ou despesa)
+  Caixa                  │ (−/+)  │ entrada/saída no caixa (depende do contexto)
   ─────────────────────────────────────────────────────────────────
   O valor digitado é sempre POSITIVO.  O sistema interpreta
   automaticamente pelo tipo.
 */
 
 const TIPOS_REFERENCIA = [
-  { value: 'A pagar',   label: '📤 A pagar (− restaurante paga)',  dir: 'saida'   },
-  { value: 'A receber', label: '📥 A receber (+ colaborador deve)', dir: 'entrada' },
-  { value: 'Sangria',   label: '💵 Sangria (retirada de caixa)',    dir: 'saida'   },
-  { value: 'PIX',       label: '📲 PIX',                            dir: 'saida'   },
-  { value: 'Caixa',     label: '🏦 Caixa',                          dir: 'neutro'  },
+  { value: 'A pagar',                label: '📤 A pagar (− restaurante paga ao colaborador)',  dir: 'saida'   },
+  { value: 'Adiantamento Transporte',label: '🚗 Adiantamento Transporte (− abatido na folha)', dir: 'saida'   },
+  { value: 'A receber',              label: '📥 A receber (+ colaborador deve ao restaurante)', dir: 'entrada' },
+  { value: 'Sangria',                label: '💵 Sangria (retirada de caixa)',    dir: 'saida'   },
+  { value: 'PIX',                    label: '📲 PIX',                            dir: 'saida'   },
+  { value: 'Caixa',                  label: '🏦 Caixa',                          dir: 'neutro'  },
 ];
 
 export const Saidas: React.FC = () => {
@@ -258,8 +260,9 @@ export const Saidas: React.FC = () => {
   // badge color por tipo
   const tipoCor = (tipo: string) => {
     switch (tipo) {
-      case 'A pagar':   return { bg: '#fce4e4', text: '#c62828', border: '#e57373' };
-      case 'A receber': return { bg: '#e8f5e9', text: '#2e7d32', border: '#66bb6a' };
+      case 'A pagar':                 return { bg: '#fce4e4', text: '#c62828', border: '#e57373' };
+      case 'Adiantamento Transporte': return { bg: '#fff3e0', text: '#e65100', border: '#ffcc80' };
+      case 'A receber':               return { bg: '#e8f5e9', text: '#2e7d32', border: '#66bb6a' };
       case 'Sangria':   return { bg: '#fff3e0', text: '#e65100', border: '#ffa726' };
       case 'PIX':       return { bg: '#e8eaf6', text: '#283593', border: '#7986cb' };
       case 'Caixa':     return { bg: '#e0f7fa', text: '#006064', border: '#26c6da' };
@@ -354,10 +357,13 @@ export const Saidas: React.FC = () => {
                     </select>
                     {/* hint contextual */}
                     {novoRegistro.tipo === 'A pagar' && (
-                      <small style={{ color: '#c62828' }}>⬇ Valor sai do restaurante → vai ao colaborador</small>
+                      <small style={{ color: '#c62828' }}>⬇ Valor sai do restaurante → vai ao colaborador (adiantamento, comissão, etc.). Não é abatido do transporte.</small>
+                    )}
+                    {novoRegistro.tipo === 'Adiantamento Transporte' && (
+                      <small style={{ color: '#e65100', fontWeight: 'bold' }}>🚗 Use este tipo para registrar transporte pago antecipado. O valor será abatido automaticamente do transporte calculado na Folha de Pagamento (semana de dobras).</small>
                     )}
                     {novoRegistro.tipo === 'A receber' && (
-                      <small style={{ color: '#2e7d32' }}>⬆ Colaborador deve esse valor ao restaurante (vale, adiantamento a repor)</small>
+                      <small style={{ color: '#2e7d32' }}>⬆ Colaborador deve esse valor ao restaurante (vale, empréstimo, desconto). Será descontado automaticamente do líquido na folha semanal.</small>
                     )}
                     {novoRegistro.tipo === 'Sangria' && (
                       <small style={{ color: '#e65100' }}>💵 Dinheiro retirado do caixa físico (Sangria da caixa)</small>

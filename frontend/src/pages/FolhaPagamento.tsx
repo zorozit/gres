@@ -98,21 +98,25 @@ interface FechamentoSemanalFreelancer {
     valorDia: number;
     valorNoite: number;
     valorTransporte: number;
-    totalTransporte: number;
+    totalTransporte: number;        // transporte calculado pelos dias trabalhados
+    transporteAdiantado: number;    // transporte já pago (Saídas "Adiantamento Transporte")
+    transporteSaldo: number;        // totalTransporte - transporteAdiantado (≥ 0)
     diasTrabalhados: number;
     total: number;
-    totalLiquido: number;        // total + transporte - saidasDesconto
-    saidasDesconto: number;      // total de saídas "A receber" no período (descontos)
-    saidasDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes
-    diasCodigo: string;          // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
+    totalLiquido: number;           // total dobras + transporteSaldo - saidasDesconto
+    saidasDesconto: number;         // total de saídas "A receber" (descontos gerais)
+    saidasDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes desconto
+    diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
   totalSemana: number;
-  totalTransporte: number;
+  totalTransporte: number;             // saldo a pagar (calculado - adiantado)
+  totalTransporteCalculado?: number;   // transporte bruto pelos dias trabalhados
+  totalTransporteAdiantado?: number;   // total já pago via "Adiantamento Transporte"
   totalCombustivel: number;
   totalExtra: number;
   totalDesconto: number;
-  totalSaidasDesconto: number;   // soma dos descontos de saídas de todos freelancers
+  totalSaidasDesconto: number;         // soma dos descontos de saídas (A receber)
   totalLiquido: number;
   observacao?: string;
 }
@@ -445,28 +449,45 @@ export default function FolhaPagamento() {
         const valorTransporte = R(f.valorTransporte);
         const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
 
-        // Saídas "A receber" do freelancer nesta semana (colaborador deve ao restaurante = desconto)
-        const saidasFreelancer = saidasPeriodo.filter(s =>
+        // Saídas "Adiantamento Transporte" do freelancer nesta semana (transporte já pago)
+        const saidasTransporte = saidasPeriodo.filter(s =>
+          s.colaboradorId === f.id &&
+          (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte' &&
+          ((s.dataPagamento || s.data || '') >= isoInicio) &&
+          ((s.dataPagamento || s.data || '') <= isoFim)
+        );
+        const transporteAdiantado = parseFloat(
+          saidasTransporte.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+        );
+        // Saldo = quanto ainda é devido (transporte calculado menos o que já foi adiantado)
+        // Não fica negativo: se adiantou mais do que calculado, saldo = 0
+        const transporteSaldo = parseFloat(Math.max(0, totalTransporte - transporteAdiantado).toFixed(2));
+
+        // Saídas "A receber" do freelancer nesta semana (colaborador deve ao restaurante = desconto geral)
+        const saidasDescFreelancer = saidasPeriodo.filter(s =>
           s.colaboradorId === f.id &&
           (s.tipo || s.origem || s.referencia || '') === 'A receber' &&
-          s.dataPagamento >= isoInicio && s.dataPagamento <= isoFim
+          ((s.dataPagamento || s.data || '') >= isoInicio) &&
+          ((s.dataPagamento || s.data || '') <= isoFim)
         );
         const saidasDesconto = parseFloat(
-          saidasFreelancer.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+          saidasDescFreelancer.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
-        const saidasDetalhe = saidasFreelancer.map((s: any) => ({
+        const saidasDetalhe = saidasDescFreelancer.map((s: any) => ({
           descricao: s.descricao || 'Desconto',
           valor: R(s.valor),
-          data: s.dataPagamento || '',
+          data: s.dataPagamento || s.data || '',
         }));
 
-        const totalLiquido = parseFloat((total + totalTransporte - saidasDesconto).toFixed(2));
+        // Líquido = dobras + saldo de transporte (já subtraído o adiantado) - descontos gerais
+        const totalLiquido = parseFloat((total + transporteSaldo - saidasDesconto).toFixed(2));
 
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
           telefone: f.celular || f.telefone,
           dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
           valorTransporte, totalTransporte,
+          transporteAdiantado, transporteSaldo,
           total, totalLiquido, saidasDesconto, saidasDetalhe,
           diasCodigo, diasTrabalhados,
           pago: false,
@@ -480,6 +501,8 @@ export default function FolhaPagamento() {
       const desconto = parseFloat(ef.desconto || '0') || 0;
       const totalSemana = frList.reduce((s, fr) => s + fr.total, 0);
       const totalTransporteSemana = frList.reduce((s, fr) => s + (fr.totalTransporte || 0), 0);
+      const totalTransporteAdiantado = frList.reduce((s, fr) => s + (fr.transporteAdiantado || 0), 0);
+      const totalTransporteSaldo = frList.reduce((s, fr) => s + (fr.transporteSaldo || 0), 0);
       const totalSaidasDesconto = frList.reduce((s, fr) => s + (fr.saidasDesconto || 0), 0);
 
       return {
@@ -487,12 +510,14 @@ export default function FolhaPagamento() {
         dataFechamento: isoFim,
         freelancers: frList,
         totalSemana,
-        totalTransporte: totalTransporteSemana,
+        totalTransporte: totalTransporteSaldo,         // s\u00f3 o saldo (calculado - adiantado)
+        totalTransporteCalculado: totalTransporteSemana,
+        totalTransporteAdiantado,
         totalCombustivel: combustivel,
         totalExtra: extra,
         totalDesconto: desconto,
         totalSaidasDesconto,
-        totalLiquido: totalSemana + totalTransporteSemana - totalSaidasDesconto + extra - desconto,
+        totalLiquido: totalSemana + totalTransporteSaldo - totalSaidasDesconto + extra - desconto,
         observacao: ef.obs,
       };
     });
@@ -1496,11 +1521,17 @@ export default function FolhaPagamento() {
               <>
                 {/* Informações sobre transporte e descontos */}
                 <div style={{ backgroundColor: '#e3f2fd', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', color: '#1565c0', borderLeft: '4px solid #1976d2' }}>
-                  <strong>ℹ️ Como funciona o pagamento:</strong>
-                  <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                    <li><strong>Transporte</strong>: calculado automaticamente pelos dias com escala lançada (turnos trabalhados). Se o colaborador faltar e a escala for removida, o transporte não é contabilizado.</li>
-                    <li><strong>Descontos de Sa\u00eddas</strong>: lan\u00e7amentos tipo <em>"A receber"</em> no m\u00f3dulo <strong>Sa\u00eddas</strong> s\u00e3o descontados automaticamente do l\u00edquido semanal.</li>
-                    <li><strong>Desconto manual</strong>: use o campo <em>Desconto</em> no cabe\u00e7alho de cada semana para ajustes avulsos (transport adiantado, etc.).</li>
+                  <strong>ℹ️ Como funciona o pagamento semanal de freelancers:</strong>
+                  <ul style={{ margin: '6px 0 0 16px', padding: 0, lineHeight: '1.8' }}>
+                    <li><strong>Transporte calculado</strong>: dias com escala lançada × valor/dia configurado no cadastro. Se o colaborador faltar e a escala for removida, não é contabilizado.</li>
+                    <li>
+                      <strong>🚗 Adiantamento de Transporte</strong>: se voc\u00ea pagou o transporte antecipado,
+                      v\u00e1 em <strong>Sa\u00eddas → Novo Registro</strong>, selecione o colaborador, escolha o tipo
+                      <em> "🚗 Adiantamento Transporte"</em> e informe o valor pago. O sistema abate automaticamente
+                      esse valor do transporte calculado na semana correspondente e mostra o saldo restante.
+                    </li>
+                    <li><strong>🔴 Descontos (A receber)</strong>: lan\u00e7amentos tipo <em>"A receber"</em> em Sa\u00eddas (vale, empr\u00e9stimo, etc.) s\u00e3o descontados automaticamente do l\u00edquido da semana.</li>
+                    <li><strong>Ajuste manual</strong>: use os campos <em>Extra / Desconto</em> no cabe\u00e7alho de cada semana para corre\u00e7\u00f5es avulsas que n\u00e3o se enquadram nos tipos acima.</li>
                   </ul>
                 </div>
                 {/* Total do mês */}
@@ -1587,8 +1618,24 @@ export default function FolhaPagamento() {
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1976d2', fontSize: '13px' }}>
                                   {fmtMoeda(fr.total)}
                                 </td>
-                                <td style={{ ...s.td, textAlign: 'right', color: fr.totalTransporte > 0 ? '#1565c0' : '#aaa', fontSize: '12px' }}>
-                                  {fr.totalTransporte > 0 ? `+${fmtMoeda(fr.totalTransporte)}` : '—'}
+                                <td style={{ ...s.td, textAlign: 'right', fontSize: '11px' }}>
+                                  {fr.totalTransporte > 0 ? (
+                                    <div>
+                                      <div style={{ color: '#1565c0' }} title="Transporte calculado (dias trabalhados × valor/dia)">
+                                        📦 {fmtMoeda(fr.totalTransporte)}
+                                      </div>
+                                      {fr.transporteAdiantado > 0 && (
+                                        <div style={{ color: '#e65100', fontSize: '10px' }} title="Já pago via Adiantamento Transporte em Saídas">
+                                          ✔ {fmtMoeda(fr.transporteAdiantado)} pago
+                                        </div>
+                                      )}
+                                      {fr.transporteAdiantado > 0 && (
+                                        <div style={{ color: fr.transporteSaldo > 0 ? '#2e7d32' : '#999', fontWeight: 'bold', fontSize: '10px' }}>
+                                          → {fr.transporteSaldo > 0 ? `saldo ${fmtMoeda(fr.transporteSaldo)}` : 'quitado'}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : '—'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', color: fr.saidasDesconto > 0 ? '#c62828' : '#aaa', fontSize: '12px' }}>
                                   {fr.saidasDesconto > 0 ? (
@@ -1640,10 +1687,12 @@ export default function FolhaPagamento() {
                                             pago: novoPago,
                                             dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
                                             valorBruto: fr.total,
-                                            valorTransporte: fr.totalTransporte || 0,
+                                            valorTransporte: fr.transporteSaldo || 0,
+                                            transporteCalculado: fr.totalTransporte || 0,
+                                            transporteAdiantado: fr.transporteAdiantado || 0,
                                             desconto: fr.saidasDesconto || 0,
                                             totalFinal: fr.totalLiquido,
-                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
+                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
                                           };
                                           const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                                             method: 'POST',
@@ -1672,13 +1721,38 @@ export default function FolhaPagamento() {
                             })}
                           </tbody>
                           <tfoot>
+                            {/* Linha de transporte adiantado (se houver) */}
+                            {(fech.totalTransporteAdiantado || 0) > 0 && (
+                              <tr style={{ backgroundColor: '#fff8e1' }}>
+                                <td style={{ padding: '6px 8px', color: '#e65100', fontSize: '11px' }} colSpan={5}>🚗 Transporte calculado</td>
+                                <td colSpan={1} />
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1565c0', fontSize: '11px' }}>
+                                  {fmtMoeda(fech.totalTransporteCalculado || 0)}
+                                </td>
+                                <td colSpan={4} />
+                              </tr>
+                            )}
+                            {(fech.totalTransporteAdiantado || 0) > 0 && (
+                              <tr style={{ backgroundColor: '#fff8e1' }}>
+                                <td style={{ padding: '6px 8px', color: '#e65100', fontSize: '11px' }} colSpan={5}>✔ Transporte já pago (adiantado via Saídas)</td>
+                                <td colSpan={1} />
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#e65100', fontSize: '11px' }}>
+                                  −{fmtMoeda(fech.totalTransporteAdiantado || 0)}
+                                </td>
+                                <td colSpan={4} />
+                              </tr>
+                            )}
                             <tr style={{ backgroundColor: '#880e4f', color: 'white', fontWeight: 'bold' }}>
                               <td style={{ padding: '8px' }} colSpan={5}>SUBTOTAL DOBRAS</td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#f48fb1' }}>
                                 {fmtMoeda(fech.totalSemana)}
                               </td>
-                              <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9' }}>
-                                {fech.totalTransporte > 0 ? `+${fmtMoeda(fech.totalTransporte)}` : '—'}
+                              <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9', fontSize: '11px' }}>
+                                {fech.totalTransporte > 0
+                                  ? <span title={`Calculado: ${fmtMoeda(fech.totalTransporteCalculado||0)}${(fech.totalTransporteAdiantado||0) > 0 ? ` | Adiantado: −${fmtMoeda(fech.totalTransporteAdiantado||0)}` : ''}`}>
+                                      +{fmtMoeda(fech.totalTransporte)}{(fech.totalTransporteAdiantado||0) > 0 ? ' *' : ''}
+                                    </span>
+                                  : (fech.totalTransporteCalculado||0) > 0 ? <span style={{ color: '#a5d6a7' }}>✔ quitado</span> : '—'}
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
                                 {fech.totalSaidasDesconto > 0 ? `−${fmtMoeda(fech.totalSaidasDesconto)}` : '—'}
@@ -1690,10 +1764,9 @@ export default function FolhaPagamento() {
                             </tr>
                             {fech.totalSaidasDesconto > 0 && (
                               <tr style={{ backgroundColor: '#ffebee' }}>
-                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={8}>
-                                  ⚠️ Descontos automáticos de Saídas ("A receber") incluídos acima. Confira em Saídas para detalhes por colaborador.
+                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={11}>
+                                  ⚠️ Descontos automáticos de Saídas ("A receber") incluídos no Líquido. Veja tooltip na coluna Desconto por colaborador.
                                 </td>
-                                <td colSpan={3} />
                               </tr>
                             )}
                             {(parseFloat(ef.combustivel || '0') > 0 || parseFloat(ef.extra || '0') > 0 || parseFloat(ef.desconto || '0') > 0) && (
