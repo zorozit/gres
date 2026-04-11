@@ -147,6 +147,48 @@ const formatarCelular = (v: string) => {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
+/* Converte número → string BR para exibição no campo (ex: 1500.5 → "1.500,50") */
+const numParaBR = (v: number | undefined): string => {
+  if (v === undefined || v === null || isNaN(v as number)) return '';
+  if (v === 0) return '';
+  return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+};
+
+/* Converte string BR digitada → número (ex: "1.500,50" ou "1500,50" ou "1500.50" → 1500.5) */
+const brParaNum = (s: string): number => {
+  if (!s || s.trim() === '') return 0;
+  // Remove pontos de milhar e converte vírgula decimal em ponto
+  const limpo = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(limpo);
+  return isNaN(n) ? 0 : n;
+};
+
+/* Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
+const dataISOParaPt = (iso: string): string => {
+  if (!iso) return '';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return iso; // já está em outro formato, devolve como está
+};
+
+/* Auto-formata enquanto o usuário digita → DD/MM/YYYY */
+const formatarData = (v: string): string => {
+  const d = v.replace(/\D/g, '').slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+};
+
+/* Converte DD/MM/YYYY → YYYY-MM-DD para persistência; retorna '' se inválido */
+const dataPtParaISO = (pt: string): string => {
+  const m = pt.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return '';
+  const [, dd, mm, yyyy] = m;
+  const d = new Date(`${yyyy}-${mm}-${dd}`);
+  if (isNaN(d.getTime())) return '';
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Colaboradores() {
   const { activeUnit } = useUnit();
@@ -513,8 +555,19 @@ export default function Colaboradores() {
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Data de Nascimento</label>
-          <input type="date" value={data.dataNascimento || ''} style={S.input}
-            onChange={e => onChange({ dataNascimento: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataNascimento || '')}
+            style={S.input}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataNascimento: iso || fmt2 });
+            }}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={{ ...S.label, color: '#999' }}>E-mail (opcional)</label>
@@ -597,15 +650,37 @@ export default function Colaboradores() {
         {/* Datas */}
         <div style={S.formGroup}>
           <label style={S.label}>Data de Admissão</label>
-          <input type="date" value={data.dataAdmissao || ''} style={S.input}
-            onChange={e => onChange({ dataAdmissao: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataAdmissao || '')}
+            style={S.input}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataAdmissao: iso || fmt2 });
+            }}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={{ ...S.label, color: data.ativo === false ? '#c62828' : '#444' }}>
             Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
           </label>
-          <input type="date" value={data.dataDemissao || ''} style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
-            onChange={e => onChange({ dataDemissao: e.target.value })} />
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataDemissao || '')}
+            style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataDemissao: iso || fmt2 });
+            }}
+          />
         </div>
         {/* Status */}
         <div style={S.formGroup}>
@@ -619,29 +694,57 @@ export default function Colaboradores() {
         {/* Financeiro */}
         <div style={S.formGroup}>
           <label style={S.label}>Salário Base (R$)</label>
-          <input type="number" step="0.01" value={data.salario || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.salario)}
+            key={`sal-${data.salario}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ salario: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Valor Dia / Dobra-Dia (R$)</label>
-          <input type="number" step="0.01" value={data.valorDia || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorDia)}
+            key={`vdia-${data.valorDia}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorDia: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Valor Noite / Dobra-Noite (R$)</label>
-          <input type="number" step="0.01" value={data.valorNoite || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorNoite)}
+            key={`vnoite-${data.valorNoite}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorNoite: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Transporte Ida+Volta por dia (R$)</label>
-          <input type="number" step="0.50" value={data.valorTransporte || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorTransporte)}
+            key={`vtransp-${data.valorTransporte}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorTransporte: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
         </div>
         <div style={S.formGroup}>
@@ -969,13 +1072,29 @@ export default function Colaboradores() {
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Valor por Dobra (R$) <span style={{fontSize:'11px',color:'#888'}}>(usado na folha)</span></label>
-                    <input type="number" step="10" min="0" value={(formFree as any).valorDia ?? 120} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, valorDia: parseFloat(e.target.value) || 0 } as any)} />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      defaultValue={numParaBR((formFree as any).valorDia ?? 120)}
+                      key={`free-vdia-${(formFree as any).valorDia}`}
+                      style={S.input}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => setFormFree({ ...formFree, valorDia: brParaNum(e.target.value) } as any)}
+                    />
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Transporte por dia (R$)</label>
-                    <input type="number" step="0.50" min="0" value={(formFree as any).valorTransporte ?? 0} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, valorTransporte: parseFloat(e.target.value) || 0 } as any)} />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      defaultValue={numParaBR((formFree as any).valorTransporte ?? 0)}
+                      key={`free-vtransp-${(formFree as any).valorTransporte}`}
+                      style={S.input}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => setFormFree({ ...formFree, valorTransporte: brParaNum(e.target.value) } as any)}
+                    />
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Status</label>
