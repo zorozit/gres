@@ -1010,7 +1010,7 @@ export default function Colaboradores() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                      {['Nome', 'Função', 'Área', 'PIX', 'Telefone', 'R$/Dobra', 'Transp/dia', 'Status', ''].map(h => (
+                      {['Nome', 'Função', 'Área', 'PIX', 'Telefone', 'R$/Dia', 'R$/Noite', 'Transp/dia', 'Status', ''].map(h => (
                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -1023,7 +1023,8 @@ export default function Colaboradores() {
                         <td style={{ padding: '8px 10px', color: '#555', fontSize: '12px' }}>{f.area || '—'}</td>
                         <td style={{ padding: '8px 10px', fontSize: '12px' }}>{f.chavePix || '—'}</td>
                         <td style={{ padding: '8px 10px', fontSize: '12px' }}>{(f.celular || f.telefone) || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#2e7d32' }}>{fmt(f.valorDia || 0)}<span style={{fontSize:'10px',color:'#888'}}>/dobra</span></td>
+                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#2e7d32' }}>{f.valorDia > 0 ? fmt(f.valorDia) : '—'}</td>
+                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#7b1fa2' }}>{f.valorNoite > 0 ? fmt(f.valorNoite) : '—'}</td>
                         <td style={{ padding: '8px 10px', fontSize: '12px', color: '#1565c0' }}>{f.valorTransporte > 0 ? fmt(f.valorTransporte) : '—'}</td>
                         <td style={{ padding: '8px 10px' }}>
                           <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
@@ -1085,7 +1086,7 @@ export default function Colaboradores() {
                       onChange={e => setFormFree({ ...formFree, telefone: e.target.value })} />
                   </div>
                   <div style={S.formGroup}>
-                    <label style={S.label}>Valor por Dobra (R$) <span style={{fontSize:'11px',color:'#888'}}>(usado na folha)</span></label>
+                    <label style={S.label}>Valor Dobra-Dia (R$) <span style={{fontSize:'11px',color:'#888'}}>(turno D ou DN)</span></label>
                     <input
                       type="text"
                       inputMode="decimal"
@@ -1095,6 +1096,19 @@ export default function Colaboradores() {
                       style={S.input}
                       onFocus={e => e.target.select()}
                       onBlur={e => setFormFree({ ...formFree, valorDia: brParaNum(e.target.value) } as any)}
+                    />
+                  </div>
+                  <div style={S.formGroup}>
+                    <label style={S.label}>Valor Dobra-Noite (R$) <span style={{fontSize:'11px',color:'#888'}}>(turno N ou DN)</span></label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      defaultValue={numParaBR((formFree as any).valorNoite ?? 0)}
+                      key={`free-vnoite-${(formFree as any).valorNoite}`}
+                      style={S.input}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => setFormFree({ ...formFree, valorNoite: brParaNum(e.target.value) } as any)}
                     />
                   </div>
                   <div style={S.formGroup}>

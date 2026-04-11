@@ -95,6 +95,11 @@ interface FechamentoSemanalFreelancer {
     telefone?: string;
     dobras: number;
     valorDobra: number;
+    valorDia: number;
+    valorNoite: number;
+    valorTransporte: number;
+    totalTransporte: number;
+    diasTrabalhados: number;
     total: number;
     diasCodigo: string;          // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
@@ -732,13 +737,23 @@ export default function FolhaPagamento() {
   /* ── Modal detalhe Freelancer ────────────────────────────── */
   const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[] }; onClose: () => void }) => {
     const { fr, semana, escalas: escs } = data;
-    const valorDobra = R(fr.valorDobra || fr.valorDia) || 120;
+    const vDia   = R(fr.valorDia)   || 0;
+    const vNoite = R(fr.valorNoite) || 0;
+    const usaTurno = vDia > 0 || vNoite > 0;
+    const valorDobra = usaTurno ? (vDia + vNoite) : (R(fr.valorDobra) || R(fr.valorDia) || 120);
     const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
     const linhas = escs.map(e => {
       const dow = new Date(e.data + 'T12:00:00').getDay();
-      const turnoLabel = e.turno === 'DiaNoite' ? 'DN (Dobra)' : e.turno === 'Dia' ? 'Dia (0.5 dobra)' : e.turno === 'Noite' ? 'Noite (0.5 dobra)' : e.turno;
+      const turnoLabel = e.turno === 'DiaNoite' ? 'DN (D+N)' : e.turno === 'Dia' ? 'Dia' : e.turno === 'Noite' ? 'Noite' : e.turno;
       const dobras = e.turno === 'DiaNoite' ? 1 : (e.turno === 'Dia' || e.turno === 'Noite') ? 0.5 : 0;
-      const valor = dobras * valorDobra;
+      let valor = 0;
+      if (usaTurno) {
+        if (e.turno === 'DiaNoite') valor = vDia + vNoite;
+        else if (e.turno === 'Dia')   valor = vDia;
+        else if (e.turno === 'Noite') valor = vNoite;
+      } else {
+        valor = dobras * valorDobra;
+      }
       return { data: e.data, dia: DIAS_ABR[dow], turno: turnoLabel, dobras, valor };
     }).filter(l => l.dobras > 0);
     const totalDobras = linhas.reduce((s, l) => s + l.dobras, 0);
@@ -752,7 +767,10 @@ export default function FolhaPagamento() {
             <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
           </div>
           <div style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
-            <strong>{fr.nome}</strong> · Semana {semana} · R$ {fmt(valorDobra)}/dobra
+            <strong>{fr.nome}</strong> · Semana {semana}
+            {usaTurno
+              ? <> · ☀️ R$ {fmt(vDia)}/dia · 🌙 R$ {fmt(vNoite)}/noite</>
+              : <> · R$ {fmt(valorDobra)}/dobra</>}
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '12px' }}>
@@ -1093,9 +1111,10 @@ export default function FolhaPagamento() {
             ...freelancers.map(f => ({
               id: f.id, nome: f.nome, chavePix: f.chavePix, cargo: f.cargo,
               tipoContrato: 'Freelancer' as const, area: f.area, funcao: f.funcao || f.cargo,
-              valorDia: 0, valorNoite: 0,
-              // valorDia on freelancer record = valor por dobra
-              valorDobra: R(f.valorDia) || R((f as any).valorDobra) || 120,
+              valorDia: R(f.valorDia) || 0,
+              valorNoite: R(f.valorNoite) || 0,
+              // valorDobra usado quando não há valorDia/valorNoite separados
+              valorDobra: R((f as any).valorDobra) || R(f.valorDia) || 120,
               valorTransporte: f.valorTransporte || 0,
             })),
           ].sort((a,b) => {
@@ -1137,11 +1156,13 @@ export default function FolhaPagamento() {
                     else if (esc.turno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
                   }
                   let totalBruto = 0;
-                  if (p.tipoContrato === 'CLT') {
-                    const vDia = p.valorDia, vNoite = p.valorNoite;
-                    const dobrasCalc = (vDia + vNoite) * dnC + vDia * (dC - dnC) + vNoite * (nC - dnC);
-                    totalBruto = dobrasCalc;
+                  const vDia = p.valorDia || 0;
+                  const vNoite = p.valorNoite || 0;
+                  if (p.tipoContrato === 'CLT' || (vDia > 0 || vNoite > 0)) {
+                    // Calcula por turno: DN = vDia + vNoite, D = vDia, N = vNoite
+                    totalBruto = (vDia + vNoite) * dnC + vDia * (dC - dnC) + vNoite * (nC - dnC);
                   } else {
+                    // Freelancer com dobra única (valorDobra)
                     const vd = p.valorDobra || 120;
                     const dobrasCalc = dnC + (dC - dnC) * 0.5 + (nC - dnC) * 0.5;
                     totalBruto = vd * dobrasCalc;
@@ -1525,7 +1546,9 @@ export default function FolhaPagamento() {
                                   {fr.dobras}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right' }}>
-                                  R$ {fmt(fr.valorDobra)}
+                                  {(fr.valorDia > 0 || fr.valorNoite > 0)
+                                    ? <><span style={{ color: '#e65100' }}>☀️{fmt(fr.valorDia)}</span><br/><span style={{ color: '#3949ab' }}>🌙{fmt(fr.valorNoite)}</span></>
+                                    : <>R$ {fmt(fr.valorDobra)}</>}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1976d2', fontSize: '13px' }}>
                                   {fmtMoeda(fr.total)}
@@ -1561,14 +1584,18 @@ export default function FolhaPagamento() {
                                         const novoPago = !frIsPago;
                                         setSalvando(true);
                                         try {
+                                          const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
+                                            ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
+                                            : `R$${fmt(fr.valorDobra)}/dobra`;
                                           const payload = {
                                             colaboradorId: fr.id, mes: mesAno,
                                             semana: fech.dataFechamento, unitId,
                                             pago: novoPago,
                                             dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
-                                            valorBruto: fr.total, valorTransporte: 0,
-                                            totalFinal: fr.total,
-                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras × R$${fmt(fr.valorDobra)}`,
+                                            valorBruto: fr.total,
+                                            valorTransporte: fr.totalTransporte || 0,
+                                            totalFinal: fr.total + (fr.totalTransporte || 0),
+                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}`,
                                           };
                                           const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                                             method: 'POST',
@@ -1598,12 +1625,21 @@ export default function FolhaPagamento() {
                           </tbody>
                           <tfoot>
                             <tr style={{ backgroundColor: '#880e4f', color: 'white', fontWeight: 'bold' }}>
-                              <td style={{ padding: '8px' }} colSpan={6}>SEMANA {fech.semanaLabel}</td>
+                              <td style={{ padding: '8px' }} colSpan={6}>SUBTOTAL DOBRAS</td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#f48fb1' }}>
                                 {fmtMoeda(fech.totalSemana)}
                               </td>
                               <td style={{ padding: '8px' }} />
                             </tr>
+                            {fech.totalTransporte > 0 && (
+                              <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                                <td style={{ padding: '6px 8px' }} colSpan={6}>🚗 Transporte</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#90caf9' }}>
+                                  +{fmtMoeda(fech.totalTransporte)}
+                                </td>
+                                <td style={{ padding: '6px 8px' }} />
+                              </tr>
+                            )}
                             {(parseFloat(ef.combustivel || '0') > 0 || parseFloat(ef.extra || '0') > 0 || parseFloat(ef.desconto || '0') > 0) && (
                               <>
                                 {parseFloat(ef.combustivel || '0') > 0 && (
@@ -1627,10 +1663,10 @@ export default function FolhaPagamento() {
                                     <td />
                                   </tr>
                                 )}
-                                <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                                <tr style={{ backgroundColor: '#1b5e20', color: 'white', fontWeight: 'bold' }}>
                                   <td style={{ padding: '8px' }} colSpan={5}>TOTAL LÍQUIDO</td>
                                   <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>
-                                    {fmtMoeda(fech.totalSemana + parseFloat(ef.extra || '0') - parseFloat(ef.combustivel || '0') - parseFloat(ef.desconto || '0'))}
+                                    {fmtMoeda(fech.totalSemana + (fech.totalTransporte || 0) + parseFloat(ef.extra || '0') - parseFloat(ef.combustivel || '0') - parseFloat(ef.desconto || '0'))}
                                   </td>
                                   <td />
                                 </tr>
