@@ -100,6 +100,7 @@ interface FechamentoSemanalFreelancer {
     pago?: boolean;
   }[];
   totalSemana: number;
+  totalTransporte: number;
   totalCombustivel: number;
   totalExtra: number;
   totalDesconto: number;
@@ -165,19 +166,21 @@ function fmtDataISO(d: Date) {
   return d.toISOString().split('T')[0];
 }
 
-/** Conta dobras de um freelancer em um conjunto de escalas */
-function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string } {
+/** Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas */
+function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string; diasTrabalhados: number } {
   const linhas: string[] = [];
   let dobras = 0;
-  const dias = escalas.filter(e => e.colaboradorId === freelancerId).sort((a,b) => a.data.localeCompare(b.data));
+  let diasTrabalhados = 0;
+  const dias = escalas.filter(e => e.colaboradorId === freelancerId && e.turno !== 'Folga').sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
     const dow = new Date(esc.data + 'T12:00:00').getDay();
     const label = `${DIAS_SEMANA_ABREV[dow]} ${esc.turno === 'DiaNoite' ? 'DN' : esc.turno === 'Dia' ? 'D' : esc.turno === 'Noite' ? 'N' : 'F'}`;
     linhas.push(label);
+    diasTrabalhados++;
     if (esc.turno === 'DiaNoite') dobras += 1;
     else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobras += 0.5;
   }
-  return { dobras, diasCodigo: linhas.join(' | ') };
+  return { dobras, diasCodigo: linhas.join(' | '), diasTrabalhados };
 }
 
 /* ─── Component ─────────────────────────────────────────────────────────── */
@@ -408,14 +411,37 @@ export default function FolhaPagamento() {
         const escalasSemana = escalas.filter(e =>
           e.colaboradorId === f.id && e.data >= isoInicio && e.data <= isoFim
         );
-        const { dobras, diasCodigo } = contarDobras(escalasSemana, f.id);
-        // valorDia is used as 'valor por dobra' for freelancers
-        const valorDobra = R(f.valorDia) || R((f as any).valorDobra) || 120;
-        const total = parseFloat((dobras * valorDobra).toFixed(2));
+        const { dobras, diasCodigo, diasTrabalhados } = contarDobras(escalasSemana, f.id);
+
+        // Se tem valorDia E/OU valorNoite configurados, calcular por turno
+        const vDia   = R(f.valorDia);
+        const vNoite = R(f.valorNoite);
+        const vDobra = R((f as any).valorDobra) || 120;
+        const usaTurno = vDia > 0 || vNoite > 0;
+
+        let total = 0;
+        if (usaTurno) {
+          for (const esc of escalasSemana) {
+            if (esc.turno === 'DiaNoite') total += vDia + vNoite;
+            else if (esc.turno === 'Dia')   total += vDia;
+            else if (esc.turno === 'Noite') total += vNoite;
+          }
+        } else {
+          total = parseFloat((dobras * vDobra).toFixed(2));
+        }
+        total = parseFloat(total.toFixed(2));
+
+        // valorDobra para exibição
+        const valorDobra = usaTurno ? (vDia + vNoite) : vDobra;
+        const valorTransporte = R(f.valorTransporte);
+        const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
+
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
           telefone: f.celular || f.telefone,
-          dobras, valorDobra, total, diasCodigo,
+          dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
+          valorTransporte, totalTransporte,
+          total, diasCodigo, diasTrabalhados,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -426,16 +452,18 @@ export default function FolhaPagamento() {
       const extra = parseFloat(ef.extra || '0') || 0;
       const desconto = parseFloat(ef.desconto || '0') || 0;
       const totalSemana = frList.reduce((s, fr) => s + fr.total, 0);
+      const totalTransporteSemana = frList.reduce((s, fr) => s + (fr.totalTransporte || 0), 0);
 
       return {
         semanaLabel: `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
         dataFechamento: isoFim,
         freelancers: frList,
         totalSemana,
+        totalTransporte: totalTransporteSemana,
         totalCombustivel: combustivel,
         totalExtra: extra,
         totalDesconto: desconto,
-        totalLiquido: totalSemana + extra - desconto,
+        totalLiquido: totalSemana + totalTransporteSemana + extra - desconto,
         observacao: ef.obs,
       };
     });
@@ -449,13 +477,15 @@ export default function FolhaPagamento() {
   }, [editFechamento, freelancers, escalas]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
-  const handleTogglePago = async (folha: FolhaMensal) => {
+  const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
     const novoPago = !folha.pago;
+    const hoje2 = new Date().toISOString().split('T')[0];
+    const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
     setSalvando(true);
     try {
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
-        pago: novoPago, dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
+        pago: novoPago, dataPagamento: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
       };
       await fetch(`${apiUrl}/folha-pagamento`, {
@@ -465,7 +495,7 @@ export default function FolhaPagamento() {
       });
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
-          ? { ...f, pago: novoPago, dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : undefined }
+          ? { ...f, pago: novoPago, dataPagamento: novoPago ? (dataOverride || hoje2) : undefined }
           : f
       ));
     } catch { alert('Erro ao salvar status'); }
@@ -522,10 +552,11 @@ export default function FolhaPagamento() {
   }), [folhasFiltradas]);
 
   const totalFreelancerMes = useMemo(() =>
-    fechamentosFreelancer.reduce((s, f) => s + f.totalSemana, 0),
+    fechamentosFreelancer.reduce((s, f) => s + f.totalSemana + (f.totalTransporte || 0), 0),
     [fechamentosFreelancer]);
 
-
+  // Estado para modal de confirmação de pagamento CLT
+  const [modalPagamento, setModalPagamento] = useState<FolhaMensal | null>(null);
 
   /* ── Styles ──────────────────────────────────────────────── */
   const s = {
@@ -684,7 +715,11 @@ export default function FolhaPagamento() {
         )}
 
         <div style={{ marginTop: '14px', display: 'flex', gap: '10px' }}>
-          <button onClick={() => { handleTogglePago(f); onClose(); }} style={s.btn(f.pago ? '#e53935' : '#43a047')}>
+          <button onClick={() => {
+            onClose();
+            if (f.pago) handleTogglePago(f);
+            else setModalPagamento(f);
+          }} style={s.btn(f.pago ? '#e53935' : '#43a047')}>
             {f.pago ? '↩ Desfazer' : '✅ Marcar pago'}
           </button>
           <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
@@ -782,10 +817,47 @@ export default function FolhaPagamento() {
     );
   };
 
+  /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
+  const ModalConfirmarPagamentoCLT = () => {
+    if (!modalPagamento) return null;
+    const hoje2 = new Date().toISOString().split('T')[0];
+    const [dataLocal, setDataLocal] = useState(hoje2);
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setModalPagamento(null)}>
+        <div style={{ ...s.card, maxWidth: '380px', width: '94%', padding: '24px' }}
+          onClick={e => e.stopPropagation()}>
+          <h3 style={{ margin: '0 0 16px', color: '#2e7d32' }}>✅ Confirmar Pagamento</h3>
+          <p style={{ margin: '0 0 4px', fontSize: '14px', color: '#333' }}>
+            <strong>{modalPagamento.nome}</strong>
+          </p>
+          <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#666' }}>
+            Saldo: <strong style={{ color: '#1976d2' }}>{fmtMoeda(modalPagamento.saldoFinal)}</strong>
+          </p>
+          <label style={{ ...s.label }}>Data do pagamento</label>
+          <input
+            type="date"
+            value={dataLocal}
+            onChange={e => setDataLocal(e.target.value)}
+            style={{ ...s.input, marginBottom: '16px' }}
+          />
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={async () => { setModalPagamento(null); await handleTogglePago(modalPagamento, dataLocal); }}
+              style={s.btn('#43a047')}>✅ Confirmar
+            </button>
+            <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ── Render ──────────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
+      <ModalConfirmarPagamentoCLT />
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
       {historicoColabId && (
@@ -929,7 +1001,10 @@ export default function FolhaPagamento() {
                               title="Histórico analítico">
                               📊
                             </button>
-                            <button onClick={() => handleTogglePago(f)} disabled={salvando}
+                            <button
+                              onClick={() => f.pago ? handleTogglePago(f) : setModalPagamento(f)}
+                              disabled={salvando}
+                              title={f.pago ? 'Desfazer pagamento' : 'Registrar pagamento com data'}
                               style={{ ...s.btn(f.pago ? '#e53935' : '#43a047'), padding: '4px 10px', fontSize: '11px' }}>
                               {f.pago ? '↩' : '✅'}
                             </button>
@@ -1212,25 +1287,45 @@ export default function FolhaPagamento() {
                                       <td style={{ ...s.td, textAlign: 'center' }}>
                                         <button
                                           onClick={async () => {
-                                            const novoPago = !isPago;
-                                            setSalvando(true);
-                                            try {
-                                              const payload = {
-                                                colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
-                                                pago: novoPago,
-                                                dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
-                                                valorBruto: brutoEditado, valorTransporte: transpEditado,
-                                                totalFinal: totalEdit,
-                                                obs: ed.obs || '',
-                                              };
-                                              await fetch(`${apiUrl}/folha-pagamento`, {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                                                body: JSON.stringify(payload),
-                                              });
-                                              await carregarDados();
-                                            } catch { alert('Erro ao salvar status'); }
-                                            finally { setSalvando(false); }
+                                            if (!isPago) {
+                                              const hoje2 = new Date().toISOString().split('T')[0];
+                                              const dataConfirmada = window.prompt('Data do pagamento (AAAA-MM-DD):', hoje2);
+                                              if (!dataConfirmada) return;
+                                              setSalvando(true);
+                                              try {
+                                                const payload = {
+                                                  colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
+                                                  pago: true,
+                                                  dataPagamento: dataConfirmada,
+                                                  valorBruto: brutoEditado, valorTransporte: transpEditado,
+                                                  totalFinal: totalEdit, obs: ed.obs || '',
+                                                };
+                                                await fetch(`${apiUrl}/folha-pagamento`, {
+                                                  method: 'POST',
+                                                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                                  body: JSON.stringify(payload),
+                                                });
+                                                await carregarDados();
+                                              } catch { alert('Erro ao salvar status'); }
+                                              finally { setSalvando(false); }
+                                            } else {
+                                              setSalvando(true);
+                                              try {
+                                                const payload = {
+                                                  colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
+                                                  pago: false, dataPagamento: null,
+                                                  valorBruto: brutoEditado, valorTransporte: transpEditado,
+                                                  totalFinal: totalEdit, obs: ed.obs || '',
+                                                };
+                                                await fetch(`${apiUrl}/folha-pagamento`, {
+                                                  method: 'POST',
+                                                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                                  body: JSON.stringify(payload),
+                                                });
+                                                await carregarDados();
+                                              } catch { alert('Erro ao salvar status'); }
+                                              finally { setSalvando(false); }
+                                            }
                                           }}
                                           disabled={salvando}
                                           style={{ ...s.btn(isPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}
