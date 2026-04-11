@@ -147,6 +147,22 @@ const formatarCelular = (v: string) => {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
+/* Converte número → string BR para exibição no campo (ex: 1500.5 → "1.500,50") */
+const numParaBR = (v: number | undefined): string => {
+  if (v === undefined || v === null || isNaN(v as number)) return '';
+  if (v === 0) return '';
+  return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+};
+
+/* Converte string BR digitada → número (ex: "1.500,50" ou "1500,50" ou "1500.50" → 1500.5) */
+const brParaNum = (s: string): number => {
+  if (!s || s.trim() === '') return 0;
+  // Remove pontos de milhar e converte vírgula decimal em ponto
+  const limpo = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(limpo);
+  return isNaN(n) ? 0 : n;
+};
+
 /* Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
 const dataISOParaPt = (iso: string): string => {
   if (!iso) return '';
@@ -678,29 +694,57 @@ export default function Colaboradores() {
         {/* Financeiro */}
         <div style={S.formGroup}>
           <label style={S.label}>Salário Base (R$)</label>
-          <input type="number" step="0.01" value={data.salario || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.salario)}
+            key={`sal-${data.salario}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ salario: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
+          />
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Valor Dia / Dobra-Dia (R$)</label>
-          <input type="number" step="0.01" value={data.valorDia || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorDia)}
+            key={`vdia-${data.valorDia}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorDia: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Valor Noite / Dobra-Noite (R$)</label>
-          <input type="number" step="0.01" value={data.valorNoite || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorNoite)}
+            key={`vnoite-${data.valorNoite}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorNoite: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
         </div>
         <div style={S.formGroup}>
           <label style={S.label}>Transporte Ida+Volta por dia (R$)</label>
-          <input type="number" step="0.50" value={data.valorTransporte || 0} style={S.input}
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            defaultValue={numParaBR(data.valorTransporte)}
+            key={`vtransp-${data.valorTransporte}`}
+            style={S.input}
             onFocus={e => e.target.select()}
-            onChange={e => onChange({ valorTransporte: parseFloat(e.target.value) || 0 })} />
+            onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
+          />
           <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
         </div>
         <div style={S.formGroup}>
@@ -1028,13 +1072,29 @@ export default function Colaboradores() {
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Valor por Dobra (R$) <span style={{fontSize:'11px',color:'#888'}}>(usado na folha)</span></label>
-                    <input type="number" step="10" min="0" value={(formFree as any).valorDia ?? 120} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, valorDia: parseFloat(e.target.value) || 0 } as any)} />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      defaultValue={numParaBR((formFree as any).valorDia ?? 120)}
+                      key={`free-vdia-${(formFree as any).valorDia}`}
+                      style={S.input}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => setFormFree({ ...formFree, valorDia: brParaNum(e.target.value) } as any)}
+                    />
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Transporte por dia (R$)</label>
-                    <input type="number" step="0.50" min="0" value={(formFree as any).valorTransporte ?? 0} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, valorTransporte: parseFloat(e.target.value) || 0 } as any)} />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      defaultValue={numParaBR((formFree as any).valorTransporte ?? 0)}
+                      key={`free-vtransp-${(formFree as any).valorTransporte}`}
+                      style={S.input}
+                      onFocus={e => e.target.select()}
+                      onBlur={e => setFormFree({ ...formFree, valorTransporte: brParaNum(e.target.value) } as any)}
+                    />
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>Status</label>
