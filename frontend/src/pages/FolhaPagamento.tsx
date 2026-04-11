@@ -101,6 +101,9 @@ interface FechamentoSemanalFreelancer {
     totalTransporte: number;
     diasTrabalhados: number;
     total: number;
+    totalLiquido: number;        // total + transporte - saidasDesconto
+    saidasDesconto: number;      // total de saídas "A receber" no período (descontos)
+    saidasDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes
     diasCodigo: string;          // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
@@ -109,6 +112,7 @@ interface FechamentoSemanalFreelancer {
   totalCombustivel: number;
   totalExtra: number;
   totalDesconto: number;
+  totalSaidasDesconto: number;   // soma dos descontos de saídas de todos freelancers
   totalLiquido: number;
   observacao?: string;
 }
@@ -441,12 +445,30 @@ export default function FolhaPagamento() {
         const valorTransporte = R(f.valorTransporte);
         const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
 
+        // Saídas "A receber" do freelancer nesta semana (colaborador deve ao restaurante = desconto)
+        const saidasFreelancer = saidasPeriodo.filter(s =>
+          s.colaboradorId === f.id &&
+          (s.tipo || s.origem || s.referencia || '') === 'A receber' &&
+          s.dataPagamento >= isoInicio && s.dataPagamento <= isoFim
+        );
+        const saidasDesconto = parseFloat(
+          saidasFreelancer.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+        );
+        const saidasDetalhe = saidasFreelancer.map((s: any) => ({
+          descricao: s.descricao || 'Desconto',
+          valor: R(s.valor),
+          data: s.dataPagamento || '',
+        }));
+
+        const totalLiquido = parseFloat((total + totalTransporte - saidasDesconto).toFixed(2));
+
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
           telefone: f.celular || f.telefone,
           dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
           valorTransporte, totalTransporte,
-          total, diasCodigo, diasTrabalhados,
+          total, totalLiquido, saidasDesconto, saidasDetalhe,
+          diasCodigo, diasTrabalhados,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -458,6 +480,7 @@ export default function FolhaPagamento() {
       const desconto = parseFloat(ef.desconto || '0') || 0;
       const totalSemana = frList.reduce((s, fr) => s + fr.total, 0);
       const totalTransporteSemana = frList.reduce((s, fr) => s + (fr.totalTransporte || 0), 0);
+      const totalSaidasDesconto = frList.reduce((s, fr) => s + (fr.saidasDesconto || 0), 0);
 
       return {
         semanaLabel: `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
@@ -468,7 +491,8 @@ export default function FolhaPagamento() {
         totalCombustivel: combustivel,
         totalExtra: extra,
         totalDesconto: desconto,
-        totalLiquido: totalSemana + totalTransporteSemana + extra - desconto,
+        totalSaidasDesconto,
+        totalLiquido: totalSemana + totalTransporteSemana - totalSaidasDesconto + extra - desconto,
         observacao: ef.obs,
       };
     });
@@ -476,10 +500,10 @@ export default function FolhaPagamento() {
     setFechamentosFreelancer(fechamentos.filter(f => f.freelancers.length > 0));
   };
 
-  // Recalcular fechamentos quando editFechamento muda
+  // Recalcular fechamentos quando editFechamento, saidas ou escalas mudam
   useEffect(() => {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
-  }, [editFechamento, freelancers, escalas]);
+  }, [editFechamento, freelancers, escalas, saidasPeriodo]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
@@ -556,8 +580,9 @@ export default function FolhaPagamento() {
     pgto05: folhasFiltradas.reduce((s, f) => s + f.pgtosDia05, 0),
   }), [folhasFiltradas]);
 
+  // Total l\u00edquido do m\u00eas: soma das dobras + transporte - descontos de sa\u00eddas
   const totalFreelancerMes = useMemo(() =>
-    fechamentosFreelancer.reduce((s, f) => s + f.totalSemana + (f.totalTransporte || 0), 0),
+    fechamentosFreelancer.reduce((s, f) => s + f.totalSemana + (f.totalTransporte || 0) - (f.totalSaidasDesconto || 0), 0),
     [fechamentosFreelancer]);
 
   // Estado para modal de confirmação de pagamento CLT
@@ -1469,10 +1494,19 @@ export default function FolhaPagamento() {
               </div>
             ) : (
               <>
+                {/* Informações sobre transporte e descontos */}
+                <div style={{ backgroundColor: '#e3f2fd', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', color: '#1565c0', borderLeft: '4px solid #1976d2' }}>
+                  <strong>ℹ️ Como funciona o pagamento:</strong>
+                  <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                    <li><strong>Transporte</strong>: calculado automaticamente pelos dias com escala lançada (turnos trabalhados). Se o colaborador faltar e a escala for removida, o transporte não é contabilizado.</li>
+                    <li><strong>Descontos de Sa\u00eddas</strong>: lan\u00e7amentos tipo <em>"A receber"</em> no m\u00f3dulo <strong>Sa\u00eddas</strong> s\u00e3o descontados automaticamente do l\u00edquido semanal.</li>
+                    <li><strong>Desconto manual</strong>: use o campo <em>Desconto</em> no cabe\u00e7alho de cada semana para ajustes avulsos (transport adiantado, etc.).</li>
+                  </ul>
+                </div>
                 {/* Total do mês */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '16px', paddingTop: '12px' }}>
                   <div style={{ ...s.card, borderLeft: '4px solid #c2185b' }}>
-                    <div style={{ fontSize: '11px', color: '#666' }}>Total Freelancers</div>
+                    <div style={{ fontSize: '11px', color: '#666' }}>Total L\u00edquido Freelancers</div>
                     <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#c2185b' }}>{fmtMoeda(totalFreelancerMes)}</div>
                   </div>
                   <div style={{ ...s.card, borderLeft: '4px solid #1976d2' }}>
@@ -1520,7 +1554,7 @@ export default function FolhaPagamento() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                           <thead>
                             <tr>
-                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total', 'Status', 'Ações'].map(h => (
+                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total Dobras', 'Transp.', 'Desconto', 'Líquido', 'Status', 'Ações'].map(h => (
                                 <th key={h} style={s.th}>{h}</th>
                               ))}
                             </tr>
@@ -1552,6 +1586,19 @@ export default function FolhaPagamento() {
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1976d2', fontSize: '13px' }}>
                                   {fmtMoeda(fr.total)}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'right', color: fr.totalTransporte > 0 ? '#1565c0' : '#aaa', fontSize: '12px' }}>
+                                  {fr.totalTransporte > 0 ? `+${fmtMoeda(fr.totalTransporte)}` : '—'}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'right', color: fr.saidasDesconto > 0 ? '#c62828' : '#aaa', fontSize: '12px' }}>
+                                  {fr.saidasDesconto > 0 ? (
+                                    <span title={fr.saidasDetalhe.map(d => `${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>
+                                      −{fmtMoeda(fr.saidasDesconto)}
+                                    </span>
+                                  ) : '—'}
+                                </td>
+                                <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                                  {fmtMoeda(fr.totalLiquido)}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center' }}>
                                   <span style={frIsPago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
@@ -1594,8 +1641,9 @@ export default function FolhaPagamento() {
                                             dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
                                             valorBruto: fr.total,
                                             valorTransporte: fr.totalTransporte || 0,
-                                            totalFinal: fr.total + (fr.totalTransporte || 0),
-                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}`,
+                                            desconto: fr.saidasDesconto || 0,
+                                            totalFinal: fr.totalLiquido,
+                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
                                           };
                                           const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                                             method: 'POST',
@@ -1625,50 +1673,58 @@ export default function FolhaPagamento() {
                           </tbody>
                           <tfoot>
                             <tr style={{ backgroundColor: '#880e4f', color: 'white', fontWeight: 'bold' }}>
-                              <td style={{ padding: '8px' }} colSpan={6}>SUBTOTAL DOBRAS</td>
+                              <td style={{ padding: '8px' }} colSpan={5}>SUBTOTAL DOBRAS</td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#f48fb1' }}>
                                 {fmtMoeda(fech.totalSemana)}
                               </td>
-                              <td style={{ padding: '8px' }} />
+                              <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9' }}>
+                                {fech.totalTransporte > 0 ? `+${fmtMoeda(fech.totalTransporte)}` : '—'}
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
+                                {fech.totalSaidasDesconto > 0 ? `−${fmtMoeda(fech.totalSaidasDesconto)}` : '—'}
+                              </td>
+                              <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7', fontWeight: 'bold' }}>
+                                {fmtMoeda(fech.totalSemana + fech.totalTransporte - fech.totalSaidasDesconto)}
+                              </td>
+                              <td colSpan={2} style={{ padding: '8px' }} />
                             </tr>
-                            {fech.totalTransporte > 0 && (
-                              <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                                <td style={{ padding: '6px 8px' }} colSpan={6}>🚗 Transporte</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#90caf9' }}>
-                                  +{fmtMoeda(fech.totalTransporte)}
+                            {fech.totalSaidasDesconto > 0 && (
+                              <tr style={{ backgroundColor: '#ffebee' }}>
+                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={8}>
+                                  ⚠️ Descontos automáticos de Saídas ("A receber") incluídos acima. Confira em Saídas para detalhes por colaborador.
                                 </td>
-                                <td style={{ padding: '6px 8px' }} />
+                                <td colSpan={3} />
                               </tr>
                             )}
                             {(parseFloat(ef.combustivel || '0') > 0 || parseFloat(ef.extra || '0') > 0 || parseFloat(ef.desconto || '0') > 0) && (
                               <>
                                 {parseFloat(ef.combustivel || '0') > 0 && (
                                   <tr style={{ backgroundColor: '#fff3e0' }}>
-                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#e65100' }} colSpan={5}>⛽ Combustível</td>
+                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#e65100' }} colSpan={8}>⛽ Combustível (ajuste manual)</td>
                                     <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>−{fmtMoeda(parseFloat(ef.combustivel || '0'))}</td>
-                                    <td />
+                                    <td colSpan={2} />
                                   </tr>
                                 )}
                                 {parseFloat(ef.extra || '0') > 0 && (
                                   <tr style={{ backgroundColor: '#e8f5e9' }}>
-                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#2e7d32' }} colSpan={5}>➕ Extra</td>
+                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#2e7d32' }} colSpan={8}>➕ Extra (ajuste manual)</td>
                                     <td style={{ padding: '6px 8px', textAlign: 'right', color: '#2e7d32' }}>+{fmtMoeda(parseFloat(ef.extra || '0'))}</td>
-                                    <td />
+                                    <td colSpan={2} />
                                   </tr>
                                 )}
                                 {parseFloat(ef.desconto || '0') > 0 && (
                                   <tr style={{ backgroundColor: '#fce4ec' }}>
-                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={5}>➖ Desconto</td>
+                                    <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={8}>➖ Desconto (ajuste manual)</td>
                                     <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>−{fmtMoeda(parseFloat(ef.desconto || '0'))}</td>
-                                    <td />
+                                    <td colSpan={2} />
                                   </tr>
                                 )}
                                 <tr style={{ backgroundColor: '#1b5e20', color: 'white', fontWeight: 'bold' }}>
-                                  <td style={{ padding: '8px' }} colSpan={5}>TOTAL LÍQUIDO</td>
+                                  <td style={{ padding: '8px' }} colSpan={8}>TOTAL LÍQUIDO SEMANA</td>
                                   <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>
-                                    {fmtMoeda(fech.totalSemana + (fech.totalTransporte || 0) + parseFloat(ef.extra || '0') - parseFloat(ef.combustivel || '0') - parseFloat(ef.desconto || '0'))}
+                                    {fmtMoeda(fech.totalLiquido)}
                                   </td>
-                                  <td />
+                                  <td colSpan={2} />
                                 </tr>
                               </>
                             )}
@@ -1701,12 +1757,16 @@ export default function FolhaPagamento() {
                     <tbody>
                       {freelancers.map((fr, fi) => {
                         let totalDobras = 0;
+                        let totalMesLiquido = 0;
+                        let totalDescontoMes = 0;
                         for (const fech of fechamentosFreelancer) {
                           const frSem = fech.freelancers.find(x => x.id === fr.id);
-                          if (frSem) totalDobras += frSem.dobras;
+                          if (frSem) {
+                            totalDobras += frSem.dobras;
+                            totalMesLiquido += frSem.totalLiquido;
+                            totalDescontoMes += frSem.saidasDesconto || 0;
+                          }
                         }
-                        const valorDobra = R(fr.valorDia) || R((fr as any).valorDobra) || 120;
-                        const totalMes = totalDobras * valorDobra;
                         if (totalDobras === 0) return null;
                         return (
                           <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
@@ -1714,7 +1774,8 @@ export default function FolhaPagamento() {
                             <td style={{ ...s.td, fontSize: '11px' }}>{fr.chavePix || '—'}</td>
                             <td style={{ ...s.td, textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>{totalDobras}</td>
                             <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#c2185b', fontSize: '13px' }}>
-                              {fmtMoeda(totalMes)}
+                              {fmtMoeda(totalMesLiquido)}
+                              {totalDescontoMes > 0 && <div style={{ fontSize: '10px', color: '#c62828', fontWeight: 'normal' }}>(desc. {fmtMoeda(totalDescontoMes)})</div>}
                             </td>
                           </tr>
                         );
