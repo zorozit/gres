@@ -451,12 +451,15 @@ export default function FolhaPagamento() {
         const valorTransporte = R(f.valorTransporte);
         const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
 
+        // Helper: data efetiva da saída (dataPagamento ou data de lançamento)
+        const saidaData = (s: any) => s.dataPagamento || s.data || '';
+
         // Saídas "Adiantamento Transporte" do freelancer nesta semana (transporte já pago)
-        const saidasTransporte = saidasPeriodo.filter(s =>
+        const saidasTransporte = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
           (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte' &&
-          ((s.dataPagamento || s.data || '') >= isoInicio) &&
-          ((s.dataPagamento || s.data || '') <= isoFim)
+          saidaData(s) >= isoInicio &&
+          saidaData(s) <= isoFim
         );
         const transporteAdiantado = parseFloat(
           saidasTransporte.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
@@ -465,20 +468,22 @@ export default function FolhaPagamento() {
         // Não fica negativo: se adiantou mais do que calculado, saldo = 0
         const transporteSaldo = parseFloat(Math.max(0, totalTransporte - transporteAdiantado).toFixed(2));
 
-        // Saídas "A receber" do freelancer nesta semana (colaborador deve ao restaurante = desconto geral)
-        const saidasDescFreelancer = saidasPeriodo.filter(s =>
+        // Saídas de desconto do freelancer nesta semana:
+        // inclui 'A receber', 'Caixinha', 'Consumo Interno' (qualquer categoria com regraFolha = desconto_liquido)
+        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Caixinha', 'Consumo Interno'];
+        const saidasDescFreelancer = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
-          (s.tipo || s.origem || s.referencia || '') === 'A receber' &&
-          ((s.dataPagamento || s.data || '') >= isoInicio) &&
-          ((s.dataPagamento || s.data || '') <= isoFim)
+          TIPOS_DESCONTO_FREELANCER.includes(s.tipo || s.origem || s.referencia || '') &&
+          saidaData(s) >= isoInicio &&
+          saidaData(s) <= isoFim
         );
         const saidasDesconto = parseFloat(
           saidasDescFreelancer.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
         const saidasDetalhe = saidasDescFreelancer.map((s: any) => ({
-          descricao: s.descricao || 'Desconto',
+          descricao: `[${s.tipo || s.origem}] ${s.descricao || 'Desconto'}`,
           valor: R(s.valor),
-          data: s.dataPagamento || s.data || '',
+          data: saidaData(s),
         }));
 
         // Líquido = dobras + saldo de transporte (já subtraído o adiantado) - descontos gerais
@@ -1776,10 +1781,12 @@ export default function FolhaPagamento() {
                                           e.colaboradorId === fr.id && e.data >= isoIni && e.data <= fech.dataFechamento
                                         );
                                         // Filter saídas for this freelancer in this week
+                                        // Use dataPagamento OR data (creation date) for matching
                                         const saidasSemana = saidasPeriodo.filter((s2: any) => {
                                           const sColabId = s2.colaboradorId || s2.colabId;
                                           if (sColabId !== fr.id) return false;
-                                          return s2.dataPagamento >= isoIni && s2.dataPagamento <= fech.dataFechamento;
+                                          const sData = s2.dataPagamento || s2.data || '';
+                                          return sData >= isoIni && sData <= fech.dataFechamento;
                                         });
                                         setDetalheFreelancer({ fr, semana: fech.semanaLabel, escalas: escalasSemana, saidaItems: saidasSemana });
                                       }}
