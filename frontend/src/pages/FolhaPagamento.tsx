@@ -223,7 +223,9 @@ export default function FolhaPagamento() {
   const [detalheSelecionado, setDetalheSelecionado] = useState<FolhaMensal | null>(null);
   const [historicoColabId, setHistoricoColabId] = useState<string | null>(null);
   const [historicoItems, setHistoricoItems] = useState<any[]>([]);
-  const [detalheFreelancer, setDetalheFreelancer] = useState<{fr: any; semana: string; escalas: any[]} | null>(null);
+  const [detalheFreelancer, setDetalheFreelancer] = useState<{fr: any; semana: string; escalas: any[]; saidaItems?: any[]} | null>(null);
+  // Modal confirmar pagamento freelancer (com data editável)
+  const [modalFreelancerPgto, setModalFreelancerPgto] = useState<{fr: any; fech: FechamentoSemanalFreelancer} | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [salvando, setSalvando] = useState(false);
@@ -784,9 +786,79 @@ export default function FolhaPagamento() {
   );
 
 
+  /* ── Modal confirmar pagamento Freelancer (data editável) ── */
+  const ModalConfirmarPgtoFreelancer = () => {
+    if (!modalFreelancerPgto) return null;
+    const { fr, fech } = modalFreelancerPgto;
+    const hoje2 = new Date().toISOString().split('T')[0];
+    const [dataLocal, setDataLocal] = useState(hoje2);
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setModalFreelancerPgto(null)}>
+        <div style={{ ...s.card, maxWidth: '380px', width: '94%', padding: '24px' }}
+          onClick={e => e.stopPropagation()}>
+          <h3 style={{ margin: '0 0 16px', color: '#c2185b' }}>✅ Confirmar Pagamento Freelancer</h3>
+          <p style={{ margin: '0 0 4px', fontSize: '14px', color: '#333' }}>
+            <strong>{fr.nome}</strong>
+          </p>
+          <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#666' }}>
+            Semana {fech.semanaLabel}
+          </p>
+          <p style={{ margin: '0 0 14px', fontSize: '14px', color: '#1565c0', fontWeight: 'bold' }}>
+            Líquido: {fmtMoeda(fr.totalLiquido)}
+          </p>
+          <label style={{ ...s.label }}>Data do pagamento</label>
+          <input
+            type="date"
+            value={dataLocal}
+            onChange={e => setDataLocal(e.target.value)}
+            style={{ ...s.input, marginBottom: '16px' }}
+          />
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              disabled={salvando}
+              onClick={async () => {
+                setModalFreelancerPgto(null);
+                setSalvando(true);
+                try {
+                  const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
+                    ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
+                    : `R$${fmt(fr.valorDobra)}/dobra`;
+                  const payload = {
+                    colaboradorId: fr.id, mes: mesAno,
+                    semana: fech.dataFechamento, unitId,
+                    pago: true,
+                    dataPagamento: dataLocal,
+                    valorBruto: fr.total,
+                    valorTransporte: fr.transporteSaldo || 0,
+                    transporteCalculado: fr.totalTransporte || 0,
+                    transporteAdiantado: fr.transporteAdiantado || 0,
+                    desconto: fr.saidasDesconto || 0,
+                    totalFinal: fr.totalLiquido,
+                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
+                  };
+                  const resp = await fetch(`${apiUrl}/folha-pagamento`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                    body: JSON.stringify(payload),
+                  });
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  await carregarDados();
+                } catch (err) { alert('Erro ao salvar pagamento: ' + err); }
+                finally { setSalvando(false); }
+              }}
+              style={s.btn('#43a047')}>✅ Confirmar
+            </button>
+            <button onClick={() => setModalFreelancerPgto(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ── Modal detalhe Freelancer ────────────────────────────── */
-  const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[] }; onClose: () => void }) => {
-    const { fr, semana, escalas: escs } = data;
+  const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[]; saidaItems?: any[] }; onClose: () => void }) => {
+    const { fr, semana, escalas: escs, saidaItems } = data;
     const vDia   = R(fr.valorDia)   || 0;
     const vNoite = R(fr.valorNoite) || 0;
     const usaTurno = vDia > 0 || vNoite > 0;
@@ -869,8 +941,44 @@ export default function FolhaPagamento() {
             </tfoot>
           </table>
 
+          {/* Saídas lançadas para o colaborador na semana */}
+          {saidaItems && saidaItems.length > 0 && (
+            <div style={{ marginTop: '12px', backgroundColor: '#fff3e0', borderRadius: '6px', padding: '10px', fontSize: '12px' }}>
+              <strong style={{ color: '#e65100' }}>📋 Saídas da Semana:</strong>
+              <table style={{ width: '100%', marginTop: '6px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#e65100', color: 'white' }}>
+                    <th style={{ padding: '4px 6px', textAlign: 'left' }}>Tipo</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'left' }}>Descrição</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'right' }}>Valor</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'center' }}>Data</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {saidaItems.map((s2: any, idx: number) => (
+                    <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff8f0' : 'white', borderBottom: '1px solid #ffe0b2' }}>
+                      <td style={{ padding: '4px 6px' }}>
+                        <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                          backgroundColor: s2.tipo === 'A receber' ? '#e8f5e9' : s2.tipo === 'Adiantamento Transporte' ? '#fff3e0' : '#ffebee',
+                          color: s2.tipo === 'A receber' ? '#2e7d32' : s2.tipo === 'Adiantamento Transporte' ? '#e65100' : '#c62828' }}>
+                          {s2.tipo}
+                        </span>
+                      </td>
+                      <td style={{ padding: '4px 6px', color: '#555' }}>{s2.descricao || '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold',
+                        color: s2.tipo === 'A receber' ? '#c62828' : '#e65100' }}>
+                        {s2.tipo === 'A receber' ? '−' : '+'}{fmtMoeda(R(s2.valor))}
+                      </td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>{s2.dataPagamento || s2.data || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {fr.chavePix && (
-            <div style={{ padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '6px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ padding: '10px', marginTop: '10px', backgroundColor: '#e8f5e9', borderRadius: '6px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <strong>💳 PIX:</strong> {fr.chavePix}
               <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
                 style={{ ...s.btn('#43a047'), padding: '4px 10px', fontSize: '11px' }}>📋 Copiar</button>
@@ -926,6 +1034,7 @@ export default function FolhaPagamento() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
       <ModalConfirmarPagamentoCLT />
+      <ModalConfirmarPgtoFreelancer />
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
       {historicoColabId && (
@@ -1666,7 +1775,13 @@ export default function FolhaPagamento() {
                                         const escalasSemana = escalas.filter(e =>
                                           e.colaboradorId === fr.id && e.data >= isoIni && e.data <= fech.dataFechamento
                                         );
-                                        setDetalheFreelancer({ fr, semana: fech.semanaLabel, escalas: escalasSemana });
+                                        // Filter saídas for this freelancer in this week
+                                        const saidasSemana = saidasPeriodo.filter((s2: any) => {
+                                          const sColabId = s2.colaboradorId || s2.colabId;
+                                          if (sColabId !== fr.id) return false;
+                                          return s2.dataPagamento >= isoIni && s2.dataPagamento <= fech.dataFechamento;
+                                        });
+                                        setDetalheFreelancer({ fr, semana: fech.semanaLabel, escalas: escalasSemana, saidaItems: saidasSemana });
                                       }}
                                       style={{ ...s.btn('#c2185b'), padding: '3px 8px', fontSize: '11px' }}
                                       title="Ver detalhamento">
@@ -1675,7 +1790,12 @@ export default function FolhaPagamento() {
                                     <button
                                       disabled={salvando}
                                       onClick={async () => {
-                                        const novoPago = !frIsPago;
+                                        if (!frIsPago) {
+                                          // Open confirmation modal with editable date
+                                          setModalFreelancerPgto({ fr, fech });
+                                          return;
+                                        }
+                                        // Desfazer pagamento diretamente
                                         setSalvando(true);
                                         try {
                                           const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
@@ -1684,8 +1804,8 @@ export default function FolhaPagamento() {
                                           const payload = {
                                             colaboradorId: fr.id, mes: mesAno,
                                             semana: fech.dataFechamento, unitId,
-                                            pago: novoPago,
-                                            dataPagamento: novoPago ? new Date().toISOString().split('T')[0] : null,
+                                            pago: false,
+                                            dataPagamento: null,
                                             valorBruto: fr.total,
                                             valorTransporte: fr.transporteSaldo || 0,
                                             transporteCalculado: fr.totalTransporte || 0,
