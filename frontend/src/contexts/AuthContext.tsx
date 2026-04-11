@@ -5,7 +5,7 @@ interface AuthContextType {
   user: { email: string } | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
-  loading: boolean;
+  loading: boolean;       // true durante verificação de sessão E durante login
   error: string | null;
   email?: string;
   token?: string;
@@ -16,19 +16,30 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<{ email: string } | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Inicia como TRUE para bloquear o guard de rota até verificar localStorage
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Restaura sessão salva ao carregar/recarregar a página (F5)
   useEffect(() => {
     const stored = localStorage.getItem('user');
-    if (stored) {
-      setUser(JSON.parse(stored));
-      setIsAuthenticated(true);
+    const storedToken = localStorage.getItem('auth_token');
+    if (stored && storedToken) {
+      try {
+        setUser(JSON.parse(stored));
+        setIsAuthenticated(true);
+      } catch {
+        // JSON corrompido — limpa
+        localStorage.removeItem('user');
+      }
     }
+    // Libera o guard de rota após verificação (síncrona, sem await)
+    setSessionChecked(true);
   }, []);
 
   const login = async (email: string, password: string) => {
-    setLoading(true);
+    setLoginLoading(true);
     setError(null);
     try {
       const apiEndpoint = import.meta.env.VITE_API_ENDPOINT;
@@ -56,14 +67,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userData = { email, perfil: data.user.perfil, unitId: unitIdClean, id: data.user.id };
       setUser(userData);
       setIsAuthenticated(true);
+      // Persiste todas as chaves usadas pelo app
       localStorage.setItem('user', JSON.stringify(userData));
-      // Salvar com TODAS as chaves usadas no app
       localStorage.setItem('token', data.token);
       localStorage.setItem('auth_token', data.token);   // usado em todos os fetch
       localStorage.setItem('user_role', data.user.perfil);
       localStorage.setItem('user_unit', unitIdClean);
       localStorage.setItem('unit_id', unitIdClean);       // usado em Saidas e outros
-      localStorage.setItem('user_id', data.user.id || '');  // id do usuário para responsavelId
+      localStorage.setItem('user_id', data.user.id || '');
       console.log('Login bem-sucedido! unitId (CNPJ):', unitIdClean, '| userId:', data.user.id);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
@@ -71,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Login error:', err);
       throw err;
     } finally {
-      setLoading(false);
+      setLoginLoading(false);
     }
   };
 
@@ -89,6 +100,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const token = localStorage.getItem('token') || undefined;
+
+  // loading = true enquanto sessão não verificada OU durante o submit do login
+  const loading = !sessionChecked || loginLoading;
 
   return (
     <AuthContext.Provider value={{ 

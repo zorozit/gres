@@ -166,9 +166,10 @@ const brParaNum = (s: string): number => {
 /* Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
 const dataISOParaPt = (iso: string): string => {
   if (!iso) return '';
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  // Aceita tanto "YYYY-MM-DD" quanto "YYYY-MM-DDTHH:mm:ss..." (timestamp ISO completo)
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return iso; // já está em outro formato, devolve como está
+  return ''; // formato desconhecido → campo vazio em vez de exibir lixo
 };
 
 /* Auto-formata enquanto o usuário digita → DD/MM/YYYY */
@@ -383,7 +384,7 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
         />
       </div>
       <div style={styles.formGroup}>
-        <label style={styles.label}>Valor Dia / Dobra-Dia (R$)</label>
+        <label style={styles.label}>Valor Dia / Dobra-Dia (R$) <span style={{fontSize:'10px',color:'#888',fontWeight:'normal'}}>(CLT: adicional dobra‑dia | Freelancer: R$/turno Dia)</span></label>
         <input
           type="text"
           inputMode="decimal"
@@ -393,10 +394,9 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
           onFocus={e => e.target.select()}
           onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
         />
-        <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
       </div>
       <div style={styles.formGroup}>
-        <label style={styles.label}>Valor Noite / Dobra-Noite (R$)</label>
+        <label style={styles.label}>Valor Noite / Dobra-Noite (R$) <span style={{fontSize:'10px',color:'#888',fontWeight:'normal'}}>(CLT: adicional dobra‑noite | Freelancer: R$/turno Noite)</span></label>
         <input
           type="text"
           inputMode="decimal"
@@ -406,7 +406,6 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
           onFocus={e => e.target.select()}
           onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
         />
-        <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
       </div>
       <div style={styles.formGroup}>
         <label style={styles.label}>Transporte Ida+Volta por dia (R$)</label>
@@ -951,7 +950,7 @@ export default function Colaboradores() {
                         {colab.dataAdmissao && (
                           <div style={S.cardRow}>
                             <span style={S.cardLabel}>Admissão:</span>
-                            <span style={{ fontSize:'11px', color:'#888' }}>{colab.dataAdmissao}</span>
+                            <span style={{ fontSize:'11px', color:'#888' }}>{dataISOParaPt(colab.dataAdmissao)}</span>
                           </div>
                         )}
                         {colab.dataDemissao && (
