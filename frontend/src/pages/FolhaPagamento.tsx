@@ -814,56 +814,157 @@ export default function FolhaPagamento() {
   );
 
 
-  /* ── Modal confirmar pagamento Freelancer (data editável) ── */
+  /* ── Modal confirmar pagamento Freelancer (checklist + data editável) ── */
+  // Hooks must be called unconditionally (React rules) — states are always created
+  // even when the modal is not open; they are reset via useEffect when modal opens.
+  interface CheckItem { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
+  const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
+  const [dataLocalFreelancer, setDataLocalFreelancer] = useState(new Date().toISOString().split('T')[0]);
+
+  // Reset checklist whenever a new freelancer payment modal opens
+  useEffect(() => {
+    if (!modalFreelancerPgto) return;
+    const { fr } = modalFreelancerPgto;
+    const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
+      ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
+      : `R$${fmt(fr.valorDobra)}/dobra`;
+    const items: CheckItem[] = [
+      { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
+      ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias − R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+      ...fr.saidasDetalhe.map((d: { descricao: string; valor: number; data: string }, i: number) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
+      ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
+        key: `pend_${i}`,
+        label: `⏳ Pendente anterior: [${p.tipo || p.origem}] ${p.descricao || ''} (${(p.dataPagamento || p.data || '').substring(0, 10)})`,
+        valor: R(p.valor),
+        tipo: 'debito' as const,
+        checked: false,
+      })),
+    ];
+    setCheckItems(items);
+    setDataLocalFreelancer(new Date().toISOString().split('T')[0]);
+  }, [modalFreelancerPgto]);
+
   const ModalConfirmarPgtoFreelancer = () => {
     if (!modalFreelancerPgto) return null;
     const { fr, fech } = modalFreelancerPgto;
-    const hoje2 = new Date().toISOString().split('T')[0];
-    const [dataLocal, setDataLocal] = useState(hoje2);
+
+    const totalSelecionado = checkItems.reduce((sum, item) => {
+      if (!item.checked) return sum;
+      return item.tipo === 'credito' ? sum + item.valor : sum - item.valor;
+    }, 0);
+
+    const toggleItem = (key: string) => {
+      setCheckItems(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
+    };
+
     return (
-      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalFreelancerPgto(null)}>
-        <div style={{ ...s.card, maxWidth: '380px', width: '94%', padding: '24px' }}
+        <div style={{ ...s.card, maxWidth: '520px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}
           onClick={e => e.stopPropagation()}>
-          <h3 style={{ margin: '0 0 16px', color: '#c2185b' }}>✅ Confirmar Pagamento Freelancer</h3>
-          <p style={{ margin: '0 0 4px', fontSize: '14px', color: '#333' }}>
-            <strong>{fr.nome}</strong>
-          </p>
-          <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#666' }}>
-            Semana {fech.semanaLabel}
-          </p>
-          <p style={{ margin: '0 0 14px', fontSize: '14px', color: '#1565c0', fontWeight: 'bold' }}>
-            Líquido: {fmtMoeda(fr.totalLiquido)}
-          </p>
-          <label style={{ ...s.label }}>Data do pagamento</label>
-          <input
-            type="date"
-            value={dataLocal}
-            onChange={e => setDataLocal(e.target.value)}
-            style={{ ...s.input, marginBottom: '16px' }}
-          />
+
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <h3 style={{ margin: 0, color: '#c2185b' }}>✅ Confirmar Pagamento Freelancer</h3>
+            <button onClick={() => setModalFreelancerPgto(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+
+          {/* Colaborador info */}
+          <div style={{ backgroundColor: '#fce4ec', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px' }}>
+            <div style={{ fontWeight: 'bold', color: '#880e4f', fontSize: '15px' }}>{fr.nome}</div>
+            <div style={{ color: '#c2185b', marginTop: '2px' }}>Semana {fech.semanaLabel}</div>
+            {fr.chavePix && (
+              <div style={{ marginTop: '4px', fontSize: '12px', color: '#666' }}>
+                💳 PIX: <strong>{fr.chavePix}</strong>
+                <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
+                  style={{ marginLeft: '8px', padding: '1px 6px', fontSize: '10px', border: 'none', borderRadius: '3px', backgroundColor: '#43a047', color: 'white', cursor: 'pointer' }}>
+                  📋
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Checklist de itens */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#444', marginBottom: '8px' }}>
+              ☑️ Selecione os itens a incluir neste pagamento:
+            </div>
+            <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'hidden' }}>
+              {checkItems.map((item, i) => (
+                <label key={item.key} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 12px', cursor: 'pointer',
+                  backgroundColor: item.checked ? (item.tipo === 'debito' ? '#fff3e0' : '#f1f8e9') : '#f9f9f9',
+                  borderBottom: i < checkItems.length - 1 ? '1px solid #eeeeee' : 'none',
+                  transition: 'background 0.15s',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={() => toggleItem(item.key)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: item.tipo === 'credito' ? '#43a047' : '#e65100' }}
+                  />
+                  <span style={{ flex: 1, fontSize: '12px', color: '#333' }}>{item.label}</span>
+                  <span style={{ fontWeight: 'bold', fontSize: '13px', minWidth: '80px', textAlign: 'right',
+                    color: item.tipo === 'credito' ? '#2e7d32' : '#c62828',
+                    opacity: item.checked ? 1 : 0.35 }}>
+                    {item.tipo === 'credito' ? '+' : '−'}{fmtMoeda(item.valor)}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Total selecionado */}
+          <div style={{ backgroundColor: totalSelecionado >= 0 ? '#e8f5e9' : '#ffebee', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>💰 Total a pagar:</span>
+            <span style={{ fontSize: '20px', fontWeight: 'bold', color: totalSelecionado >= 0 ? '#2e7d32' : '#c62828' }}>
+              {fmtMoeda(Math.max(0, totalSelecionado))}
+            </span>
+          </div>
+
+          {/* Data pagamento */}
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ ...s.label }}>Data do pagamento</label>
+            <input
+              type="date"
+              value={dataLocalFreelancer}
+              onChange={e => setDataLocalFreelancer(e.target.value)}
+              style={s.input}
+            />
+          </div>
+
+          {/* Buttons */}
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
-              disabled={salvando}
+              disabled={salvando || totalSelecionado < 0}
               onClick={async () => {
                 setModalFreelancerPgto(null);
                 setSalvando(true);
                 try {
-                  const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
+                  const creditoItems = checkItems.filter(it => it.checked && it.tipo === 'credito');
+                  const debitoItems  = checkItems.filter(it => it.checked && it.tipo === 'debito');
+                  const totalCredito = creditoItems.reduce((s, it) => s + it.valor, 0);
+                  const totalDebito  = debitoItems.reduce((s, it) => s + it.valor, 0);
+                  const totalFinal   = Math.max(0, totalCredito - totalDebito);
+
+                  const inclTransporte = checkItems.find(it => it.key === 'transporte')?.checked ?? false;
+                  const inclDobras     = checkItems.find(it => it.key === 'dobras')?.checked ?? false;
+                  const obsLabel       = (fr.valorDia > 0 || fr.valorNoite > 0)
                     ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
                     : `R$${fmt(fr.valorDobra)}/dobra`;
+
                   const payload = {
                     colaboradorId: fr.id, mes: mesAno,
                     semana: fech.dataFechamento, unitId,
                     pago: true,
-                    dataPagamento: dataLocal,
-                    valorBruto: fr.total,
-                    valorTransporte: fr.transporteSaldo || 0,
+                    dataPagamento: dataLocalFreelancer,
+                    valorBruto:          inclDobras ? fr.total : 0,
+                    valorTransporte:     inclTransporte ? fr.transporteSaldo : 0,
                     transporteCalculado: fr.totalTransporte || 0,
                     transporteAdiantado: fr.transporteAdiantado || 0,
-                    desconto: fr.saidasDesconto || 0,
-                    totalFinal: fr.totalLiquido,
-                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
+                    desconto:            totalDebito,
+                    totalFinal,
+                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -875,7 +976,8 @@ export default function FolhaPagamento() {
                 } catch (err) { alert('Erro ao salvar pagamento: ' + err); }
                 finally { setSalvando(false); }
               }}
-              style={s.btn('#43a047')}>✅ Confirmar
+              style={{ ...s.btn('#43a047'), flex: 1 }}>
+              {salvando ? '⏳ Salvando...' : `✅ Confirmar ${fmtMoeda(Math.max(0, totalSelecionado))}`}
             </button>
             <button onClick={() => setModalFreelancerPgto(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
           </div>
@@ -1076,10 +1178,15 @@ export default function FolhaPagamento() {
   };
 
   /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
+  // Hook called unconditionally (React rules) — state persists across renders
+  const [dataLocalCLT, setDataLocalCLT] = useState(new Date().toISOString().split('T')[0]);
+  // Reset date whenever modal opens
+  useEffect(() => {
+    if (modalPagamento) setDataLocalCLT(new Date().toISOString().split('T')[0]);
+  }, [modalPagamento]);
+
   const ModalConfirmarPagamentoCLT = () => {
     if (!modalPagamento) return null;
-    const hoje2 = new Date().toISOString().split('T')[0];
-    const [dataLocal, setDataLocal] = useState(hoje2);
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalPagamento(null)}>
@@ -1095,13 +1202,13 @@ export default function FolhaPagamento() {
           <label style={{ ...s.label }}>Data do pagamento</label>
           <input
             type="date"
-            value={dataLocal}
-            onChange={e => setDataLocal(e.target.value)}
+            value={dataLocalCLT}
+            onChange={e => setDataLocalCLT(e.target.value)}
             style={{ ...s.input, marginBottom: '16px' }}
           />
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
-              onClick={async () => { setModalPagamento(null); await handleTogglePago(modalPagamento, dataLocal); }}
+              onClick={async () => { setModalPagamento(null); await handleTogglePago(modalPagamento, dataLocalCLT); }}
               style={s.btn('#43a047')}>✅ Confirmar
             </button>
             <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Cancelar</button>

@@ -155,8 +155,8 @@ export const Extrato: React.FC = () => {
           const dataEfetiva = saida.dataPagamento || saida.data || '';
           const saidaMes    = dataEfetiva.substring(0, 7);
 
-          // pago field: explicit false = pendente; default (true or missing) = pago
-          const isPago = saida.pago !== false;
+          // pago field: explicit false (or string 'false') = pendente; default (true or missing) = pago
+          const isPago = saida.pago !== false && saida.pago !== 'false';
 
           // If processing older saidas, only include truly pending ones
           if (incluirPendentesAntigos && isPago) continue;
@@ -206,28 +206,58 @@ export const Extrato: React.FC = () => {
   const salvarEdicaoSaida = async () => {
     if (!editItem || editItem.origem !== 'saida') return;
     setSalvando(true);
+    // Explicit boolean — never rely on coercion
+    const novoPago: boolean = editForm.pago === true || editForm.pago === 'true';
     try {
+      const raw = editItem.raw || {};
       const payload = {
-        ...editItem.raw,
+        ...raw,
+        id:             editItem.id,
+        unitId:         raw.unitId || editItem.unitId,
+        colaboradorId:  raw.colaboradorId || editItem.colaboradorId,
         descricao:      editForm.descricao,
         valor:          parseFloat(editForm.valor) || 0,
         tipo:           editForm.tipoSaida,
         origem:         editForm.tipoSaida,
         referencia:     editForm.tipoSaida,
         dataPagamento:  editForm.dataPagamento,
-        data:           editItem.raw?.data || editForm.dataPagamento,
-        pago:           editForm.pago === true || editForm.pago === 'true',
+        data:           raw.data || editForm.dataPagamento,
+        pago:           novoPago,   // explicit boolean
         observacao:     editForm.obs,
         obs:            editForm.obs,
+        updatedAt:      new Date().toISOString(),
       };
+
       const res = await fetch(`${apiUrl}/saidas/${editItem.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
+
       if (res.ok) {
+        // Optimistic local update: reflect change immediately in UI
+        // NOTE: We do NOT reload from server here because the API may return
+        // pago: undefined (which gets coerced to true), overriding the edit.
+        // The optimistic update is the source of truth until the next full reload.
+        setItems(prev => prev.map(it => {
+          if (it.id !== editItem.id) return it;
+          const isDebito = TIPOS_DEBITO.includes(editForm.tipoSaida);
+          return {
+            ...it,
+            descricao:    editForm.descricao,
+            valor:        parseFloat(editForm.valor) || 0,
+            tipo:         isDebito ? 'debito' : 'credito',
+            tipoSaida:    editForm.tipoSaida,
+            dataPagamento:editForm.dataPagamento,
+            pago:         novoPago,  // explicit boolean — guaranteed to be true or false
+            obs:          editForm.obs,
+            raw:          { ...payload, pago: novoPago },  // keep pago explicit in raw too
+          };
+        }));
         setEditItem(null);
-        await carregarDados();
+        // Schedule background reload after a short delay so the API has time
+        // to persist the change before we fetch fresh data
+        setTimeout(() => carregarDados(), 1500);
       } else {
         const err = await res.json().catch(() => ({}));
         alert('Erro ao salvar: ' + (err.error || res.status));
