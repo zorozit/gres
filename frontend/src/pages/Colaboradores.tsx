@@ -189,6 +189,298 @@ const dataPtParaISO = (pt: string): string => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+/* ─── Sub-form prop types ─────────────────────────────────────────────────── */
+interface CamposBasicosProps {
+  data: Partial<Colaborador>;
+  onChange: (p: Partial<Colaborador>) => void;
+}
+interface CamposEnderecoProps {
+  data: Partial<Colaborador>;
+  onChange: (p: Partial<Colaborador>) => void;
+}
+interface CamposContratacaoProps {
+  data: Partial<Colaborador>;
+  onChange: (p: Partial<Colaborador>) => void;
+  funcoesOpcoes: string[];
+  funcoes: FuncaoEscala[];
+}
+interface CamposJornadaProps {
+  data: Partial<Colaborador>;
+  onChange: (p: Partial<Colaborador>) => void;
+}
+
+/* ─── Sub-forms (fora do componente pai para evitar perda de foco) ─────────── */
+const CamposBasicos = ({ data, onChange }: CamposBasicosProps) => (
+  <div style={styles.secao}>
+    <h3 style={styles.secaoTitulo}>📋 Identificação</h3>
+    <div style={styles.grid2Col}>
+      <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+        <label style={styles.label}>Nome completo *</label>
+        <input type="text" value={data.nome || ''} style={styles.input}
+          onChange={e => onChange({ nome: e.target.value })} />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>CPF *</label>
+        <input type="text" inputMode="numeric" placeholder="000.000.000-00"
+          value={data.cpf || ''} style={styles.input}
+          onChange={e => onChange({ cpf: formatarCPF(e.target.value) })} />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Celular / WhatsApp *</label>
+        <input type="tel" inputMode="numeric" placeholder="(00) 00000-0000"
+          value={data.celular || data.telefone || ''} style={styles.input}
+          onChange={e => { const f = formatarCelular(e.target.value); onChange({ celular: f, telefone: f }); }} />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Data de Nascimento</label>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="DD/MM/AAAA"
+          value={dataISOParaPt(data.dataNascimento || '')}
+          style={styles.input}
+          maxLength={10}
+          onChange={e => {
+            const fmt2 = formatarData(e.target.value);
+            const iso = dataPtParaISO(fmt2);
+            onChange({ dataNascimento: iso || fmt2 });
+          }}
+        />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={{ ...styles.label, color: '#999' }}>E-mail (opcional)</label>
+        <input type="email" value={data.email || ''} style={{ ...styles.input, borderColor: '#ddd' }}
+          onChange={e => onChange({ email: e.target.value })} />
+      </div>
+    </div>
+  </div>
+);
+
+const CamposEndereco = ({ data, onChange }: CamposEnderecoProps) => (
+  <div style={styles.secao}>
+    <h3 style={styles.secaoTitulo}>🏠 Endereço</h3>
+    <div style={styles.grid2Col}>
+      <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+        <label style={styles.label}>Logradouro</label>
+        <input type="text" value={data.endereco || ''} style={styles.input}
+          onChange={e => onChange({ endereco: e.target.value })} />
+      </div>
+      {[
+        { label: 'Número', key: 'numero' }, { label: 'Complemento', key: 'complemento' },
+        { label: 'Cidade', key: 'cidade' }, { label: 'Estado', key: 'estado' }, { label: 'CEP', key: 'cep' },
+      ].map(({ label, key }) => (
+        <div key={key} style={styles.formGroup}>
+          <label style={styles.label}>{label}</label>
+          <input type="text" value={(data as any)[key] || ''} style={styles.input}
+            onChange={e => onChange({ [key]: e.target.value })} />
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposContratacaoProps) => (
+  <div style={styles.secao}>
+    <h3 style={styles.secaoTitulo}>💼 Contratação</h3>
+    <div style={styles.grid2Col}>
+      {/* Tipo de contrato */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Tipo de Contrato *</label>
+        <select value={data.tipoContrato || 'CLT'} style={styles.input}
+          onChange={e => onChange({ tipoContrato: e.target.value as 'CLT' | 'Freelancer' })}>
+          <option value="CLT">CLT</option>
+          <option value="Freelancer">Freelancer</option>
+        </select>
+      </div>
+      {/* Cargo (admin only) */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Cargo <span style={{ color:'#888', fontWeight:'normal', fontSize:'11px' }}>(administrativo — não aparece na escala)</span></label>
+        <select value={data.cargo || data.tipo || 'Outro'} style={styles.input}
+          onChange={e => onChange({ cargo: e.target.value, tipo: e.target.value })}>
+          {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {/* Função (exibida na escala) — SELECT com opções */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Função na Escala <span style={{ color:'#1976d2', fontSize:'11px' }}>(exibida no grid de escalas)</span></label>
+        <select value={data.funcao || ''} style={styles.input}
+          onChange={e => onChange({ funcao: e.target.value })}>
+          <option value="">— Selecione a função —</option>
+          {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <small style={{ color: '#888', fontSize: '11px' }}>
+          Diferente do cargo. Personalizada por colaborador. Cadastre mais em <em>Funções/Regras</em>.
+        </small>
+      </div>
+      {/* Área — SELECT com opções */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Área de Trabalho <span style={{ color:'#1976d2', fontSize:'11px' }}>(agrupamento na escala)</span></label>
+        <select value={data.area || ''} style={styles.input}
+          onChange={e => onChange({ area: e.target.value })}>
+          <option value="">— Selecione a área —</option>
+          {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
+          {/* Áreas customizadas do cadastro de funções */}
+          {funcoes.map(f => f.area).filter(a => a && !AREAS_PADRAO.includes(a))
+            .filter((v,i,arr) => arr.indexOf(v) === i)
+            .map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
+      {/* Datas */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Data de Admissão</label>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="DD/MM/AAAA"
+          value={dataISOParaPt(data.dataAdmissao || '')}
+          style={styles.input}
+          maxLength={10}
+          onChange={e => {
+            const fmt2 = formatarData(e.target.value);
+            const iso = dataPtParaISO(fmt2);
+            onChange({ dataAdmissao: iso || fmt2 });
+          }}
+        />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={{ ...styles.label, color: data.ativo === false ? '#c62828' : '#444' }}>
+          Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
+        </label>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="DD/MM/AAAA"
+          value={dataISOParaPt(data.dataDemissao || '')}
+          style={{ ...styles.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
+          maxLength={10}
+          onChange={e => {
+            const fmt2 = formatarData(e.target.value);
+            const iso = dataPtParaISO(fmt2);
+            onChange({ dataDemissao: iso || fmt2 });
+          }}
+        />
+      </div>
+      {/* Status */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Status</label>
+        <select value={data.ativo === false ? 'inativo' : 'ativo'} style={styles.input}
+          onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
+          <option value="ativo">● Ativo</option>
+          <option value="inativo">○ Inativo / Desligado</option>
+        </select>
+      </div>
+      {/* Financeiro */}
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Salário Base (R$)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="0,00"
+          defaultValue={numParaBR(data.salario)}
+          style={styles.input}
+          onFocus={e => e.target.select()}
+          onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
+        />
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Valor Dia / Dobra-Dia (R$)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="0,00"
+          defaultValue={numParaBR(data.valorDia)}
+          style={styles.input}
+          onFocus={e => e.target.select()}
+          onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
+        />
+        <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Valor Noite / Dobra-Noite (R$)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="0,00"
+          defaultValue={numParaBR(data.valorNoite)}
+          style={styles.input}
+          onFocus={e => e.target.select()}
+          onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
+        />
+        <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Transporte Ida+Volta por dia (R$)</label>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="0,00"
+          defaultValue={numParaBR(data.valorTransporte)}
+          style={styles.input}
+          onFocus={e => e.target.select()}
+          onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
+        />
+        <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
+      </div>
+      <div style={styles.formGroup}>
+        <label style={styles.label}>Chave PIX</label>
+        <input type="text" value={data.chavePix || ''} style={styles.input}
+          onChange={e => onChange({ chavePix: e.target.value })} />
+      </div>
+      <div style={{ ...styles.formGroup, justifyContent: 'flex-end' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '22px' }}>
+          <input type="checkbox" checked={data.valeAlimentacao || false}
+            onChange={e => onChange({ valeAlimentacao: e.target.checked })} />
+          <span style={styles.label}>Vale Alimentação</span>
+        </label>
+      </div>
+    </div>
+  </div>
+);
+
+const CamposJornada = ({ data, onChange }: CamposJornadaProps) => (
+  <div style={styles.secao}>
+    <h3 style={styles.secaoTitulo}>📅 Jornada</h3>
+    <div style={styles.formGroup}>
+      <label style={styles.label}>Dias disponíveis:</label>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+        {DIAS_SEMANA_PT.map(dia => {
+          const ativo = (data.diasDisponiveis || []).includes(dia.valor);
+          return (
+            <label key={dia.valor} style={{
+              display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer',
+              padding: '4px 10px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold',
+              backgroundColor: ativo ? '#1976d2' : '#f0f0f0',
+              color: ativo ? 'white' : '#555',
+              border: `1px solid ${ativo ? '#1565c0' : '#ddd'}`,
+            }}>
+              <input type="checkbox" style={{ display: 'none' }} checked={ativo}
+                onChange={e => {
+                  const dias = data.diasDisponiveis || [];
+                  onChange({ diasDisponiveis: e.target.checked
+                    ? [...dias, dia.valor]
+                    : dias.filter(d => d !== dia.valor) });
+                }} />
+              {dia.label}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+    <div style={{ display: 'flex', gap: '20px', marginTop: '12px' }}>
+      {[
+        { label: '☀️ Pode trabalhar Dia', key: 'podeTrabalharDia' },
+        { label: '🌙 Pode trabalhar Noite', key: 'podeTrabalharNoite' },
+      ].map(({ label, key }) => (
+        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={(data as any)[key] || false}
+            onChange={e => onChange({ [key]: e.target.checked })} />
+          <span style={styles.label}>{label}</span>
+        </label>
+      ))}
+    </div>
+  </div>
+);
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Colaboradores() {
   const { activeUnit } = useUnit();
@@ -267,8 +559,6 @@ export default function Colaboradores() {
   /* ── Helpers ────────────────────────────────────────────────── */
   const celularDe = (c: Partial<Colaborador>) => c.celular || c.telefone || '';
   const cargoDe   = (c: Partial<Colaborador>) => c.cargo   || c.tipo     || 'Outro';
-  const funcaoDe  = (c: Partial<Colaborador>) => c.funcao  || '';
-  const areaDe    = (c: Partial<Colaborador>) => c.area    || '';
 
   // Todas as opções de função disponíveis
   const funcoesOpcoes = useMemo(() => {
@@ -528,290 +818,14 @@ export default function Colaboradores() {
     return Array.from(s).sort();
   }, [colaboradoresCLT]);
 
-  /* ── Estilos ──────────────────────────────────────────────── */
+  /* ── Alias de estilos ─────────────────────────────────────── */
   const S = styles;
-
-  /* ── Sub-forms ────────────────────────────────────────────── */
-  const CamposBasicos = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => (
-    <div style={S.secao}>
-      <h3 style={S.secaoTitulo}>📋 Identificação</h3>
-      <div style={S.grid2Col}>
-        <div style={{ ...S.formGroup, gridColumn: '1 / -1' }}>
-          <label style={S.label}>Nome completo *</label>
-          <input type="text" value={data.nome || ''} style={S.input}
-            onChange={e => onChange({ nome: e.target.value })} />
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>CPF *</label>
-          <input type="text" inputMode="numeric" placeholder="000.000.000-00"
-            value={data.cpf || ''} style={S.input}
-            onChange={e => onChange({ cpf: formatarCPF(e.target.value) })} />
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Celular / WhatsApp *</label>
-          <input type="tel" inputMode="numeric" placeholder="(00) 00000-0000"
-            value={data.celular || data.telefone || ''} style={S.input}
-            onChange={e => { const f = formatarCelular(e.target.value); onChange({ celular: f, telefone: f }); }} />
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Data de Nascimento</label>
-          <input
-            type="text"
-            inputMode="numeric"
-            placeholder="DD/MM/AAAA"
-            value={dataISOParaPt(data.dataNascimento || '')}
-            style={S.input}
-            maxLength={10}
-            onChange={e => {
-              const fmt2 = formatarData(e.target.value);
-              const iso = dataPtParaISO(fmt2);
-              onChange({ dataNascimento: iso || fmt2 });
-            }}
-          />
-        </div>
-        <div style={S.formGroup}>
-          <label style={{ ...S.label, color: '#999' }}>E-mail (opcional)</label>
-          <input type="email" value={data.email || ''} style={{ ...S.input, borderColor: '#ddd' }}
-            onChange={e => onChange({ email: e.target.value })} />
-        </div>
-      </div>
-    </div>
-  );
-
-  const CamposEndereco = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => (
-    <div style={S.secao}>
-      <h3 style={S.secaoTitulo}>🏠 Endereço</h3>
-      <div style={S.grid2Col}>
-        <div style={{ ...S.formGroup, gridColumn: '1 / -1' }}>
-          <label style={S.label}>Logradouro</label>
-          <input type="text" value={data.endereco || ''} style={S.input}
-            onChange={e => onChange({ endereco: e.target.value })} />
-        </div>
-        {[
-          { label: 'Número', key: 'numero' }, { label: 'Complemento', key: 'complemento' },
-          { label: 'Cidade', key: 'cidade' }, { label: 'Estado', key: 'estado' }, { label: 'CEP', key: 'cep' },
-        ].map(({ label, key }) => (
-          <div key={key} style={S.formGroup}>
-            <label style={S.label}>{label}</label>
-            <input type="text" value={(data as any)[key] || ''} style={S.input}
-              onChange={e => onChange({ [key]: e.target.value })} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const CamposContratacao = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => (
-    <div style={S.secao}>
-      <h3 style={S.secaoTitulo}>💼 Contratação</h3>
-      <div style={S.grid2Col}>
-        {/* Tipo de contrato */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Tipo de Contrato *</label>
-          <select value={data.tipoContrato || 'CLT'} style={S.input}
-            onChange={e => onChange({ tipoContrato: e.target.value as 'CLT' | 'Freelancer' })}>
-            <option value="CLT">CLT</option>
-            <option value="Freelancer">Freelancer</option>
-          </select>
-        </div>
-        {/* Cargo (admin only) */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Cargo <span style={{ color:'#888', fontWeight:'normal', fontSize:'11px' }}>(administrativo — não aparece na escala)</span></label>
-          <select value={cargoDe(data)} style={S.input}
-            onChange={e => onChange({ cargo: e.target.value, tipo: e.target.value })}>
-            {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        {/* Função (exibida na escala) — SELECT com opções */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Função na Escala <span style={{ color:'#1976d2', fontSize:'11px' }}>(exibida no grid de escalas)</span></label>
-          <select value={funcaoDe(data)} style={S.input}
-            onChange={e => onChange({ funcao: e.target.value })}>
-            <option value="">— Selecione a função —</option>
-            {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
-          </select>
-          <small style={{ color: '#888', fontSize: '11px' }}>
-            Diferente do cargo. Personalizada por colaborador. Cadastre mais em <em>Funções/Regras</em>.
-          </small>
-        </div>
-        {/* Área — SELECT com opções */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Área de Trabalho <span style={{ color:'#1976d2', fontSize:'11px' }}>(agrupamento na escala)</span></label>
-          <select value={areaDe(data)} style={S.input}
-            onChange={e => onChange({ area: e.target.value })}>
-            <option value="">— Selecione a área —</option>
-            {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
-            {/* Áreas customizadas do cadastro de funções */}
-            {funcoes.map(f => f.area).filter(a => a && !AREAS_PADRAO.includes(a))
-              .filter((v,i,arr) => arr.indexOf(v) === i)
-              .map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </div>
-        {/* Datas */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Data de Admissão</label>
-          <input
-            type="text"
-            inputMode="numeric"
-            placeholder="DD/MM/AAAA"
-            value={dataISOParaPt(data.dataAdmissao || '')}
-            style={S.input}
-            maxLength={10}
-            onChange={e => {
-              const fmt2 = formatarData(e.target.value);
-              const iso = dataPtParaISO(fmt2);
-              onChange({ dataAdmissao: iso || fmt2 });
-            }}
-          />
-        </div>
-        <div style={S.formGroup}>
-          <label style={{ ...S.label, color: data.ativo === false ? '#c62828' : '#444' }}>
-            Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
-          </label>
-          <input
-            type="text"
-            inputMode="numeric"
-            placeholder="DD/MM/AAAA"
-            value={dataISOParaPt(data.dataDemissao || '')}
-            style={{ ...S.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
-            maxLength={10}
-            onChange={e => {
-              const fmt2 = formatarData(e.target.value);
-              const iso = dataPtParaISO(fmt2);
-              onChange({ dataDemissao: iso || fmt2 });
-            }}
-          />
-        </div>
-        {/* Status */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Status</label>
-          <select value={data.ativo === false ? 'inativo' : 'ativo'} style={S.input}
-            onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
-            <option value="ativo">● Ativo</option>
-            <option value="inativo">○ Inativo / Desligado</option>
-          </select>
-        </div>
-        {/* Financeiro */}
-        <div style={S.formGroup}>
-          <label style={S.label}>Salário Base (R$)</label>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            defaultValue={numParaBR(data.salario)}
-            key={`sal-${data.salario}`}
-            style={S.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
-          />
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Valor Dia / Dobra-Dia (R$)</label>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            defaultValue={numParaBR(data.valorDia)}
-            key={`vdia-${data.valorDia}`}
-            style={S.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
-          />
-          <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Valor Noite / Dobra-Noite (R$)</label>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            defaultValue={numParaBR(data.valorNoite)}
-            key={`vnoite-${data.valorNoite}`}
-            style={S.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
-          />
-          <small style={{ color:'#888', fontSize:'11px' }}>Pago nas dobras (além do salário)</small>
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Transporte Ida+Volta por dia (R$)</label>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            defaultValue={numParaBR(data.valorTransporte)}
-            key={`vtransp-${data.valorTransporte}`}
-            style={S.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
-          />
-          <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
-        </div>
-        <div style={S.formGroup}>
-          <label style={S.label}>Chave PIX</label>
-          <input type="text" value={data.chavePix || ''} style={S.input}
-            onChange={e => onChange({ chavePix: e.target.value })} />
-        </div>
-        <div style={{ ...S.formGroup, justifyContent: 'flex-end' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '22px' }}>
-            <input type="checkbox" checked={data.valeAlimentacao || false}
-              onChange={e => onChange({ valeAlimentacao: e.target.checked })} />
-            <span style={S.label}>Vale Alimentação</span>
-          </label>
-        </div>
-      </div>
-    </div>
-  );
-
-  const CamposJornada = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => (
-    <div style={S.secao}>
-      <h3 style={S.secaoTitulo}>📅 Jornada</h3>
-      <div style={S.formGroup}>
-        <label style={S.label}>Dias disponíveis:</label>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
-          {DIAS_SEMANA_PT.map(dia => {
-            const ativo = (data.diasDisponiveis || []).includes(dia.valor);
-            return (
-              <label key={dia.valor} style={{
-                display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer',
-                padding: '4px 10px', borderRadius: '4px', fontSize: '13px', fontWeight: 'bold',
-                backgroundColor: ativo ? '#1976d2' : '#f0f0f0',
-                color: ativo ? 'white' : '#555',
-                border: `1px solid ${ativo ? '#1565c0' : '#ddd'}`,
-              }}>
-                <input type="checkbox" style={{ display: 'none' }} checked={ativo}
-                  onChange={e => {
-                    const dias = data.diasDisponiveis || [];
-                    onChange({ diasDisponiveis: e.target.checked
-                      ? [...dias, dia.valor]
-                      : dias.filter(d => d !== dia.valor) });
-                  }} />
-                {dia.label}
-              </label>
-            );
-          })}
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: '20px', marginTop: '12px' }}>
-        {[
-          { label: '☀️ Pode trabalhar Dia', key: 'podeTrabalharDia' },
-          { label: '🌙 Pode trabalhar Noite', key: 'podeTrabalharNoite' },
-        ].map(({ label, key }) => (
-          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={(data as any)[key] || false}
-              onChange={e => onChange({ [key]: e.target.checked })} />
-            <span style={S.label}>{label}</span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
 
   /* ── Render ──────────────────────────────────────────────── */
   return (
-    <div style={S.pageWrapper}>
+    <div style={styles.pageWrapper}>
       <Header title="👥 Gestão de Colaboradores" showBack={true} />
-      <div style={S.container}>
+      <div style={styles.container}>
 
         {/* Toast */}
         {msg && (
@@ -968,7 +982,7 @@ export default function Colaboradores() {
             <h2 style={{ marginTop: 0, color:'#1565c0' }}>➕ Novo Colaborador</h2>
             <CamposBasicos    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <CamposEndereco   data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
-            <CamposContratacao data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
+            <CamposContratacao data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} funcoesOpcoes={funcoesOpcoes} funcoes={funcoes} />
             <CamposJornada    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
               <button onClick={() => { setNovoColab(ESTADO_INICIAL); setAba('lista'); }} style={S.botaoCancelar}>Cancelar</button>
@@ -1308,7 +1322,9 @@ export default function Colaboradores() {
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
             <CamposContratacao
               data={colaboradorEditando}
-              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)}
+              funcoesOpcoes={funcoesOpcoes}
+              funcoes={funcoes} />
             <CamposJornada
               data={colaboradorEditando}
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
