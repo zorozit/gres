@@ -21,18 +21,18 @@ interface Colaborador {
   estado: string;
   cep: string;
   tipoContrato: 'CLT' | 'Freelancer';
-  cargo: string;           // cargo administrativo — exibido apenas no cadastro
+  cargo: string;           // cargo administrativo
   tipo: string;            // retrocompat
-  funcao: string;          // função exibida na escala (personalizável)
-  area: string;            // área: Salão, Cozinha, Operações, Gerência, Bar...
+  funcao: string;          // função exibida na escala
+  area: string;
   valorDia: number;
   valorNoite: number;
-  valorTransporte: number; // R$ por dia trabalhado (ida+volta)
+  valorTransporte: number;
   valeAlimentacao: boolean;
   salario: number;
   chavePix: string;
   dataAdmissao: string;
-  dataDemissao?: string;   // preenchido quando desligado
+  dataDemissao?: string;
   diasDisponiveis: string[];
   podeTrabalharDia: boolean;
   podeTrabalharNoite: boolean;
@@ -40,25 +40,12 @@ interface Colaborador {
   ativo: boolean;
 }
 
-interface Freelancer {
-  id: string;
-  nome: string;
-  chavePix?: string;
-  telefone?: string;
-  valorDobra?: number;
-  cargo?: string;
-  funcao?: string;
-  area?: string;
-  ativo: boolean;
-  unitId?: string;
-}
-
 interface FuncaoEscala {
   id: string;
   nome: string;
   area: string;
   cor: string;
-  diasTrabalho: number[];   // 0=Dom…6=Sáb
+  diasTrabalho: number[];
   turnoNoite: number[];
   unitId: string;
 }
@@ -100,9 +87,7 @@ const FUNCOES_ESCALA_PADRAO: Omit<FuncaoEscala, 'id' | 'unitId'>[] = [
   { nome: 'Bartender',          area: 'Bar',        cor: '#ad1457', diasTrabalho: [4,5,6,0],      turnoNoite: [4,5,6,0] },
   { nome: 'Atendente',          area: 'Salão',      cor: '#0277bd', diasTrabalho: [2,3,4,5,6,0], turnoNoite: [] },
   { nome: 'Gerente',            area: 'Gerência',   cor: '#37474f', diasTrabalho: [2,3,4,5,6],    turnoNoite: [4,5,6] },
-  // CLT final de semana
   { nome: 'Bartender FDS',      area: 'Bar',        cor: '#c2185b', diasTrabalho: [5,6,0],        turnoNoite: [5,6,0] },
-  // Freelancer genérico
   { nome: 'Freelancer',         area: 'Salão',      cor: '#f06292', diasTrabalho: [4,5,6,0],      turnoNoite: [4,5,6,0] },
 ];
 
@@ -121,11 +106,6 @@ const ESTADO_INICIAL: Partial<Colaborador> = {
   podeTrabalharDia: true,
   podeTrabalharNoite: false,
   ativo: true,
-};
-
-const FREELANCER_INICIAL: Partial<Freelancer> = {
-  nome: '', chavePix: '', telefone: '', valorDobra: 120,
-  cargo: '', funcao: '', area: 'Salão', ativo: true,
 };
 
 /* ─── Formatadores ────────────────────────────────────────────────────────── */
@@ -147,32 +127,26 @@ const formatarCelular = (v: string) => {
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
-/* Converte número → string BR para exibição no campo (ex: 1500.5 → "1.500,50") */
 const numParaBR = (v: number | undefined): string => {
   if (v === undefined || v === null || isNaN(v as number)) return '';
   if (v === 0) return '';
   return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 };
 
-/* Converte string BR digitada → número (ex: "1.500,50" ou "1500,50" ou "1500.50" → 1500.5) */
 const brParaNum = (s: string): number => {
   if (!s || s.trim() === '') return 0;
-  // Remove pontos de milhar e converte vírgula decimal em ponto
   const limpo = s.replace(/\./g, '').replace(',', '.');
   const n = parseFloat(limpo);
   return isNaN(n) ? 0 : n;
 };
 
-/* Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
 const dataISOParaPt = (iso: string): string => {
   if (!iso) return '';
-  // Aceita tanto "YYYY-MM-DD" quanto "YYYY-MM-DDTHH:mm:ss..." (timestamp ISO completo)
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return ''; // formato desconhecido → campo vazio em vez de exibir lixo
+  return '';
 };
 
-/* Auto-formata enquanto o usuário digita → DD/MM/YYYY */
 const formatarData = (v: string): string => {
   const d = v.replace(/\D/g, '').slice(0, 8);
   if (d.length <= 2) return d;
@@ -180,7 +154,6 @@ const formatarData = (v: string): string => {
   return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
 };
 
-/* Converte DD/MM/YYYY → YYYY-MM-DD para persistência; retorna '' se inválido */
 const dataPtParaISO = (pt: string): string => {
   const m = pt.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return '';
@@ -221,7 +194,7 @@ const CamposBasicos = ({ data, onChange }: CamposBasicosProps) => (
           onChange={e => onChange({ nome: e.target.value })} />
       </div>
       <div style={styles.formGroup}>
-        <label style={styles.label}>CPF *</label>
+        <label style={styles.label}>CPF</label>
         <input type="text" inputMode="numeric" placeholder="000.000.000-00"
           value={data.cpf || ''} style={styles.input}
           onChange={e => onChange({ cpf: formatarCPF(e.target.value) })} />
@@ -280,161 +253,163 @@ const CamposEndereco = ({ data, onChange }: CamposEnderecoProps) => (
   </div>
 );
 
-const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposContratacaoProps) => (
-  <div style={styles.secao}>
-    <h3 style={styles.secaoTitulo}>💼 Contratação</h3>
-    <div style={styles.grid2Col}>
-      {/* Tipo de contrato */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Tipo de Contrato *</label>
-        <select value={data.tipoContrato || 'CLT'} style={styles.input}
-          onChange={e => onChange({ tipoContrato: e.target.value as 'CLT' | 'Freelancer' })}>
-          <option value="CLT">CLT</option>
-          <option value="Freelancer">Freelancer</option>
-        </select>
-      </div>
-      {/* Cargo (admin only) */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Cargo <span style={{ color:'#888', fontWeight:'normal', fontSize:'11px' }}>(administrativo — não aparece na escala)</span></label>
-        <select value={data.cargo || data.tipo || 'Outro'} style={styles.input}
-          onChange={e => onChange({ cargo: e.target.value, tipo: e.target.value })}>
-          {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
-      {/* Função (exibida na escala) — SELECT com opções */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Função na Escala <span style={{ color:'#1976d2', fontSize:'11px' }}>(exibida no grid de escalas)</span></label>
-        <select value={data.funcao || ''} style={styles.input}
-          onChange={e => onChange({ funcao: e.target.value })}>
-          <option value="">— Selecione a função —</option>
-          {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
-        </select>
-        <small style={{ color: '#888', fontSize: '11px' }}>
-          Diferente do cargo. Personalizada por colaborador. Cadastre mais em <em>Funções/Regras</em>.
-        </small>
-      </div>
-      {/* Área — SELECT com opções */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Área de Trabalho <span style={{ color:'#1976d2', fontSize:'11px' }}>(agrupamento na escala)</span></label>
-        <select value={data.area || ''} style={styles.input}
-          onChange={e => onChange({ area: e.target.value })}>
-          <option value="">— Selecione a área —</option>
-          {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
-          {/* Áreas customizadas do cadastro de funções */}
-          {funcoes.map(f => f.area).filter(a => a && !AREAS_PADRAO.includes(a))
-            .filter((v,i,arr) => arr.indexOf(v) === i)
-            .map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-      </div>
-      {/* Datas */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Data de Admissão</label>
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="DD/MM/AAAA"
-          value={dataISOParaPt(data.dataAdmissao || '')}
-          style={styles.input}
-          maxLength={10}
-          onChange={e => {
-            const fmt2 = formatarData(e.target.value);
-            const iso = dataPtParaISO(fmt2);
-            onChange({ dataAdmissao: iso || fmt2 });
-          }}
-        />
-      </div>
-      <div style={styles.formGroup}>
-        <label style={{ ...styles.label, color: data.ativo === false ? '#c62828' : '#444' }}>
-          Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
-        </label>
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="DD/MM/AAAA"
-          value={dataISOParaPt(data.dataDemissao || '')}
-          style={{ ...styles.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
-          maxLength={10}
-          onChange={e => {
-            const fmt2 = formatarData(e.target.value);
-            const iso = dataPtParaISO(fmt2);
-            onChange({ dataDemissao: iso || fmt2 });
-          }}
-        />
-      </div>
-      {/* Status */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Status</label>
-        <select value={data.ativo === false ? 'inativo' : 'ativo'} style={styles.input}
-          onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
-          <option value="ativo">● Ativo</option>
-          <option value="inativo">○ Inativo / Desligado</option>
-        </select>
-      </div>
-      {/* Financeiro */}
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Salário Base (R$)</label>
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="0,00"
-          defaultValue={numParaBR(data.salario)}
-          style={styles.input}
-          onFocus={e => e.target.select()}
-          onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
-        />
-      </div>
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Valor Dia / Dobra-Dia (R$) <span style={{fontSize:'10px',color:'#888',fontWeight:'normal'}}>(CLT: adicional dobra‑dia | Freelancer: R$/turno Dia)</span></label>
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="0,00"
-          defaultValue={numParaBR(data.valorDia)}
-          style={styles.input}
-          onFocus={e => e.target.select()}
-          onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
-        />
-      </div>
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Valor Noite / Dobra-Noite (R$) <span style={{fontSize:'10px',color:'#888',fontWeight:'normal'}}>(CLT: adicional dobra‑noite | Freelancer: R$/turno Noite)</span></label>
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="0,00"
-          defaultValue={numParaBR(data.valorNoite)}
-          style={styles.input}
-          onFocus={e => e.target.select()}
-          onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
-        />
-      </div>
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Transporte Ida+Volta por dia (R$)</label>
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="0,00"
-          defaultValue={numParaBR(data.valorTransporte)}
-          style={styles.input}
-          onFocus={e => e.target.select()}
-          onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
-        />
-        <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados na semana</small>
-      </div>
-      <div style={styles.formGroup}>
-        <label style={styles.label}>Chave PIX</label>
-        <input type="text" value={data.chavePix || ''} style={styles.input}
-          onChange={e => onChange({ chavePix: e.target.value })} />
-      </div>
-      <div style={{ ...styles.formGroup, justifyContent: 'flex-end' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '22px' }}>
-          <input type="checkbox" checked={data.valeAlimentacao || false}
-            onChange={e => onChange({ valeAlimentacao: e.target.checked })} />
-          <span style={styles.label}>Vale Alimentação</span>
-        </label>
+const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposContratacaoProps) => {
+  const isFreelancer = data.tipoContrato === 'Freelancer';
+  return (
+    <div style={styles.secao}>
+      <h3 style={styles.secaoTitulo}>💼 Contratação</h3>
+      <div style={styles.grid2Col}>
+        {/* Tipo de contrato */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Tipo de Contrato *</label>
+          <select value={data.tipoContrato || 'CLT'} style={styles.input}
+            onChange={e => onChange({ tipoContrato: e.target.value as 'CLT' | 'Freelancer' })}>
+            <option value="CLT">CLT</option>
+            <option value="Freelancer">Freelancer</option>
+          </select>
+        </div>
+        {/* Cargo (admin only) — hide for freelancer */}
+        {!isFreelancer && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Cargo <span style={{ color:'#888', fontWeight:'normal', fontSize:'11px' }}>(administrativo)</span></label>
+            <select value={data.cargo || data.tipo || 'Outro'} style={styles.input}
+              onChange={e => onChange({ cargo: e.target.value, tipo: e.target.value })}>
+              {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        )}
+        {/* Função na escala */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Função na Escala <span style={{ color:'#1976d2', fontSize:'11px' }}>(exibida no grid)</span></label>
+          <select value={data.funcao || ''} style={styles.input}
+            onChange={e => onChange({ funcao: e.target.value })}>
+            <option value="">— Selecione a função —</option>
+            {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </div>
+        {/* Área */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Área de Trabalho <span style={{ color:'#1976d2', fontSize:'11px' }}>(agrupamento)</span></label>
+          <select value={data.area || ''} style={styles.input}
+            onChange={e => onChange({ area: e.target.value })}>
+            <option value="">— Selecione a área —</option>
+            {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
+            {funcoes.map(f => f.area).filter(a => a && !AREAS_PADRAO.includes(a))
+              .filter((v,i,arr) => arr.indexOf(v) === i)
+              .map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        {/* Datas */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Data de Admissão</label>
+          <input
+            type="text" inputMode="numeric" placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataAdmissao || '')} style={styles.input} maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataAdmissao: iso || fmt2 });
+            }}
+          />
+        </div>
+        <div style={styles.formGroup}>
+          <label style={{ ...styles.label, color: data.ativo === false ? '#c62828' : '#444' }}>
+            Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
+          </label>
+          <input
+            type="text" inputMode="numeric" placeholder="DD/MM/AAAA"
+            value={dataISOParaPt(data.dataDemissao || '')}
+            style={{ ...styles.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
+            maxLength={10}
+            onChange={e => {
+              const fmt2 = formatarData(e.target.value);
+              const iso = dataPtParaISO(fmt2);
+              onChange({ dataDemissao: iso || fmt2 });
+            }}
+          />
+        </div>
+        {/* Status */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Status</label>
+          <select value={data.ativo === false ? 'inativo' : 'ativo'} style={styles.input}
+            onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
+            <option value="ativo">● Ativo</option>
+            <option value="inativo">○ Inativo / Desligado</option>
+          </select>
+        </div>
+        {/* Financeiro — Salário (CLT only) */}
+        {!isFreelancer && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Salário Base (R$)</label>
+            <input
+              type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(data.salario)} style={styles.input}
+              onFocus={e => e.target.select()}
+              onBlur={e => onChange({ salario: brParaNum(e.target.value) })}
+            />
+          </div>
+        )}
+        {/* Valor Dia */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>
+            {isFreelancer ? 'Valor Dobra-Dia (R$)' : 'Adicional Dobra-Dia (R$)'}
+            <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>
+              {isFreelancer ? 'R$ por turno Dia / DN' : 'Adicional sobre salário'}
+            </span>
+          </label>
+          <input
+            type="text" inputMode="decimal" placeholder="0,00"
+            defaultValue={numParaBR(data.valorDia)} style={styles.input}
+            onFocus={e => e.target.select()}
+            onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
+          />
+        </div>
+        {/* Valor Noite */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>
+            {isFreelancer ? 'Valor Dobra-Noite (R$)' : 'Adicional Dobra-Noite (R$)'}
+            <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>
+              {isFreelancer ? 'R$ por turno N / DN' : 'Adicional sobre salário'}
+            </span>
+          </label>
+          <input
+            type="text" inputMode="decimal" placeholder="0,00"
+            defaultValue={numParaBR(data.valorNoite)} style={styles.input}
+            onFocus={e => e.target.select()}
+            onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
+          />
+        </div>
+        {/* Transporte */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Transporte Ida+Volta por dia (R$)</label>
+          <input
+            type="text" inputMode="decimal" placeholder="0,00"
+            defaultValue={numParaBR(data.valorTransporte)} style={styles.input}
+            onFocus={e => e.target.select()}
+            onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
+          />
+          <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados</small>
+        </div>
+        {/* PIX */}
+        <div style={styles.formGroup}>
+          <label style={styles.label}>Chave PIX</label>
+          <input type="text" value={data.chavePix || ''} style={styles.input}
+            onChange={e => onChange({ chavePix: e.target.value })} />
+        </div>
+        {/* Vale Alimentação (CLT only) */}
+        {!isFreelancer && (
+          <div style={{ ...styles.formGroup, justifyContent: 'flex-end' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '22px' }}>
+              <input type="checkbox" checked={data.valeAlimentacao || false}
+                onChange={e => onChange({ valeAlimentacao: e.target.checked })} />
+              <span style={styles.label}>Vale Alimentação</span>
+            </label>
+          </div>
+        )}
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const CamposJornada = ({ data, onChange }: CamposJornadaProps) => (
   <div style={styles.secao}>
@@ -480,6 +455,139 @@ const CamposJornada = ({ data, onChange }: CamposJornadaProps) => (
   </div>
 );
 
+/* ─── Card de Colaborador (unificado para CLT e Freelancer) ─────────────── */
+interface CardColaboradorProps {
+  colab: Colaborador;
+  onEditar: (c: Colaborador) => void;
+  onDesligar: (c: Colaborador) => void;
+  onReativar: (c: Colaborador) => void;
+}
+
+const CardColaborador = ({ colab, onEditar, onDesligar, onReativar }: CardColaboradorProps) => {
+  const isFreelancer = colab.tipoContrato === 'Freelancer';
+  const celular = colab.celular || colab.telefone || '';
+  const cargo = colab.cargo || colab.tipo || '';
+  return (
+    <div style={{
+      ...styles.card,
+      opacity: colab.ativo === false ? 0.75 : 1,
+      borderLeft: colab.ativo === false
+        ? '4px solid #c62828'
+        : isFreelancer
+          ? '4px solid #e65100'
+          : '4px solid #1976d2',
+    }}>
+      <div style={styles.cardHeader}>
+        <h3 style={{ margin: 0, fontSize: '14px', flex: 1 }}>{colab.nome}</h3>
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{
+            ...styles.badge,
+            backgroundColor: isFreelancer ? '#e65100' : '#1976d2',
+          }}>
+            {colab.tipoContrato}
+          </span>
+          {colab.area && (
+            <span style={{ ...styles.badge, backgroundColor: '#546e7a', fontSize: '10px' }}>
+              {colab.area}
+            </span>
+          )}
+          {colab.ativo === false && (
+            <span style={{ ...styles.badge, backgroundColor: '#c62828', fontSize: '10px' }}>
+              Desligado
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.cardBody}>
+        {/* Função na escala — destaque */}
+        {colab.funcao && (
+          <div style={{
+            backgroundColor: isFreelancer ? '#fff3e0' : '#e3f2fd',
+            borderRadius: '4px', padding: '4px 8px', marginBottom: '6px', fontSize: '12px'
+          }}>
+            <span style={{ color: '#888', fontSize: '11px' }}>Função: </span>
+            <strong style={{ color: isFreelancer ? '#e65100' : '#1565c0' }}>{colab.funcao}</strong>
+          </div>
+        )}
+
+        {/* Cargo (CLT) */}
+        {!isFreelancer && cargo && (
+          <div style={styles.cardRow}>
+            <span style={styles.cardLabel}>Cargo:</span>
+            <span style={{ fontSize: '12px', color: '#666' }}>{cargo}</span>
+          </div>
+        )}
+
+        {/* CPF — CLT ou freelancer se preenchido */}
+        {colab.cpf && colab.cpf !== '00000000000' && (
+          <div style={styles.cardRow}>
+            <span style={styles.cardLabel}>CPF:</span>
+            <span style={{ fontSize: '12px' }}>{colab.cpf}</span>
+          </div>
+        )}
+
+        {celular && (
+          <div style={styles.cardRow}>
+            <span style={styles.cardLabel}>Celular:</span>
+            <span style={{ fontSize: '12px' }}>{celular}</span>
+          </div>
+        )}
+
+        {colab.chavePix && (
+          <div style={styles.cardRow}>
+            <span style={styles.cardLabel}>PIX:</span>
+            <span style={{ color: '#1976d2', fontSize: '12px', wordBreak: 'break-all' }}>{colab.chavePix}</span>
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid #f0f0f0', marginTop: '6px', paddingTop: '6px' }}>
+          {/* Valores financeiros */}
+          {(colab.valorDia > 0 || colab.valorNoite > 0) && (
+            <div style={styles.cardRow}>
+              <span style={styles.cardLabel}>{isFreelancer ? 'Dobra:' : 'Adicional:'}</span>
+              {colab.valorDia > 0 && <span style={{ fontSize: '12px', color: '#1976d2' }}>D={fmt(colab.valorDia)}</span>}
+              {colab.valorNoite > 0 && <span style={{ fontSize: '12px', color: '#7b1fa2', marginLeft: '6px' }}>N={fmt(colab.valorNoite)}</span>}
+            </div>
+          )}
+          {!isFreelancer && colab.salario > 0 && (
+            <div style={styles.cardRow}>
+              <span style={styles.cardLabel}>Salário:</span>
+              <span style={{ fontSize: '12px', color: '#2e7d32', fontWeight: 'bold' }}>{fmt(colab.salario)}</span>
+            </div>
+          )}
+          {colab.valorTransporte > 0 && (
+            <div style={styles.cardRow}>
+              <span style={styles.cardLabel}>Transp:</span>
+              <span style={{ fontSize: '12px', color: '#666' }}>{fmt(colab.valorTransporte)}/dia</span>
+            </div>
+          )}
+          {colab.dataAdmissao && (
+            <div style={styles.cardRow}>
+              <span style={styles.cardLabel}>Admissão:</span>
+              <span style={{ fontSize: '11px', color: '#888' }}>{dataISOParaPt(colab.dataAdmissao)}</span>
+            </div>
+          )}
+          {colab.dataDemissao && (
+            <div style={styles.cardRow}>
+              <span style={{ ...styles.cardLabel, color: '#c62828' }}>Demissão:</span>
+              <span style={{ fontSize: '11px', color: '#c62828' }}>{dataISOParaPt(colab.dataDemissao)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.cardActions}>
+        <button onClick={() => onEditar(colab)} style={styles.botaoEditar}>✏️ Editar</button>
+        {colab.ativo !== false
+          ? <button onClick={() => onDesligar(colab)} style={{ ...styles.botaoDeletar, backgroundColor: '#e65100', fontSize: '11px' }}>Desligar</button>
+          : <button onClick={() => onReativar(colab)} style={{ ...styles.botaoDeletar, backgroundColor: '#2e7d32', fontSize: '11px' }}>Reativar</button>
+        }
+      </div>
+    </div>
+  );
+};
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Colaboradores() {
   const { activeUnit } = useUnit();
@@ -495,20 +603,20 @@ export default function Colaboradores() {
   const [salvando, setSalvando]         = useState(false);
   const [msg, setMsg]                   = useState('');
 
-  type AbaType = 'lista' | 'novo' | 'freelancers' | 'regras';
+  type AbaType = 'lista' | 'novo' | 'regras';
   const [aba, setAba] = useState<AbaType>('lista');
 
-  // Colaborador
+  // Colaborador editing
   const [colaboradorEditando, setColaboradorEditando] = useState<Colaborador | null>(null);
-  const [filtroTipo, setFiltroTipo]   = useState('');
-  const [filtroArea, setFiltroArea]   = useState('');
-  const [filtroAtivo, setFiltroAtivo] = useState(true);
-  const [busca, setBusca]             = useState('');
-  const [novoColab, setNovoColab]     = useState<Partial<Colaborador>>(ESTADO_INICIAL);
 
-  // Freelancer editing (using same Colaborador form)
-  const [freelancerEditando, setFreelancerEditando] = useState<string | null>(null);
-  const [formFree, setFormFree]       = useState<Partial<Freelancer>>(FREELANCER_INICIAL);
+  // Filters
+  const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
+  const [filtroArea, setFiltroArea]         = useState('');
+  const [filtroAtivo, setFiltroAtivo]       = useState(true);
+  const [busca, setBusca]                   = useState('');
+
+  // New colaborador form (unified)
+  const [novoColab, setNovoColab] = useState<Partial<Colaborador>>(ESTADO_INICIAL);
 
   // Regras de função
   const [funcaoEditando, setFuncaoEditando] = useState<FuncaoEscala | null>(null);
@@ -539,7 +647,6 @@ export default function Colaboradores() {
       });
       if (r.ok) {
         const d = await r.json();
-        // Retorna todos (ativos e inativos) para poder filtrar no front
         setColaboradores(Array.isArray(d) ? d : d.colaboradores || []);
       }
     } catch (e) { console.error(e); }
@@ -559,21 +666,29 @@ export default function Colaboradores() {
   const celularDe = (c: Partial<Colaborador>) => c.celular || c.telefone || '';
   const cargoDe   = (c: Partial<Colaborador>) => c.cargo   || c.tipo     || 'Outro';
 
-  // Todas as opções de função disponíveis
   const funcoesOpcoes = useMemo(() => {
     const fromDB = funcoes.map(f => f.nome);
     const all = [...new Set([...fromDB, ...FUNCOES_LISTA])].sort();
     return all;
   }, [funcoes]);
 
-  /* ── CRUD Colaborador ─────────────────────────────────────── */
+  /* ── CRUD Colaborador (unificado CLT + Freelancer) ─────────── */
   const handleCriarColaborador = async () => {
-    const cpfLimpo     = (novoColab.cpf     || '').replace(/\D/g, '');
+    const isFreelancer = novoColab.tipoContrato === 'Freelancer';
     const celularLimpo = celularDe(novoColab).replace(/\D/g, '');
     if (!novoColab.nome?.trim()) { alert('Nome é obrigatório!'); return; }
-    if (cpfLimpo.length !== 11)  { alert('CPF inválido — informe 11 dígitos!'); return; }
-    if (celularLimpo.length < 10){ alert('Celular inválido!'); return; }
-    const cargo = cargoDe(novoColab);
+    if (celularLimpo.length < 10) { alert('Celular inválido!'); return; }
+
+    // CPF only required for CLT
+    if (!isFreelancer) {
+      const cpfLimpo = (novoColab.cpf || '').replace(/\D/g, '');
+      if (cpfLimpo.length !== 11) { alert('CPF inválido — informe 11 dígitos!'); return; }
+    }
+
+    const cargo = isFreelancer
+      ? (novoColab.funcao || novoColab.cargo || 'Freelancer')
+      : cargoDe(novoColab);
+
     const payload: Partial<Colaborador> = {
       ...novoColab,
       unitId,
@@ -583,7 +698,12 @@ export default function Colaboradores() {
       area:    novoColab.area    || '',
       celular: novoColab.celular || '',
       telefone: novoColab.celular || '',
+      // For freelancers without CPF, use placeholder
+      cpf: isFreelancer && !(novoColab.cpf || '').replace(/\D/g,'').length
+        ? '00000000000'
+        : novoColab.cpf,
     };
+
     setSalvando(true);
     try {
       const res = await fetch(`${apiUrl}/colaboradores`, {
@@ -606,7 +726,10 @@ export default function Colaboradores() {
 
   const handleEditarColaborador = async () => {
     if (!colaboradorEditando) return;
-    const cargo = cargoDe(colaboradorEditando);
+    const isFreelancer = colaboradorEditando.tipoContrato === 'Freelancer';
+    const cargo = isFreelancer
+      ? (colaboradorEditando.funcao || colaboradorEditando.cargo || 'Freelancer')
+      : cargoDe(colaboradorEditando);
     const payload = {
       ...colaboradorEditando,
       cargo,
@@ -678,54 +801,6 @@ export default function Colaboradores() {
     finally { setSalvando(false); }
   };
 
-  /* ── CRUD Freelancers (via /colaboradores com tipoContrato=Freelancer) ─── */
-  const handleSalvarFreelancer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formFree.nome?.trim()) { alert('Nome é obrigatório.'); return; }
-    setSalvando(true);
-    try {
-      const isEdit = !!freelancerEditando;
-      const payload = {
-        ...formFree,
-        unitId,
-        tipoContrato: 'Freelancer',
-        cargo: formFree.funcao || formFree.cargo || 'Freelancer',
-        tipo:  formFree.funcao || formFree.cargo || 'Freelancer',
-        cpf:   (formFree as any).cpf || '00000000000',
-        celular: formFree.telefone || '',
-        telefone: formFree.telefone || '',
-        ativo: formFree.ativo !== false,
-      };
-      const url = isEdit
-        ? `${apiUrl}/colaboradores/${freelancerEditando}`
-        : `${apiUrl}/colaboradores`;
-      const res = await fetch(url, {
-        method: isEdit ? 'PUT' : 'POST',
-        headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        mostrarMsg(isEdit ? '✅ Freelancer atualizado!' : '✅ Freelancer cadastrado!');
-        setFormFree(FREELANCER_INICIAL);
-        setFreelancerEditando(null);
-        carregarColaboradores();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert('Erro: ' + ((err as any).error || res.status));
-      }
-    } catch { alert('Erro ao salvar freelancer'); }
-    finally { setSalvando(false); }
-  };
-
-  const handleDeletarFreelancer = async (id: string, nome: string) => {
-    if (!window.confirm(`Excluir ${nome}?`)) return;
-    await fetch(`${apiUrl}/colaboradores/${id}`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
-    });
-    mostrarMsg('🗑️ Freelancer removido.');
-    carregarColaboradores();
-  };
-
   /* ── CRUD Funções de Escala ───────────────────────────────── */
   const handleSalvarFuncao = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -766,7 +841,7 @@ export default function Colaboradores() {
   };
 
   const handleImportarFuncoesPadrao = async () => {
-    if (!window.confirm(`Importar ${FUNCOES_ESCALA_PADRAO.length} funções padrão? Funções existentes com mesmo nome serão atualizadas.`)) return;
+    if (!window.confirm(`Importar ${FUNCOES_ESCALA_PADRAO.length} funções padrão?`)) return;
     setSalvando(true);
     let criados = 0;
     for (const f of FUNCOES_ESCALA_PADRAO) {
@@ -786,36 +861,29 @@ export default function Colaboradores() {
   };
 
   /* ── Derivados ───────────────────────────────────────────── */
-  // Freelancers são colaboradores com tipoContrato='Freelancer'
-  const freelancers = useMemo(() =>
-    colaboradores.filter(c => c.tipoContrato === 'Freelancer'),
-  [colaboradores]);
-
-  // CLTs (exibidos na aba lista)
-  const colaboradoresCLT = useMemo(() =>
-    colaboradores.filter(c => c.tipoContrato !== 'Freelancer'),
-  [colaboradores]);
+  const totalCLT = useMemo(() => colaboradores.filter(c => c.tipoContrato !== 'Freelancer').length, [colaboradores]);
+  const totalFreelancer = useMemo(() => colaboradores.filter(c => c.tipoContrato === 'Freelancer').length, [colaboradores]);
 
   /* ── Filtros ──────────────────────────────────────────────── */
   const colaboradoresFiltrados = useMemo(() => {
-    return colaboradoresCLT.filter(c => {
-      const matchTipo  = !filtroTipo || cargoDe(c) === filtroTipo || (c.funcao||'') === filtroTipo;
-      const matchArea  = !filtroArea || (c.area || '') === filtroArea;
-      const matchAtivo = filtroAtivo ? c.ativo !== false : c.ativo === false;
+    return colaboradores.filter(c => {
+      const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
+      const matchArea     = !filtroArea || (c.area || '') === filtroArea;
+      const matchAtivo    = filtroAtivo ? c.ativo !== false : c.ativo === false;
       const q = busca.toLowerCase();
       const matchBusca = !busca ||
         (c.nome || '').toLowerCase().includes(q) ||
         (c.cpf  || '').replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
         celularDe(c).replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
         (c.funcao || '').toLowerCase().includes(q);
-      return matchTipo && matchArea && matchAtivo && matchBusca;
+      return matchContrato && matchArea && matchAtivo && matchBusca;
     });
-  }, [colaboradores, filtroTipo, filtroArea, filtroAtivo, busca]);
+  }, [colaboradores, filtroContrato, filtroArea, filtroAtivo, busca]);
 
   const areasUnicas = useMemo(() => {
-    const s = new Set(colaboradoresCLT.map(c => c.area || '').filter(Boolean));
+    const s = new Set(colaboradores.map(c => c.area || '').filter(Boolean));
     return Array.from(s).sort();
-  }, [colaboradoresCLT]);
+  }, [colaboradores]);
 
   /* ── Alias de estilos ─────────────────────────────────────── */
   const S = styles;
@@ -838,10 +906,9 @@ export default function Colaboradores() {
         {/* ABAS */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '0', borderBottom: '2px solid #ddd', flexWrap: 'wrap' }}>
           {([
-            { key: 'lista',       label: `📋 CLT (${colaboradoresCLT.length})` },
-            { key: 'novo',        label: '➕ Novo' },
-            { key: 'freelancers', label: `🎯 Freelancers (${freelancers.length})` },
-            { key: 'regras',      label: `📖 Funções/Regras (${funcoes.length})` },
+            { key: 'lista',  label: `📋 Colaboradores (${colaboradores.length})` },
+            { key: 'novo',   label: '➕ Novo Cadastro' },
+            { key: 'regras', label: `📖 Funções/Regras (${funcoes.length})` },
           ] as { key: AbaType; label: string }[]).map(({ key, label }) => (
             <button key={key} onClick={() => setAba(key)} style={{
               padding: '10px 18px', border: 'none', cursor: 'pointer', fontWeight: 'bold',
@@ -853,21 +920,50 @@ export default function Colaboradores() {
           ))}
         </div>
 
-        {/* ── ABA LISTA ─────────────────────────────────────────── */}
+        {/* ── ABA LISTA (CLT + Freelancers unificados em grid) ─── */}
         {aba === 'lista' && (
           <div style={S.tabContent}>
+
+            {/* Resumo */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Total', value: colaboradores.length, color: '#1565c0', bg: '#e3f2fd' },
+                { label: 'CLT', value: totalCLT, color: '#1b5e20', bg: '#e8f5e9' },
+                { label: 'Freelancer', value: totalFreelancer, color: '#e65100', bg: '#fff3e0' },
+              ].map(({ label, value, color, bg }) => (
+                <div key={label} style={{ backgroundColor: bg, borderRadius: '8px', padding: '10px 18px', textAlign: 'center', minWidth: '80px' }}>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color }}>{value}</div>
+                  <div style={{ fontSize: '11px', color, fontWeight: 'bold' }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Filtros */}
             <div style={S.filtrosContainer}>
               <input type="text" placeholder="🔍 Buscar por nome, CPF, celular ou função..."
                 value={busca} onChange={e => setBusca(e.target.value)} style={S.inputBusca} />
-              <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={S.select}>
-                <option value="">Todos os cargos</option>
-                {TIPOS_CARGO.map(t => <option key={t} value={t}>{t}</option>)}
-                {funcoesOpcoes.filter(f => !TIPOS_CARGO.includes(f)).map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
+
+              {/* Filtro por tipo de contrato — botões pill */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                {(['todos', 'CLT', 'Freelancer'] as const).map(tipo => (
+                  <button key={tipo} onClick={() => setFiltroContrato(tipo)} style={{
+                    padding: '8px 14px', border: 'none', borderRadius: '20px', cursor: 'pointer',
+                    fontWeight: 'bold', fontSize: '12px',
+                    backgroundColor: filtroContrato === tipo
+                      ? (tipo === 'Freelancer' ? '#e65100' : tipo === 'CLT' ? '#1976d2' : '#37474f')
+                      : '#f0f0f0',
+                    color: filtroContrato === tipo ? 'white' : '#555',
+                  }}>
+                    {tipo === 'todos' ? 'Todos' : tipo}
+                  </button>
+                ))}
+              </div>
+
               <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)} style={S.select}>
                 <option value="">Todas as áreas</option>
                 {areasUnicas.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
+
               <select value={filtroAtivo ? 'ativo' : 'inativo'}
                 onChange={e => setFiltroAtivo(e.target.value === 'ativo')} style={S.select}>
                 <option value="ativo">● Ativos</option>
@@ -875,10 +971,8 @@ export default function Colaboradores() {
               </select>
             </div>
 
-            {/* Legenda rápida */}
-            <div style={{ display:'flex', gap:'8px', marginBottom:'12px', fontSize:'11px', color:'#666', flexWrap:'wrap' }}>
-              <span>Total CLT: <strong>{colaboradoresFiltrados.length}</strong></span>
-              <span style={{ color:'#e65100' }}>Freelancers (separado): <strong>{freelancers.length}</strong></span>
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px' }}>
+              Exibindo <strong>{colaboradoresFiltrados.length}</strong> colaborador(es)
             </div>
 
             {loading ? (
@@ -888,256 +982,53 @@ export default function Colaboradores() {
             ) : (
               <div style={S.gridContainer}>
                 {colaboradoresFiltrados.map(colab => (
-                  <div key={colab.id} style={{ ...S.card, opacity: colab.ativo === false ? 0.7 : 1, borderLeft: colab.ativo === false ? '4px solid #c62828' : undefined }}>
-                    <div style={S.cardHeader}>
-                      <h3 style={{ margin: 0, fontSize: '14px' }}>{colab.nome}</h3>
-                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <span style={{ ...S.badge, backgroundColor: colab.tipoContrato === 'CLT' ? '#28a745' : '#fd7e14' }}>
-                          {colab.tipoContrato}
-                        </span>
-                        {colab.area && (
-                          <span style={{ ...S.badge, backgroundColor: '#1565c0', fontSize: '10px' }}>
-                            {colab.area}
-                          </span>
-                        )}
-                        {colab.ativo === false && (
-                          <span style={{ ...S.badge, backgroundColor: '#c62828', fontSize: '10px' }}>
-                            Desligado
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={S.cardBody}>
-                      {/* Função na escala — destaque */}
-                      {colab.funcao && (
-                        <div style={{ backgroundColor:'#e3f2fd', borderRadius:'4px', padding:'4px 8px', marginBottom:'6px', fontSize:'12px' }}>
-                          <span style={{ color:'#888', fontSize:'11px' }}>Função: </span>
-                          <strong style={{ color:'#1565c0' }}>{colab.funcao}</strong>
-                        </div>
-                      )}
-                      <div style={S.cardRow}>
-                        <span style={S.cardLabel}>Cargo:</span>
-                        <span style={{ fontSize: '12px', color:'#666' }}>{cargoDe(colab)}</span>
-                      </div>
-                      <div style={S.cardRow}>
-                        <span style={S.cardLabel}>CPF:</span>
-                        <span style={{ fontSize:'12px' }}>{colab.cpf || '—'}</span>
-                      </div>
-                      <div style={S.cardRow}>
-                        <span style={S.cardLabel}>Celular:</span>
-                        <span style={{ fontSize:'12px' }}>{(colab.celular || colab.telefone) || '—'}</span>
-                      </div>
-                      {colab.chavePix && (
-                        <div style={S.cardRow}>
-                          <span style={S.cardLabel}>PIX:</span>
-                          <span style={{ color: '#1976d2', fontSize: '12px' }}>{colab.chavePix}</span>
-                        </div>
-                      )}
-                      <div style={{ borderTop: '1px solid #f0f0f0', marginTop: '6px', paddingTop: '6px' }}>
-                        {(colab.valorDia > 0 || colab.valorNoite > 0) && (
-                          <div style={S.cardRow}>
-                            <span style={S.cardLabel}>Dobra:</span>
-                            <span style={{ fontSize:'12px', color:'#1976d2' }}>D={fmt(colab.valorDia)}</span>
-                            <span style={{ fontSize:'12px', color:'#7b1fa2', marginLeft:'6px' }}>N={fmt(colab.valorNoite)}</span>
-                          </div>
-                        )}
-                        {colab.valorTransporte > 0 && (
-                          <div style={S.cardRow}>
-                            <span style={S.cardLabel}>Transp:</span>
-                            <span style={{ fontSize:'12px', color:'#666' }}>{fmt(colab.valorTransporte)}/dia</span>
-                          </div>
-                        )}
-                        {colab.dataAdmissao && (
-                          <div style={S.cardRow}>
-                            <span style={S.cardLabel}>Admissão:</span>
-                            <span style={{ fontSize:'11px', color:'#888' }}>{dataISOParaPt(colab.dataAdmissao)}</span>
-                          </div>
-                        )}
-                        {colab.dataDemissao && (
-                          <div style={S.cardRow}>
-                            <span style={{ ...S.cardLabel, color:'#c62828' }}>Demissão:</span>
-                            <span style={{ fontSize:'11px', color:'#c62828' }}>{colab.dataDemissao}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div style={S.cardActions}>
-                      <button onClick={() => setColaboradorEditando(colab)} style={S.botaoEditar}>✏️ Editar</button>
-                      {colab.ativo !== false
-                        ? <button onClick={() => handleDesligar(colab)} style={{ ...S.botaoDeletar, backgroundColor:'#e65100', fontSize:'11px' }}>Desligar</button>
-                        : <button onClick={() => handleReativar(colab)} style={{ ...S.botaoDeletar, backgroundColor:'#2e7d32', fontSize:'11px' }}>Reativar</button>
-                      }
-                    </div>
-                  </div>
+                  <CardColaborador
+                    key={colab.id}
+                    colab={colab}
+                    onEditar={setColaboradorEditando}
+                    onDesligar={handleDesligar}
+                    onReativar={handleReativar}
+                  />
                 ))}
               </div>
             )}
           </div>
         )}
 
-        {/* ── ABA NOVO COLABORADOR ──────────────────────────────── */}
+        {/* ── ABA NOVO CADASTRO (formulário único) ──────────────── */}
         {aba === 'novo' && (
           <div style={{ ...S.tabContent, ...S.formularioContainer }}>
-            <h2 style={{ marginTop: 0, color:'#1565c0' }}>➕ Novo Colaborador</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+              <h2 style={{ margin: 0, color:'#1565c0' }}>➕ Novo Colaborador</h2>
+              {/* Quick tipo badge */}
+              <span style={{
+                padding: '6px 16px', borderRadius: '20px', fontWeight: 'bold', fontSize: '13px',
+                backgroundColor: novoColab.tipoContrato === 'Freelancer' ? '#fff3e0' : '#e3f2fd',
+                color: novoColab.tipoContrato === 'Freelancer' ? '#e65100' : '#1565c0',
+                border: `1px solid ${novoColab.tipoContrato === 'Freelancer' ? '#e65100' : '#1565c0'}`,
+              }}>
+                {novoColab.tipoContrato || 'CLT'}
+              </span>
+            </div>
+
             <CamposBasicos    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
             <CamposEndereco   data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
-            <CamposContratacao data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} funcoesOpcoes={funcoesOpcoes} funcoes={funcoes} />
-            <CamposJornada    data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
+            <CamposContratacao
+              data={novoColab}
+              onChange={p => setNovoColab(prev => ({ ...prev, ...p }))}
+              funcoesOpcoes={funcoesOpcoes}
+              funcoes={funcoes}
+            />
+            {/* Jornada only for CLT */}
+            {novoColab.tipoContrato !== 'Freelancer' && (
+              <CamposJornada data={novoColab} onChange={p => setNovoColab(prev => ({ ...prev, ...p }))} />
+            )}
+
             <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
               <button onClick={() => { setNovoColab(ESTADO_INICIAL); setAba('lista'); }} style={S.botaoCancelar}>Cancelar</button>
               <button onClick={handleCriarColaborador} disabled={salvando} style={S.botaoSalvar}>
-                {salvando ? '⏳ Salvando...' : '💾 Salvar Colaborador'}
+                {salvando ? '⏳ Salvando...' : `💾 Salvar ${novoColab.tipoContrato || 'Colaborador'}`}
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── ABA FREELANCERS ───────────────────────────────────── */}
-        {aba === 'freelancers' && (
-          <div style={S.tabContent}>
-            <div style={{ padding:'10px 14px', backgroundColor:'#fff3e0', borderRadius:'6px', borderLeft:'4px solid #e65100', marginBottom:'16px', fontSize:'13px' }}>
-              <strong style={{ color:'#e65100' }}>ℹ️ Freelancers</strong> — cadastrados como colaboradores com tipo <strong>Freelancer</strong>. Aparecem na escala agrupados por área. Os valores de dobra só são visíveis em <strong>Folha de Pagamento</strong>.
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-              <h3 style={{ margin: 0 }}>🎯 Freelancers Cadastrados ({freelancers.length})</h3>
-              <button onClick={() => { setFormFree(FREELANCER_INICIAL); setFreelancerEditando(null); }}
-                style={S.btnPrimary}>➕ Novo Freelancer</button>
-            </div>
-
-            {freelancers.length > 0 && (
-              <div style={{ overflowX: 'auto', marginBottom: '24px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                      {['Nome', 'Função', 'Área', 'PIX', 'Telefone', 'R$/Dia', 'R$/Noite', 'Transp/dia', 'Status', ''].map(h => (
-                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {freelancers.map((f, i) => (
-                      <tr key={f.id} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{f.nome}</td>
-                        <td style={{ padding: '8px 10px', color: '#1976d2' }}>{f.funcao || f.cargo || '—'}</td>
-                        <td style={{ padding: '8px 10px', color: '#555', fontSize: '12px' }}>{f.area || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontSize: '12px' }}>{f.chavePix || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontSize: '12px' }}>{(f.celular || f.telefone) || '—'}</td>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#2e7d32' }}>{f.valorDia > 0 ? fmt(f.valorDia) : '—'}</td>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#7b1fa2' }}>{f.valorNoite > 0 ? fmt(f.valorNoite) : '—'}</td>
-                        <td style={{ padding: '8px 10px', fontSize: '12px', color: '#1565c0' }}>{f.valorTransporte > 0 ? fmt(f.valorTransporte) : '—'}</td>
-                        <td style={{ padding: '8px 10px' }}>
-                          <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                            backgroundColor: f.ativo !== false ? '#e8f5e9' : '#fce4ec',
-                            color: f.ativo !== false ? '#2e7d32' : '#c62828' }}>
-                            {f.ativo !== false ? '● Ativo' : '○ Inativo'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '8px 6px' }}>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button onClick={() => setColaboradorEditando(f as Colaborador)}
-                              style={{ padding: '3px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#1976d2', color: 'white', fontSize: '12px' }}>✏️</button>
-                            <button onClick={() => handleDeletarFreelancer(f.id, f.nome)}
-                              style={{ padding: '3px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#e53935', color: 'white', fontSize: '12px' }}>🗑</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Formulário para novo freelancer */}
-            <div style={{ backgroundColor: '#f9f9f9', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', borderTop: '3px solid #e65100' }}>
-              <h4 style={{ marginTop: 0, color: '#e65100' }}>➕ Novo Freelancer</h4>
-              <p style={{ fontSize: '12px', color: '#888', margin: '0 0 12px 0' }}>Preencha os campos abaixo. O colaborador será salvo como <strong>Freelancer</strong>.</p>
-              <form onSubmit={handleSalvarFreelancer}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Nome *</label>
-                    <input type="text" value={formFree.nome || ''} style={S.input} required
-                      onChange={e => setFormFree({ ...formFree, nome: e.target.value })} />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Função <span style={{ color: '#1976d2', fontSize:'11px' }}>(escala)</span></label>
-                    <select value={formFree.funcao || formFree.cargo || ''} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, funcao: e.target.value, cargo: e.target.value })}>
-                      <option value="">— Selecione —</option>
-                      {funcoesOpcoes.map(f => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Área</label>
-                    <select value={(formFree as any).area || ''} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, area: e.target.value } as any)}>
-                      <option value="">— Selecione —</option>
-                      {AREAS_PADRAO.map(a => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Chave PIX</label>
-                    <input type="text" value={formFree.chavePix || ''} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, chavePix: e.target.value })} />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Telefone / WhatsApp</label>
-                    <input type="tel" value={formFree.telefone || ''} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, telefone: e.target.value })} />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Valor Dobra-Dia (R$) <span style={{fontSize:'11px',color:'#888'}}>(turno D ou DN)</span></label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      defaultValue={numParaBR((formFree as any).valorDia ?? 120)}
-                      key={`free-vdia-${(formFree as any).valorDia}`}
-                      style={S.input}
-                      onFocus={e => e.target.select()}
-                      onBlur={e => setFormFree({ ...formFree, valorDia: brParaNum(e.target.value) } as any)}
-                    />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Valor Dobra-Noite (R$) <span style={{fontSize:'11px',color:'#888'}}>(turno N ou DN)</span></label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      defaultValue={numParaBR((formFree as any).valorNoite ?? 0)}
-                      key={`free-vnoite-${(formFree as any).valorNoite}`}
-                      style={S.input}
-                      onFocus={e => e.target.select()}
-                      onBlur={e => setFormFree({ ...formFree, valorNoite: brParaNum(e.target.value) } as any)}
-                    />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Transporte por dia (R$)</label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      defaultValue={numParaBR((formFree as any).valorTransporte ?? 0)}
-                      key={`free-vtransp-${(formFree as any).valorTransporte}`}
-                      style={S.input}
-                      onFocus={e => e.target.select()}
-                      onBlur={e => setFormFree({ ...formFree, valorTransporte: brParaNum(e.target.value) } as any)}
-                    />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Status</label>
-                    <select value={formFree.ativo !== false ? 'true' : 'false'} style={S.input}
-                      onChange={e => setFormFree({ ...formFree, ativo: e.target.value === 'true' })}>
-                      <option value="true">● Ativo</option>
-                      <option value="false">○ Inativo</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ marginTop: '14px', display: 'flex', gap: '10px' }}>
-                  <button type="submit" disabled={salvando} style={S.botaoSalvar}>
-                    {salvando ? '⏳...' : '✅ Cadastrar Freelancer'}
-                  </button>
-                </div>
-              </form>
             </div>
           </div>
         )}
@@ -1221,7 +1112,7 @@ export default function Colaboradores() {
             {funcoes.length === 0 && (
               <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#fff3e0', borderRadius: '8px', marginBottom: '20px' }}>
                 <p style={{ color: '#e65100', margin: 0 }}>
-                  Nenhuma função cadastrada. Clique em <strong>"Importar Padrões"</strong> para importar 12 funções padrão (CLT + Freelancer), ou cadastre manualmente.
+                  Nenhuma função cadastrada. Clique em <strong>"Importar Padrões"</strong> para importar {FUNCOES_ESCALA_PADRAO.length} funções padrão, ou cadastre manualmente.
                 </p>
               </div>
             )}
@@ -1324,9 +1215,20 @@ export default function Colaboradores() {
         <div style={S.modal}>
           <div style={S.modalContent}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
-              <h2 style={{ margin: 0 }}>✏️ Editar Colaborador</h2>
+              <div>
+                <h2 style={{ margin: 0 }}>✏️ Editar Colaborador</h2>
+                <span style={{
+                  display: 'inline-block', marginTop: '4px',
+                  padding: '3px 12px', borderRadius: '20px', fontWeight: 'bold', fontSize: '12px',
+                  backgroundColor: colaboradorEditando.tipoContrato === 'Freelancer' ? '#fff3e0' : '#e3f2fd',
+                  color: colaboradorEditando.tipoContrato === 'Freelancer' ? '#e65100' : '#1565c0',
+                }}>
+                  {colaboradorEditando.tipoContrato}
+                </span>
+              </div>
               <button onClick={() => setColaboradorEditando(null)} style={{ background:'none', border:'none', fontSize:'22px', cursor:'pointer', color:'#666' }}>✕</button>
             </div>
+
             <CamposBasicos
               data={colaboradorEditando}
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
@@ -1338,9 +1240,13 @@ export default function Colaboradores() {
               onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)}
               funcoesOpcoes={funcoesOpcoes}
               funcoes={funcoes} />
-            <CamposJornada
-              data={colaboradorEditando}
-              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+            {/* Jornada only for CLT */}
+            {colaboradorEditando.tipoContrato !== 'Freelancer' && (
+              <CamposJornada
+                data={colaboradorEditando}
+                onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+            )}
+
             <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap:'wrap' }}>
               <button onClick={() => setColaboradorEditando(null)} style={{ ...S.botaoCancelar, flex:'none', padding:'10px 16px' }}>Cancelar</button>
               <button onClick={handleEditarColaborador} disabled={salvando} style={{ ...S.botaoSalvar, flex:1 }}>
@@ -1380,7 +1286,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   pageWrapper:        { display: 'flex', flexDirection: 'column', minHeight: '100vh' },
   container:          { padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%', flex: 1 },
   tabContent:         { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '0 8px 8px 8px', padding: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
-  filtrosContainer:   { display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' },
+  filtrosContainer:   { display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' },
   inputBusca:         { flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: '4px', minWidth: '220px' },
   select:             { padding: '10px', border: '1px solid #ccc', borderRadius: '4px', backgroundColor: 'white', cursor: 'pointer' },
   gridContainer:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' },
