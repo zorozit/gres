@@ -108,21 +108,24 @@ interface FechamentoSemanalFreelancer {
     transporteSaldo: number;        // totalTransporte - transporteAdiantado (≥ 0)
     diasTrabalhados: number;
     total: number;
-    totalLiquido: number;           // total dobras + transporteSaldo - saidasDesconto
-    saidasDesconto: number;         // total de saídas "A receber" (descontos gerais)
+    totalLiquido: number;           // total dobras + transporteSaldo + caixinha - saidasDesconto
+    saidasDesconto: number;         // total de saídas "A receber" / "Consumo Interno" (descontos)
     saidasDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes desconto
+    caixinhaTotal: number;          // 🪙 caixinha a pagar ao colaborador (crédito)
+    caixinhaDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes caixinha
     pendentesAnteriores: any[];     // Saídas pendentes de meses anteriores a descontar
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
   totalSemana: number;
+  totalCaixinha: number;               // soma das caixinhas a pagar da semana
   totalTransporte: number;             // saldo a pagar (calculado - adiantado)
   totalTransporteCalculado?: number;   // transporte bruto pelos dias trabalhados
   totalTransporteAdiantado?: number;   // total já pago via "Adiantamento Transporte"
   totalCombustivel: number;
   totalExtra: number;
   totalDesconto: number;
-  totalSaidasDesconto: number;         // soma dos descontos de saídas (A receber)
+  totalSaidasDesconto: number;         // soma dos descontos de saídas (A receber / Consumo)
   totalLiquido: number;
   observacao?: string;
 }
@@ -510,9 +513,27 @@ export default function FolhaPagamento() {
         // Não fica negativo: se adiantou mais do que calculado, saldo = 0
         const transporteSaldo = parseFloat(Math.max(0, totalTransporte - transporteAdiantado).toFixed(2));
 
-        // Saídas de desconto do freelancer nesta semana:
-        // inclui 'A receber', 'Caixinha', 'Consumo Interno' (qualquer categoria com regraFolha = desconto_liquido)
-        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Caixinha', 'Consumo Interno'];
+        // 🪙 Caixinha a receber: o restaurante coletou a gorjeta e DEVE pagar ao colaborador
+        // é um CRÉDITO (soma ao líquido), não um desconto
+        const TIPOS_CAIXINHA = ['Caixinha'];
+        const saidasCaixinhaFr = saidasPeriodo.filter((s: any) =>
+          s.colaboradorId === f.id &&
+          TIPOS_CAIXINHA.includes(s.tipo || s.origem || s.referencia || '') &&
+          saidaData(s) >= isoInicio &&
+          saidaData(s) <= isoFim
+        );
+        const caixinhaTotal = parseFloat(
+          saidasCaixinhaFr.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+        );
+        const caixinhaDetalhe = saidasCaixinhaFr.map((s: any) => ({
+          descricao: `🪙 Caixinha: ${s.descricao || 'Gorjeta'}`,
+          valor: R(s.valor),
+          data: saidaData(s),
+        }));
+
+        // Descontos reais: apenas 'A receber' e 'Consumo Interno' (dëvida do colaborador)
+        // 'Caixinha' foi retirado desta lista — agora é crédito
+        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Consumo Interno'];
         const saidasDescFreelancer = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
           TIPOS_DESCONTO_FREELANCER.includes(s.tipo || s.origem || s.referencia || '') &&
@@ -531,8 +552,8 @@ export default function FolhaPagamento() {
         // Saídas pendentes de meses anteriores para este freelancer
         const pendentesAnteriores = saidasPendentesAnt.filter((s: any) => s.colaboradorId === f.id);
 
-        // Líquido = dobras + saldo de transporte (já subtraído o adiantado) - descontos gerais
-        const totalLiquido = parseFloat((total + transporteSaldo - saidasDesconto).toFixed(2));
+        // Líquido = dobras + transporte saldo + caixinha (crédito) - descontos
+        const totalLiquido = parseFloat((total + transporteSaldo + caixinhaTotal - saidasDesconto).toFixed(2));
 
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
@@ -541,6 +562,7 @@ export default function FolhaPagamento() {
           valorTransporte, totalTransporte,
           transporteAdiantado, transporteSaldo,
           total, totalLiquido, saidasDesconto, saidasDetalhe,
+          caixinhaTotal, caixinhaDetalhe,
           diasCodigo, diasTrabalhados,
           pendentesAnteriores,
           pago: false,
@@ -557,20 +579,22 @@ export default function FolhaPagamento() {
       const totalTransporteAdiantado = frList.reduce((s, fr) => s + (fr.transporteAdiantado || 0), 0);
       const totalTransporteSaldo = frList.reduce((s, fr) => s + (fr.transporteSaldo || 0), 0);
       const totalSaidasDesconto = frList.reduce((s, fr) => s + (fr.saidasDesconto || 0), 0);
+      const totalCaixinhaSemana = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
 
       return {
         semanaLabel: `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
         dataFechamento: isoFim,
         freelancers: frList,
         totalSemana,
-        totalTransporte: totalTransporteSaldo,         // s\u00f3 o saldo (calculado - adiantado)
+        totalCaixinha: totalCaixinhaSemana,           // caixinha total a pagar na semana
+        totalTransporte: totalTransporteSaldo,         // só o saldo (calculado - adiantado)
         totalTransporteCalculado: totalTransporteSemana,
         totalTransporteAdiantado,
         totalCombustivel: combustivel,
         totalExtra: extra,
         totalDesconto: desconto,
         totalSaidasDesconto,
-        totalLiquido: totalSemana + totalTransporteSaldo - totalSaidasDesconto + extra - desconto,
+        totalLiquido: totalSemana + totalTransporteSaldo + totalCaixinhaSemana - totalSaidasDesconto + extra - desconto,
         observacao: ef.obs,
       };
     });
@@ -854,6 +878,14 @@ export default function FolhaPagamento() {
     const items: CheckItem[] = [
       { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
       ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias − R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+      // 🪙 Caixinha é CRÉDITO: restaurante deve pagar ao colaborador
+      ...((fr.caixinhaDetalhe || []).map((d: { descricao: string; valor: number; data: string }, i: number) => ({
+        key: `caix_${i}`,
+        label: `🪙 ${d.descricao} (${d.data})`,
+        valor: d.valor,
+        tipo: 'credito' as const,
+        checked: true,
+      }))),
       ...fr.saidasDetalhe.map((d: { descricao: string; valor: number; data: string }, i: number) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
       ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
         key: `pend_${i}`,
@@ -976,6 +1008,11 @@ export default function FolhaPagamento() {
                     ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
                     : `R$${fmt(fr.valorDobra)}/dobra`;
 
+                  // Caixinha items checked (crédito)
+                  const caixinhaChecked = checkItems
+                    .filter(it => it.checked && it.key.startsWith('caix_'))
+                    .reduce((s, it) => s + it.valor, 0);
+
                   const payload = {
                     colaboradorId: fr.id, mes: mesAno,
                     semana: fech.dataFechamento, unitId,
@@ -985,9 +1022,10 @@ export default function FolhaPagamento() {
                     valorTransporte:     inclTransporte ? fr.transporteSaldo : 0,
                     transporteCalculado: fr.totalTransporte || 0,
                     transporteAdiantado: fr.transporteAdiantado || 0,
+                    caixinha:            caixinhaChecked,
                     desconto:            totalDebito,
                     totalFinal,
-                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
+                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -1971,7 +2009,7 @@ export default function FolhaPagamento() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                           <thead>
                             <tr>
-                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total Dobras', 'Transp.', 'Desconto', 'Líquido', 'Status', 'Ações'].map(h => (
+                              {['Freelancer', 'PIX / Tel', 'Dias (código)', 'Dobras', 'Valor/Dobra', 'Total Dobras', 'Transp.', '🪙 Caixinha', 'Desconto', 'Líquido', 'Status', 'Ações'].map(h => (
                                 <th key={h} style={s.th}>{h}</th>
                               ))}
                             </tr>
@@ -2029,6 +2067,15 @@ export default function FolhaPagamento() {
                                         </div>
                                       )}
                                     </div>
+                                  ) : '—'}
+                                </td>
+                                {/* 🪙 Caixinha — crédito a pagar ao colaborador */}
+                                <td style={{ ...s.td, textAlign: 'right', color: (fr as any).caixinhaTotal > 0 ? '#f57f17' : '#aaa', fontSize: '12px' }}>
+                                  {(fr as any).caixinhaTotal > 0 ? (
+                                    <span style={{ color: '#e65100', fontWeight: 'bold' }}
+                                      title={((fr as any).caixinhaDetalhe || []).map((d: any) => `${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>
+                                      +{fmtMoeda((fr as any).caixinhaTotal)}
+                                    </span>
                                   ) : '—'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', color: fr.saidasDesconto > 0 ? '#c62828' : '#aaa', fontSize: '12px' }}>
@@ -2098,8 +2145,9 @@ export default function FolhaPagamento() {
                                             transporteCalculado: fr.totalTransporte || 0,
                                             transporteAdiantado: fr.transporteAdiantado || 0,
                                             desconto: fr.saidasDesconto || 0,
+                                            caixinha: (fr as any).caixinhaTotal || 0,
                                             totalFinal: fr.totalLiquido,
-                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
+                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${(fr as any).caixinhaTotal > 0 ? ` – Caixinha: +R$${fmt((fr as any).caixinhaTotal)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
                                           };
                                           const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                                             method: 'POST',
@@ -2161,18 +2209,29 @@ export default function FolhaPagamento() {
                                     </span>
                                   : (fech.totalTransporteCalculado||0) > 0 ? <span style={{ color: '#a5d6a7' }}>✔ quitado</span> : '—'}
                               </td>
+                              {/* 🪙 Caixinha total da semana (crédito) */}
+                              <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80', fontSize: '11px' }}>
+                                {(fech.totalCaixinha || 0) > 0 ? `+${fmtMoeda(fech.totalCaixinha || 0)}` : '—'}
+                              </td>
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
                                 {fech.totalSaidasDesconto > 0 ? `−${fmtMoeda(fech.totalSaidasDesconto)}` : '—'}
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7', fontWeight: 'bold' }}>
-                                {fmtMoeda(fech.totalSemana + fech.totalTransporte - fech.totalSaidasDesconto)}
+                                {fmtMoeda(fech.totalSemana + fech.totalTransporte + (fech.totalCaixinha || 0) - fech.totalSaidasDesconto)}
                               </td>
                               <td colSpan={2} style={{ padding: '8px' }} />
                             </tr>
                             {fech.totalSaidasDesconto > 0 && (
                               <tr style={{ backgroundColor: '#ffebee' }}>
-                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={11}>
-                                  ⚠️ Descontos automáticos de Saídas ("A receber") incluídos no Líquido. Veja tooltip na coluna Desconto por colaborador.
+                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={12}>
+                                  ⚠️ Descontos automáticos de Saídas ("A receber" / "Consumo Interno") incluídos no Líquido. Veja tooltip na coluna Desconto.
+                                </td>
+                              </tr>
+                            )}
+                            {(fech.totalCaixinha || 0) > 0 && (
+                              <tr style={{ backgroundColor: '#fff8e1' }}>
+                                <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#e65100' }} colSpan={12}>
+                                  🪙 Caixinha (gorjeta) será paga junto com as dobras da semana. Inclusa no Líquido.
                                 </td>
                               </tr>
                             )}

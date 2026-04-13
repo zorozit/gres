@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx';
   A pagar          │  (−)  │ Restaurante paga ao colaborador (gen. purpose)
   Adiant. Salário  │  (−)  │ Adiantamento salarial (descontado no fechamento CLT)
   Adiant. Transporte│ (−)  │ Transporte pago antecipado → abatido na folha semanal
-  Caixinha         │  (−)  │ Desconto de caixinha (gorjeta coletada pelo restaurante)
+  Caixinha         │  (+)  │ Gorjeta coletada pelo restaurante → PAGA ao colaborador junto com a semana
   Consumo Interno  │  (−)  │ Consumo/refeição do colaborador no restaurante
   A receber        │  (+)  │ Colaborador deve ao restaurante → descontado do líquido
   Vale             │  (+)  │ Vale adiantado que deve ser devolvido/descontado
@@ -32,7 +32,7 @@ interface Categoria {
   dir: 'saida' | 'entrada' | 'neutro';
   hint: string;
   grupo: 'colaborador' | 'caixa';
-  regraFolha?: 'abate_transporte' | 'desconto_liquido' | 'adiantamento_clt' | null;
+  regraFolha?: 'abate_transporte' | 'desconto_liquido' | 'credito_liquido' | 'adiantamento_clt' | null;
   bg: string; text: string; border: string;
 }
 
@@ -57,9 +57,9 @@ const CATEGORIAS: Categoria[] = [
     bg: '#fff3e0', text: '#e65100', border: '#ffcc80',
   },
   {
-    value: 'Caixinha', label: 'Caixinha', emoji: '🪙',
-    dir: 'saida', grupo: 'colaborador', regraFolha: 'desconto_liquido',
-    hint: 'Desconto de caixinha (gorjeta coletada). Será descontado do líquido semanal do freelancer ou do salário CLT.',
+    value: 'Caixinha', label: 'Caixinha 🪙 (gorjeta a pagar)', emoji: '🪙',
+    dir: 'saida', grupo: 'colaborador', regraFolha: 'credito_liquido',
+    hint: '🪙 Gorjeta coletada pelo restaurante. Será PAGA ao colaborador junto com os demais pagamentos da semana (somada ao líquido, não descontada).',
     bg: '#fff8e1', text: '#f57f17', border: '#ffe082',
   },
   {
