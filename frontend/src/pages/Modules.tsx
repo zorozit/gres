@@ -20,7 +20,7 @@ export const Modules: React.FC = () => {
       icon: '📊',
       title: 'Dashboard Operacional',
       description: 'Visualize métricas e indicadores em tempo real',
-      path: '/dashboard',
+      path: '/modulos/dashboard',
       color: '#667eea',
       adminRequired: true,
     },

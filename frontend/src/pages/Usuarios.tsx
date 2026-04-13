@@ -10,15 +10,132 @@ interface Usuario {
   celular: string;
   email?: string;
   perfil: string;
-  unitId: string | string[]; // Pode ser uma unidade ou múltiplas
-  unitIds?: string[]; // Lista de unidades
+  unitId: string | string[];
+  unitIds?: string[];
   ativo: boolean;
   senha?: string;
 }
 
+// ─── Definição centralizada de módulos e permissões por perfil ───────────────
+const TODOS_MODULOS = [
+  {
+    id: 'dashboard',
+    icon: '📊',
+    title: 'Dashboard Operacional',
+    description: 'Métricas e indicadores em tempo real',
+    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
+  },
+  {
+    id: 'caixa',
+    icon: '💰',
+    title: 'Controle de Caixa',
+    description: 'Aberturas, recebimentos e fechamentos',
+    perfis: [], // todos
+  },
+  {
+    id: 'escalas',
+    icon: '📅',
+    title: 'Gestão de Escalas',
+    description: 'Turnos e presenças de colaboradores',
+    perfis: [],
+  },
+  {
+    id: 'saidas',
+    icon: '💸',
+    title: 'Registro de Saídas',
+    description: 'Despesas e saídas operacionais',
+    perfis: [],
+  },
+  {
+    id: 'motoboys',
+    icon: '🏍️',
+    title: 'Gestão de Motoboys',
+    description: 'Entregas e comissões',
+    perfis: [],
+  },
+  {
+    id: 'colaboradores',
+    icon: '👥',
+    title: 'Gestão de Colaboradores',
+    description: 'Dados e históricos de funcionários',
+    perfis: [],
+  },
+  {
+    id: 'folha-pagamento',
+    icon: '💳',
+    title: 'Folha de Pagamento',
+    description: 'Cálculo e gestão de pagamentos',
+    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
+  },
+  {
+    id: 'extrato',
+    icon: '📋',
+    title: 'Extrato de Pagamentos',
+    description: 'Histórico analítico de pagamentos',
+    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
+  },
+  {
+    id: 'unidades',
+    icon: '🏢',
+    title: 'Cadastro de Unidades',
+    description: 'Unidades de restaurante',
+    perfis: ['admin', 'Administrador', 'ADMIN'],
+  },
+  {
+    id: 'usuarios',
+    icon: '🔐',
+    title: 'Gestão de Usuários',
+    description: 'Controle de acesso e permissões',
+    perfis: ['admin', 'Administrador', 'ADMIN'],
+  },
+  {
+    id: 'usuarios-edicao',
+    icon: '✏️',
+    title: 'Edição de Usuários',
+    description: 'Editar usuários e vincular unidades',
+    perfis: ['admin', 'Administrador', 'ADMIN'],
+  },
+];
+
+const PERFIS_SISTEMA = [
+  {
+    key: 'admin',
+    label: 'Administrador',
+    icon: '👑',
+    color: '#7b1fa2',
+    bg: '#f3e5f5',
+    aliases: ['admin', 'Administrador', 'ADMIN'],
+  },
+  {
+    key: 'gerente',
+    label: 'Gerente',
+    icon: '🏅',
+    color: '#1565c0',
+    bg: '#e3f2fd',
+    aliases: ['gerente', 'Gerente', 'GERENTE', 'Manager'],
+  },
+  {
+    key: 'operador',
+    label: 'Operador',
+    icon: '👤',
+    color: '#2e7d32',
+    bg: '#e8f5e9',
+    aliases: ['operador', 'Operador', 'OPERADOR'],
+  },
+];
+
+function perfilPodeAcessar(perfilKey: string, modulo: typeof TODOS_MODULOS[0]): boolean {
+  if (modulo.perfis.length === 0) return true; // sem restrição = todos
+  const perfil = PERFIS_SISTEMA.find(p => p.key === perfilKey);
+  if (!perfil) return false;
+  return perfil.aliases.some(a => modulo.perfis.includes(a));
+}
+
+// ─── Componente principal ────────────────────────────────────────────────────
 export const Usuarios: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
+  const [aba, setAba] = useState<'usuarios' | 'novo' | 'permissoes'>('usuarios');
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuarioEditando, setUsuarioEditando] = useState<Usuario | null>(null);
   const [novoUsuario, setNovoUsuario] = useState({
@@ -38,6 +155,7 @@ export const Usuarios: React.FC = () => {
   const [confirmaNovaSenha, setConfirmaNovaSenha] = useState('');
   const [loading, setLoading] = useState(true);
   const [unidades, setUnidades] = useState<any[]>([]);
+  const [perfilDetalhe, setPerfilDetalhe] = useState<string | null>(null);
 
   useEffect(() => {
     carregarUsuarios();
@@ -53,7 +171,6 @@ export const Usuarios: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Usuários carregados:', data);
         setUsuarios(Array.isArray(data) ? data : []);
       } else {
         console.error('Erro ao carregar usuários:', response.status);
@@ -86,61 +203,42 @@ export const Usuarios: React.FC = () => {
       alert('Preencha os campos obrigatórios: Nome, CPF e Celular');
       return;
     }
-
     if (novoUsuario.unitIds.length === 0) {
       alert('Selecione ao menos uma unidade');
       return;
     }
-
     if (novoUsuario.senha && novoUsuario.senha !== novoUsuario.senhaConfirmacao) {
       alert('As senhas não coincidem');
       return;
     }
-
     if (novoUsuario.senha && novoUsuario.senha.length < 6) {
       alert('A senha deve ter no mínimo 6 caracteres');
       return;
     }
-
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      
-      // Preparar payload com campos corretos
       const senhaFinal = novoUsuario.senha || gerarSenhaAleatoria();
       const payload = {
         nome: novoUsuario.nome,
         cpf: novoUsuario.cpf,
         celular: novoUsuario.celular,
-        email: novoUsuario.email || `${novoUsuario.cpf.replace(/\D/g, '')}@temp.com`, // Gera email temporário se não informado
+        email: novoUsuario.email || `${novoUsuario.cpf.replace(/\D/g, '')}@temp.com`,
         perfil: novoUsuario.perfil,
-        unitId: novoUsuario.unitIds[0] || '', // Primeira unidade como principal
-        unitIds: novoUsuario.unitIds, // Array de todas as unidades
+        unitId: novoUsuario.unitIds[0] || '',
+        unitIds: novoUsuario.unitIds,
         ativo: novoUsuario.ativo,
         senha: senhaFinal
       };
-      
-      console.log('📤 Enviando payload:', payload);
-      
       const response = await fetch(`${apiUrl}/usuarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
       if (response.ok) {
-        setNovoUsuario({
-          nome: '',
-          cpf: '',
-          celular: '',
-          email: '',
-          perfil: 'operador',
-          unitId: '',
-          unitIds: [],
-          ativo: true,
-          senha: '',
-          senhaConfirmacao: ''
-        });
+        setNovoUsuario({ nome: '', cpf: '', celular: '', email: '', perfil: 'operador', unitId: '', unitIds: [], ativo: true, senha: '', senhaConfirmacao: '' });
         carregarUsuarios();
+        setAba('usuarios');
         alert(`✅ Usuário criado com sucesso!\n\n📧 Email: ${payload.email}\n🔑 Senha: ${senhaFinal}\n\n⚠️ Anote a senha e envie ao usuário!`);
       } else {
         const erro = await response.text();
@@ -155,9 +253,7 @@ export const Usuarios: React.FC = () => {
   const gerarSenhaAleatoria = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
     let senha = '';
-    for (let i = 0; i < 8; i++) {
-      senha += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    for (let i = 0; i < 8; i++) senha += chars.charAt(Math.floor(Math.random() * chars.length));
     return senha;
   };
 
@@ -166,31 +262,24 @@ export const Usuarios: React.FC = () => {
       alert('Preencha os campos obrigatórios: Nome, CPF e Celular');
       return;
     }
-
-    const unitIds = usuarioEditando.unitIds || (usuarioEditando.unitId ? [usuarioEditando.unitId] : []);
+    const unitIds: string[] = Array.isArray(usuarioEditando.unitIds)
+      ? usuarioEditando.unitIds
+      : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
     if (unitIds.length === 0) {
       alert('Selecione ao menos uma unidade');
       return;
     }
-
     if (novaSenha && novaSenha !== confirmaNovaSenha) {
       alert('As senhas não coincidem');
       return;
     }
-
     if (novaSenha && novaSenha.length < 6) {
       alert('A senha deve ter no mínimo 6 caracteres');
       return;
     }
-
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      
-      const unitIds: string[] = Array.isArray(usuarioEditando.unitIds) 
-        ? usuarioEditando.unitIds 
-        : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
-      
       const payload: any = {
         nome: usuarioEditando.nome,
         cpf: usuarioEditando.cpf,
@@ -198,24 +287,18 @@ export const Usuarios: React.FC = () => {
         email: usuarioEditando.email || `${usuarioEditando.cpf.replace(/\D/g, '')}@temp.com`,
         perfil: usuarioEditando.perfil,
         unitId: unitIds[0] || '',
-        unitIds: unitIds,
+        unitIds,
         ativo: usuarioEditando.ativo
       };
-      
-      if (novaSenha) {
-        payload.senha = novaSenha;
-      }
-      
-      console.log('📤 Atualizando usuário:', payload);
-      
+      if (novaSenha) payload.senha = novaSenha;
       const response = await fetch(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
       if (response.ok) {
-        const mensagem = novaSenha 
-          ? `✅ Usuário atualizado com sucesso!\n\n🔑 Nova senha: ${novaSenha}\n\n⚠️ Anote e envie ao usuário!`
+        const mensagem = novaSenha
+          ? `✅ Usuário atualizado!\n\n🔑 Nova senha: ${novaSenha}\n\n⚠️ Anote e envie ao usuário!`
           : 'Usuário atualizado com sucesso!';
         setUsuarioEditando(null);
         setNovaSenha('');
@@ -253,347 +336,445 @@ export const Usuarios: React.FC = () => {
     }
   };
 
-  const styles = {
-    container: { padding: '20px', maxWidth: '1400px', margin: '0 auto' },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-    mainLayout: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' },
-    coluna: { backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '4px' },
-    formulario: { padding: '15px' },
-    formGroup: { marginBottom: '15px' },
-    label: { display: 'block', marginBottom: '5px', fontWeight: 'bold' },
-    input: { width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', boxSizing: 'border-box' as const },
-    h2: { marginTop: 0 },
-    botaoSalvar: { padding: '10px 20px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '20px', width: '100%' },
-    botaoEditar: { padding: '8px 12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '5px' },
-    botaoDeletar: { padding: '8px 12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' },
-    modal: { position: 'fixed' as const, top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-    modalContent: { backgroundColor: 'white', padding: '20px', borderRadius: '8px', maxWidth: '500px', width: '90%', maxHeight: '80vh', overflowY: 'auto' as const },
-    tabela: { width: '100%', borderCollapse: 'collapse' as const, marginTop: '20px' },
-    th: { padding: '10px', textAlign: 'left' as const, borderBottom: '2px solid #ddd', backgroundColor: '#f0f0f0' },
-    td: { padding: '10px', borderBottom: '1px solid #ddd' },
-    checkboxGroup: { display: 'flex', flexDirection: 'column' as const, gap: '8px', marginTop: '8px' },
-    checkbox: { display: 'flex', alignItems: 'center', gap: '8px' }
+  // ─── helper: badge de perfil ─────────────────────────────────────────────
+  const getPerfilInfo = (perfil: string) => {
+    const p = PERFIS_SISTEMA.find(ps => ps.aliases.some(a => a.toLowerCase() === perfil.toLowerCase()));
+    return p || { label: perfil, icon: '👤', color: '#555', bg: '#eee' };
   };
 
-  if (loading) {
-    return <div style={styles.container}><p>Carregando...</p></div>;
-  }
+  // ─── Styles ──────────────────────────────────────────────────────────────
+  const s = {
+    page: { minHeight: '100vh', backgroundColor: '#f5f7fa', fontFamily: 'Segoe UI, sans-serif' },
+    header: { background: 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', padding: '16px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+    headerTitle: { margin: 0, fontSize: '20px' },
+    headerRight: { display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' },
+    logoutBtn: { padding: '6px 14px', background: 'rgba(255,255,255,0.2)', color: '#fff', border: '1px solid rgba(255,255,255,0.4)', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
+    backBtn: { padding: '6px 14px', background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
+    // tabs
+    tabBar: { display: 'flex', gap: 0, borderBottom: '2px solid #e0e0e0', background: '#fff', padding: '0 28px' },
+    tab: (active: boolean): React.CSSProperties => ({
+      padding: '12px 24px', cursor: 'pointer', fontWeight: active ? 700 : 400,
+      color: active ? '#667eea' : '#666', borderBottom: active ? '3px solid #667eea' : '3px solid transparent',
+      fontSize: '14px', background: 'none', border: 'none', outline: 'none', transition: 'all .2s',
+    }),
+    body: { padding: '28px', maxWidth: '1300px', margin: '0 auto' },
+    // cards grid
+    grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: '16px' },
+    card: { background: '#fff', borderRadius: '10px', padding: '18px', boxShadow: '0 2px 8px rgba(0,0,0,.08)', borderLeft: '4px solid #667eea' },
+    // form
+    formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: '#fff', padding: '24px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,.08)' },
+    formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+    label: { fontSize: '13px', fontWeight: 600, color: '#444' },
+    input: { padding: '9px 12px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px', outline: 'none' } as React.CSSProperties,
+    // permissions
+    permGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: '20px' },
+    permCard: (_bg: string, color: string): React.CSSProperties => ({
+      background: '#fff', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+      borderTop: `4px solid ${color}`, cursor: 'pointer', transition: 'transform .15s, box-shadow .15s',
+    }),
+    moduleBadge: (ok: boolean): React.CSSProperties => ({
+      display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px',
+      borderRadius: '6px', fontSize: '13px', marginBottom: '6px',
+      background: ok ? '#e8f5e9' : '#fafafa', color: ok ? '#2e7d32' : '#bbb',
+      border: `1px solid ${ok ? '#c8e6c9' : '#eee'}`,
+    }),
+    // modal
+    overlay: { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+    modal: { background: '#fff', borderRadius: '12px', padding: '28px', width: '90%', maxWidth: '540px', maxHeight: '88vh', overflowY: 'auto' as const },
+  };
 
-  return (
-    <div style={styles.container}>
-      <div style={styles.header}>
+  // ─── Aba Lista de Usuários ──────────────────────────────────────────────
+  const renderUsuarios = () => (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
-          <button onClick={() => navigate('/dashboard')} style={{ padding: '8px 16px', marginRight: '10px' }}>← Voltar</button>
-          <h1>👨‍💼 Gestão de Usuários</h1>
+          <h2 style={{ margin: 0, fontSize: '18px', color: '#333' }}>📋 Usuários Cadastrados</h2>
+          <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#888' }}>{usuarios.length} usuário(s) no sistema</p>
         </div>
-        <div>
-          <span style={{ marginRight: '20px' }}>Usuário: {email}</span>
-          <button onClick={logout} style={{ padding: '8px 16px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🚪 Sair</button>
-        </div>
+        <button
+          onClick={() => setAba('novo')}
+          style={{ padding: '9px 20px', background: '#667eea', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
+        >
+          ➕ Novo Usuário
+        </button>
       </div>
 
-      <div style={styles.mainLayout}>
-        <div style={styles.coluna}>
-          <div style={styles.formulario}>
-            <h2 style={styles.h2}>➕ Novo Usuário</h2>
-            
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Nome: * (obrigatório)</label>
-              <input 
-                type="text"
-                value={novoUsuario.nome}
-                onChange={(e) => setNovoUsuario({...novoUsuario, nome: e.target.value})}
-                style={styles.input}
-                placeholder="Nome completo"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>CPF: * (obrigatório)</label>
-              <input 
-                type="text"
-                value={novoUsuario.cpf}
-                onChange={(e) => setNovoUsuario({...novoUsuario, cpf: e.target.value})}
-                style={styles.input}
-                placeholder="000.000.000-00"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Celular: * (obrigatório)</label>
-              <input 
-                type="tel"
-                value={novoUsuario.celular}
-                onChange={(e) => setNovoUsuario({...novoUsuario, celular: e.target.value})}
-                style={styles.input}
-                placeholder="(11) 99999-9999"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Email: (opcional)</label>
-              <input 
-                type="email"
-                value={novoUsuario.email}
-                onChange={(e) => setNovoUsuario({...novoUsuario, email: e.target.value})}
-                style={styles.input}
-                placeholder="usuario@email.com"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Perfil:</label>
-              <select 
-                value={novoUsuario.perfil}
-                onChange={(e) => setNovoUsuario({...novoUsuario, perfil: e.target.value})}
-                style={styles.input}
-              >
-                <option value="operador">Operador</option>
-                <option value="gerente">Gerente</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Unidades: * (selecione uma ou mais)</label>
-              <div style={styles.checkboxGroup}>
-                {unidades.map((unit: any) => (
-                  <div key={unit.id} style={styles.checkbox}>
-                    <input 
-                      type="checkbox"
-                      checked={novoUsuario.unitIds.includes(unit.id)}
-                      onChange={(e) => {
-                        const newUnitIds = e.target.checked 
-                          ? [...novoUsuario.unitIds, unit.id]
-                          : novoUsuario.unitIds.filter(id => id !== unit.id);
-                        setNovoUsuario({...novoUsuario, unitIds: newUnitIds});
-                      }}
-                    />
-                    <label>{unit.nome}</label>
+      {loading ? (
+        <p>Carregando...</p>
+      ) : usuarios.length === 0 ? (
+        <p style={{ color: '#888', textAlign: 'center', padding: '40px' }}>Nenhum usuário cadastrado</p>
+      ) : (
+        <div style={s.grid}>
+          {usuarios.map(u => {
+            const pi = getPerfilInfo(u.perfil);
+            return (
+              <div key={u.id} style={{ ...s.card, borderLeftColor: pi.color, opacity: u.ativo ? 1 : 0.6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '15px', color: '#222' }}>{u.nome}</div>
+                    <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{u.cpf}</div>
                   </div>
-                ))}
+                  <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '12px', background: pi.bg, color: pi.color, fontWeight: 600 }}>
+                    {pi.icon} {pi.label}
+                  </span>
+                </div>
+                <div style={{ fontSize: '13px', color: '#555', marginBottom: '4px' }}>📱 {u.celular}</div>
+                {u.email && <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>✉️ {u.email}</div>}
+                <div style={{ fontSize: '12px', marginTop: '8px' }}>
+                  <span style={{ padding: '2px 8px', borderRadius: '10px', background: u.ativo ? '#e8f5e9' : '#ffebee', color: u.ativo ? '#2e7d32' : '#c62828', fontWeight: 600 }}>
+                    {u.ativo ? '● Ativo' : '● Inativo'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
+                  <button
+                    onClick={() => setUsuarioEditando(u)}
+                    style={{ flex: 1, padding: '7px', background: '#e3f2fd', color: '#1565c0', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+                  >✏️ Editar</button>
+                  <button
+                    onClick={() => handleDeletarUsuario(u.id)}
+                    style={{ flex: 1, padding: '7px', background: '#ffebee', color: '#c62828', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+                  >🗑️ Deletar</button>
+                </div>
               </div>
-              {novoUsuario.unitIds.length > 0 && (
-                <small style={{color: '#666', marginTop: '4px', display: 'block'}}>
-                  ✅ {novoUsuario.unitIds.length} unidade(s) selecionada(s)
-                </small>
-              )}
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Senha: (opcional - se não informada, será gerada automaticamente)</label>
-              <input 
-                type={mostrarSenha ? "text" : "password"}
-                value={novoUsuario.senha}
-                onChange={(e) => setNovoUsuario({...novoUsuario, senha: e.target.value})}
-                style={styles.input}
-                placeholder="Mínimo 6 caracteres"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Confirmar Senha:</label>
-              <input 
-                type={mostrarSenha ? "text" : "password"}
-                value={novoUsuario.senhaConfirmacao}
-                onChange={(e) => setNovoUsuario({...novoUsuario, senhaConfirmacao: e.target.value})}
-                style={styles.input}
-                placeholder="Digite a senha novamente"
-              />
-            </div>
-
-            <div style={styles.formGroup}>
-              <label style={styles.checkbox}>
-                <input 
-                  type="checkbox"
-                  checked={mostrarSenha}
-                  onChange={(e) => setMostrarSenha(e.target.checked)}
-                />
-                <span style={{marginLeft: '8px'}}>👁️ Mostrar senha</span>
-              </label>
-            </div>
-
-            <button onClick={handleSalvarNovoUsuario} style={styles.botaoSalvar}>💾 Criar Usuário</button>
-          </div>
-        </div>
-
-        <div style={styles.coluna}>
-          <h2>📋 Usuários Cadastrados ({usuarios.length})</h2>
-          {usuarios.length === 0 ? (
-            <p>Nenhum usuário cadastrado</p>
-          ) : (
-            <div style={{overflowX: 'auto'}}>
-              <table style={styles.tabela}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Nome</th>
-                    <th style={styles.th}>CPF</th>
-                    <th style={styles.th}>Celular</th>
-                    <th style={styles.th}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usuarios.map((usuario) => (
-                    <tr key={usuario.id}>
-                      <td style={styles.td}>{usuario.nome}</td>
-                      <td style={styles.td}>{usuario.cpf}</td>
-                      <td style={styles.td}>{usuario.celular}</td>
-                      <td style={styles.td}>
-                        <button onClick={() => setUsuarioEditando(usuario)} style={styles.botaoEditar}>✏️ Editar</button>
-                        <button onClick={() => handleDeletarUsuario(usuario.id)} style={{...styles.botaoDeletar, marginLeft: '5px'}}>🗑️ Deletar</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {usuarioEditando && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
-            <h2>Editar Usuário</h2>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Nome: * (obrigatório)</label>
-              <input 
-                type="text"
-                value={usuarioEditando.nome}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, nome: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>CPF: * (obrigatório)</label>
-              <input 
-                type="text"
-                value={usuarioEditando.cpf}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, cpf: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Celular: * (obrigatório)</label>
-              <input 
-                type="tel"
-                value={usuarioEditando.celular}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, celular: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Email: (opcional)</label>
-              <input 
-                type="email"
-                value={usuarioEditando.email || ''}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, email: e.target.value})}
-                style={styles.input}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Perfil:</label>
-              <select 
-                value={usuarioEditando.perfil}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, perfil: e.target.value})}
-                style={styles.input}
-              >
-                <option value="operador">Operador</option>
-                <option value="gerente">Gerente</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Unidades: * (selecione uma ou mais)</label>
-              <div style={styles.checkboxGroup}>
-                {unidades.map((unit: any) => {
-                  const unitIds: string[] = Array.isArray(usuarioEditando.unitIds) 
-                    ? usuarioEditando.unitIds 
-                    : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
-                  return (
-                    <div key={unit.id} style={styles.checkbox}>
-                      <input 
-                        type="checkbox"
-                        checked={unitIds.includes(unit.id)}
-                        onChange={(e) => {
-                          const newUnitIds: string[] = e.target.checked 
-                            ? [...unitIds, unit.id]
-                            : unitIds.filter((id) => id !== unit.id);
-                          setUsuarioEditando({...usuarioEditando, unitIds: newUnitIds, unitId: newUnitIds[0] || ''});
-                        }}
-                      />
-                      <label>{unit.nome}</label>
-                    </div>
-                  );
-                })}
-              </div>
-              {(usuarioEditando.unitIds?.length || 0) > 0 && (
-                <small style={{color: '#666', marginTop: '4px', display: 'block'}}>
-                  ✅ {usuarioEditando.unitIds?.length || 0} unidade(s) selecionada(s)
-                </small>
-              )}
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>🔑 Redefinir Senha: (deixe em branco para manter a atual)</label>
-              <input 
-                type="password"
-                value={novaSenha}
-                onChange={(e) => setNovaSenha(e.target.value)}
-                style={styles.input}
-                placeholder="Nova senha (mínimo 6 caracteres)"
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Confirmar Nova Senha:</label>
-              <input 
-                type="password"
-                value={confirmaNovaSenha}
-                onChange={(e) => setConfirmaNovaSenha(e.target.value)}
-                style={styles.input}
-                placeholder="Digite a senha novamente"
-              />
-              {novaSenha && novaSenha === confirmaNovaSenha && novaSenha.length >= 6 && (
-                <small style={{color: 'green', marginTop: '4px', display: 'block'}}>
-                  ✅ Senhas coincidem
-                </small>
-              )}
-              {novaSenha && novaSenha !== confirmaNovaSenha && (
-                <small style={{color: 'red', marginTop: '4px', display: 'block'}}>
-                  ❌ Senhas não coincidem
-                </small>
-              )}
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Ativo:</label>
-              <select 
-                value={usuarioEditando.ativo ? 'true' : 'false'}
-                onChange={(e) => setUsuarioEditando({...usuarioEditando, ativo: e.target.value === 'true'})}
-                style={styles.input}
-              >
-                <option value="true">Sim</option>
-                <option value="false">Não</option>
-              </select>
-            </div>
-            <div style={{display: 'flex', gap: '10px', marginTop: '20px'}}>
-              <button onClick={() => {
-                setUsuarioEditando(null);
-                setNovaSenha('');
-                setConfirmaNovaSenha('');
-              }} style={{flex: 1, padding: '10px', backgroundColor: '#ccc', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Cancelar</button>
-              <button onClick={handleSalvarEdicao} style={{flex: 1, padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Salvar</button>
-              <button onClick={() => {
-                if (usuarioEditando.id && window.confirm('Tem certeza que deseja deletar este usuário?')) {
-                  handleDeletarUsuario(usuarioEditando.id);
-                  setUsuarioEditando(null);
-                  setNovaSenha('');
-                  setConfirmaNovaSenha('');
-                }
-              }} style={{flex: 1, padding: '10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>Deletar</button>
-            </div>
-          </div>
+            );
+          })}
         </div>
       )}
+    </div>
+  );
 
+  // ─── Aba Novo Usuário ──────────────────────────────────────────────────
+  const renderNovoUsuario = () => (
+    <div>
+      <h2 style={{ marginBottom: '20px', fontSize: '18px', color: '#333' }}>➕ Novo Usuário</h2>
+      <div style={s.formGrid}>
+        <div style={s.formGroup}>
+          <label style={s.label}>Nome *</label>
+          <input style={s.input} value={novoUsuario.nome} onChange={e => setNovoUsuario({ ...novoUsuario, nome: e.target.value })} placeholder="Nome completo" />
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>CPF *</label>
+          <input style={s.input} value={novoUsuario.cpf} onChange={e => setNovoUsuario({ ...novoUsuario, cpf: e.target.value })} placeholder="000.000.000-00" />
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Celular *</label>
+          <input style={s.input} type="tel" value={novoUsuario.celular} onChange={e => setNovoUsuario({ ...novoUsuario, celular: e.target.value })} placeholder="(11) 99999-9999" />
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Email (opcional)</label>
+          <input style={s.input} type="email" value={novoUsuario.email} onChange={e => setNovoUsuario({ ...novoUsuario, email: e.target.value })} placeholder="usuario@email.com" />
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Perfil</label>
+          <select style={s.input} value={novoUsuario.perfil} onChange={e => setNovoUsuario({ ...novoUsuario, perfil: e.target.value })}>
+            <option value="operador">👤 Operador</option>
+            <option value="gerente">🏅 Gerente</option>
+            <option value="admin">👑 Administrador</option>
+          </select>
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Status</label>
+          <select style={s.input} value={novoUsuario.ativo ? 'true' : 'false'} onChange={e => setNovoUsuario({ ...novoUsuario, ativo: e.target.value === 'true' })}>
+            <option value="true">Ativo</option>
+            <option value="false">Inativo</option>
+          </select>
+        </div>
+        <div style={{ ...s.formGroup, gridColumn: '1 / -1' }}>
+          <label style={s.label}>Unidades * (selecione uma ou mais)</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+            {unidades.map((unit: any) => (
+              <label key={unit.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '6px', border: `1px solid ${novoUsuario.unitIds.includes(unit.id) ? '#667eea' : '#ddd'}`, background: novoUsuario.unitIds.includes(unit.id) ? '#ede7f6' : '#fafafa', cursor: 'pointer', fontSize: '13px' }}>
+                <input type="checkbox" checked={novoUsuario.unitIds.includes(unit.id)} onChange={e => {
+                  const ids = e.target.checked ? [...novoUsuario.unitIds, unit.id] : novoUsuario.unitIds.filter(id => id !== unit.id);
+                  setNovoUsuario({ ...novoUsuario, unitIds: ids });
+                }} />
+                {unit.nome}
+              </label>
+            ))}
+          </div>
+          {novoUsuario.unitIds.length > 0 && (
+            <small style={{ color: '#667eea', marginTop: '4px' }}>✅ {novoUsuario.unitIds.length} unidade(s) selecionada(s)</small>
+          )}
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Senha (opcional — gerada automaticamente se vazia)</label>
+          <input style={s.input} type={mostrarSenha ? 'text' : 'password'} value={novoUsuario.senha} onChange={e => setNovoUsuario({ ...novoUsuario, senha: e.target.value })} placeholder="Mínimo 6 caracteres" />
+        </div>
+        <div style={s.formGroup}>
+          <label style={s.label}>Confirmar Senha</label>
+          <input style={s.input} type={mostrarSenha ? 'text' : 'password'} value={novoUsuario.senhaConfirmacao} onChange={e => setNovoUsuario({ ...novoUsuario, senhaConfirmacao: e.target.value })} placeholder="Repita a senha" />
+        </div>
+        <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input type="checkbox" checked={mostrarSenha} onChange={e => setMostrarSenha(e.target.checked)} />
+          <label style={{ fontSize: '13px', color: '#555' }}>👁️ Mostrar senha</label>
+        </div>
+        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '12px', marginTop: '8px' }}>
+          <button
+            onClick={() => setAba('usuarios')}
+            style={{ flex: 1, padding: '11px', background: '#eee', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
+          >Cancelar</button>
+          <button
+            onClick={handleSalvarNovoUsuario}
+            style={{ flex: 2, padding: '11px', background: '#667eea', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '14px' }}
+          >💾 Criar Usuário</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Aba Permissões por Perfil ──────────────────────────────────────────
+  const renderPermissoes = () => (
+    <div>
+      <div style={{ marginBottom: '24px' }}>
+        <h2 style={{ margin: 0, fontSize: '18px', color: '#333' }}>🔑 Permissões por Perfil</h2>
+        <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#888' }}>
+          Veja quais módulos cada perfil pode acessar no sistema.
+        </p>
+      </div>
+
+      {/* ─── Cards dos perfis ─────────────────────────────────────── */}
+      <div style={s.permGrid}>
+        {PERFIS_SISTEMA.map(perfil => {
+          const modulosAcesso = TODOS_MODULOS.filter(m => perfilPodeAcessar(perfil.key, m));
+          const total = TODOS_MODULOS.length;
+          const acessos = modulosAcesso.length;
+          const pct = Math.round((acessos / total) * 100);
+          const isOpen = perfilDetalhe === perfil.key;
+
+          return (
+            <div
+              key={perfil.key}
+              style={{ ...s.permCard(perfil.bg, perfil.color) }}
+              onClick={() => setPerfilDetalhe(isOpen ? null : perfil.key)}
+            >
+              {/* cabeçalho do card */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '28px' }}>{perfil.icon}</span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '16px', color: perfil.color }}>{perfil.label}</div>
+                    <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{acessos} de {total} módulos</div>
+                  </div>
+                </div>
+                <span style={{ fontSize: '18px', color: '#aaa' }}>{isOpen ? '▲' : '▼'}</span>
+              </div>
+
+              {/* barra de progresso */}
+              <div style={{ height: '6px', background: '#eee', borderRadius: '3px', marginBottom: '14px' }}>
+                <div style={{ height: '6px', borderRadius: '3px', background: perfil.color, width: `${pct}%`, transition: 'width .3s' }} />
+              </div>
+
+              {/* estatísticas rápidas */}
+              <div style={{ display: 'flex', gap: '10px', marginBottom: isOpen ? '16px' : 0 }}>
+                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: perfil.bg, borderRadius: '8px' }}>
+                  <div style={{ fontWeight: 700, fontSize: '18px', color: perfil.color }}>{acessos}</div>
+                  <div style={{ fontSize: '11px', color: '#666' }}>Com acesso</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: '#fafafa', borderRadius: '8px' }}>
+                  <div style={{ fontWeight: 700, fontSize: '18px', color: '#bbb' }}>{total - acessos}</div>
+                  <div style={{ fontSize: '11px', color: '#666' }}>Sem acesso</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: '#fafafa', borderRadius: '8px' }}>
+                  <div style={{ fontWeight: 700, fontSize: '18px', color: '#555' }}>{pct}%</div>
+                  <div style={{ fontSize: '11px', color: '#666' }}>Cobertura</div>
+                </div>
+              </div>
+
+              {/* lista expandida de módulos */}
+              {isOpen && (
+                <div style={{ marginTop: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.5px' }}>Módulos</div>
+                  {TODOS_MODULOS.map(m => {
+                    const ok = perfilPodeAcessar(perfil.key, m);
+                    return (
+                      <div key={m.id} style={s.moduleBadge(ok)}>
+                        <span style={{ fontSize: '16px' }}>{m.icon}</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: ok ? 600 : 400, fontSize: '13px' }}>{m.title}</div>
+                          <div style={{ fontSize: '11px', opacity: 0.7 }}>{m.description}</div>
+                        </div>
+                        <span style={{ fontSize: '15px' }}>{ok ? '✅' : '🔒'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ─── Tabela resumo de acesso por usuário ──────────────────── */}
+      <div style={{ marginTop: '36px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,.08)' }}>
+        <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#333' }}>👥 Acesso por Usuário Cadastrado</h3>
+        {usuarios.length === 0 ? (
+          <p style={{ color: '#888', fontSize: '13px' }}>Nenhum usuário cadastrado</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Usuário</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Perfil</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Status</th>
+                  {TODOS_MODULOS.map(m => (
+                    <th key={m.id} style={{ padding: '8px 6px', textAlign: 'center', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontSize: '18px', minWidth: '36px' }} title={m.title}>
+                      {m.icon}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {usuarios.map((u, idx) => {
+                  const pi = getPerfilInfo(u.perfil);
+                  // Find which system perfil key matches this user
+                  const perfilKey = PERFIS_SISTEMA.find(p => p.aliases.some(a => a.toLowerCase() === u.perfil.toLowerCase()))?.key || 'operador';
+                  return (
+                    <tr key={u.id} style={{ background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee', fontWeight: 600 }}>{u.nome}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '10px', background: pi.bg, color: pi.color, fontSize: '12px', fontWeight: 600 }}>
+                          {pi.icon} {pi.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 600, background: u.ativo ? '#e8f5e9' : '#ffebee', color: u.ativo ? '#2e7d32' : '#c62828' }}>
+                          {u.ativo ? 'Ativo' : 'Inativo'}
+                        </span>
+                      </td>
+                      {TODOS_MODULOS.map(m => {
+                        const ok = perfilPodeAcessar(perfilKey, m);
+                        return (
+                          <td key={m.id} style={{ padding: '10px 6px', textAlign: 'center', borderBottom: '1px solid #eee', fontSize: '16px' }} title={ok ? `${u.nome} pode acessar ${m.title}` : `${u.nome} não tem acesso a ${m.title}`}>
+                            {ok ? '✅' : '—'}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ marginTop: '12px', fontSize: '12px', color: '#aaa', display: 'flex', gap: '16px' }}>
+          <span>✅ Tem acesso</span>
+          <span>— Sem acesso</span>
+          {TODOS_MODULOS.map(m => (
+            <span key={m.id}>{m.icon} {m.title}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Modal edição ─────────────────────────────────────────────────────
+  const renderModalEdicao = () => {
+    if (!usuarioEditando) return null;
+    const unitIds: string[] = Array.isArray(usuarioEditando.unitIds)
+      ? usuarioEditando.unitIds
+      : (usuarioEditando.unitId ? [usuarioEditando.unitId as string] : []);
+
+    return (
+      <div style={s.overlay}>
+        <div style={s.modal}>
+          <h2 style={{ margin: '0 0 20px', fontSize: '18px' }}>✏️ Editar Usuário</h2>
+
+          {([
+            ['Nome *', 'text', usuarioEditando.nome, (v: string) => setUsuarioEditando({ ...usuarioEditando, nome: v })],
+            ['CPF *', 'text', usuarioEditando.cpf, (v: string) => setUsuarioEditando({ ...usuarioEditando, cpf: v })],
+            ['Celular *', 'tel', usuarioEditando.celular, (v: string) => setUsuarioEditando({ ...usuarioEditando, celular: v })],
+            ['Email', 'email', usuarioEditando.email || '', (v: string) => setUsuarioEditando({ ...usuarioEditando, email: v })],
+          ] as [string, string, string, (v: string) => void][]).map(([lbl, type, val, fn]) => (
+            <div key={lbl} style={{ ...s.formGroup, marginBottom: '14px' }}>
+              <label style={s.label}>{lbl}</label>
+              <input style={s.input} type={type} value={val} onChange={e => fn(e.target.value)} />
+            </div>
+          ))}
+
+          <div style={{ ...s.formGroup, marginBottom: '14px' }}>
+            <label style={s.label}>Perfil</label>
+            <select style={s.input} value={usuarioEditando.perfil} onChange={e => setUsuarioEditando({ ...usuarioEditando, perfil: e.target.value })}>
+              <option value="operador">👤 Operador</option>
+              <option value="gerente">🏅 Gerente</option>
+              <option value="admin">👑 Administrador</option>
+            </select>
+          </div>
+
+          <div style={{ ...s.formGroup, marginBottom: '14px' }}>
+            <label style={s.label}>Unidades *</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+              {unidades.map((unit: any) => (
+                <label key={unit.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', borderRadius: '6px', border: `1px solid ${unitIds.includes(unit.id) ? '#667eea' : '#ddd'}`, background: unitIds.includes(unit.id) ? '#ede7f6' : '#fafafa', cursor: 'pointer', fontSize: '13px' }}>
+                  <input type="checkbox" checked={unitIds.includes(unit.id)} onChange={e => {
+                    const newIds = e.target.checked ? [...unitIds, unit.id] : unitIds.filter(id => id !== unit.id);
+                    setUsuarioEditando({ ...usuarioEditando, unitIds: newIds, unitId: newIds[0] || '' });
+                  }} />
+                  {unit.nome}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ ...s.formGroup, marginBottom: '14px' }}>
+            <label style={s.label}>Status</label>
+            <select style={s.input} value={usuarioEditando.ativo ? 'true' : 'false'} onChange={e => setUsuarioEditando({ ...usuarioEditando, ativo: e.target.value === 'true' })}>
+              <option value="true">Ativo</option>
+              <option value="false">Inativo</option>
+            </select>
+          </div>
+
+          <div style={{ ...s.formGroup, marginBottom: '8px' }}>
+            <label style={s.label}>🔑 Nova Senha (opcional)</label>
+            <input style={s.input} type="password" value={novaSenha} onChange={e => setNovaSenha(e.target.value)} placeholder="Mínimo 6 caracteres" />
+          </div>
+          <div style={{ ...s.formGroup, marginBottom: '20px' }}>
+            <label style={s.label}>Confirmar Nova Senha</label>
+            <input style={s.input} type="password" value={confirmaNovaSenha} onChange={e => setConfirmaNovaSenha(e.target.value)} placeholder="Repita a nova senha" />
+            {novaSenha && novaSenha === confirmaNovaSenha && novaSenha.length >= 6 && <small style={{ color: 'green' }}>✅ Senhas coincidem</small>}
+            {novaSenha && novaSenha !== confirmaNovaSenha && <small style={{ color: 'red' }}>❌ Senhas não coincidem</small>}
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={() => { setUsuarioEditando(null); setNovaSenha(''); setConfirmaNovaSenha(''); }} style={{ flex: 1, padding: '10px', background: '#eee', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Cancelar</button>
+            <button onClick={handleSalvarEdicao} style={{ flex: 2, padding: '10px', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>💾 Salvar</button>
+            <button onClick={() => { if (usuarioEditando.id && window.confirm('Deletar este usuário?')) { handleDeletarUsuario(usuarioEditando.id); setUsuarioEditando(null); setNovaSenha(''); setConfirmaNovaSenha(''); } }} style={{ flex: 1, padding: '10px', background: '#f44336', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>🗑️</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ─── Render principal ─────────────────────────────────────────────────
+  return (
+    <div style={s.page}>
+      {/* header */}
+      <div style={s.header}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button onClick={() => navigate('/modulos')} style={s.backBtn}>← Módulos</button>
+          <h1 style={s.headerTitle}>🔐 Gestão de Usuários</h1>
+        </div>
+        <div style={s.headerRight}>
+          <span>{email}</span>
+          <button onClick={logout} style={s.logoutBtn}>🚪 Sair</button>
+        </div>
+      </div>
+
+      {/* tab bar */}
+      <div style={s.tabBar}>
+        <button style={s.tab(aba === 'usuarios')} onClick={() => setAba('usuarios')}>👥 Usuários</button>
+        <button style={s.tab(aba === 'novo')} onClick={() => setAba('novo')}>➕ Novo</button>
+        <button style={s.tab(aba === 'permissoes')} onClick={() => setAba('permissoes')}>🔑 Permissões por Perfil</button>
+      </div>
+
+      {/* conteúdo */}
+      <div style={s.body}>
+        {aba === 'usuarios' && renderUsuarios()}
+        {aba === 'novo' && renderNovoUsuario()}
+        {aba === 'permissoes' && renderPermissoes()}
+      </div>
+
+      {renderModalEdicao()}
       <Footer showLinks={true} />
     </div>
   );

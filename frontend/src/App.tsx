@@ -26,6 +26,10 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route
               path="/dashboard"
+              element={<Navigate to="/modulos/dashboard" replace />}
+            />
+            <Route
+              path="/modulos/dashboard"
               element={
                 <ProtectedRoute adminOnly={true}>
                   <Dashboard />
