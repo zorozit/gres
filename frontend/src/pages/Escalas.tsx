@@ -968,44 +968,47 @@ export const Escalas: React.FC = () => {
                           else if(prN==='falta')fT++;
                           else if(prN==='falta_justificada')fjT++;
                         }
-                        // Check if this person has any DiaNoite shifts this week
-                        const hasDN = semAtual.dias.some(d=>{
+                        // Determinar quais turnos esta pessoa tem na semana
+                        const hasNightInWeek = semAtual.dias.some(d=>{
                           const esc=escalasMap[p.id]?.[fmtIso(d)];
-                          return esc?.turno==='DiaNoite';
+                          return esc?.turno==='Noite'||esc?.turno==='DiaNoite';
                         });
-                        // Render 2 rows if hasDN, else 1
-                        const turnos_label = ['Dia','Noite'] as const;
-                        return turnos_label.map((tLabel, tIdx)=>{
-                          // Only show night row if person has noite or diaNoite shifts this week
-                          const hasNightInWeek = semAtual.dias.some(d=>{
-                            const esc=escalasMap[p.id]?.[fmtIso(d)];
-                            return esc?.turno==='Noite'||esc?.turno==='DiaNoite';
-                          });
-                          const hasDayInWeek = semAtual.dias.some(d=>{
-                            const esc=escalasMap[p.id]?.[fmtIso(d)];
-                            return esc?.turno==='Dia'||esc?.turno==='DiaNoite';
-                          });
-                          if (tLabel==='Noite' && !hasNightInWeek) return null;
-                          if (tLabel==='Dia' && !hasDayInWeek && hasNightInWeek) return null;
+                        const hasDayInWeek = semAtual.dias.some(d=>{
+                          const esc=escalasMap[p.id]?.[fmtIso(d)];
+                          return esc?.turno==='Dia'||esc?.turno==='DiaNoite';
+                        });
+                        // Linhas a renderizar: sempre mostra pelo menos 1 linha
+                        // Se tem ambos os turnos → 2 linhas; se só noite → 1 linha Noite; se só dia → 1 linha Dia; se nenhum → 1 linha Dia (folga)
+                        type TLabel = 'Dia'|'Noite';
+                        const linhasVisiveis: TLabel[] = hasDayInWeek && hasNightInWeek
+                          ? ['Dia','Noite']
+                          : hasNightInWeek
+                            ? ['Noite']
+                            : ['Dia'];
+                        const totalLinhas = linhasVisiveis.length;
+                        return linhasVisiveis.map((tLabel, linhaIdx)=>{
+                          const isFirstRow = linhaIdx === 0; // primeira linha visível SEMPRE tem o nome
                           const presKey = tLabel==='Noite' ? `${p.id}_N` : p.id;
                           return (
-                            <tr key={`${p.id}_${tLabel}`} style={{ backgroundColor:ci%2===0?'#fafafa':'white', borderBottom: tLabel==='Dia'&&hasDN?'none':undefined }}>
-                              {tIdx===0 ? (
+                            <tr key={`${p.id}_${tLabel}`} style={{ backgroundColor:ci%2===0?'#fafafa':'white', borderBottom: tLabel==='Dia'&&totalLinhas>1?'none':undefined }}>
+                              {/* Nome e Função — aparecem na primeira linha visível com rowSpan */}
+                              {isFirstRow && (
                                 <>
-                                  <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }} rowSpan={hasDN&&hasNightInWeek?2:1}>
+                                  <td style={{ ...s.td, textAlign:'left', fontWeight:'bold', paddingLeft:'8px', fontSize:'11px', borderLeft:`3px solid ${cor}` }} rowSpan={totalLinhas}>
                                     {p.nome.split(' ').slice(0,2).join(' ')}
                                   </td>
-                                  <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{funcaoDe(p)}</td>
+                                  <td style={{ ...s.td, textAlign:'left', fontSize:'10px', color:'#555' }} rowSpan={totalLinhas}>{funcaoDe(p)}</td>
                                 </>
-                              ) : null}
+                              )}
+                              {/* Badge do turno D / N */}
                               <td style={{ ...s.td, textAlign:'center', fontWeight:'bold', fontSize:'9px',
                                 backgroundColor:tLabel==='Dia'?'#fff9c4':'#e8eaf6',
                                 color:tLabel==='Dia'?'#f57f17':'#3949ab',
                                 padding:'2px 3px' }}>{tLabel[0]}</td>
+                              {/* Células de cada dia */}
                               {semAtual.dias.map(d=>{
                                 const ds=fmtIso(d);
                                 const esc=escalasMap[p.id]?.[ds];
-                                // Check if this shift type is present
                                 const hasThisTurno = tLabel==='Dia'
                                   ? (esc?.turno==='Dia'||esc?.turno==='DiaNoite')
                                   : (esc?.turno==='Noite'||esc?.turno==='DiaNoite');
@@ -1028,13 +1031,14 @@ export const Escalas: React.FC = () => {
                                   </td>
                                 );
                               })}
-                              {tIdx===0 ? (
+                              {/* Totais — apenas na primeira linha visível com rowSpan */}
+                              {isFirstRow && (
                                 <>
-                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{pT}</td>
-                                  <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{fT}</td>
-                                  <td style={{ ...s.td, fontWeight:'bold', color:'#e65100', fontSize:'11px' }} rowSpan={hasDN&&hasNightInWeek?2:1}>{fjT}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#2e7d32', fontSize:'11px' }} rowSpan={totalLinhas}>{pT}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#c62828', fontSize:'11px' }} rowSpan={totalLinhas}>{fT}</td>
+                                  <td style={{ ...s.td, fontWeight:'bold', color:'#e65100', fontSize:'11px' }} rowSpan={totalLinhas}>{fjT}</td>
                                 </>
-                              ) : null}
+                              )}
                             </tr>
                           );
                         });

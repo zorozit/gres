@@ -502,6 +502,7 @@ export const Motoboys: React.FC = () => {
       const token = localStorage.getItem('auth_token');
       const isEdit = !!editandoId;
       const payload = { ...formData, unitId };
+      // Salvar sempre em /motoboys (PUT se editar, POST se novo)
       let url = isEdit ? `${apiUrl}/motoboys/${editandoId}` : `${apiUrl}/motoboys`;
       let method: string = isEdit ? 'PUT' : 'POST';
       const r = await fetch(url, {
@@ -510,18 +511,45 @@ export const Motoboys: React.FC = () => {
         body: JSON.stringify(payload),
       });
       if (r.ok) {
+        // Também atualizar /colaboradores se o motoboy veio de lá (para persistir valorChegadaDia/Noite/Entrega)
+        if (isEdit) {
+          await fetch(`${apiUrl}/colaboradores/${editandoId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              ...payload,
+              tipoContrato: formData.vinculo === 'Freelancer' ? 'Freelancer' : 'CLT',
+              cargo: formData.nome, tipo: formData.nome,
+              valorChegadaDia: formData.valorChegadaDia ?? 0,
+              valorChegadaNoite: formData.valorChegadaNoite ?? 0,
+              valorEntrega: formData.valorEntrega ?? 0,
+            }),
+          }).catch(() => {}); // silencia erro se não existir em /colaboradores
+        }
         alert(isEdit ? 'Motoboy atualizado!' : 'Motoboy cadastrado!');
         resetForm(); setAba('lista'); fetchMotoboys();
       } else {
         const err = await r.json().catch(() => ({}));
-        // Se PUT retornou 404 (motoboy veio de /colaboradores, não existe em /motoboys)
-        // recria como novo registro preservando o id original
+        // Se PUT retornou 404 (motoboy veio de /colaboradores, não existe ainda em /motoboys)
+        // cria novo registro em /motoboys preservando o id original
         if (isEdit && r.status === 404) {
           const r2 = await fetch(`${apiUrl}/motoboys`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ ...payload, id: editandoId }),
           });
+          // Também salvar em /colaboradores para persistir campos novos
+          await fetch(`${apiUrl}/colaboradores/${editandoId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              ...payload,
+              tipoContrato: formData.vinculo === 'Freelancer' ? 'Freelancer' : 'CLT',
+              valorChegadaDia: formData.valorChegadaDia ?? 0,
+              valorChegadaNoite: formData.valorChegadaNoite ?? 0,
+              valorEntrega: formData.valorEntrega ?? 0,
+            }),
+          }).catch(() => {});
           if (r2.ok) {
             alert('Motoboy salvo com sucesso!');
             resetForm(); setAba('lista'); fetchMotoboys();
@@ -823,10 +851,8 @@ export const Motoboys: React.FC = () => {
                 {(() => {
                   const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
                   const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
-                  const showChegada = isFreelancerCtrl && (
-                    R(motoboyCtrl?.valorChegadaDia ?? motoboyCtrl?.valorChegada) > 0 ||
-                    R(motoboyCtrl?.valorChegadaNoite ?? motoboyCtrl?.valorChegada) > 0
-                  );
+                  // Mostrar colunas de chegada sempre que for Freelancer (mesmo que valores sejam 0)
+                  const showChegada = isFreelancerCtrl;
                   return (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
