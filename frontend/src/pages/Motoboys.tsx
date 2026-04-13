@@ -239,12 +239,26 @@ export const Motoboys: React.FC = () => {
       const dM = await rM.json();
       // Normalizar campos da API /motoboys (retrocompat valorChegada → valorChegadaDia/Noite)
       const motosRaw: any[] = Array.isArray(dM) ? dM : [];
+      // LOG DIAGNÓSTICO: mostra TODOS os campos retornados pela API /motoboys para o 1º registro
+      if (motosRaw.length > 0) {
+        console.log('[Motoboys] RAW /motoboys[0] keys:', Object.keys(motosRaw[0]));
+        console.log('[Motoboys] RAW /motoboys[0] values:', JSON.stringify(motosRaw[0]));
+      }
 
       // Carregar colaboradores para enriquecer /motoboys com campos que podem não estar salvos lá
       let colabsData: any[] = [];
       if (rC?.ok) {
         const dC = await rC.json();
         colabsData = Array.isArray(dC) ? dC : [];
+        // LOG DIAGNÓSTICO: mostra campos do 1º colaborador motoboy
+        const colabMoto = colabsData.find((c: any) => {
+          const fn = (c.funcao || c.cargo || '').toLowerCase();
+          return fn.includes('motoboy') || fn.includes('entregador');
+        });
+        if (colabMoto) {
+          console.log('[Motoboys] RAW /colaboradores motoboy keys:', Object.keys(colabMoto));
+          console.log('[Motoboys] RAW /colaboradores motoboy values:', JSON.stringify(colabMoto));
+        }
       }
 
       const motosDB: Motoboy[] = motosRaw.map((m: any) => {
