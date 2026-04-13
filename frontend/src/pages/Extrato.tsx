@@ -32,11 +32,22 @@ interface ExtratoItem {
   raw?: any;
 }
 
+// Categorias de saída — créditos (a receber pelo colaborador) primeiro, depois débitos (descontos)
 const TIPOS_SAIDA = [
-  'A pagar', 'Adiantamento Salário', 'Adiantamento Transporte',
-  'Caixinha', 'Consumo Interno', 'A receber', 'Sangria', 'PIX', 'Caixa',
+  // ── Créditos (valor pago AO colaborador) ──
+  'A pagar',              // pagamento normal / folha
+  'Adiantamento Salário', // adiantamento
+  'Adiantamento Transporte',
+  'Caixinha',             // gorjeta / bônus recebido pelo colaborador
+  'PIX',                  // transferência ao colaborador
+  'Caixa',                // retirada do caixa pelo colaborador
+  // ── Débitos (desconto DO colaborador) ──
+  'Consumo Interno',      // consumo de produto descontado
+  'Desconto',             // desconto genérico
+  'Sangria',              // sangria de caixa (a acertar)
 ];
-const TIPOS_DEBITO = ['A receber', 'Caixinha', 'Consumo Interno'];
+// Categorias que representam DÉBITO (descontado do colaborador — valor negativo)
+const TIPOS_DEBITO = ['Consumo Interno', 'Desconto', 'Sangria'];
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
@@ -453,8 +464,20 @@ export const Extrato: React.FC = () => {
             <div>
               <label style={s.label}>Categoria / Tipo *</label>
               <select value={editForm.tipoSaida} onChange={e => setEditForm({ ...editForm, tipoSaida: e.target.value })} style={s.select}>
-                {TIPOS_SAIDA.map(t => <option key={t} value={t}>{t}</option>)}
+                <optgroup label="➕ Crédito (pago ao colaborador)">
+                  {TIPOS_SAIDA.filter(t => !TIPOS_DEBITO.includes(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                </optgroup>
+                <optgroup label="➖ Débito (desconto do colaborador)">
+                  {TIPOS_SAIDA.filter(t => TIPOS_DEBITO.includes(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                </optgroup>
               </select>
+              {/* Visual hint: show if selected category is credit or debit */}
+              <div style={{ marginTop: '4px', fontSize: '11px', fontWeight: 'bold',
+                color: TIPOS_DEBITO.includes(editForm.tipoSaida) ? '#c62828' : '#2e7d32' }}>
+                {TIPOS_DEBITO.includes(editForm.tipoSaida)
+                  ? '➖ Débito — será descontado do colaborador'
+                  : '➕ Crédito — será pago ao colaborador'}
+              </div>
             </div>
 
             {/* Descrição */}

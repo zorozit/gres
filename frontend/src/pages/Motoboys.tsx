@@ -20,6 +20,10 @@ interface Motoboy {
   vinculo: 'CLT' | 'Freelancer';
   salario?: number;
   periculosidade?: number;
+  /** Freelancer: valor fixo recebido por dia trabalhado ("chegada") */
+  valorChegada?: number;
+  /** Freelancer: valor pago por entrega realizada */
+  valorEntrega?: number;
   ativo: boolean;
 }
 
@@ -151,7 +155,8 @@ function preencherControleComSaidas(
 
 const emptyForm: Partial<Motoboy> = {
   nome: '', cpf: '', telefone: '', placa: '', dataAdmissao: new Date().toISOString().split('T')[0],
-  comissao: 0, chavePix: '', vinculo: 'Freelancer', salario: 0, periculosidade: 30, ativo: true,
+  comissao: 0, chavePix: '', vinculo: 'Freelancer', salario: 0, periculosidade: 30,
+  valorChegada: 0, valorEntrega: 0, ativo: true,
 };
 
 /* ─── Component ─────────────────────────────────────────────────────────── */
@@ -393,7 +398,20 @@ export const Motoboys: React.FC = () => {
     const salBase = R(motoboy?.salario);
     const peri = R(motoboy?.periculosidade) / 100;
     const periculosidadeValor = salBase * peri;
-    return { totalVariavel, totalPgto, totalViagens, totalCaixinha, diasTrab, salBase, periculosidadeValor };
+    // Freelancer-specific: chegada + entrega
+    const vChegada = R(motoboy?.valorChegada);
+    const vEntrega = R(motoboy?.valorEntrega);
+    const totalChegada = vChegada > 0 ? parseFloat((vChegada * diasTrab).toFixed(2)) : 0;
+    const totalEntregas = vEntrega > 0 ? parseFloat((vEntrega * totalViagens).toFixed(2)) : 0;
+    // Gross total for Freelancer = chegada + entregas + caixinha
+    const totalBrutoFreelancer = motoboy?.vinculo === 'Freelancer'
+      ? parseFloat((totalChegada + totalEntregas + totalCaixinha).toFixed(2))
+      : 0;
+    return {
+      totalVariavel, totalPgto, totalViagens, totalCaixinha, diasTrab,
+      salBase, periculosidadeValor,
+      vChegada, vEntrega, totalChegada, totalEntregas, totalBrutoFreelancer,
+    };
   }, [controleComAcumulado, ctrlMotoboyId, motoboys]);
 
   /* ── Saídas do motoboy selecionado no período ─────────── */
@@ -462,6 +480,7 @@ export const Motoboys: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(motoboysFiltrados.map(m => ({
       Nome: m.nome, CPF: m.cpf, Telefone: m.telefone, Placa: m.placa || '-',
       Vínculo: m.vinculo, 'Salário': m.salario ?? 0, 'Periculosidade (%)': m.periculosidade ?? 0,
+      'Valor Chegada (R$)': m.valorChegada ?? 0, 'Valor/Entrega (R$)': m.valorEntrega ?? 0,
       'Diária': m.salario ? ((m.salario * (1 + R(m.periculosidade) / 100)) / 30).toFixed(2) : '-',
       'Chave PIX': m.chavePix || '-', Admissão: m.dataAdmissao || '-', Ativo: m.ativo ? 'Sim' : 'Não',
     })));
@@ -552,7 +571,7 @@ export const Motoboys: React.FC = () => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário', 'Diária', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
+                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário / Chegada', 'Diária / Entrega', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
@@ -561,7 +580,14 @@ export const Motoboys: React.FC = () => {
                     {motoboysFiltrados.map(m => {
                       const peri = R(m.periculosidade) / 100;
                       const salComPeri = R(m.salario) * (1 + peri);
-                      const diaria = m.salario ? (salComPeri / 30).toFixed(2) : '-';
+                      const isFreelancer = m.vinculo === 'Freelancer';
+                      // CLT: diária = (salário + peri) / 30 | Freelancer: valor de chegada/dia
+                      const colSalario = isFreelancer
+                        ? (m.valorChegada ? `R$ ${fmt(m.valorChegada)}/dia` : '—')
+                        : (m.salario ? `R$ ${fmt(m.salario)}` : '—');
+                      const colDiaria = isFreelancer
+                        ? (m.valorEntrega ? `R$ ${fmt(m.valorEntrega)}/entrega` : '—')
+                        : (m.salario ? `R$ ${(salComPeri / 30).toFixed(2)}/dia` : '—');
                       return (
                         <tr key={m.id}
                           onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f0f7ff')}
@@ -573,9 +599,9 @@ export const Motoboys: React.FC = () => {
                           <td style={s.td}>{m.cpf}</td>
                           <td style={s.td}>{m.telefone}</td>
                           <td style={s.td}>{m.placa || '-'}</td>
-                          <td style={s.td}>{m.salario ? `R$ ${fmt(m.salario)}` : '-'}</td>
-                          <td style={{ ...s.td, fontWeight: 'bold', color: '#1976d2' }}>R$ {diaria}</td>
-                          <td style={s.td}>{m.periculosidade != null ? `${m.periculosidade}%` : '-'}</td>
+                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#e65100' : '#6a1b9a' }}>{colSalario}</td>
+                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#0288d1' : '#1976d2' }}>{colDiaria}</td>
+                          <td style={s.td}>{!isFreelancer && m.periculosidade != null ? `${m.periculosidade}%` : '—'}</td>
                           <td style={s.td}>{m.chavePix || '-'}</td>
                           <td style={s.td}>{m.dataAdmissao || '-'}</td>
                           <td style={s.td}>
@@ -659,23 +685,38 @@ export const Motoboys: React.FC = () => {
             ) : (
               <>
                 {/* Cards resumo do mês */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
-                  {[
-                    { label: 'Dias trabalhados', val: resumoCtrl.diasTrab, cor: '#1976d2', isNum: true },
-                    { label: 'Total viagens', val: resumoCtrl.totalViagens, cor: '#0288d1', isNum: true },
-                    { label: 'Total caixinha', val: `R$ ${fmt(resumoCtrl.totalCaixinha)}`, cor: '#00838f', isNum: false },
-                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047', isNum: false },
-                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00', isNum: false },
-                    { label: 'Saldo variável', val: `R$ ${fmt(resumoCtrl.totalVariavel - resumoCtrl.totalPgto)}`, cor: resumoCtrl.totalVariavel - resumoCtrl.totalPgto > 0 ? '#2e7d32' : '#c62828', isNum: false },
-                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a', isNum: false },
-                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100', isNum: false },
-                  ].map(c => (
-                    <div key={c.label} style={{ ...s.card, padding: '10px', borderLeft: `3px solid ${c.cor}` }}>
-                      <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: c.cor }}>{c.isNum ? c.val : c.val}</div>
+                {(() => {
+                  const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+                  const isFreelancer = motoboy?.vinculo === 'Freelancer';
+                  const saldo = resumoCtrl.totalVariavel - resumoCtrl.totalPgto;
+                  const cardsBase = [
+                    { label: 'Dias trabalhados', val: String(resumoCtrl.diasTrab), cor: '#1976d2' },
+                    { label: 'Total viagens', val: String(resumoCtrl.totalViagens), cor: '#0288d1' },
+                    { label: 'Caixinha', val: `R$ ${fmt(resumoCtrl.totalCaixinha)}`, cor: '#00838f' },
+                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047' },
+                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
+                    { label: 'Saldo variável', val: `R$ ${fmt(saldo)}`, cor: saldo >= 0 ? '#2e7d32' : '#c62828' },
+                  ];
+                  const cardsFreelancer = isFreelancer && resumoCtrl.vChegada > 0 ? [
+                    { label: `Chegada (${resumoCtrl.diasTrab}d × R$${fmt(resumoCtrl.vChegada)})`, val: `R$ ${fmt(resumoCtrl.totalChegada)}`, cor: '#e65100' },
+                    { label: `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})`, val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#0288d1' },
+                    { label: 'Bruto (chegada+ent.+caix.)', val: `R$ ${fmt(resumoCtrl.totalBrutoFreelancer)}`, cor: '#2e7d32' },
+                  ] : [];
+                  const cardsCLT = !isFreelancer ? [
+                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a' },
+                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100' },
+                  ] : [];
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                      {[...cardsBase, ...cardsFreelancer, ...cardsCLT].map(c => (
+                        <div key={c.label} style={{ ...s.card, padding: '10px', borderLeft: `3px solid ${c.cor}` }}>
+                          <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
 
                 {/* Tabela diária */}
                 <div style={{ overflowX: 'auto' }}>
@@ -877,17 +918,45 @@ export const Motoboys: React.FC = () => {
                       <option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
                     </select>
                   </div>
-                  <div><label style={s.label}>Salário Base (R$)</label><input type="number" step="0.01" min="0" value={formData.salario ?? ''} onChange={e => setFormData({ ...formData, salario: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
-                  <div>
-                    <label style={s.label}>Periculosidade (%)</label>
-                    <input type="number" step="1" min="0" max="100" placeholder="30" value={formData.periculosidade ?? ''} onChange={e => setFormData({ ...formData, periculosidade: parseFloat(e.target.value) || 0 })} style={s.input} />
-                    {formData.salario && formData.periculosidade ? (
-                      <small style={{ color: '#2e7d32' }}>
-                        Diária: R$ {(R(formData.salario) * (1 + R(formData.periculosidade) / 100) / 30).toFixed(2)}
-                      </small>
-                    ) : null}
-                  </div>
-                  <div><label style={s.label}>Comissão por entrega (%)</label><input type="number" step="0.01" min="0" value={formData.comissao ?? ''} onChange={e => setFormData({ ...formData, comissao: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
+                  {/* CLT: salário base */}
+                  {formData.vinculo !== 'Freelancer' && (
+                    <div>
+                      <label style={s.label}>Salário Base (R$) <span style={{ color: '#6a1b9a', fontSize: '11px' }}>(CLT)</span></label>
+                      <input type="number" step="0.01" min="0" value={formData.salario ?? ''} onChange={e => setFormData({ ...formData, salario: parseFloat(e.target.value) || 0 })} style={s.input} />
+                    </div>
+                  )}
+                  {/* CLT: periculosidade */}
+                  {formData.vinculo !== 'Freelancer' && (
+                    <div>
+                      <label style={s.label}>Periculosidade (%) <span style={{ color: '#e65100', fontSize: '11px' }}>(CLT — padrão 30%)</span></label>
+                      <input type="number" step="1" min="0" max="100" placeholder="30" value={formData.periculosidade ?? ''} onChange={e => setFormData({ ...formData, periculosidade: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      {formData.salario && formData.periculosidade ? (
+                        <small style={{ color: '#2e7d32' }}>
+                          Diária: R$ {(R(formData.salario) * (1 + R(formData.periculosidade) / 100) / 30).toFixed(2)}
+                        </small>
+                      ) : null}
+                    </div>
+                  )}
+                  {/* Freelancer: valor de chegada (fixo por dia trabalhado) */}
+                  {formData.vinculo === 'Freelancer' && (
+                    <div>
+                      <label style={s.label}>Valor de Chegada (R$/dia) <span style={{ color: '#e65100', fontSize: '11px' }}>(fixo por dia trabalhado)</span></label>
+                      <input type="number" step="0.01" min="0" placeholder="Ex: 50.00" value={formData.valorChegada ?? ''} onChange={e => setFormData({ ...formData, valorChegada: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      <small style={{ color: '#888' }}>Pago independentemente do nº de entregas</small>
+                    </div>
+                  )}
+                  {/* Freelancer: valor por entrega */}
+                  {formData.vinculo === 'Freelancer' && (
+                    <div>
+                      <label style={s.label}>Valor por Entrega (R$) <span style={{ color: '#0288d1', fontSize: '11px' }}>(por corrida/entrega)</span></label>
+                      <input type="number" step="0.01" min="0" placeholder="Ex: 5.00" value={formData.valorEntrega ?? ''} onChange={e => setFormData({ ...formData, valorEntrega: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      <small style={{ color: '#888' }}>Multiplicado pela quantidade de entregas do período</small>
+                    </div>
+                  )}
+                  {/* Comissão % — opcional para CLT */}
+                  {formData.vinculo !== 'Freelancer' && (
+                    <div><label style={s.label}>Comissão por entrega (%)</label><input type="number" step="0.01" min="0" value={formData.comissao ?? ''} onChange={e => setFormData({ ...formData, comissao: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
+                  )}
                   <div><label style={s.label}>Admissão</label><input type="date" value={formData.dataAdmissao || ''} onChange={e => setFormData({ ...formData, dataAdmissao: e.target.value })} style={s.input} /></div>
                   {formData.vinculo === 'CLT' && (
                     <div><label style={s.label}>Demissão</label><input type="date" value={formData.dataDemissao || ''} onChange={e => setFormData({ ...formData, dataDemissao: e.target.value })} style={s.input} /></div>

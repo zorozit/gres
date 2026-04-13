@@ -32,6 +32,10 @@ interface Motoboy extends Colaborador {
   placa?: string;
   vinculo?: 'CLT' | 'Freelancer';
   comissao?: number;
+  /** Freelancer: valor fixo por dia trabalhado */
+  valorChegada?: number;
+  /** Freelancer: valor por entrega realizada */
+  valorEntrega?: number;
 }
 
 // Freelancers are colaboradores with tipoContrato='Freelancer'
