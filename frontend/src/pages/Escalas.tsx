@@ -38,6 +38,7 @@ interface Escala {
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
   presenca?: 'presente' | 'falta' | 'falta_justificada';
+  presencaNoite?: 'presente' | 'falta' | 'falta_justificada';
   observacao?: string;
   unitId?: string;
 }
@@ -242,14 +243,16 @@ export const Escalas: React.FC = () => {
       // Rebuild presenca map (day presenca uses id, night presenca uses id_N)
       const pm:Record<string,Record<string,string>>={};
       for (const e of lista) {
+        // Normaliza data para garantir formato YYYY-MM-DD (sem componente de tempo)
+        const dataKey = e.data ? e.data.split('T')[0] : e.data;
         if (e.presenca) {
           if (!pm[e.colaboradorId]) pm[e.colaboradorId]={};
-          pm[e.colaboradorId][e.data]=e.presenca;
+          pm[e.colaboradorId][dataKey]=e.presenca;
         }
-        if ((e as any).presencaNoite) {
+        if (e.presencaNoite) {
           const kN=`${e.colaboradorId}_N`;
           if (!pm[kN]) pm[kN]={};
-          pm[kN][e.data]=(e as any).presencaNoite;
+          pm[kN][dataKey]=e.presencaNoite;
         }
       }
       setPresencaMap(pm);
@@ -336,8 +339,10 @@ export const Escalas: React.FC = () => {
   const escalasMap = useMemo(()=>{
     const m:Record<string,Record<string,Escala>>={};
     for (const e of escalas){
+      // Normaliza data para garantir formato YYYY-MM-DD (sem componente de tempo)
+      const dataKey = e.data ? e.data.split('T')[0] : e.data;
       if (!m[e.colaboradorId]) m[e.colaboradorId]={};
-      m[e.colaboradorId][e.data]=e;
+      m[e.colaboradorId][dataKey]={ ...e, data: dataKey };
     }
     return m;
   },[escalas]);
@@ -420,7 +425,11 @@ export const Escalas: React.FC = () => {
         });
       }
     } catch(e){ console.error(e); }
-    finally { setSalvandoPres(false); }
+    finally {
+      setSalvandoPres(false);
+      // Refresh escalas para sincronizar presencaNoite em escalasMap
+      fetchEscalas();
+    }
   },[escalasMap,apiUrl,unitId]);
 
   /* ── Gerar automático ──────────────────────────────────────  */
@@ -523,25 +532,48 @@ export const Escalas: React.FC = () => {
   /* ── Resumo mensal por pessoa ─────────────────────────────── */
   // isoHoje: data de hoje em formato YYYY-MM-DD para filtrar dias futuros
   const isoHoje = fmtIso(hoje);
+
+  /** Retorna a presença mais relevante de um colaborador num dia, unindo turno Dia e Noite.
+   *  Prioridade: presente > falta_justificada > falta > undefined */
+  const presencaDia = useCallback((pid: string, ds: string): string | undefined => {
+    const prD = presencaMap[pid]?.[ds];           // turno Dia
+    const prN = presencaMap[`${pid}_N`]?.[ds];    // turno Noite
+    if (prD === 'presente' || prN === 'presente') return 'presente';
+    if (prD === 'falta_justificada' || prN === 'falta_justificada') return 'falta_justificada';
+    if (prD === 'falta' || prN === 'falta') return 'falta';
+    return prD || prN;
+  }, [presencaMap]);
+
   const resumos = useMemo(()=>todos.map(p=>{
     let diaT=0,noiteT=0,dobraT=0,presenteT=0,faltaT=0,faltaJT=0;
+    // Para controlar dias já contados (evitar dupla contagem Dia+Noite)
+    const diasContados = new Set<string>();
     for (const d of dias){
       const ds=fmtIso(d);
+      const esc=escalasMap[p.id]?.[ds];
       // Contagem de turnos: apenas dias até hoje (sem contar futuros)
       if (ds <= isoHoje) {
-        const esc=escalasMap[p.id]?.[ds];
         if(esc?.turno==='Dia') diaT++;
         else if(esc?.turno==='Noite') noiteT++;
         else if(esc?.turno==='DiaNoite') dobraT++;
       }
-      // Presenças: só contabiliza marcações explícitas (não infere presença em dias futuros)
-      const pr=presencaMap[p.id]?.[ds];
-      if(pr==='presente') presenteT++;
-      else if(pr==='falta') faltaT++;
-      else if(pr==='falta_justificada') faltaJT++;
+      // Presenças: fonte primária = presencaMap (otimista), fonte secundária = escalasMap
+      // presencaDia combina turno Dia (pid) + turno Noite (pid_N)
+      let pr: string | undefined = presencaDia(p.id, ds);
+      // Fallback: lê diretamente dos campos do escalasMap se presencaMap não tiver
+      if (!pr && esc) {
+        if (esc.presenca) pr = esc.presenca;
+        else if (esc.presencaNoite) pr = esc.presencaNoite;
+      }
+      if (!diasContados.has(ds)) {
+        diasContados.add(ds);
+        if(pr==='presente') presenteT++;
+        else if(pr==='falta') faltaT++;
+        else if(pr==='falta_justificada') faltaJT++;
+      }
     }
     return {id:p.id,nome:p.nome,diaT,noiteT,dobraT,presenteT,faltaT,faltaJT};
-  }),[todos,dias,escalasMap,presencaMap,isoHoje]);
+  }),[todos,dias,escalasMap,presencaDia,isoHoje]);
 
   /* ── Estilos ─────────────────────────────────────────────── */
   const s = {
@@ -733,7 +765,9 @@ export const Escalas: React.FC = () => {
                                   {dias.map(d=>{
                                     const ds=fmtIso(d);
                                     const esc=escalasMap[p.id]?.[ds];
-                                    const pr=presencaMap[p.id]?.[ds];
+                                    // Presença consolidada: presencaDia (Dia+Noite via presencaMap) + fallback via escalasMap
+                                    let pr=presencaDia(p.id, ds);
+                                    if (!pr && esc) pr = esc.presenca || esc.presencaNoite;
                                     const b=TURNO_BADGE[esc?.turno||'']||TURNO_BADGE[''];
                                     const pb=pr?PRES_BADGE[pr]:null;
                                     const isFer=!!FERIADOS_2026[ds];

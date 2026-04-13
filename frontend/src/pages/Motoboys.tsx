@@ -40,6 +40,7 @@ interface EscalaMotoboy {
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
   presenca?: 'presente' | 'falta' | 'falta_justificada';
+  presencaNoite?: 'presente' | 'falta' | 'falta_justificada';
 }
 
 /** Saída lançada no módulo de controle financeiro */
@@ -170,10 +171,16 @@ function preencherControleComSaidas(
       .reduce((sum, s) => sum + R(s.valor), 0);
 
     // Presença confirmada via escalas
-    const presencaConfirmada = escalaDoDia?.presenca === 'presente';
+    // presenca = turno Dia, presencaNoite = turno Noite (campos separados na API)
     const turnoEscala = escalaDoDia?.turno; // 'Dia' | 'Noite' | 'DiaNoite' | 'Folga'
-    const presencaDia   = presencaConfirmada && (turnoEscala === 'Dia' || turnoEscala === 'DiaNoite');
-    const presencaNoite = presencaConfirmada && (turnoEscala === 'Noite' || turnoEscala === 'DiaNoite');
+    const presencaConfirmadaDia   = escalaDoDia?.presenca === 'presente' &&
+      (turnoEscala === 'Dia' || turnoEscala === 'DiaNoite');
+    const presencaConfirmadaNoite = (escalaDoDia?.presencaNoite === 'presente' ||
+      (escalaDoDia?.presenca === 'presente' && turnoEscala === 'Noite')) &&
+      (turnoEscala === 'Noite' || turnoEscala === 'DiaNoite');
+    const presencaConfirmada = presencaConfirmadaDia || presencaConfirmadaNoite;
+    const presencaDia   = presencaConfirmadaDia;
+    const presencaNoite = presencaConfirmadaNoite;
 
     // hasDia/hasNoite: saídas OU presença confirmada via escala
     const hasData    = saidasDoDia.length > 0 || presencaConfirmada;
@@ -534,8 +541,8 @@ export const Motoboys: React.FC = () => {
     const vEntrega = R(motoboy?.valorEntrega);
 
     // Soma de chegadas reais calculadas por preencherControleComSaidas
-    const totalChegadaDia   = controleComAcumulado.reduce((s, l) => s + R((l as any).chegadaDia),   0);
-    const totalChegadaNoite = controleComAcumulado.reduce((s, l) => s + R((l as any).chegadaNoite), 0);
+    const totalChegadaDia   = controleComAcumulado.reduce((s, l) => s + R(l.chegadaDia),   0);
+    const totalChegadaNoite = controleComAcumulado.reduce((s, l) => s + R(l.chegadaNoite), 0);
     const totalChegada = parseFloat((totalChegadaDia + totalChegadaNoite).toFixed(2));
 
     const totalEntregas = vEntrega > 0 ? parseFloat((vEntrega * totalViagens).toFixed(2)) : 0;
@@ -1002,18 +1009,54 @@ export const Motoboys: React.FC = () => {
                             <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
                             {/* Campos editáveis ou só-leitura conforme modo */}
                             {modoVisualizacao === 'manual' ? (
-                              (['entDia', 'caixinhaDia', 'entNoite', 'caixinhaNoite', 'vlVariavel', 'pgto'] as const).map(campo => (
-                                <td key={campo} style={s.td}>
-                                  <input
-                                    type="number" step="0.01" min="0"
-                                    style={s.numInput}
-                                    value={(l as any)[campo] || ''}
-                                    onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                    onFocus={e => e.target.select()}
-                                    placeholder="0"
-                                  />
-                                </td>
-                              ))
+                              <>
+                                {(['entDia', 'caixinhaDia'] as const).map(campo => (
+                                  <td key={campo} style={s.td}>
+                                    <input
+                                      type="number" step="0.01" min="0"
+                                      style={s.numInput}
+                                      value={(l as any)[campo] || ''}
+                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                      onFocus={e => e.target.select()}
+                                      placeholder="0"
+                                    />
+                                  </td>
+                                ))}
+                                {showChegada && (
+                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                    {R(l.chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(l.chegadaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  </td>
+                                )}
+                                {(['entNoite', 'caixinhaNoite'] as const).map(campo => (
+                                  <td key={campo} style={s.td}>
+                                    <input
+                                      type="number" step="0.01" min="0"
+                                      style={s.numInput}
+                                      value={(l as any)[campo] || ''}
+                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                      onFocus={e => e.target.select()}
+                                      placeholder="0"
+                                    />
+                                  </td>
+                                ))}
+                                {showChegada && (
+                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                    {R(l.chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(l.chegadaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  </td>
+                                )}
+                                {(['vlVariavel', 'pgto'] as const).map(campo => (
+                                  <td key={campo} style={s.td}>
+                                    <input
+                                      type="number" step="0.01" min="0"
+                                      style={s.numInput}
+                                      value={(l as any)[campo] || ''}
+                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                      onFocus={e => e.target.select()}
+                                      placeholder="0"
+                                    />
+                                  </td>
+                                ))}
+                              </>
                             ) : (
                               <>
                                 <td style={{ ...s.td, textAlign: 'center' as const }}>
@@ -1024,7 +1067,7 @@ export const Motoboys: React.FC = () => {
                                 </td>
                                 {showChegada && (
                                   <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R((l as any).chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(R((l as any).chegadaDia))}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                    {R(l.chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(l.chegadaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
                                   </td>
                                 )}
                                 <td style={{ ...s.td, textAlign: 'center' as const }}>
@@ -1035,7 +1078,7 @@ export const Motoboys: React.FC = () => {
                                 </td>
                                 {showChegada && (
                                   <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R((l as any).chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(R((l as any).chegadaNoite))}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                    {R(l.chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(l.chegadaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
                                   </td>
                                 )}
                                 <td style={s.td}>

@@ -410,6 +410,8 @@ export default function FolhaPagamento() {
     }
 
     for (const m of motoboys) {
+      // Apenas motoboys CLT entram na folha CLT; Freelancers são tratados na aba de Freelancers
+      if (m.vinculo === 'Freelancer') continue;
       const controle: ControleDia[] = controlesMap[m.id] || [];
       const salBase = R(m.salario);
       const peri = R(m.periculosidade ?? 30) / 100;
