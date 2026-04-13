@@ -239,42 +239,55 @@ export const Motoboys: React.FC = () => {
       const dM = await rM.json();
       // Normalizar campos da API /motoboys (retrocompat valorChegada → valorChegadaDia/Noite)
       const motosRaw: any[] = Array.isArray(dM) ? dM : [];
-      const motosDB: Motoboy[] = motosRaw.map((m: any) => ({
-        ...m,
-        valorChegadaDia:   R(m.valorChegadaDia)   || R(m.valorChegada) || 0,
-        valorChegadaNoite: R(m.valorChegadaNoite) || R(m.valorChegada) || 0,
-        valorEntrega: R(m.valorEntrega) || 0,
-      }));
-      console.log('[Motoboys] fetchMotoboys DB=', motosDB.length, motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
-      // Also get motoboys from colaboradores table (funcao or cargo = Motoboy/Entregador)
-      let motosFromColabs: Motoboy[] = [];
+
+      // Carregar colaboradores para enriquecer /motoboys com campos que podem não estar salvos lá
+      let colabsData: any[] = [];
       if (rC?.ok) {
         const dC = await rC.json();
-        const colabs = Array.isArray(dC) ? dC : [];
-        motosFromColabs = colabs
-          .filter((c: any) => {
-            const fn = (c.funcao || c.cargo || '').toLowerCase();
-            return fn.includes('motoboy') || fn.includes('entregador');
-          })
-          .filter((c: any) => !motosDB.some(m => m.id === c.id || m.cpf === c.cpf))
-          .map((c: any): Motoboy => ({
-            id: c.id, nome: c.nome, cpf: c.cpf,
-            telefone: c.celular || c.telefone || '',
-            placa: c.placa || '',
-            dataAdmissao: c.dataAdmissao,
-            dataDemissao: c.dataDemissao,
-            comissao: c.comissao || 0,
-            chavePix: c.chavePix || '',
-            unitId: c.unitId,
-            vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
-            salario: c.salario || 0,
-            periculosidade: c.periculosidade || 30,
-            valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorChegada) || 0,
-            valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorChegada) || 0,
-            valorEntrega: R(c.valorEntrega) || 0,
-            ativo: c.ativo !== false,
-          }));
+        colabsData = Array.isArray(dC) ? dC : [];
       }
+
+      const motosDB: Motoboy[] = motosRaw.map((m: any) => {
+        // Busca dados complementares em /colaboradores pelo mesmo ID ou CPF
+        const colabMatch = colabsData.find((c: any) => c.id === m.id || (m.cpf && c.cpf === m.cpf));
+        // Para valorChegadaDia/Noite/Entrega: prioriza /motoboys; se for 0, usa /colaboradores
+        const vCD = R(m.valorChegadaDia) || R(m.valorChegada) || R(colabMatch?.valorChegadaDia) || R(colabMatch?.valorChegada) || 0;
+        const vCN = R(m.valorChegadaNoite) || R(m.valorChegada) || R(colabMatch?.valorChegadaNoite) || R(colabMatch?.valorChegada) || 0;
+        const vE  = R(m.valorEntrega) || R(colabMatch?.valorEntrega) || 0;
+        return {
+          ...m,
+          valorChegadaDia:   vCD,
+          valorChegadaNoite: vCN,
+          valorEntrega: vE,
+        };
+      });
+      console.log('[Motoboys] fetchMotoboys DB=', motosDB.length, motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
+
+      // Motoboys que só existem em /colaboradores (funcao ou cargo = Motoboy/Entregador)
+      const motosFromColabs: Motoboy[] = colabsData
+        .filter((c: any) => {
+          const fn = (c.funcao || c.cargo || '').toLowerCase();
+          return fn.includes('motoboy') || fn.includes('entregador');
+        })
+        .filter((c: any) => !motosDB.some(m => m.id === c.id || m.cpf === c.cpf))
+        .map((c: any): Motoboy => ({
+          id: c.id, nome: c.nome, cpf: c.cpf,
+          telefone: c.celular || c.telefone || '',
+          placa: c.placa || '',
+          dataAdmissao: c.dataAdmissao,
+          dataDemissao: c.dataDemissao,
+          comissao: c.comissao || 0,
+          chavePix: c.chavePix || '',
+          unitId: c.unitId,
+          vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
+          salario: c.salario || 0,
+          periculosidade: c.periculosidade || 30,
+          valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorChegada) || 0,
+          valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorChegada) || 0,
+          valorEntrega: R(c.valorEntrega) || 0,
+          ativo: c.ativo !== false,
+        }));
+
       setMotoboys([...motosDB, ...motosFromColabs]);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -512,14 +525,24 @@ export const Motoboys: React.FC = () => {
       });
       if (r.ok) {
         // Também atualizar /colaboradores se o motoboy veio de lá (para persistir valorChegadaDia/Noite/Entrega)
+        // Não sobrescreve cargo/funcao para não quebrar o lookup de área em Escalas
         if (isEdit) {
           await fetch(`${apiUrl}/colaboradores/${editandoId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
-              ...payload,
+              nome: formData.nome,
+              cpf: formData.cpf,
+              celular: formData.telefone,
+              telefone: formData.telefone,
+              chavePix: formData.chavePix,
+              salario: formData.salario,
+              periculosidade: formData.periculosidade,
+              dataAdmissao: formData.dataAdmissao,
+              dataDemissao: formData.dataDemissao,
+              ativo: formData.ativo,
+              unitId,
               tipoContrato: formData.vinculo === 'Freelancer' ? 'Freelancer' : 'CLT',
-              cargo: formData.nome, tipo: formData.nome,
               valorChegadaDia: formData.valorChegadaDia ?? 0,
               valorChegadaNoite: formData.valorChegadaNoite ?? 0,
               valorEntrega: formData.valorEntrega ?? 0,
@@ -538,12 +561,22 @@ export const Motoboys: React.FC = () => {
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ ...payload, id: editandoId }),
           });
-          // Também salvar em /colaboradores para persistir campos novos
+          // Também salvar em /colaboradores para persistir campos novos (sem sobrescrever cargo/funcao)
           await fetch(`${apiUrl}/colaboradores/${editandoId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
-              ...payload,
+              nome: formData.nome,
+              cpf: formData.cpf,
+              celular: formData.telefone,
+              telefone: formData.telefone,
+              chavePix: formData.chavePix,
+              salario: formData.salario,
+              periculosidade: formData.periculosidade,
+              dataAdmissao: formData.dataAdmissao,
+              dataDemissao: formData.dataDemissao,
+              ativo: formData.ativo,
+              unitId,
               tipoContrato: formData.vinculo === 'Freelancer' ? 'Freelancer' : 'CLT',
               valorChegadaDia: formData.valorChegadaDia ?? 0,
               valorChegadaNoite: formData.valorChegadaNoite ?? 0,
@@ -824,11 +857,11 @@ export const Motoboys: React.FC = () => {
                     { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
                     { label: 'Saldo variável', val: `R$ ${fmt(saldo)}`, cor: saldo >= 0 ? '#2e7d32' : '#c62828' },
                   ];
-                  const hasChegada = resumoCtrl.vChegadaDia > 0 || resumoCtrl.vChegadaNoite > 0;
-                  const cardsFreelancer = isFreelancer && (hasChegada || resumoCtrl.vEntrega > 0) ? [
-                    ...(resumoCtrl.vChegadaDia > 0 ? [{ label: `Ch.Dia (R$${fmt(resumoCtrl.vChegadaDia)}/turno)`, val: `R$ ${fmt(resumoCtrl.totalChegadaDia)}`, cor: '#e65100' }] : []),
-                    ...(resumoCtrl.vChegadaNoite > 0 ? [{ label: `Ch.Noite (R$${fmt(resumoCtrl.vChegadaNoite)}/turno)`, val: `R$ ${fmt(resumoCtrl.totalChegadaNoite)}`, cor: '#7b1fa2' }] : []),
-                    ...(resumoCtrl.vEntrega > 0 ? [{ label: `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})`, val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#0288d1' }] : []),
+                  // Para freelancer: sempre mostra cards de chegada/entrega (mesmo que 0), para ficar visível
+                  const cardsFreelancer = isFreelancer ? [
+                    { label: `Ch.Dia${resumoCtrl.vChegadaDia > 0 ? ` (R$${fmt(resumoCtrl.vChegadaDia)}/turno)` : ' (não configurado)'}`, val: resumoCtrl.vChegadaDia > 0 ? `R$ ${fmt(resumoCtrl.totalChegadaDia)}` : '—', cor: '#e65100' },
+                    { label: `Ch.Noite${resumoCtrl.vChegadaNoite > 0 ? ` (R$${fmt(resumoCtrl.vChegadaNoite)}/turno)` : ' (não configurado)'}`, val: resumoCtrl.vChegadaNoite > 0 ? `R$ ${fmt(resumoCtrl.totalChegadaNoite)}` : '—', cor: '#7b1fa2' },
+                    { label: resumoCtrl.vEntrega > 0 ? `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})` : 'Vl. Entrega (não configurado)', val: resumoCtrl.vEntrega > 0 ? `R$ ${fmt(resumoCtrl.totalEntregas)}` : '—', cor: '#0288d1' },
                     { label: 'Bruto (chegada+ent.+caix.)', val: `R$ ${fmt(resumoCtrl.totalBrutoFreelancer)}`, cor: '#2e7d32' },
                   ] : [];
                   const cardsCLT = !isFreelancer ? [

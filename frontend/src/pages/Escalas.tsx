@@ -1014,12 +1014,15 @@ export const Escalas: React.FC = () => {
                                   : (esc?.turno==='Noite'||esc?.turno==='DiaNoite');
                                 const cur=presencaMap[presKey]?.[ds]||'';
                                 const pb=cur?PRES_BADGE[cur]:null;
+                                const dow=d.getDay();
+                                const isFer=!!FERIADOS_2026[ds];
+                                const isWeekend=dow===0||dow===6;
                                 return (
-                                  <td key={ds} style={{ ...s.td, cursor:hasThisTurno?'pointer':'default',
-                                    backgroundColor:FERIADOS_2026[ds]?'#fff9e0':pb?pb.bg:(hasThisTurno?(tLabel==='Dia'?'#fffde7':'#e8eaf6'):undefined),
-                                    opacity:hasThisTurno?1:0.2, minWidth:'64px', padding:'3px' }}
-                                    title={hasThisTurno?(tLabel+' — clique para pontuar'):'Sem turno '+tLabel}
-                                    onClick={()=>hasThisTurno&&handlePresenca(presKey,ds,cur)}>
+                                  <td key={ds} style={{ ...s.td, cursor:'pointer',
+                                    backgroundColor:isFer?'#fff9e0':pb?pb.bg:(hasThisTurno?(tLabel==='Dia'?'#fffde7':'#e8eaf6'):(isWeekend?'#f5f5f5':undefined)),
+                                    opacity:hasThisTurno?1:0.45, minWidth:'64px', padding:'3px' }}
+                                    title={hasThisTurno?(tLabel+' — clique para pontuar'):(tLabel+' — sem turno lançado (clique para registrar presença manual)')}
+                                    onClick={()=>handlePresenca(presKey,ds,cur)}>
                                     {hasThisTurno ? (
                                       <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
                                         <span style={{ fontSize:'8px', fontWeight:'bold',
@@ -1027,7 +1030,12 @@ export const Escalas: React.FC = () => {
                                         {pb ? <span style={{ fontSize:'12px' }}>{pb.icon}</span>
                                              : <span style={{ fontSize:'9px', color:'#bbb' }}>—</span>}
                                       </div>
-                                    ) : <span style={{ color:'#eee', fontSize:'8px' }}>·</span>}
+                                    ) : (
+                                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
+                                        {pb ? <span style={{ fontSize:'12px' }}>{pb.icon}</span>
+                                             : <span style={{ color:'#ccc', fontSize:'8px' }}>·</span>}
+                                      </div>
+                                    )}
                                   </td>
                                 );
                               })}
