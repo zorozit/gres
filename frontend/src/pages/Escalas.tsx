@@ -277,7 +277,7 @@ export const Escalas: React.FC = () => {
   // Enriquece com área da função quando a pessoa não tem área cadastrada
   const todos = useMemo<Pessoa[]>(()=>{
     const combined = [...colaboradores,...freelancers].map(p => {
-      if (p.area) return p; // já tem área cadastrada
+      if (p.area && p.area !== 'Sem Área') return p; // já tem área válida cadastrada
       const fn = (p.funcao || p.cargo || '').toLowerCase().trim();
       // 1) Busca em funcoes-escala cadastradas para a unidade
       const regra = funcoes.find(f => f.nome.toLowerCase() === fn)

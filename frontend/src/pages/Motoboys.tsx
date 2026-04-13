@@ -20,7 +20,11 @@ interface Motoboy {
   vinculo: 'CLT' | 'Freelancer';
   salario?: number;
   periculosidade?: number;
-  /** Freelancer: valor fixo recebido por dia trabalhado ("chegada") */
+  /** Freelancer: valor fixo por dia — turno Dia */
+  valorChegadaDia?: number;
+  /** Freelancer: valor fixo por dia — turno Noite */
+  valorChegadaNoite?: number;
+  /** @deprecated use valorChegadaDia — mantido para compatibilidade */
   valorChegada?: number;
   /** Freelancer: valor pago por entrega realizada */
   valorEntrega?: number;
@@ -54,9 +58,11 @@ interface ControleDia {
   // Turno dia — populados de saídas
   entDia: number;
   caixinhaDia: number;
+  chegadaDia: number;     // Freelancer: valorChegadaDia se trabalhou no turno dia
   // Turno noite — populados de saídas
   entNoite: number;
   caixinhaNoite: number;
+  chegadaNoite: number;   // Freelancer: valorChegadaNoite se trabalhou no turno noite
   vlVariavel: number;
   pgto: number;
   variavel: number;
@@ -110,7 +116,10 @@ function preencherControleComSaidas(
   motoboy?: Motoboy
 ): ControleDia[] {
   const isFreelancer = motoboy?.vinculo === 'Freelancer';
-  const valorEntrega = R(motoboy?.valorEntrega);
+  const valorEntrega    = R(motoboy?.valorEntrega);
+  // Chegada por turno (usa valorChegadaDia/Noite; fallback em valorChegada p/ retrocompat)
+  const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
+  const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
 
   // Saídas do motoboy
   const saidasMoto = saidas.filter(s => s.colaboradorId === motoboyId);
@@ -118,8 +127,8 @@ function preencherControleComSaidas(
   return linhasBase.map(linha => {
     const saidasDoDia = saidasMoto.filter(s => s.data === linha.data);
 
-    const saidasDia   = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
-    const saidasNoite = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
+    const saidasDia      = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
+    const saidasNoite    = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
     const saidasSemTurno = saidasDoDia.filter(s => normalizeTurno(s.turno) === '');
 
     // Viagens por turno
@@ -138,15 +147,23 @@ function preencherControleComSaidas(
       .filter(s => R(s.valor) > 0)
       .reduce((sum, s) => sum + R(s.valor), 0);
 
-    const hasData = saidasDoDia.length > 0;
+    const hasData    = saidasDoDia.length > 0;
+    const hasDia     = saidasDia.length > 0 || saidasSemTurno.length > 0;
+    const hasNoite   = saidasNoite.length > 0;
+
+    // Chegada fixa por turno (Freelancer)
+    const chegadaDia   = isFreelancer && hasDia   && vChegadaDia   > 0 ? vChegadaDia   : 0;
+    const chegadaNoite = isFreelancer && hasNoite && vChegadaNoite > 0 ? vChegadaNoite : 0;
 
     // vlVariavel:
-    //  • Freelancer: (valorEntrega × viagens) + caixinha do dia
+    //  • Freelancer: chegadas + (valorEntrega × viagens) + caixinha do dia
     //  • CLT: caixinha do dia (bônus extra sobre o salário fixo)
     let vlVariavel: number;
     if (hasData) {
-      if (isFreelancer && valorEntrega > 0) {
-        vlVariavel = parseFloat(((valorEntrega * totalViagens) + totalCaixinha).toFixed(2));
+      if (isFreelancer) {
+        vlVariavel = parseFloat((
+          chegadaDia + chegadaNoite + (valorEntrega * totalViagens) + totalCaixinha
+        ).toFixed(2));
       } else {
         vlVariavel = totalCaixinha > 0 ? totalCaixinha : linha.vlVariavel;
       }
@@ -160,6 +177,8 @@ function preencherControleComSaidas(
       entNoite:       hasData ? entNoite       : linha.entNoite,
       caixinhaDia:    hasData ? caixinhaDia    : linha.caixinhaDia,
       caixinhaNoite:  hasData ? caixinhaNoite  : linha.caixinhaNoite,
+      chegadaDia:     hasData ? chegadaDia     : (linha.chegadaDia  ?? 0),
+      chegadaNoite:   hasData ? chegadaNoite   : (linha.chegadaNoite ?? 0),
       pgto:           hasData ? pgto           : linha.pgto,
       vlVariavel,
       saidasDia,
@@ -171,7 +190,7 @@ function preencherControleComSaidas(
 const emptyForm: Partial<Motoboy> = {
   nome: '', cpf: '', telefone: '', placa: '', dataAdmissao: new Date().toISOString().split('T')[0],
   comissao: 0, chavePix: '', vinculo: 'Freelancer', salario: 0, periculosidade: 30,
-  valorChegada: 0, valorEntrega: 0, ativo: true,
+  valorChegadaDia: 0, valorChegadaNoite: 0, valorEntrega: 0, ativo: true,
 };
 
 /* ─── Component ─────────────────────────────────────────────────────────── */
@@ -242,8 +261,9 @@ export const Motoboys: React.FC = () => {
             vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
             salario: c.salario || 0,
             periculosidade: c.periculosidade || 30,
-            valorChegada: c.valorChegada || 0,
-            valorEntrega: c.valorEntrega || 0,
+            valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorChegada) || 0,
+            valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorChegada) || 0,
+            valorEntrega: R(c.valorEntrega) || 0,
             ativo: c.ativo !== false,
           }));
       }
@@ -296,10 +316,10 @@ export const Motoboys: React.FC = () => {
         const dbMap = new Map(d.map((l: any) => [l.data, l]));
         linhasBase = dias.map(data => {
           const db = dbMap.get(data) as any;
-          return db ? { ...db, motoboyId: ctrlMotoboyId } : {
+          return db ? { ...db, motoboyId: ctrlMotoboyId, chegadaDia: db.chegadaDia ?? 0, chegadaNoite: db.chegadaNoite ?? 0 } : {
             motoboyId: ctrlMotoboyId, data,
             diaSemana: diaSemana(data), salDia,
-            entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+            entDia: 0, caixinhaDia: 0, chegadaDia: 0, entNoite: 0, caixinhaNoite: 0, chegadaNoite: 0,
             vlVariavel: 0, pgto: 0, variavel: 0, unitId,
           };
         });
@@ -307,7 +327,7 @@ export const Motoboys: React.FC = () => {
         linhasBase = dias.map(data => ({
           motoboyId: ctrlMotoboyId, data,
           diaSemana: diaSemana(data), salDia,
-          entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+          entDia: 0, caixinhaDia: 0, chegadaDia: 0, entNoite: 0, caixinhaNoite: 0, chegadaNoite: 0,
           vlVariavel: 0, pgto: 0, variavel: 0, unitId,
         }));
       }
@@ -376,7 +396,7 @@ export const Motoboys: React.FC = () => {
     const linhasBase = dias.map(data => ({
       motoboyId: ctrlMotoboyId, data,
       diaSemana: diaSemana(data), salDia,
-      entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
+      entDia: 0, caixinhaDia: 0, chegadaDia: 0, entNoite: 0, caixinhaNoite: 0, chegadaNoite: 0,
       vlVariavel: 0, pgto: 0, variavel: 0, unitId,
     }));
     const motoboyObj = motoboys.find(m => m.id === ctrlMotoboyId);
@@ -426,27 +446,34 @@ export const Motoboys: React.FC = () => {
     const peri = R(motoboy?.periculosidade) / 100;
     const periculosidadeValor = salBase * peri;
 
-    // Freelancer-specific: chegada fixa + entregas variáveis
-    const vChegada = R(motoboy?.valorChegada);
+    // Freelancer-specific: chegada (dia + noite) a partir das linhas
+    const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
+    const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
     const vEntrega = R(motoboy?.valorEntrega);
-    const totalChegada  = vChegada > 0 ? parseFloat((vChegada * diasTrab).toFixed(2)) : 0;
+
+    // Soma de chegadas reais calculadas por preencherControleComSaidas
+    const totalChegadaDia   = controleComAcumulado.reduce((s, l) => s + R((l as any).chegadaDia),   0);
+    const totalChegadaNoite = controleComAcumulado.reduce((s, l) => s + R((l as any).chegadaNoite), 0);
+    const totalChegada = parseFloat((totalChegadaDia + totalChegadaNoite).toFixed(2));
+
     const totalEntregas = vEntrega > 0 ? parseFloat((vEntrega * totalViagens).toFixed(2)) : 0;
 
-    // Bruto Freelancer = chegada + entregas + caixinha
+    // Bruto Freelancer = chegadas + entregas + caixinha
     const totalBrutoFreelancer = isFreelancer
       ? parseFloat((totalChegada + totalEntregas + totalCaixinha).toFixed(2))
       : 0;
 
     // Para Freelancer, o "Total variável" exibido é o bruto se configurado e há dados;
     // se bruto for 0 mas houver vlVariavel manual, usa vlVariavel para não ocultar valores
-    const totalVariavelExibido = isFreelancer && (vChegada > 0 || vEntrega > 0) && totalBrutoFreelancer > 0
+    const totalVariavelExibido = isFreelancer && (vChegadaDia > 0 || vChegadaNoite > 0 || vEntrega > 0) && totalBrutoFreelancer > 0
       ? totalBrutoFreelancer
       : totalVariavel;
 
     return {
       totalVariavel: totalVariavelExibido, totalPgto, totalViagens, totalCaixinha, diasTrab,
       salBase, periculosidadeValor,
-      vChegada, vEntrega, totalChegada, totalEntregas, totalBrutoFreelancer,
+      vChegadaDia, vChegadaNoite, vEntrega,
+      totalChegadaDia, totalChegadaNoite, totalChegada, totalEntregas, totalBrutoFreelancer,
     };
   }, [controleComAcumulado, ctrlMotoboyId, motoboys]);
 
@@ -466,18 +493,37 @@ export const Motoboys: React.FC = () => {
     try {
       const token = localStorage.getItem('auth_token');
       const isEdit = !!editandoId;
-      const url = isEdit ? `${apiUrl}/motoboys/${editandoId}` : `${apiUrl}/motoboys`;
+      const payload = { ...formData, unitId };
+      let url = isEdit ? `${apiUrl}/motoboys/${editandoId}` : `${apiUrl}/motoboys`;
+      let method: string = isEdit ? 'PUT' : 'POST';
       const r = await fetch(url, {
-        method: isEdit ? 'PUT' : 'POST',
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...formData, unitId }),
+        body: JSON.stringify(payload),
       });
       if (r.ok) {
         alert(isEdit ? 'Motoboy atualizado!' : 'Motoboy cadastrado!');
         resetForm(); setAba('lista'); fetchMotoboys();
       } else {
         const err = await r.json().catch(() => ({}));
-        alert('Erro: ' + (err.error || r.status));
+        // Se PUT retornou 404 (motoboy veio de /colaboradores, não existe em /motoboys)
+        // recria como novo registro preservando o id original
+        if (isEdit && r.status === 404) {
+          const r2 = await fetch(`${apiUrl}/motoboys`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ ...payload, id: editandoId }),
+          });
+          if (r2.ok) {
+            alert('Motoboy salvo com sucesso!');
+            resetForm(); setAba('lista'); fetchMotoboys();
+            return;
+          }
+          const err2 = await r2.json().catch(() => ({}));
+          alert('Erro ao salvar: ' + (err2.error || r2.status));
+        } else {
+          alert('Erro: ' + (err.error || r.status));
+        }
       }
     } catch (e) { alert('Erro ao salvar'); }
   };
@@ -516,7 +562,9 @@ export const Motoboys: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(motoboysFiltrados.map(m => ({
       Nome: m.nome, CPF: m.cpf, Telefone: m.telefone, Placa: m.placa || '-',
       Vínculo: m.vinculo, 'Salário': m.salario ?? 0, 'Periculosidade (%)': m.periculosidade ?? 0,
-      'Valor Chegada (R$)': m.valorChegada ?? 0, 'Valor/Entrega (R$)': m.valorEntrega ?? 0,
+      'Ch.Dia (R$)': m.valorChegadaDia ?? m.valorChegada ?? 0,
+      'Ch.Noite (R$)': m.valorChegadaNoite ?? m.valorChegada ?? 0,
+      'Valor/Entrega (R$)': m.valorEntrega ?? 0,
       'Diária': m.salario ? ((m.salario * (1 + R(m.periculosidade) / 100)) / 30).toFixed(2) : '-',
       'Chave PIX': m.chavePix || '-', Admissão: m.dataAdmissao || '-', Ativo: m.ativo ? 'Sim' : 'Não',
     })));
@@ -607,7 +655,7 @@ export const Motoboys: React.FC = () => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário / Chegada', 'Diária / Entrega', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
+                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário / Ch.Dia', 'Diária / Ch.Noite', 'Vl.Entrega', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
@@ -617,13 +665,19 @@ export const Motoboys: React.FC = () => {
                       const peri = R(m.periculosidade) / 100;
                       const salComPeri = R(m.salario) * (1 + peri);
                       const isFreelancer = m.vinculo === 'Freelancer';
-                      // CLT: diária = (salário + peri) / 30 | Freelancer: valor de chegada/dia
+                      // CLT: salário + diária | Freelancer: chegadaDia / chegadaNoite / valorEntrega
+                      const vCD = R(m.valorChegadaDia   ?? m.valorChegada);
+                      const vCN = R(m.valorChegadaNoite ?? m.valorChegada);
+                      const vEnt = R(m.valorEntrega);
                       const colSalario = isFreelancer
-                        ? (m.valorChegada ? `R$ ${fmt(m.valorChegada)}/dia` : '—')
+                        ? (vCD ? `R$ ${fmt(vCD)}/dia` : '—')
                         : (m.salario ? `R$ ${fmt(m.salario)}` : '—');
                       const colDiaria = isFreelancer
-                        ? (m.valorEntrega ? `R$ ${fmt(m.valorEntrega)}/entrega` : '—')
+                        ? (vCN ? `R$ ${fmt(vCN)}/noite` : '—')
                         : (m.salario ? `R$ ${(salComPeri / 30).toFixed(2)}/dia` : '—');
+                      const colEntrega = isFreelancer
+                        ? (vEnt ? `R$ ${fmt(vEnt)}/ent.` : '—')
+                        : '—';
                       return (
                         <tr key={m.id}
                           onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f0f7ff')}
@@ -636,7 +690,8 @@ export const Motoboys: React.FC = () => {
                           <td style={s.td}>{m.telefone}</td>
                           <td style={s.td}>{m.placa || '-'}</td>
                           <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#e65100' : '#6a1b9a' }}>{colSalario}</td>
-                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#0288d1' : '#1976d2' }}>{colDiaria}</td>
+                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#7b1fa2' : '#1976d2' }}>{colDiaria}</td>
+                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#0288d1' : '#777' }}>{colEntrega}</td>
                           <td style={s.td}>{!isFreelancer && m.periculosidade != null ? `${m.periculosidade}%` : '—'}</td>
                           <td style={s.td}>{m.chavePix || '-'}</td>
                           <td style={s.td}>{m.dataAdmissao || '-'}</td>
@@ -733,9 +788,11 @@ export const Motoboys: React.FC = () => {
                     { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
                     { label: 'Saldo variável', val: `R$ ${fmt(saldo)}`, cor: saldo >= 0 ? '#2e7d32' : '#c62828' },
                   ];
-                  const cardsFreelancer = isFreelancer && resumoCtrl.vChegada > 0 ? [
-                    { label: `Chegada (${resumoCtrl.diasTrab}d × R$${fmt(resumoCtrl.vChegada)})`, val: `R$ ${fmt(resumoCtrl.totalChegada)}`, cor: '#e65100' },
-                    { label: `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})`, val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#0288d1' },
+                  const hasChegada = resumoCtrl.vChegadaDia > 0 || resumoCtrl.vChegadaNoite > 0;
+                  const cardsFreelancer = isFreelancer && (hasChegada || resumoCtrl.vEntrega > 0) ? [
+                    ...(resumoCtrl.vChegadaDia > 0 ? [{ label: `Ch.Dia (R$${fmt(resumoCtrl.vChegadaDia)}/turno)`, val: `R$ ${fmt(resumoCtrl.totalChegadaDia)}`, cor: '#e65100' }] : []),
+                    ...(resumoCtrl.vChegadaNoite > 0 ? [{ label: `Ch.Noite (R$${fmt(resumoCtrl.vChegadaNoite)}/turno)`, val: `R$ ${fmt(resumoCtrl.totalChegadaNoite)}`, cor: '#7b1fa2' }] : []),
+                    ...(resumoCtrl.vEntrega > 0 ? [{ label: `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})`, val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#0288d1' }] : []),
                     { label: 'Bruto (chegada+ent.+caix.)', val: `R$ ${fmt(resumoCtrl.totalBrutoFreelancer)}`, cor: '#2e7d32' },
                   ] : [];
                   const cardsCLT = !isFreelancer ? [
@@ -755,6 +812,14 @@ export const Motoboys: React.FC = () => {
                 })()}
 
                 {/* Tabela diária */}
+                {(() => {
+                  const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
+                  const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
+                  const showChegada = isFreelancerCtrl && (
+                    R(motoboyCtrl?.valorChegadaDia ?? motoboyCtrl?.valorChegada) > 0 ||
+                    R(motoboyCtrl?.valorChegadaNoite ?? motoboyCtrl?.valorChegada) > 0
+                  );
+                  return (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                     <thead>
@@ -762,7 +827,9 @@ export const Motoboys: React.FC = () => {
                         {[
                           'Data', 'Dia', 'Sal.+Per.',
                           'Ent. Dia', 'Caix. Dia',
+                          ...(showChegada ? ['Ch. Dia'] : []),
                           'Ent. Noite', 'Caix. Noite',
+                          ...(showChegada ? ['Ch. Noite'] : []),
                           'Vl. Variável', 'Pgto', 'Var. Acum.',
                           ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
                         ].map(h => <th key={h} style={s.th}>{h}</th>)}
@@ -806,12 +873,22 @@ export const Motoboys: React.FC = () => {
                                 <td style={{ ...s.td, textAlign: 'center' as const }}>
                                   {R(l.caixinhaDia) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
                                 </td>
+                                {showChegada && (
+                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                    {R((l as any).chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(R((l as any).chegadaDia))}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  </td>
+                                )}
                                 <td style={{ ...s.td, textAlign: 'center' as const }}>
                                   {R(l.entNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>{l.entNoite}</strong> : <span style={{ color: '#ccc' }}>-</span>}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center' as const }}>
                                   {R(l.caixinhaNoite) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
                                 </td>
+                                {showChegada && (
+                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
+                                    {R((l as any).chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(R((l as any).chegadaNoite))}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  </td>
+                                )}
                                 <td style={s.td}>
                                   <input
                                     type="number" step="0.01" min="0"
@@ -853,8 +930,10 @@ export const Motoboys: React.FC = () => {
                         <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
+                        {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
                         <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entNoite), 0)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaNoite), 0))}</td>
+                        {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaNoite)}</td>}
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
                         <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
@@ -863,6 +942,8 @@ export const Motoboys: React.FC = () => {
                     </tfoot>
                   </table>
                 </div>
+                  );
+                })()}
 
                 {/* Painel de saídas detalhado */}
                 {mostrarSaidas && saidasDoMotoboy.length > 0 && (
@@ -973,19 +1054,27 @@ export const Motoboys: React.FC = () => {
                       ) : null}
                     </div>
                   )}
-                  {/* Freelancer: valor de chegada (fixo por dia trabalhado) */}
+                  {/* Freelancer: chegada turno Dia */}
                   {formData.vinculo === 'Freelancer' && (
                     <div>
-                      <label style={s.label}>Valor de Chegada (R$/dia) <span style={{ color: '#e65100', fontSize: '11px' }}>(fixo por dia trabalhado)</span></label>
-                      <input type="number" step="0.01" min="0" placeholder="Ex: 50.00" value={formData.valorChegada ?? ''} onChange={e => setFormData({ ...formData, valorChegada: parseFloat(e.target.value) || 0 })} style={s.input} />
-                      <small style={{ color: '#888' }}>Pago independentemente do nº de entregas</small>
+                      <label style={s.label}>Chegada Turno Dia (R$) <span style={{ color: '#e65100', fontSize: '11px' }}>(fixo p/ turno dia trabalhado)</span></label>
+                      <input type="number" step="0.01" min="0" placeholder="Ex: 100.00" value={formData.valorChegadaDia ?? ''} onChange={e => setFormData({ ...formData, valorChegadaDia: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      <small style={{ color: '#888' }}>Pago por dia que trabalhou no turno Dia</small>
+                    </div>
+                  )}
+                  {/* Freelancer: chegada turno Noite */}
+                  {formData.vinculo === 'Freelancer' && (
+                    <div>
+                      <label style={s.label}>Chegada Turno Noite (R$) <span style={{ color: '#7b1fa2', fontSize: '11px' }}>(fixo p/ turno noite trabalhado)</span></label>
+                      <input type="number" step="0.01" min="0" placeholder="Ex: 100.00" value={formData.valorChegadaNoite ?? ''} onChange={e => setFormData({ ...formData, valorChegadaNoite: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      <small style={{ color: '#888' }}>Pago por dia que trabalhou no turno Noite</small>
                     </div>
                   )}
                   {/* Freelancer: valor por entrega */}
                   {formData.vinculo === 'Freelancer' && (
                     <div>
                       <label style={s.label}>Valor por Entrega (R$) <span style={{ color: '#0288d1', fontSize: '11px' }}>(por corrida/entrega)</span></label>
-                      <input type="number" step="0.01" min="0" placeholder="Ex: 5.00" value={formData.valorEntrega ?? ''} onChange={e => setFormData({ ...formData, valorEntrega: parseFloat(e.target.value) || 0 })} style={s.input} />
+                      <input type="number" step="0.01" min="0" placeholder="Ex: 8.00" value={formData.valorEntrega ?? ''} onChange={e => setFormData({ ...formData, valorEntrega: parseFloat(e.target.value) || 0 })} style={s.input} />
                       <small style={{ color: '#888' }}>Multiplicado pela quantidade de entregas do período</small>
                     </div>
                   )}
