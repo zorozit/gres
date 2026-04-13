@@ -113,6 +113,37 @@ function normalizeTurno(t?: string): 'dia' | 'noite' | '' {
   return '';
 }
 
+/** Retorna semanas do mês: cada semana vai de segunda a domingo */
+function semanasMes(mesAno: string): { inicio: string; fim: string; label: string }[] {
+  const [ano, mes] = mesAno.split('-').map(Number);
+  const d1 = new Date(ano, mes - 1, 1);
+  const d2 = new Date(ano, mes, 0);
+  const semanas: { inicio: string; fim: string; label: string }[] = [];
+  let cur = new Date(d1);
+  // Avança para segunda-feira da primeira semana do mês (ou mantém se já for 2ª)
+  const dow0 = cur.getDay(); // 0=Dom,1=Seg,...
+  if (dow0 !== 1) {
+    // Começa na segunda anterior (pode ser antes do mês)
+    const diff = dow0 === 0 ? -6 : 1 - dow0;
+    cur.setDate(cur.getDate() + diff);
+  }
+  while (cur <= d2) {
+    const ini = new Date(cur);
+    const fim = new Date(cur);
+    fim.setDate(fim.getDate() + 6); // domingo
+    // limita ao mês
+    const inicioStr = ini.toISOString().split('T')[0];
+    const fimStr = fim.toISOString().split('T')[0];
+    semanas.push({
+      inicio: inicioStr,
+      fim: fimStr,
+      label: `${String(ini.getDate()).padStart(2,'0')}/${String(mes).padStart(2,'0')} – ${String(Math.min(fim.getDate(), d2.getDate())).padStart(2,'0')}/${String(mes).padStart(2,'0')}`,
+    });
+    cur.setDate(cur.getDate() + 7);
+  }
+  return semanas;
+}
+
 /**
  * Preenche o controle diário de um motoboy com base nas saídas e escalas do período.
  *
@@ -124,82 +155,96 @@ function normalizeTurno(t?: string): 'dia' | 'noite' | '' {
  * - Para Freelancers: vlVariavel = chegadaDia + chegadaNoite + (valorEntrega × viagens) + caixinha
  * - Para CLT: vlVariavel = caixinha (bônus extra sobre o salário fixo)
  */
+/**
+ * Modos de integração:
+ *  'integrado'  – recalcula chegadaDia/Noite/vlVariavel a partir do cadastro atual + saídas + escalas.
+ *                 Usado apenas quando NÃO há dados salvos no banco (primeiro carregamento do mês).
+ *  'merge'      – preserva chegadaDia/Noite/vlVariavel já salvos; apenas atualiza entDia/Noite,
+ *                 caixinha e pgto das saídas lançadas. Evita que mudanças no cadastro alterem
+ *                 semanas pagas.
+ */
 function preencherControleComSaidas(
   linhasBase: ControleDia[],
   saidas: Saida[],
   motoboyId: string,
   motoboy?: Motoboy,
-  escalas?: EscalaMotoboy[]
+  escalas?: EscalaMotoboy[],
+  modo: 'integrado' | 'merge' = 'integrado'
 ): ControleDia[] {
   const isFreelancer = motoboy?.vinculo === 'Freelancer';
   const valorEntrega    = R(motoboy?.valorEntrega);
-  // Chegada por turno (usa valorChegadaDia/Noite; fallback em valorChegada p/ retrocompat)
   const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
   const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
 
-  // IDs possíveis do motoboy para cruzar com saídas (mot-xxx e col-xxx)
   const colabId = motoboy?.colaboradorId;
   const idSet = new Set([motoboyId, colabId].filter(Boolean) as string[]);
-  // Saídas do motoboy — aceita qualquer um dos IDs
   const saidasMoto = saidas.filter(s => idSet.has(s.colaboradorId));
-  // Escalas já vêm pré-filtradas pelo chamador (incluindo ambos os IDs)
   const escalasMoto = escalas || [];
 
   return linhasBase.map(linha => {
     const saidasDoDia = saidasMoto.filter(s => s.data === linha.data);
-    // Escala do dia (para verificar presença confirmada)
     const escalaDoDia = escalasMoto.find(e => e.data === linha.data);
 
     const saidasDia      = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
     const saidasNoite    = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
     const saidasSemTurno = saidasDoDia.filter(s => normalizeTurno(s.turno) === '');
 
-    // Viagens por turno (apenas de saídas)
     const entDia   = saidasDia.reduce((sum, s) => sum + R(s.viagens), 0);
     const entNoite = saidasNoite.reduce((sum, s) => sum + R(s.viagens), 0);
     const totalViagens = entDia + entNoite;
 
-    // Caixinha por turno + extras sem turno
     const caixinhaDia   = saidasDia.reduce((sum, s) => sum + R(s.caixinha), 0);
     const caixinhaNoite = saidasNoite.reduce((sum, s) => sum + R(s.caixinha), 0);
     const caixinhaExtra = saidasSemTurno.reduce((sum, s) => sum + R(s.caixinha), 0);
     const totalCaixinha = caixinhaDia + caixinhaNoite + caixinhaExtra;
 
-    // Pagamentos (valor em dinheiro/pix) — soma de todos os turnos
     const pgto = saidasDoDia
       .filter(s => R(s.valor) > 0)
       .reduce((sum, s) => sum + R(s.valor), 0);
 
-    // Presença confirmada via escalas
-    // presenca = turno Dia, presencaNoite = turno Noite (campos separados na API)
-    const turnoEscala = escalaDoDia?.turno; // 'Dia' | 'Noite' | 'DiaNoite' | 'Folga'
+    const hasSaidas = saidasDoDia.length > 0;
+
+    if (modo === 'merge') {
+      // Modo MERGE: preserva chegada/vlVariavel salvos; só atualiza viagens/caixinha/pgto de saídas
+      // Recalcula vlVariavel a partir dos valores salvos de chegada (não do cadastro atual)
+      const savedChegadaDia   = linha.chegadaDia   ?? 0;
+      const savedChegadaNoite = linha.chegadaNoite ?? 0;
+      const vlVariavel = hasSaidas
+        ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagens) + totalCaixinha).toFixed(2))
+        : linha.vlVariavel;
+      return {
+        ...linha,
+        entDia:         hasSaidas ? entDia         : linha.entDia,
+        entNoite:       hasSaidas ? entNoite       : linha.entNoite,
+        caixinhaDia:    hasSaidas ? caixinhaDia    : linha.caixinhaDia,
+        caixinhaNoite:  hasSaidas ? caixinhaNoite  : linha.caixinhaNoite,
+        pgto:           hasSaidas ? pgto           : linha.pgto,
+        vlVariavel,
+        saidasDia,
+        saidasNoite,
+      };
+    }
+
+    // Modo INTEGRADO: calcula chegada do cadastro atual + presença de escalas
+    const turnoEscala = escalaDoDia?.turno;
     const presencaConfirmadaDia   = escalaDoDia?.presenca === 'presente' &&
       (turnoEscala === 'Dia' || turnoEscala === 'DiaNoite');
     const presencaConfirmadaNoite = (escalaDoDia?.presencaNoite === 'presente' ||
       (escalaDoDia?.presenca === 'presente' && turnoEscala === 'Noite')) &&
       (turnoEscala === 'Noite' || turnoEscala === 'DiaNoite');
     const presencaConfirmada = presencaConfirmadaDia || presencaConfirmadaNoite;
-    const presencaDia   = presencaConfirmadaDia;
-    const presencaNoite = presencaConfirmadaNoite;
 
-    // hasDia/hasNoite: saídas OU presença confirmada via escala
-    const hasData    = saidasDoDia.length > 0 || presencaConfirmada;
-    const hasDia     = saidasDia.length > 0 || saidasSemTurno.length > 0 || presencaDia;
-    const hasNoite   = saidasNoite.length > 0 || presencaNoite;
+    const hasData = hasSaidas || presencaConfirmada;
+    const hasDia  = saidasDia.length > 0 || saidasSemTurno.length > 0 || presencaConfirmadaDia;
+    const hasNoite= saidasNoite.length > 0 || presencaConfirmadaNoite;
 
-    // Chegada fixa por turno (Freelancer) — aplicada quando trabalhou no turno
     const chegadaDia   = isFreelancer && hasDia   && vChegadaDia   > 0 ? vChegadaDia   : 0;
     const chegadaNoite = isFreelancer && hasNoite && vChegadaNoite > 0 ? vChegadaNoite : 0;
 
-    // vlVariavel:
-    //  • Freelancer: chegadas + (valorEntrega × viagens) + caixinha do dia
-    //  • CLT: caixinha do dia (bônus extra sobre o salário fixo)
     let vlVariavel: number;
     if (hasData) {
       if (isFreelancer) {
-        vlVariavel = parseFloat((
-          chegadaDia + chegadaNoite + (valorEntrega * totalViagens) + totalCaixinha
-        ).toFixed(2));
+        vlVariavel = parseFloat((chegadaDia + chegadaNoite + (valorEntrega * totalViagens) + totalCaixinha).toFixed(2));
       } else {
         vlVariavel = totalCaixinha > 0 ? totalCaixinha : linha.vlVariavel;
       }
@@ -263,6 +308,10 @@ export const Motoboys: React.FC = () => {
   // Modo de visualização do controle
   const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('integrado');
   const [mostrarSaidas, setMostrarSaidas] = useState(false);
+
+  // Status de pagamento semanal (folha-pagamento)
+  const [pagamentosSemana, setPagamentosSemana] = useState<any[]>([]);
+  const [salvandoPgtoSemana, setSalvandoPgtoSemana] = useState<string | null>(null);
 
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
@@ -389,8 +438,10 @@ export const Motoboys: React.FC = () => {
       const dias = diasDoMes(ano, mes);
 
       let linhasBase: ControleDia[];
+      let temDadosSalvos = false;
       if (Array.isArray(d) && d.length > 0) {
-        // Usa dados salvos como base
+        // Dados salvos no banco → usa como base (valores de chegada são preservados)
+        temDadosSalvos = true;
         const dbMap = new Map(d.map((l: any) => [l.data, l]));
         linhasBase = dias.map(data => {
           const db = dbMap.get(data) as any;
@@ -402,6 +453,7 @@ export const Motoboys: React.FC = () => {
           };
         });
       } else {
+        // Sem dados salvos → cálculo integrado do zero
         linhasBase = dias.map(data => ({
           motoboyId: ctrlMotoboyId, data,
           diaSemana: diaSemana(data), salDia,
@@ -410,18 +462,70 @@ export const Motoboys: React.FC = () => {
         }));
       }
 
-      // Integrar com saídas e escalas (presença confirmada → aplica chegada mesmo sem saídas)
-      // Escalas usam colaboradorId que pode ser diferente do motoboyId (mot-xxx vs col-xxx)
+      // Integrar com saídas e escalas
+      // Modo MERGE quando há dados salvos (preserva chegada já calculada/editada)
+      // Modo INTEGRADO quando é primeira carga do mês (sem dados)
       const colabId = motoboy?.colaboradorId;
       const escalasDoMotoboy = escalasControle.filter(e =>
         e.colaboradorId === ctrlMotoboyId ||
         (colabId && e.colaboradorId === colabId)
       );
-      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboy, escalasDoMotoboy);
+      const modoIntegracao = temDadosSalvos ? 'merge' : 'integrado';
+      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboy, escalasDoMotoboy, modoIntegracao);
       setControle(linhasIntegradas);
     } catch (e) { console.error(e); setControle([]); }
     finally { setLoadingCtrl(false); }
   }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas, escalasControle]);
+
+  /* ── Pagamentos semanais (folha-pagamento) ───────────────── */
+  const fetchPagamentosSemana = useCallback(async () => {
+    if (!ctrlMotoboyId || !ctrlMesAno || !unitId) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      const r = await fetch(
+        `${apiUrl}/folha-pagamento?colaboradorId=${ctrlMotoboyId}&mes=${ctrlMesAno}&unitId=${unitId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (r.ok) {
+        const d = await r.json();
+        setPagamentosSemana(Array.isArray(d) ? d : []);
+      }
+    } catch (e) { console.error(e); }
+  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl]);
+
+  const marcarPagamentoSemana = async (semanaFim: string, pago: boolean, dataPgto?: string) => {
+    if (!ctrlMotoboyId) return;
+    setSalvandoPgtoSemana(semanaFim);
+    try {
+      const token = localStorage.getItem('auth_token');
+      // Calcula o total da semana a partir das linhas do controle
+      const semanas = semanasMes(ctrlMesAno);
+      const sem = semanas.find(s => s.fim === semanaFim);
+      if (!sem) return;
+      const linhasSemana = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
+      const totalSemana = parseFloat(linhasSemana.reduce((s, l) => s + R(l.vlVariavel), 0).toFixed(2));
+      const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+      const payload = {
+        colaboradorId: ctrlMotoboyId,
+        mes: ctrlMesAno,
+        semana: semanaFim,
+        unitId,
+        pago,
+        dataPagamento: pago ? (dataPgto || new Date().toISOString().split('T')[0]) : null,
+        totalBruto: totalSemana,
+        totalLiquido: totalSemana,
+        obs: `Semana ${sem.label} — Controle Motoboy ${motoboy?.nome || ''}`,
+      };
+      const r = await fetch(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await fetchPagamentosSemana();
+    } catch (e) { console.error(e); alert('Erro ao salvar pagamento'); }
+    finally { setSalvandoPgtoSemana(null); }
+  };
 
   // Carregar saídas ao mudar mês
   useEffect(() => {
@@ -432,6 +536,11 @@ export const Motoboys: React.FC = () => {
   useEffect(() => {
     if (aba === 'controle' && ctrlMotoboyId && !loadingSaidas) fetchControle();
   }, [ctrlMotoboyId, ctrlMesAno, aba, loadingSaidas]);
+
+  // Carregar status de pagamentos semanais
+  useEffect(() => {
+    if (aba === 'controle' && ctrlMotoboyId) fetchPagamentosSemana();
+  }, [ctrlMotoboyId, ctrlMesAno, aba, fetchPagamentosSemana]);
 
   // Recalcular variavel acumulado
   const controleComAcumulado = useMemo(() => {
@@ -489,7 +598,7 @@ export const Motoboys: React.FC = () => {
       e.colaboradorId === ctrlMotoboyId ||
       (colabIdRec && e.colaboradorId === colabIdRec)
     );
-    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboyObj, escalasDoMotoboy);
+    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboyObj, escalasDoMotoboy, 'integrado');
     setControle(linhasIntegradas);
   };
 
@@ -1134,6 +1243,82 @@ export const Motoboys: React.FC = () => {
                     </tfoot>
                   </table>
                 </div>
+                  );
+                })()}
+
+                {/* ── Resumo semanal com status de pagamento ──────── */}
+                {controleComAcumulado.length > 0 && (() => {
+                  const semanas = semanasMes(ctrlMesAno);
+                  const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+                  return (
+                    <div style={{ marginTop: '20px', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
+                      <div style={{ backgroundColor: '#37474f', color: 'white', padding: '8px 12px', fontSize: '13px', fontWeight: 'bold' }}>
+                        📅 Resumo Semanal — {motoboy?.nome}
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f5f5f5' }}>
+                            {['Semana', 'Vl. Variável', 'Total Pago', 'Saldo', 'Status', 'Ação'].map(h => (
+                              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Semana' ? 'left' : 'right', fontWeight: 'bold', color: '#555', borderBottom: '1px solid #e0e0e0', whiteSpace: 'nowrap' as const }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {semanas.map((sem, idx) => {
+                            const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
+                            const totalVar = parseFloat(linhasSem.reduce((s, l) => s + R(l.vlVariavel), 0).toFixed(2));
+                            const totalPgtoSem = parseFloat(linhasSem.reduce((s, l) => s + R(l.pgto), 0).toFixed(2));
+                            if (totalVar === 0 && totalPgtoSem === 0) return null;
+                            const pgDB = pagamentosSemana.find((p: any) => p.semana === sem.fim || p.dataFechamento === sem.fim);
+                            const pago = pgDB?.pago === true;
+                            const dataPgto = pgDB?.dataPagamento;
+                            const saldo = parseFloat((totalVar - totalPgtoSem).toFixed(2));
+                            const salvando = salvandoPgtoSemana === sem.fim;
+                            return (
+                              <tr key={sem.fim} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white', borderBottom: '1px solid #f0f0f0' }}>
+                                <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#333' }}>{sem.label}</td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', color: '#2e7d32', fontWeight: 'bold' }}>R$ {fmt(totalVar)}</td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', color: '#fb8c00' }}>
+                                  {totalPgtoSem > 0 ? `R$ ${fmt(totalPgtoSem)}` : <span style={{ color: '#ccc' }}>—</span>}
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', color: saldo > 0 ? '#c62828' : '#2e7d32', fontWeight: 'bold' }}>
+                                  R$ {fmt(saldo)}
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                  {pago ? (
+                                    <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
+                                      ✅ Pago {dataPgto ? `em ${dataPgto.split('-').reverse().join('/')}` : ''}
+                                    </span>
+                                  ) : (
+                                    <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
+                                      ⏳ Pendente
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                  {pago ? (
+                                    <button
+                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                                      disabled={salvando}
+                                      onClick={() => { if (window.confirm('Desfazer pagamento desta semana?')) marcarPagamentoSemana(sem.fim, false); }}
+                                    >↩ Desfazer</button>
+                                  ) : (
+                                    <button
+                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                      disabled={salvando}
+                                      onClick={() => {
+                                        const dt = window.prompt('Data do pagamento (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
+                                        if (dt !== null) marcarPagamentoSemana(sem.fim, true, dt || undefined);
+                                      }}
+                                    >{salvando ? '...' : '✅ Pagar'}</button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   );
                 })()}
 

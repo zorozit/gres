@@ -190,11 +190,10 @@ function fmtDataISO(d: Date) {
 
 /**
  * Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas.
- * Regras:
- *  - presença = 'presente'         → conta sempre (passado ou futuro confirmado)
- *  - presença = 'falta'/'falta_j.' → não conta (falta registrada)
- *  - presença = undefined/null      → conta APENAS se a data for até hoje (turno agendado no passado sem controle)
- *  - data futura sem presença      → NÃO conta (turno agendado mas ainda não confirmado)
+ * Regra única: SOMENTE presença = 'presente' conta.
+ *  - presença = 'presente'         → conta
+ *  - presença = 'falta'/'falta_j.' → não conta
+ *  - presença = undefined/null      → não conta (exige confirmação explícita)
  */
 const ISO_HOJE_FP = new Date().toISOString().split('T')[0];
 
@@ -206,12 +205,7 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
     .filter(e =>
       e.colaboradorId === freelancerId &&
       e.turno !== 'Folga' &&
-      (
-        // Presença explicitamente confirmada
-        e.presenca === 'presente' ||
-        // Sem registro de presença: só conta se a data já passou (compatibilidade com escalas antigas)
-        ((e.presenca === undefined || e.presenca === null) && e.data <= ISO_HOJE_FP)
-      )
+      e.presenca === 'presente'   // só conta presença explicitamente confirmada
     )
     .sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
@@ -483,14 +477,11 @@ export default function FolhaPagamento() {
         const vDobra = R((f as any).valorDobra) || 120;
         const usaTurno = vDia > 0 || vNoite > 0;
 
-        // Apenas escalas com presença confirmada (ou sem registro de presença em data passada = compatibilidade)
-        // Datas futuras sem presença registrada NÃO são contadas
+        // Apenas escalas com presença EXPLICITAMENTE confirmada como 'presente'
+        // undefined/null = não confirmado = não conta (evita falsos positivos)
         const escalasSemanaConfirmadas = escalasSemana.filter(e =>
           e.turno !== 'Folga' &&
-          (
-            e.presenca === 'presente' ||
-            ((e.presenca === undefined || e.presenca === null) && e.data <= ISO_HOJE_FP)
-          )
+          e.presenca === 'presente'
         );
 
         let total = 0;
@@ -1573,14 +1564,13 @@ export default function FolhaPagamento() {
                   for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) {
                     const ds = d.toISOString().split('T')[0];
                     const esc = escalas.find(e => e.colaboradorId === p.id && e.data === ds);
-                    // Falta registrada = não conta como trabalhado
-                    if (!esc || esc.turno === 'Folga' || esc.presenca === 'falta' || esc.presenca === 'falta_justificada') {
-                      const label = esc?.presenca === 'falta' ? 'F' : esc?.presenca === 'falta_justificada' ? 'FJ' : '—';
-                      codigos.push(label); continue;
-                    }
-                    // Data futura sem presença registrada → não conta (aguardando confirmação)
-                    if (ds > ISO_HOJE_FP && (esc.presenca === undefined || esc.presenca === null)) {
-                      codigos.push('…'); continue;
+                    // Somente 'presente' explícito conta como dia trabalhado
+                    if (!esc || esc.turno === 'Folga') { codigos.push('—'); continue; }
+                    if (esc.presenca === 'falta') { codigos.push('F'); continue; }
+                    if (esc.presenca === 'falta_justificada') { codigos.push('FJ'); continue; }
+                    if (esc.presenca !== 'presente') {
+                      // undefined/null = sem confirmação (aguardando)
+                      codigos.push(ds > ISO_HOJE_FP ? '…' : '?'); continue;
                     }
                     if (esc.turno === 'Dia') { dC++; codigos.push('D'); }
                     else if (esc.turno === 'Noite') { nC++; codigos.push('N'); }
