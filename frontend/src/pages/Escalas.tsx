@@ -221,11 +221,14 @@ export const Escalas: React.FC = () => {
           : Array.isArray(d?.data)
             ? d.data
             : [];
-      const todos = lista.filter((c:Pessoa)=>c.ativo!==false);
+      const ativos = lista.filter((c:Pessoa)=>c.ativo!==false);
+      // DEBUG: log para diagnóstico
+      console.log('[Escalas] fetchColabs total=', ativos.length,
+        'áreas:', ativos.map((c:any)=>({nome:c.nome, area:c.area, funcao:c.funcao, cargo:c.cargo, tipo:c.tipoContrato})));
       // Separate CLT from Freelancers
-      setColabs(todos.filter((c:Pessoa)=>c.tipoContrato!=='Freelancer'));
-      setFreels(todos.filter((c:Pessoa)=>c.tipoContrato==='Freelancer').map((f:any)=>({ ...f, tipoContrato:'Freelancer' as const })));
-    } catch(e){console.error(e);}
+      setColabs(ativos.filter((c:Pessoa)=>c.tipoContrato!=='Freelancer'));
+      setFreels(ativos.filter((c:Pessoa)=>c.tipoContrato==='Freelancer').map((f:any)=>({ ...f, tipoContrato:'Freelancer' as const })));
+    } catch(e){console.error('[Escalas] fetchColabs erro:', e);}
   };
 
 
@@ -286,17 +289,24 @@ export const Escalas: React.FC = () => {
   // Enriquece com área da função quando a pessoa não tem área cadastrada
   const todos = useMemo<Pessoa[]>(()=>{
     const combined = [...colaboradores,...freelancers].map(p => {
-      // Enriquecer se área está vazia, é 'Sem Área' ou 'Outro' (esses são placeholders sem significado real)
-      if (p.area && p.area !== 'Sem Área' && p.area !== 'Outro') return p; // já tem área válida cadastrada
-      const fn = (p.funcao || p.cargo || '').toLowerCase().trim();
+      // Enriquecer se área está vazia, é 'Sem Área', 'Outro' ou null/undefined
+      const areaAtual = (p.area || '').trim();
+      const areaValida = areaAtual && areaAtual !== 'Sem Área' && areaAtual !== 'Outro' && areaAtual !== 'Sem Area';
+      if (areaValida) return p; // já tem área válida cadastrada
+      // Usa funcao, cargo ou tipo (retrocompat) para buscar área
+      const fn = ((p as any).funcao || (p as any).cargo || (p as any).tipo || '').toLowerCase().trim();
+      if (!fn) return p;
       // 1) Busca em funcoes-escala cadastradas para a unidade
       const regra = funcoes.find(f => f.nome.toLowerCase() === fn)
-        || funcoes.find(f => fn.includes(f.nome.toLowerCase()));
-      if (regra?.area) return { ...p, area: regra.area };
+        || funcoes.find(f => fn.includes(f.nome.toLowerCase()))
+        || funcoes.find(f => f.nome.toLowerCase().includes(fn));
+      if (regra?.area) { console.log('[Escalas] enriqueceu', p.nome, 'fn=', fn, '→ área regra:', regra.area); return { ...p, area: regra.area }; }
       // 2) Fallback: mapa fixo de função conhecida
       const areaFixa = FUNCAO_AREA_MAP[fn]
-        || Object.entries(FUNCAO_AREA_MAP).find(([k]) => fn.includes(k))?.[1];
-      if (areaFixa) return { ...p, area: areaFixa };
+        || Object.entries(FUNCAO_AREA_MAP).find(([k]) => fn.includes(k))?.[1]
+        || Object.entries(FUNCAO_AREA_MAP).find(([k]) => k.includes(fn))?.[1];
+      if (areaFixa) { console.log('[Escalas] enriqueceu', p.nome, 'fn=', fn, '→ área mapa:', areaFixa); return { ...p, area: areaFixa }; }
+      console.log('[Escalas] SEM área', p.nome, 'fn=', fn, 'area=', p.area);
       return p;
     });
     return combined.sort((a,b)=>{
@@ -894,6 +904,23 @@ export const Escalas: React.FC = () => {
               🖱️ Clique em <strong style={{color:'#f57f17'}}>D</strong> ou <strong style={{color:'#3949ab'}}>N</strong> para ciclar presença: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>.
               Apenas dias com turno lançado podem ser pontuados. Dia e Noite são pontuados separadamente.
             </p>
+
+            {/* Painel de diagnóstico — visível apenas quando não há ninguém */}
+            {todos.length === 0 && !loading && (
+              <div style={{ padding:'12px', backgroundColor:'#fff3e0', border:'1px solid #e65100', borderRadius:'6px', fontSize:'12px', color:'#e65100', marginBottom:'14px' }}>
+                ⚠️ <strong>Nenhum colaborador carregado.</strong> Verifique se a unidade está selecionada e clique em 🔄 Atualizar.
+              </div>
+            )}
+            {todos.length > 0 && (
+              <div style={{ marginBottom:'10px', fontSize:'11px', color:'#666', display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                <span>👥 {todos.length} colaboradores carregados</span>
+                {areasUnicas.map(a=>(
+                  <span key={a} style={{ backgroundColor:corArea(a), color:'white', padding:'2px 8px', borderRadius:'10px' }}>
+                    {a}: {todos.filter(p=>(areaDe(p)||'Sem Área')===a).length}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {semAtual && areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
               const gp = todosFiltered.filter(p=>(areaDe(p)||'Sem Área')===area);

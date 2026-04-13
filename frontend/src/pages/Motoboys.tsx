@@ -237,7 +237,15 @@ export const Motoboys: React.FC = () => {
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
       ]);
       const dM = await rM.json();
-      const motosDB: Motoboy[] = Array.isArray(dM) ? dM : [];
+      // Normalizar campos da API /motoboys (retrocompat valorChegada → valorChegadaDia/Noite)
+      const motosRaw: any[] = Array.isArray(dM) ? dM : [];
+      const motosDB: Motoboy[] = motosRaw.map((m: any) => ({
+        ...m,
+        valorChegadaDia:   R(m.valorChegadaDia)   || R(m.valorChegada) || 0,
+        valorChegadaNoite: R(m.valorChegadaNoite) || R(m.valorChegada) || 0,
+        valorEntrega: R(m.valorEntrega) || 0,
+      }));
+      console.log('[Motoboys] fetchMotoboys DB=', motosDB.length, motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
       // Also get motoboys from colaboradores table (funcao or cargo = Motoboy/Entregador)
       let motosFromColabs: Motoboy[] = [];
       if (rC?.ok) {
