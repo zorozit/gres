@@ -136,6 +136,17 @@ const AREA_CORES: Record<string, string> = {
   'Pizzaria':   '#6a1b9a',
   'Caixa':      '#558b2f',
 };
+
+// Mapa fixo de função → área (fallback quando pessoa não tem área ou não há funcoes-escala)
+const FUNCAO_AREA_MAP: Record<string, string> = {
+  'pizzaiolo': 'Pizzaria', 'auxiliar de pizzaiolo': 'Pizzaria', 'ajudante de pizzaiolo': 'Pizzaria',
+  'cozinheiro': 'Cozinha', 'auxiliar de cozinha': 'Cozinha', 'ajudante de cozinha': 'Cozinha',
+  'garçom': 'Salão', 'garçonete': 'Salão', 'atendente': 'Salão', 'freelancer': 'Salão',
+  'bartender': 'Bar', 'bartender fds': 'Bar',
+  'motoboy': 'Operações', 'entregador': 'Operações',
+  'gerente': 'Gerência', 'supervisor': 'Gerência',
+  'caixa': 'Caixa',
+};
 function corArea(area: string): string {
   return AREA_CORES[area] || '#455a64';
 }
@@ -263,15 +274,28 @@ export const Escalas: React.FC = () => {
   },[regraByFuncao]);
 
   // Todos (CLT + Freelancers) para o grid, ordenados por área e nome
+  // Enriquece com área da função quando a pessoa não tem área cadastrada
   const todos = useMemo<Pessoa[]>(()=>{
-    const combined = [...colaboradores,...freelancers];
+    const combined = [...colaboradores,...freelancers].map(p => {
+      if (p.area) return p; // já tem área cadastrada
+      const fn = (p.funcao || p.cargo || '').toLowerCase().trim();
+      // 1) Busca em funcoes-escala cadastradas para a unidade
+      const regra = funcoes.find(f => f.nome.toLowerCase() === fn)
+        || funcoes.find(f => fn.includes(f.nome.toLowerCase()));
+      if (regra?.area) return { ...p, area: regra.area };
+      // 2) Fallback: mapa fixo de função conhecida
+      const areaFixa = FUNCAO_AREA_MAP[fn]
+        || Object.entries(FUNCAO_AREA_MAP).find(([k]) => fn.includes(k))?.[1];
+      if (areaFixa) return { ...p, area: areaFixa };
+      return p;
+    });
     return combined.sort((a,b)=>{
       const aArea = areaDe(a)||'zzz';
       const bArea = areaDe(b)||'zzz';
       if (aArea !== bArea) return aArea.localeCompare(bArea);
       return a.nome.localeCompare(b.nome);
     });
-  },[colaboradores,freelancers]);
+  },[colaboradores,freelancers,funcoes]);
 
   const todosFiltered = useMemo(()=>todos.filter(p=>{
     const matchArea   = filtroArea==='Todos' || (areaDe(p)||'Sem Área')===filtroArea;

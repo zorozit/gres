@@ -242,6 +242,8 @@ export const Motoboys: React.FC = () => {
             vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
             salario: c.salario || 0,
             periculosidade: c.periculosidade || 30,
+            valorChegada: c.valorChegada || 0,
+            valorEntrega: c.valorEntrega || 0,
             ativo: c.ativo !== false,
           }));
       }
@@ -435,8 +437,9 @@ export const Motoboys: React.FC = () => {
       ? parseFloat((totalChegada + totalEntregas + totalCaixinha).toFixed(2))
       : 0;
 
-    // Para Freelancer, o "Total variável" exibido é o bruto se configurado, senão usa vlVariavel
-    const totalVariavelExibido = isFreelancer && (vChegada > 0 || vEntrega > 0)
+    // Para Freelancer, o "Total variável" exibido é o bruto se configurado e há dados;
+    // se bruto for 0 mas houver vlVariavel manual, usa vlVariavel para não ocultar valores
+    const totalVariavelExibido = isFreelancer && (vChegada > 0 || vEntrega > 0) && totalBrutoFreelancer > 0
       ? totalBrutoFreelancer
       : totalVariavel;
 
