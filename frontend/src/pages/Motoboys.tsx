@@ -8,6 +8,8 @@ import * as XLSX from 'xlsx';
 
 interface Motoboy {
   id: string;
+  /** ID do registro em /colaboradores (pode diferir do id de /motoboys) */
+  colaboradorId?: string;
   nome: string;
   cpf: string;
   telefone: string;
@@ -29,6 +31,15 @@ interface Motoboy {
   /** Freelancer: valor pago por entrega realizada */
   valorEntrega?: number;
   ativo: boolean;
+}
+
+/** Escala / turno + presença de um colaborador em um dia */
+interface EscalaMotoboy {
+  id: string;
+  colaboradorId: string;
+  data: string;
+  turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
+  presenca?: 'presente' | 'falta' | 'falta_justificada';
 }
 
 /** Saída lançada no módulo de controle financeiro */
@@ -102,18 +113,22 @@ function normalizeTurno(t?: string): 'dia' | 'noite' | '' {
 }
 
 /**
- * Preenche o controle diário de um motoboy com base nas saídas do período.
- * - Saídas com viagens > 0 alimentam entDia/entNoite.
- * - Saídas com valor > 0 (pagamento) alimentam pgto.
- * - Saídas com caixinha > 0 alimentam caixinhaDia/caixinhaNoite.
- * - Para Freelancers: vlVariavel = (valorEntrega × totalViagens) + totalCaixinha
- * - Para CLT: vlVariavel preserva o valor manual se não houver saídas no dia
+ * Preenche o controle diário de um motoboy com base nas saídas e escalas do período.
+ *
+ * Regras:
+ * - Chegada (Ch.Dia / Ch.Noite) é aplicada quando:
+ *   1. Há saídas no turno, OU
+ *   2. O motoboy tem presença confirmada (presenca='presente') no turno via escalas
+ * - Viagens (entDia/entNoite) vêm exclusivamente das saídas.
+ * - Para Freelancers: vlVariavel = chegadaDia + chegadaNoite + (valorEntrega × viagens) + caixinha
+ * - Para CLT: vlVariavel = caixinha (bônus extra sobre o salário fixo)
  */
 function preencherControleComSaidas(
   linhasBase: ControleDia[],
   saidas: Saida[],
   motoboyId: string,
-  motoboy?: Motoboy
+  motoboy?: Motoboy,
+  escalas?: EscalaMotoboy[]
 ): ControleDia[] {
   const isFreelancer = motoboy?.vinculo === 'Freelancer';
   const valorEntrega    = R(motoboy?.valorEntrega);
@@ -121,17 +136,24 @@ function preencherControleComSaidas(
   const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
   const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
 
-  // Saídas do motoboy
-  const saidasMoto = saidas.filter(s => s.colaboradorId === motoboyId);
+  // IDs possíveis do motoboy para cruzar com saídas (mot-xxx e col-xxx)
+  const colabId = motoboy?.colaboradorId;
+  const idSet = new Set([motoboyId, colabId].filter(Boolean) as string[]);
+  // Saídas do motoboy — aceita qualquer um dos IDs
+  const saidasMoto = saidas.filter(s => idSet.has(s.colaboradorId));
+  // Escalas já vêm pré-filtradas pelo chamador (incluindo ambos os IDs)
+  const escalasMoto = escalas || [];
 
   return linhasBase.map(linha => {
     const saidasDoDia = saidasMoto.filter(s => s.data === linha.data);
+    // Escala do dia (para verificar presença confirmada)
+    const escalaDoDia = escalasMoto.find(e => e.data === linha.data);
 
     const saidasDia      = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
     const saidasNoite    = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
     const saidasSemTurno = saidasDoDia.filter(s => normalizeTurno(s.turno) === '');
 
-    // Viagens por turno
+    // Viagens por turno (apenas de saídas)
     const entDia   = saidasDia.reduce((sum, s) => sum + R(s.viagens), 0);
     const entNoite = saidasNoite.reduce((sum, s) => sum + R(s.viagens), 0);
     const totalViagens = entDia + entNoite;
@@ -147,11 +169,18 @@ function preencherControleComSaidas(
       .filter(s => R(s.valor) > 0)
       .reduce((sum, s) => sum + R(s.valor), 0);
 
-    const hasData    = saidasDoDia.length > 0;
-    const hasDia     = saidasDia.length > 0 || saidasSemTurno.length > 0;
-    const hasNoite   = saidasNoite.length > 0;
+    // Presença confirmada via escalas
+    const presencaConfirmada = escalaDoDia?.presenca === 'presente';
+    const turnoEscala = escalaDoDia?.turno; // 'Dia' | 'Noite' | 'DiaNoite' | 'Folga'
+    const presencaDia   = presencaConfirmada && (turnoEscala === 'Dia' || turnoEscala === 'DiaNoite');
+    const presencaNoite = presencaConfirmada && (turnoEscala === 'Noite' || turnoEscala === 'DiaNoite');
 
-    // Chegada fixa por turno (Freelancer)
+    // hasDia/hasNoite: saídas OU presença confirmada via escala
+    const hasData    = saidasDoDia.length > 0 || presencaConfirmada;
+    const hasDia     = saidasDia.length > 0 || saidasSemTurno.length > 0 || presencaDia;
+    const hasNoite   = saidasNoite.length > 0 || presencaNoite;
+
+    // Chegada fixa por turno (Freelancer) — aplicada quando trabalhou no turno
     const chegadaDia   = isFreelancer && hasDia   && vChegadaDia   > 0 ? vChegadaDia   : 0;
     const chegadaNoite = isFreelancer && hasNoite && vChegadaNoite > 0 ? vChegadaNoite : 0;
 
@@ -221,6 +250,9 @@ export const Motoboys: React.FC = () => {
   const [saidas, setSaidas] = useState<Saida[]>([]);
   const [loadingSaidas, setLoadingSaidas] = useState(false);
 
+  // Escalas do motoboy selecionado no mês (para confirmar presença e calcular chegadas)
+  const [escalasControle, setEscalasControle] = useState<EscalaMotoboy[]>([]);
+
   // Modo de visualização do controle
   const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('integrado');
   const [mostrarSaidas, setMostrarSaidas] = useState(false);
@@ -232,8 +264,9 @@ export const Motoboys: React.FC = () => {
    * A API /colaboradores usa valorDia = chegada turno dia e valorNoite = chegada turno noite.
    * Para motoboys freelancers, valorTransporte é reutilizado como valorEntrega (valor por corrida).
    */
-  const colabToMotoboy = (c: any): Motoboy => ({
-    id: c.id,
+  const colabToMotoboy = (c: any, motoboyId?: string): Motoboy => ({
+    id: motoboyId || c.id,
+    colaboradorId: c.id,  // ID original do /colaboradores (usado nas escalas)
     nome: c.nome,
     cpf: c.cpf || '',
     telefone: c.celular || c.telefone || '',
@@ -281,7 +314,8 @@ export const Motoboys: React.FC = () => {
         );
         if (colabMatch) {
           // Usa dados de /colaboradores como fonte principal para campos de pagamento
-          return colabToMotoboy({ ...colabMatch, placa: m.placa || colabMatch.placa, id: m.id });
+          // Preserva o ID de /motoboys como id principal, guarda o ID de /colaboradores em colaboradorId
+          return colabToMotoboy({ ...colabMatch, placa: m.placa || colabMatch.placa }, m.id);
         }
         // Sem match: usa só dados de /motoboys (campos de pagamento serão 0)
         return { ...m, valorChegadaDia: 0, valorChegadaNoite: 0, valorEntrega: 0 } as Motoboy;
@@ -295,14 +329,14 @@ export const Motoboys: React.FC = () => {
           return fn.includes('motoboy') || fn.includes('entregador');
         })
         .filter((c: any) => !motosDB.some(m => m.id === c.id || (c.cpf && m.cpf === c.cpf)))
-        .map(colabToMotoboy);
+        .map((c: any) => colabToMotoboy(c));
 
       setMotoboys([...motosDB, ...motosFromColabs]);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
 
-  /* ── Buscar saídas do período ─────────────────────────── */
+  /* ── Buscar saídas e escalas do período ─────────────── */
   const fetchSaidas = useCallback(async (mesAno: string) => {
     if (!unitId || !mesAno) return;
     setLoadingSaidas(true);
@@ -311,12 +345,19 @@ export const Motoboys: React.FC = () => {
       const [ano, mes] = mesAno.split('-').map(Number);
       const inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
       const fim = new Date(ano, mes, 0).toISOString().split('T')[0];
-      const r = await fetch(
-        `${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const d = await r.json();
-      setSaidas(Array.isArray(d) ? d : []);
+      // Busca saídas e escalas em paralelo para ter presença confirmada
+      const [rS, rE] = await Promise.all([
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+          { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`,
+          { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
+      ]);
+      const dS = await rS.json();
+      setSaidas(Array.isArray(dS) ? dS : []);
+      if (rE?.ok) {
+        const dE = await rE.json();
+        setEscalasControle(Array.isArray(dE) ? dE : []);
+      }
     } catch (e) { console.error(e); setSaidas([]); }
     finally { setLoadingSaidas(false); }
   }, [apiUrl, unitId]);
@@ -362,12 +403,18 @@ export const Motoboys: React.FC = () => {
         }));
       }
 
-      // Integrar com saídas (passa motoboy para calcular vlVariavel correto por vínculo)
-      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboy);
+      // Integrar com saídas e escalas (presença confirmada → aplica chegada mesmo sem saídas)
+      // Escalas usam colaboradorId que pode ser diferente do motoboyId (mot-xxx vs col-xxx)
+      const colabId = motoboy?.colaboradorId;
+      const escalasDoMotoboy = escalasControle.filter(e =>
+        e.colaboradorId === ctrlMotoboyId ||
+        (colabId && e.colaboradorId === colabId)
+      );
+      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboy, escalasDoMotoboy);
       setControle(linhasIntegradas);
     } catch (e) { console.error(e); setControle([]); }
     finally { setLoadingCtrl(false); }
-  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas]);
+  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas, escalasControle]);
 
   // Carregar saídas ao mudar mês
   useEffect(() => {
@@ -430,7 +477,12 @@ export const Motoboys: React.FC = () => {
       vlVariavel: 0, pgto: 0, variavel: 0, unitId,
     }));
     const motoboyObj = motoboys.find(m => m.id === ctrlMotoboyId);
-    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboyObj);
+    const colabIdRec = motoboyObj?.colaboradorId;
+    const escalasDoMotoboy = escalasControle.filter(e =>
+      e.colaboradorId === ctrlMotoboyId ||
+      (colabIdRec && e.colaboradorId === colabIdRec)
+    );
+    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboyObj, escalasDoMotoboy);
     setControle(linhasIntegradas);
   };
 
@@ -510,10 +562,13 @@ export const Motoboys: React.FC = () => {
   /* ── Saídas do motoboy selecionado no período ─────────── */
   const saidasDoMotoboy = useMemo(() => {
     if (!ctrlMotoboyId) return [];
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    const colabId = motoboy?.colaboradorId;
+    const idSet = new Set([ctrlMotoboyId, colabId].filter(Boolean) as string[]);
     return saidas
-      .filter(s => s.colaboradorId === ctrlMotoboyId)
+      .filter(s => idSet.has(s.colaboradorId))
       .sort((a, b) => a.data.localeCompare(b.data));
-  }, [saidas, ctrlMotoboyId]);
+  }, [saidas, ctrlMotoboyId, motoboys]);
 
   /* ── CRUD motoboys ───────────────────────────────────── */
 

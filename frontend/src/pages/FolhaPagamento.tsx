@@ -58,6 +58,7 @@ interface EscalaItem {
   colaboradorId: string;
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
+  presenca?: 'presente' | 'falta' | 'falta_justificada';
 }
 
 /** Resumo mensal para cada colaborador CLT */
@@ -184,12 +185,24 @@ function fmtDataISO(d: Date) {
   return d.toISOString().split('T')[0];
 }
 
-/** Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas */
+/**
+ * Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas.
+ * Só considera dias com presença confirmada (presenca='presente').
+ * Se presenca for undefined (escala sem registro de presença), considera como trabalhado
+ * apenas quando o turno está lançado (comportamento anterior para compatibilidade).
+ */
 function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string; diasTrabalhados: number } {
   const linhas: string[] = [];
   let dobras = 0;
   let diasTrabalhados = 0;
-  const dias = escalas.filter(e => e.colaboradorId === freelancerId && e.turno !== 'Folga').sort((a,b) => a.data.localeCompare(b.data));
+  const dias = escalas
+    .filter(e =>
+      e.colaboradorId === freelancerId &&
+      e.turno !== 'Folga' &&
+      // Só conta se presença confirmada OU se não há registro de presença (turno lançado sem controle)
+      (e.presenca === 'presente' || e.presenca === undefined || e.presenca === null)
+    )
+    .sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
     const dow = new Date(esc.data + 'T12:00:00').getDay();
     const label = `${DIAS_SEMANA_ABREV[dow]} ${esc.turno === 'DiaNoite' ? 'DN' : esc.turno === 'Dia' ? 'D' : esc.turno === 'Noite' ? 'N' : 'F'}`;
@@ -457,9 +470,15 @@ export default function FolhaPagamento() {
         const vDobra = R((f as any).valorDobra) || 120;
         const usaTurno = vDia > 0 || vNoite > 0;
 
+        // Apenas escalas com presença confirmada (ou sem registro de presença = compatibilidade)
+        const escalasSemanaConfirmadas = escalasSemana.filter(e =>
+          e.turno !== 'Folga' &&
+          (e.presenca === 'presente' || e.presenca === undefined || e.presenca === null)
+        );
+
         let total = 0;
         if (usaTurno) {
-          for (const esc of escalasSemana) {
+          for (const esc of escalasSemanaConfirmadas) {
             if (esc.turno === 'DiaNoite') total += vDia + vNoite;
             else if (esc.turno === 'Dia')   total += vDia;
             else if (esc.turno === 'Noite') total += vNoite;
@@ -1502,7 +1521,11 @@ export default function FolhaPagamento() {
                   for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) {
                     const ds = d.toISOString().split('T')[0];
                     const esc = escalas.find(e => e.colaboradorId === p.id && e.data === ds);
-                    if (!esc || esc.turno === 'Folga') { codigos.push('—'); continue; }
+                    // Falta registrada = não conta como trabalhado
+                    if (!esc || esc.turno === 'Folga' || esc.presenca === 'falta' || esc.presenca === 'falta_justificada') {
+                      const label = esc?.presenca === 'falta' ? 'F' : esc?.presenca === 'falta_justificada' ? 'FJ' : '—';
+                      codigos.push(label); continue;
+                    }
                     if (esc.turno === 'Dia') { dC++; codigos.push('D'); }
                     else if (esc.turno === 'Noite') { nC++; codigos.push('N'); }
                     else if (esc.turno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
@@ -1628,6 +1651,8 @@ export default function FolhaPagamento() {
                                         if (c==='D') { bg='#fff9c4'; tc='#f57f17'; }
                                         else if (c==='N') { bg='#e8eaf6'; tc='#3949ab'; }
                                         else if (c==='DN') { bg='#e8f5e9'; tc='#2e7d32'; }
+                                        else if (c==='F') { bg='#ffebee'; tc='#c62828'; }
+                                        else if (c==='FJ') { bg='#fce4ec'; tc='#880e4f'; }
                                         return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px' }}>
                                           <span style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
                                         </td>;
