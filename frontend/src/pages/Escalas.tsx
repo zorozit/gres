@@ -135,6 +135,7 @@ const AREA_CORES: Record<string, string> = {
   'Gerência':   '#37474f',
   'Pizzaria':   '#6a1b9a',
   'Caixa':      '#558b2f',
+  'Delivery':   '#00838f',
 };
 
 // Mapa fixo de função → área (fallback quando pessoa não tem área ou não há funcoes-escala)
@@ -143,7 +144,7 @@ const FUNCAO_AREA_MAP: Record<string, string> = {
   'cozinheiro': 'Cozinha', 'auxiliar de cozinha': 'Cozinha', 'ajudante de cozinha': 'Cozinha',
   'garçom': 'Salão', 'garçonete': 'Salão', 'atendente': 'Salão', 'freelancer': 'Salão',
   'bartender': 'Bar', 'bartender fds': 'Bar',
-  'motoboy': 'Operações', 'entregador': 'Operações',
+  'motoboy': 'Delivery', 'entregador': 'Delivery',
   'gerente': 'Gerência', 'supervisor': 'Gerência',
   'caixa': 'Caixa',
 };
@@ -212,7 +213,15 @@ export const Escalas: React.FC = () => {
     try {
       const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
-      const todos = (Array.isArray(d)?d:[]).filter((c:Pessoa)=>c.ativo!==false);
+      // API pode retornar array direto OU { colaboradores: [...] } / { data: [...] }
+      const lista: Pessoa[] = Array.isArray(d)
+        ? d
+        : Array.isArray(d?.colaboradores)
+          ? d.colaboradores
+          : Array.isArray(d?.data)
+            ? d.data
+            : [];
+      const todos = lista.filter((c:Pessoa)=>c.ativo!==false);
       // Separate CLT from Freelancers
       setColabs(todos.filter((c:Pessoa)=>c.tipoContrato!=='Freelancer'));
       setFreels(todos.filter((c:Pessoa)=>c.tipoContrato==='Freelancer').map((f:any)=>({ ...f, tipoContrato:'Freelancer' as const })));
@@ -225,7 +234,7 @@ export const Escalas: React.FC = () => {
     try {
       const r = await fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
-      const lista:Escala[] = Array.isArray(d)?d:[];
+      const lista:Escala[] = Array.isArray(d)?d:(Array.isArray(d?.escalas)?d.escalas:[]);
       setEscalas(lista);
       // Rebuild presenca map (day presenca uses id, night presenca uses id_N)
       const pm:Record<string,Record<string,string>>={};
@@ -277,7 +286,8 @@ export const Escalas: React.FC = () => {
   // Enriquece com área da função quando a pessoa não tem área cadastrada
   const todos = useMemo<Pessoa[]>(()=>{
     const combined = [...colaboradores,...freelancers].map(p => {
-      if (p.area && p.area !== 'Sem Área') return p; // já tem área válida cadastrada
+      // Enriquecer se área está vazia, é 'Sem Área' ou 'Outro' (esses são placeholders sem significado real)
+      if (p.area && p.area !== 'Sem Área' && p.area !== 'Outro') return p; // já tem área válida cadastrada
       const fn = (p.funcao || p.cargo || '').toLowerCase().trim();
       // 1) Busca em funcoes-escala cadastradas para a unidade
       const regra = funcoes.find(f => f.nome.toLowerCase() === fn)

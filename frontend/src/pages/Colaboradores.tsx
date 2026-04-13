@@ -57,7 +57,7 @@ const TIPOS_CARGO = [
   'Entregador', 'Motoboy', 'Porteiro', 'Segurança', 'Limpeza', 'Outro',
 ];
 
-const AREAS_PADRAO = ['Salão', 'Cozinha', 'Operações', 'Gerência', 'Bar', 'Pizzaria', 'Caixa', 'Outro'];
+const AREAS_PADRAO = ['Salão', 'Cozinha', 'Operações', 'Gerência', 'Bar', 'Pizzaria', 'Caixa', 'Delivery', 'Outro'];
 
 const FUNCOES_LISTA = [
   'Pizzaiolo', 'Motoboy', 'Cozinheiro', 'Auxiliar de Cozinha', 'Garçom', 'Garçonete',
