@@ -521,21 +521,27 @@ export const Escalas: React.FC = () => {
   },[escalasMap]);
 
   /* ── Resumo mensal por pessoa ─────────────────────────────── */
+  // isoHoje: data de hoje em formato YYYY-MM-DD para filtrar dias futuros
+  const isoHoje = fmtIso(hoje);
   const resumos = useMemo(()=>todos.map(p=>{
     let diaT=0,noiteT=0,dobraT=0,presenteT=0,faltaT=0,faltaJT=0;
     for (const d of dias){
       const ds=fmtIso(d);
-      const esc=escalasMap[p.id]?.[ds];
-      if(esc?.turno==='Dia') diaT++;
-      else if(esc?.turno==='Noite') noiteT++;
-      else if(esc?.turno==='DiaNoite') dobraT++;
+      // Contagem de turnos: apenas dias até hoje (sem contar futuros)
+      if (ds <= isoHoje) {
+        const esc=escalasMap[p.id]?.[ds];
+        if(esc?.turno==='Dia') diaT++;
+        else if(esc?.turno==='Noite') noiteT++;
+        else if(esc?.turno==='DiaNoite') dobraT++;
+      }
+      // Presenças: só contabiliza marcações explícitas (não infere presença em dias futuros)
       const pr=presencaMap[p.id]?.[ds];
       if(pr==='presente') presenteT++;
       else if(pr==='falta') faltaT++;
       else if(pr==='falta_justificada') faltaJT++;
     }
     return {id:p.id,nome:p.nome,diaT,noiteT,dobraT,presenteT,faltaT,faltaJT};
-  }),[todos,dias,escalasMap,presencaMap]);
+  }),[todos,dias,escalasMap,presencaMap,isoHoje]);
 
   /* ── Estilos ─────────────────────────────────────────────── */
   const s = {
@@ -731,14 +737,16 @@ export const Escalas: React.FC = () => {
                                     const b=TURNO_BADGE[esc?.turno||'']||TURNO_BADGE[''];
                                     const pb=pr?PRES_BADGE[pr]:null;
                                     const isFer=!!FERIADOS_2026[ds];
+                                    const isFuturo = ds > isoHoje;
                                     return (
-                                      <td key={ds} style={{ ...s.td, backgroundColor:isFer?'#fff9e0':undefined, padding:'2px 1px' }}>
+                                      <td key={ds} style={{ ...s.td, backgroundColor:isFer?'#fff9e0':(isFuturo?'#f9f9f9':undefined), padding:'2px 1px', opacity:isFuturo?0.5:1 }}>
                                         {esc?.turno && esc.turno!=='Folga' ? (
                                           <div style={{ display:'inline-flex', flexDirection:'column', alignItems:'center',
-                                            backgroundColor:b.bg, color:b.cor, borderRadius:'4px',
+                                            backgroundColor:isFuturo?'#eeeeee':b.bg, color:isFuturo?'#999':b.cor, borderRadius:'4px',
                                             padding:'1px 3px', fontSize:'9px', fontWeight:'bold', minWidth:'20px', lineHeight:'1.2' }}>
                                             <span>{b.label}</span>
-                                            {pb&&<span style={{ fontSize:'7px' }}>{pb.icon}</span>}
+                                            {/* Só mostra ícone de presença se não for futuro */}
+                                            {!isFuturo && pb&&<span style={{ fontSize:'7px' }}>{pb.icon}</span>}
                                           </div>
                                         ) : esc?.turno==='Folga' ? (
                                           <span style={{ fontSize:'9px', color:'#c62828' }}>F</span>

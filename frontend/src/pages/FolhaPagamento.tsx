@@ -190,10 +190,14 @@ function fmtDataISO(d: Date) {
 
 /**
  * Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas.
- * Só considera dias com presença confirmada (presenca='presente').
- * Se presenca for undefined (escala sem registro de presença), considera como trabalhado
- * apenas quando o turno está lançado (comportamento anterior para compatibilidade).
+ * Regras:
+ *  - presença = 'presente'         → conta sempre (passado ou futuro confirmado)
+ *  - presença = 'falta'/'falta_j.' → não conta (falta registrada)
+ *  - presença = undefined/null      → conta APENAS se a data for até hoje (turno agendado no passado sem controle)
+ *  - data futura sem presença      → NÃO conta (turno agendado mas ainda não confirmado)
  */
+const ISO_HOJE_FP = new Date().toISOString().split('T')[0];
+
 function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string; diasTrabalhados: number } {
   const linhas: string[] = [];
   let dobras = 0;
@@ -202,8 +206,12 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
     .filter(e =>
       e.colaboradorId === freelancerId &&
       e.turno !== 'Folga' &&
-      // Só conta se presença confirmada OU se não há registro de presença (turno lançado sem controle)
-      (e.presenca === 'presente' || e.presenca === undefined || e.presenca === null)
+      (
+        // Presença explicitamente confirmada
+        e.presenca === 'presente' ||
+        // Sem registro de presença: só conta se a data já passou (compatibilidade com escalas antigas)
+        ((e.presenca === undefined || e.presenca === null) && e.data <= ISO_HOJE_FP)
+      )
     )
     .sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
@@ -473,10 +481,14 @@ export default function FolhaPagamento() {
         const vDobra = R((f as any).valorDobra) || 120;
         const usaTurno = vDia > 0 || vNoite > 0;
 
-        // Apenas escalas com presença confirmada (ou sem registro de presença = compatibilidade)
+        // Apenas escalas com presença confirmada (ou sem registro de presença em data passada = compatibilidade)
+        // Datas futuras sem presença registrada NÃO são contadas
         const escalasSemanaConfirmadas = escalasSemana.filter(e =>
           e.turno !== 'Folga' &&
-          (e.presenca === 'presente' || e.presenca === undefined || e.presenca === null)
+          (
+            e.presenca === 'presente' ||
+            ((e.presenca === undefined || e.presenca === null) && e.data <= ISO_HOJE_FP)
+          )
         );
 
         let total = 0;
@@ -1564,6 +1576,10 @@ export default function FolhaPagamento() {
                       const label = esc?.presenca === 'falta' ? 'F' : esc?.presenca === 'falta_justificada' ? 'FJ' : '—';
                       codigos.push(label); continue;
                     }
+                    // Data futura sem presença registrada → não conta (aguardando confirmação)
+                    if (ds > ISO_HOJE_FP && (esc.presenca === undefined || esc.presenca === null)) {
+                      codigos.push('…'); continue;
+                    }
                     if (esc.turno === 'Dia') { dC++; codigos.push('D'); }
                     else if (esc.turno === 'Noite') { nC++; codigos.push('N'); }
                     else if (esc.turno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
@@ -1691,8 +1707,10 @@ export default function FolhaPagamento() {
                                         else if (c==='DN') { bg='#e8f5e9'; tc='#2e7d32'; }
                                         else if (c==='F') { bg='#ffebee'; tc='#c62828'; }
                                         else if (c==='FJ') { bg='#fce4ec'; tc='#880e4f'; }
-                                        return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px' }}>
-                                          <span style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
+                                        else if (c==='…') { bg='#f5f5f5'; tc='#9e9e9e'; } // futuro sem presença
+                                        return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px', opacity: c==='…' ? 0.6 : 1 }}>
+                                          <span title={c==='…' ? 'Turno agendado — aguardando confirmação de presença' : undefined}
+                                            style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
                                         </td>;
                                       })}
                                       <td style={{ ...s.td, fontWeight: 'bold', color: '#f57f17' }}>{l.dC}</td>
