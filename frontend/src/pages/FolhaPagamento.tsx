@@ -59,6 +59,7 @@ interface EscalaItem {
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
   presenca?: 'presente' | 'falta' | 'falta_justificada';
+  presencaNoite?: 'presente' | 'falta' | 'falta_justificada';
 }
 
 /** Resumo mensal para cada colaborador CLT */
@@ -197,6 +198,18 @@ function fmtDataISO(d: Date) {
  */
 const ISO_HOJE_FP = new Date().toISOString().split('T')[0];
 
+function statusPresencaEscala(esc?: EscalaItem): 'presente' | 'falta' | 'falta_justificada' | undefined {
+  if (!esc) return undefined;
+  if (esc.turno === 'Noite') return esc.presencaNoite || esc.presenca;
+  if (esc.turno === 'DiaNoite') {
+    if (esc.presenca === 'presente' || esc.presencaNoite === 'presente') return 'presente';
+    if (esc.presenca === 'falta_justificada' || esc.presencaNoite === 'falta_justificada') return 'falta_justificada';
+    if (esc.presenca === 'falta' || esc.presencaNoite === 'falta') return 'falta';
+    return esc.presenca || esc.presencaNoite;
+  }
+  return esc.presenca;
+}
+
 function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string; diasTrabalhados: number } {
   const linhas: string[] = [];
   let dobras = 0;
@@ -205,7 +218,7 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
     .filter(e =>
       e.colaboradorId === freelancerId &&
       e.turno !== 'Folga' &&
-      e.presenca === 'presente'   // só conta presença explicitamente confirmada
+      statusPresencaEscala(e) === 'presente'   // só conta presença explicitamente confirmada
     )
     .sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
@@ -481,7 +494,7 @@ export default function FolhaPagamento() {
         // undefined/null = não confirmado = não conta (evita falsos positivos)
         const escalasSemanaConfirmadas = escalasSemana.filter(e =>
           e.turno !== 'Folga' &&
-          e.presenca === 'presente'
+          statusPresencaEscala(e) === 'presente'
         );
 
         let total = 0;
@@ -1566,9 +1579,10 @@ export default function FolhaPagamento() {
                     const esc = escalas.find(e => e.colaboradorId === p.id && e.data === ds);
                     // Somente 'presente' explícito conta como dia trabalhado
                     if (!esc || esc.turno === 'Folga') { codigos.push('—'); continue; }
-                    if (esc.presenca === 'falta') { codigos.push('F'); continue; }
-                    if (esc.presenca === 'falta_justificada') { codigos.push('FJ'); continue; }
-                    if (esc.presenca !== 'presente') {
+                    const presStatus = statusPresencaEscala(esc);
+                    if (presStatus === 'falta') { codigos.push('F'); continue; }
+                    if (presStatus === 'falta_justificada') { codigos.push('FJ'); continue; }
+                    if (presStatus !== 'presente') {
                       // undefined/null = sem confirmação (aguardando)
                       codigos.push(ds > ISO_HOJE_FP ? '…' : '?'); continue;
                     }
