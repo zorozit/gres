@@ -399,38 +399,63 @@ export const Escalas: React.FC = () => {
 
   /* ── Presença ciclo ──────────────────────────────────────── */
   // presKey can be pessoaId (dia) or pessoaId_N (noite)
+  const salvarPresencaValor = useCallback(async (presKey:string, data:string, next:string) => {
+    const isNoite = presKey.endsWith('_N');
+    const pessoaId = isNoite ? presKey.slice(0,-2) : presKey;
+    const esc = escalasMap[pessoaId]?.[data];
+    if (esc) {
+      const field = isNoite ? 'presencaNoite' : 'presenca';
+      await fetch(`${apiUrl}/escalas/${esc.id}`, {
+        method:'PUT',
+        headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+        body: JSON.stringify({ [field]: next }),
+      });
+    } else if (next) {
+      const turno = isNoite ? 'Noite' : 'Dia';
+      const field = isNoite ? 'presencaNoite' : 'presenca';
+      await fetch(`${apiUrl}/escalas`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
+        body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next }),
+      });
+    }
+  },[escalasMap,apiUrl,unitId]);
+
   const handlePresenca = useCallback(async (presKey:string, data:string, cur:string) => {
     const ciclo = ['','presente','falta','falta_justificada'];
     const next = ciclo[(ciclo.indexOf(cur)+1)%ciclo.length];
     setPresencaMap(prev=>({...prev,[presKey]:{...(prev[presKey]||{}),[data]:next}}));
     setSalvandoPres(true);
-    const isNoite = presKey.endsWith('_N');
-    const pessoaId = isNoite ? presKey.slice(0,-2) : presKey;
     try {
-      const esc = escalasMap[pessoaId]?.[data];
-      if (esc) {
-        const field = isNoite ? 'presencaNoite' : 'presenca';
-        await fetch(`${apiUrl}/escalas/${esc.id}`, {
-          method:'PUT',
-          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-          body: JSON.stringify({ [field]: next }),
-        });
-      } else if (next) {
-        const turno = isNoite ? 'Noite' : 'Dia';
-        const field = isNoite ? 'presencaNoite' : 'presenca';
-        await fetch(`${apiUrl}/escalas`, {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-          body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next }),
-        });
-      }
+      await salvarPresencaValor(presKey, data, next);
     } catch(e){ console.error(e); }
     finally {
       setSalvandoPres(false);
       // Refresh escalas para sincronizar presencaNoite em escalasMap
       fetchEscalas();
     }
-  },[escalasMap,apiUrl,unitId]);
+  },[salvarPresencaValor]);
+
+  const handlePresencaEmMassa = useCallback(async (presKey:string, datas:string[], valor:'presente'|'') => {
+    if (!datas.length) return;
+    setPresencaMap(prev => ({
+      ...prev,
+      [presKey]: {
+        ...(prev[presKey] || {}),
+        ...Object.fromEntries(datas.map(ds => [ds, valor]))
+      }
+    }));
+    setSalvandoPres(true);
+    try {
+      await Promise.all(datas.map(ds => salvarPresencaValor(presKey, ds, valor)));
+    } catch (e) {
+      console.error(e);
+      alert(`Erro ao salvar marcação em massa: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSalvandoPres(false);
+      fetchEscalas();
+    }
+  }, [salvarPresencaValor]);
 
   /* ── Gerar automático ──────────────────────────────────────  */
   const gerarAuto = async () => {
@@ -944,7 +969,7 @@ export const Escalas: React.FC = () => {
 
             <p style={{ color:'#666', fontSize:'12px', margin:'0 0 14px 0', backgroundColor:'#e8f5e9', padding:'8px 12px', borderRadius:'6px' }}>
               🖱️ Clique em <strong style={{color:'#f57f17'}}>D</strong> ou <strong style={{color:'#3949ab'}}>N</strong> para ciclar presença: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>.
-              Apenas dias com turno lançado podem ser pontuados. Dia e Noite são pontuados separadamente.
+              Apenas dias com turno lançado podem ser pontuados. Dia e Noite são pontuados separadamente. Agora cada linha também tem <strong>Todos</strong> e <strong>Limpar</strong> para marcar ou desmarcar em massa os turnos do colaborador na semana.
             </p>
 
             {/* Painel de diagnóstico — visível apenas quando não há ninguém */}
@@ -1046,7 +1071,47 @@ export const Escalas: React.FC = () => {
                               <td style={{ ...s.td, textAlign:'center', fontWeight:'bold', fontSize:'9px',
                                 backgroundColor:tLabel==='Dia'?'#fff9c4':'#e8eaf6',
                                 color:tLabel==='Dia'?'#f57f17':'#3949ab',
-                                padding:'2px 3px' }}>{tLabel[0]}</td>
+                                padding:'2px 3px' }}>
+                                <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'3px' }}>
+                                  <span>{tLabel[0]}</span>
+                                  {(() => {
+                                    const datasComTurno = semAtual.dias
+                                      .map(d => fmtIso(d))
+                                      .filter(ds => {
+                                        const esc2 = escalasMap[p.id]?.[ds];
+                                        return tLabel==='Dia'
+                                          ? (esc2?.turno==='Dia' || esc2?.turno==='DiaNoite')
+                                          : (esc2?.turno==='Noite' || esc2?.turno==='DiaNoite');
+                                      });
+                                    return (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={salvandoPres || datasComTurno.length===0}
+                                          title={`Marcar todos os ${datasComTurno.length} ${tLabel.toLowerCase()}(s) de ${p.nome} como presente`}
+                                          onClick={(e)=>{ e.stopPropagation(); handlePresencaEmMassa(presKey, datasComTurno, 'presente'); }}
+                                          style={{
+                                            border:'none', borderRadius:'4px', cursor:salvandoPres || datasComTurno.length===0 ? 'not-allowed' : 'pointer',
+                                            fontSize:'8px', fontWeight:'bold', padding:'2px 4px',
+                                            backgroundColor:'#2e7d32', color:'white', opacity:salvandoPres || datasComTurno.length===0 ? 0.5 : 1
+                                          }}
+                                        >Todos</button>
+                                        <button
+                                          type="button"
+                                          disabled={salvandoPres || datasComTurno.length===0}
+                                          title={`Limpar todas as marcações de ${tLabel.toLowerCase()} de ${p.nome} nesta semana`}
+                                          onClick={(e)=>{ e.stopPropagation(); handlePresencaEmMassa(presKey, datasComTurno, ''); }}
+                                          style={{
+                                            border:'none', borderRadius:'4px', cursor:salvandoPres || datasComTurno.length===0 ? 'not-allowed' : 'pointer',
+                                            fontSize:'8px', fontWeight:'bold', padding:'2px 4px',
+                                            backgroundColor:'#757575', color:'white', opacity:salvandoPres || datasComTurno.length===0 ? 0.5 : 1
+                                          }}
+                                        >Limpar</button>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              </td>
                               {/* Células de cada dia */}
                               {semAtual.dias.map(d=>{
                                 const ds=fmtIso(d);
