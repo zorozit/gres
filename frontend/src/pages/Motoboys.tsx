@@ -97,56 +97,71 @@ function normalizeTurno(t?: string): 'dia' | 'noite' | '' {
 
 /**
  * Preenche o controle diário de um motoboy com base nas saídas do período.
- * Saídas com viagens > 0 alimentam entDia/entNoite.
- * Saídas com valor > 0 (pagamento) alimentam pgto.
- * Saídas com caixinha > 0 alimentam caixinhaDia/caixinhaNoite.
+ * - Saídas com viagens > 0 alimentam entDia/entNoite.
+ * - Saídas com valor > 0 (pagamento) alimentam pgto.
+ * - Saídas com caixinha > 0 alimentam caixinhaDia/caixinhaNoite.
+ * - Para Freelancers: vlVariavel = (valorEntrega × totalViagens) + totalCaixinha
+ * - Para CLT: vlVariavel preserva o valor manual se não houver saídas no dia
  */
 function preencherControleComSaidas(
   linhasBase: ControleDia[],
   saidas: Saida[],
-  motoboyId: string
+  motoboyId: string,
+  motoboy?: Motoboy
 ): ControleDia[] {
+  const isFreelancer = motoboy?.vinculo === 'Freelancer';
+  const valorEntrega = R(motoboy?.valorEntrega);
+
   // Saídas do motoboy
   const saidasMoto = saidas.filter(s => s.colaboradorId === motoboyId);
 
   return linhasBase.map(linha => {
     const saidasDoDia = saidasMoto.filter(s => s.data === linha.data);
 
-    const saidasDia = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
+    const saidasDia   = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'dia');
     const saidasNoite = saidasDoDia.filter(s => normalizeTurno(s.turno) === 'noite');
     const saidasSemTurno = saidasDoDia.filter(s => normalizeTurno(s.turno) === '');
 
     // Viagens por turno
-    const entDia = saidasDia.reduce((sum, s) => sum + R(s.viagens), 0);
+    const entDia   = saidasDia.reduce((sum, s) => sum + R(s.viagens), 0);
     const entNoite = saidasNoite.reduce((sum, s) => sum + R(s.viagens), 0);
+    const totalViagens = entDia + entNoite;
 
-    // Caixinha por turno
-    const caixinhaDia = saidasDia.reduce((sum, s) => sum + R(s.caixinha), 0);
+    // Caixinha por turno + extras sem turno
+    const caixinhaDia   = saidasDia.reduce((sum, s) => sum + R(s.caixinha), 0);
     const caixinhaNoite = saidasNoite.reduce((sum, s) => sum + R(s.caixinha), 0);
+    const caixinhaExtra = saidasSemTurno.reduce((sum, s) => sum + R(s.caixinha), 0);
+    const totalCaixinha = caixinhaDia + caixinhaNoite + caixinhaExtra;
 
     // Pagamentos (valor em dinheiro/pix) — soma de todos os turnos
     const pgto = saidasDoDia
       .filter(s => R(s.valor) > 0)
       .reduce((sum, s) => sum + R(s.valor), 0);
 
-    // Se há viagens ou pagamentos, recalcula vlVariavel
-    const totalCaixinha = caixinhaDia + caixinhaNoite;
-    // vlVariavel = soma de caixinhas das saídas sem turno + caixinhas dos turnos
-    const caixinhaExtra = saidasSemTurno.reduce((sum, s) => sum + R(s.caixinha), 0);
-    const vlVariavel = totalCaixinha + caixinhaExtra > 0
-      ? totalCaixinha + caixinhaExtra
-      : linha.vlVariavel; // mantém o valor existente se não há dados nas saídas
-
     const hasData = saidasDoDia.length > 0;
+
+    // vlVariavel:
+    //  • Freelancer: (valorEntrega × viagens) + caixinha do dia
+    //  • CLT: caixinha do dia (bônus extra sobre o salário fixo)
+    let vlVariavel: number;
+    if (hasData) {
+      if (isFreelancer && valorEntrega > 0) {
+        vlVariavel = parseFloat(((valorEntrega * totalViagens) + totalCaixinha).toFixed(2));
+      } else {
+        vlVariavel = totalCaixinha > 0 ? totalCaixinha : linha.vlVariavel;
+      }
+    } else {
+      vlVariavel = linha.vlVariavel;
+    }
 
     return {
       ...linha,
-      entDia: hasData ? entDia : linha.entDia,
-      entNoite: hasData ? entNoite : linha.entNoite,
-      caixinhaDia: hasData ? caixinhaDia : linha.caixinhaDia,
-      caixinhaNoite: hasData ? caixinhaNoite : linha.caixinhaNoite,
-      pgto: hasData ? pgto : linha.pgto,
-      vlVariavel: hasData ? vlVariavel : linha.vlVariavel,
+      entDia:         hasData ? entDia         : linha.entDia,
+      entNoite:       hasData ? entNoite       : linha.entNoite,
+      caixinhaDia:    hasData ? caixinhaDia    : linha.caixinhaDia,
+      caixinhaNoite:  hasData ? caixinhaNoite  : linha.caixinhaNoite,
+      pgto:           hasData ? pgto           : linha.pgto,
+      vlVariavel,
       saidasDia,
       saidasNoite,
     };
@@ -295,8 +310,8 @@ export const Motoboys: React.FC = () => {
         }));
       }
 
-      // Integrar com saídas
-      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId);
+      // Integrar com saídas (passa motoboy para calcular vlVariavel correto por vínculo)
+      const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboy);
       setControle(linhasIntegradas);
     } catch (e) { console.error(e); setControle([]); }
     finally { setLoadingCtrl(false); }
@@ -362,7 +377,8 @@ export const Motoboys: React.FC = () => {
       entDia: 0, caixinhaDia: 0, entNoite: 0, caixinhaNoite: 0,
       vlVariavel: 0, pgto: 0, variavel: 0, unitId,
     }));
-    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId);
+    const motoboyObj = motoboys.find(m => m.id === ctrlMotoboyId);
+    const linhasIntegradas = preencherControleComSaidas(linhasBase, saidas, ctrlMotoboyId, motoboyObj);
     setControle(linhasIntegradas);
   };
 
@@ -389,26 +405,43 @@ export const Motoboys: React.FC = () => {
 
   /* ── Resumo do controle ──────────────────────────────── */
   const resumoCtrl = useMemo(() => {
-    const totalVariavel = controleComAcumulado.reduce((s, l) => s + R(l.vlVariavel), 0);
-    const totalPgto = controleComAcumulado.reduce((s, l) => s + R(l.pgto), 0);
-    const totalViagens = controleComAcumulado.reduce((s, l) => s + R(l.entDia) + R(l.entNoite), 0);
-    const totalCaixinha = controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0);
-    const diasTrab = controleComAcumulado.filter(l => R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.vlVariavel) > 0).length;
     const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    const isFreelancer = motoboy?.vinculo === 'Freelancer';
+
+    // Totais diretos das linhas do controle
+    const totalVariavel = controleComAcumulado.reduce((s, l) => s + R(l.vlVariavel), 0);
+    const totalPgto     = controleComAcumulado.reduce((s, l) => s + R(l.pgto), 0);
+    const totalViagens  = controleComAcumulado.reduce((s, l) => s + R(l.entDia) + R(l.entNoite), 0);
+    // Caixinha total = caixinhaDia + caixinhaNoite (já consolidados por preencherControleComSaidas)
+    const totalCaixinha = controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0);
+    // Dias trabalhados = dias com ao menos uma entrega ou variável
+    const diasTrab = controleComAcumulado.filter(
+      l => R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.vlVariavel) > 0
+    ).length;
+
+    // CLT: salário e periculosidade
     const salBase = R(motoboy?.salario);
     const peri = R(motoboy?.periculosidade) / 100;
     const periculosidadeValor = salBase * peri;
-    // Freelancer-specific: chegada + entrega
+
+    // Freelancer-specific: chegada fixa + entregas variáveis
     const vChegada = R(motoboy?.valorChegada);
     const vEntrega = R(motoboy?.valorEntrega);
-    const totalChegada = vChegada > 0 ? parseFloat((vChegada * diasTrab).toFixed(2)) : 0;
+    const totalChegada  = vChegada > 0 ? parseFloat((vChegada * diasTrab).toFixed(2)) : 0;
     const totalEntregas = vEntrega > 0 ? parseFloat((vEntrega * totalViagens).toFixed(2)) : 0;
-    // Gross total for Freelancer = chegada + entregas + caixinha
-    const totalBrutoFreelancer = motoboy?.vinculo === 'Freelancer'
+
+    // Bruto Freelancer = chegada + entregas + caixinha
+    const totalBrutoFreelancer = isFreelancer
       ? parseFloat((totalChegada + totalEntregas + totalCaixinha).toFixed(2))
       : 0;
+
+    // Para Freelancer, o "Total variável" exibido é o bruto se configurado, senão usa vlVariavel
+    const totalVariavelExibido = isFreelancer && (vChegada > 0 || vEntrega > 0)
+      ? totalBrutoFreelancer
+      : totalVariavel;
+
     return {
-      totalVariavel, totalPgto, totalViagens, totalCaixinha, diasTrab,
+      totalVariavel: totalVariavelExibido, totalPgto, totalViagens, totalCaixinha, diasTrab,
       salBase, periculosidadeValor,
       vChegada, vEntrega, totalChegada, totalEntregas, totalBrutoFreelancer,
     };
