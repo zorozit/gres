@@ -88,6 +88,15 @@ export const Modules: React.FC = () => {
       adminRequired: true,
     },
     {
+      id: 'importacoes-contabeis',
+      icon: '📥',
+      title: 'Importações Contábeis',
+      description: 'Importe PDFs da contabilidade e distribua para folha e saídas',
+      path: '/modulos/importacoes-contabeis',
+      color: '#6d4c41',
+      adminRequired: true,
+    },
+    {
       id: 'unidades',
       icon: '🏢',
       title: 'Cadastro de Unidades',
