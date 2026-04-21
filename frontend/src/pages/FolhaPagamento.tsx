@@ -589,12 +589,13 @@ export default function FolhaPagamento() {
         iniDate.setDate(iniDate.getDate() - diasAteSegunda);
         const iniISO = iniDate.toISOString().split('T')[0];
         const fimISO = fimDate.toISOString().split('T')[0];
-        // Marcar como pagos todos os dias de escalas confirmadas neste período
+        // Marcar como pagos todos os dias de escalas no período
+        // Aceitar presenca='presente' OU presenca ausente (registros legados sem campo)
         const escalasPagas = escalas.filter(e =>
           e.colaboradorId === reg.colaboradorId &&
           e.data >= iniISO && e.data <= fimISO &&
           e.turno !== 'Folga' &&
-          statusPresencaEscala(e) === 'presente'
+          (statusPresencaEscala(e) === 'presente' || !e.presenca)
         );
         for (const e of escalasPagas) {
           diasJaPagosPorColab[reg.colaboradorId].add(e.data);
