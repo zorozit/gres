@@ -139,6 +139,7 @@ interface FechamentoSemanalFreelancer {
     caixinhaTotal: number;          // 🪙 caixinha a pagar ao colaborador (crédito)
     caixinhaDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes caixinha
     pendentesAnteriores: any[];     // Saídas pendentes de meses anteriores a descontar
+    saldoEspecialAberto: number;    // Saldo de adiantamento especial em aberto (histórico)
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
@@ -279,6 +280,7 @@ export default function FolhaPagamento() {
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
   // Saídas do período para cruzamento com motoboys
   const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
+  const [saldosEspeciais, setSaldosEspeciais] = useState<Record<string, number>>({});
   // Saídas pendentes de meses anteriores (pago=false)
   const [saidasPendentesAnt, setSaidasPendentesAnt] = useState<any[]>([]);
 
@@ -329,7 +331,11 @@ export default function FolhaPagamento() {
       const prevDate = new Date(ano, mes - 4, 1);
       const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [rC, rM, rF, rE, rS, rSPend] = await Promise.all([
+      // Histórico longo para cálculo de saldo de adiantamento especial (24 meses)
+      const histLongoDate = new Date(parseInt(String(ano)), parseInt(String(mes)) - 25, 1);
+      const histLongoIni = `${histLongoDate.getFullYear()}-${String(histLongoDate.getMonth() + 1).padStart(2, '0')}-01`;
+
+      const [rC, rM, rF, rE, rS, rSPend, rSHist] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
@@ -337,6 +343,8 @@ export default function FolhaPagamento() {
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         // Pending saídas from previous 3 months
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+        // Histórico longo para saldo de adiantamento especial
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
       ]);
 
       const dC = await rC.json();
@@ -386,11 +394,30 @@ export default function FolhaPagamento() {
       // Carregar saídas pendentes de meses anteriores
       if (rSPend?.ok) {
         const dSP = await rSPend.json();
-        // Only keep ones with pago !== true (pending)
         const pendentes = (Array.isArray(dSP) ? dSP : []).filter((s: any) => s.pago === false);
         setSaidasPendentesAnt(pendentes);
       } else {
         setSaidasPendentesAnt([]);
+      }
+
+      // Calcular saldo de adiantamento especial por colaborador (histórico longo)
+      if (rSHist?.ok) {
+        const dSH = await rSHist.json();
+        const hist = Array.isArray(dSH) ? dSH : [];
+        const saldos: Record<string, number> = {};
+        for (const s of hist) {
+          const tipo = s.tipo || s.origem || s.referencia || '';
+          const colId = s.colaboradorId || s.colabId;
+          if (!colId) continue;
+          if (tipo === 'Adiantamento Especial') {
+            saldos[colId] = (saldos[colId] || 0) + (parseFloat(s.valor) || 0);
+          } else if (tipo === 'Desconto Adiantamento Especial') {
+            saldos[colId] = (saldos[colId] || 0) - (parseFloat(s.valor) || 0);
+          }
+        }
+        // Manter apenas saldos positivos (dívida ainda em aberto)
+        Object.keys(saldos).forEach(k => { if (saldos[k] <= 0) delete saldos[k]; });
+        setSaldosEspeciais(saldos);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -627,6 +654,9 @@ export default function FolhaPagamento() {
         // Líquido = dobras + transporte saldo + caixinha (crédito) - descontos
         const totalLiquido = parseFloat((total + transporteSaldo + caixinhaTotal - saidasDesconto).toFixed(2));
 
+        // Saldo de adiantamento especial em aberto (toda a vida do colaborador)
+        const saldoEspecialAberto = parseFloat((saldosEspeciais[f.id] || 0).toFixed(2));
+
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
           telefone: f.celular || f.telefone,
@@ -637,6 +667,7 @@ export default function FolhaPagamento() {
           caixinhaTotal, caixinhaDetalhe,
           diasCodigo, diasTrabalhados,
           pendentesAnteriores,
+          saldoEspecialAberto,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -971,6 +1002,8 @@ export default function FolhaPagamento() {
   const [formaFreelancer, setFormaFreelancer] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
   const [formaFreelancerPix, setFormaFreelancerPix] = useState('');
   const [formaFreelancerDin, setFormaFreelancerDin] = useState('');
+  const [abaterEspecial, setAbaterEspecial] = useState(false);
+  const [valorAbatimento, setValorAbatimento] = useState('');
 
   // Reset checklist whenever a new freelancer payment modal opens
   useEffect(() => {
@@ -978,6 +1011,10 @@ export default function FolhaPagamento() {
     setFormaFreelancer('PIX');
     setFormaFreelancerPix('');
     setFormaFreelancerDin('');
+    // Sugerir abatimento se tiver saldo especial em aberto
+    const saldo = modalFreelancerPgto.fr.saldoEspecialAberto || 0;
+    setAbaterEspecial(saldo > 0);
+    setValorAbatimento(saldo > 0 ? '' : '');
     const { fr } = modalFreelancerPgto;
     const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
       ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
@@ -1084,6 +1121,45 @@ export default function FolhaPagamento() {
             </span>
           </div>
 
+          {/* Abatimento de Adiantamento Especial */}
+          {(fr.saldoEspecialAberto || 0) > 0 && (
+            <div style={{ backgroundColor: '#f3e8ff', border: '1px solid #d8b4fe', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <input type="checkbox" id="abaterCheck" checked={abaterEspecial}
+                  onChange={e => { setAbaterEspecial(e.target.checked); if (!e.target.checked) setValorAbatimento(''); }}
+                  style={{ width: '16px', height: '16px', accentColor: '#7c3aed', cursor: 'pointer' }} />
+                <label htmlFor="abaterCheck" style={{ fontWeight: 700, color: '#5b21b6', fontSize: '13px', cursor: 'pointer' }}>
+                  ➖ Abater Adiantamento Especial em aberto
+                </label>
+                <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#7c3aed', fontWeight: 700 }}>
+                  Saldo: {fmtMoeda(fr.saldoEspecialAberto)}
+                </span>
+              </div>
+              {abaterEspecial && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px' }}>
+                  <div>
+                    <label style={{ ...s.label, fontSize: '11px', color: '#5b21b6' }}>Valor a abater neste pagamento (R$)</label>
+                    <input type="number" step="0.01" min="0.01"
+                      max={Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)).toString()}
+                      value={valorAbatimento}
+                      placeholder={`máx. ${fmtMoeda(Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)))}`}
+                      onChange={e => setValorAbatimento(e.target.value)}
+                      style={{ ...s.input, fontSize: '12px', padding: '6px', borderColor: '#a78bfa' }} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                    <div style={{ fontSize: '12px', color: '#7c3aed', lineHeight: 1.6 }}>
+                      <div>💰 Recebe: <strong>{fmtMoeda(Math.max(0, totalSelecionado - (parseFloat(valorAbatimento) || 0)))}</strong></div>
+                      <div>➖ Abate: <strong>{fmtMoeda(parseFloat(valorAbatimento) || 0)}</strong></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: '6px', fontSize: '11px', color: '#6d28d9' }}>
+                ℹ️ O desconto será lançado automaticamente como <strong>Desconto Adiantamento Especial</strong> nas Saídas.
+              </div>
+            </div>
+          )}
+
           {/* Forma de pagamento */}
           <div style={{ marginBottom: '14px' }}>
             <label style={s.label}>💳 Forma de pagamento</label>
@@ -1183,6 +1259,31 @@ export default function FolhaPagamento() {
                     body: JSON.stringify(payload),
                   });
                   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+                  // Lançar abatimento de adiantamento especial automaticamente
+                  const vlAbate = parseFloat(valorAbatimento) || 0;
+                  if (abaterEspecial && vlAbate > 0) {
+                    const payloadDesc = {
+                      unitId,
+                      colaboradorId: fr.id,
+                      tipo: 'Desconto Adiantamento Especial',
+                      origem: 'Desconto Adiantamento Especial',
+                      referencia: 'Desconto Adiantamento Especial',
+                      descricao: `Abatimento adto. especial – pgto sem. ${fech.semanaLabel}`,
+                      valor: vlAbate,
+                      dataPagamento: dataLocalFreelancer,
+                      data: dataLocalFreelancer,
+                      pago: true,
+                      obs: `Abatido no pagamento da semana ${fech.semanaLabel}`,
+                      updatedAt: new Date().toISOString(),
+                    };
+                    await fetch(`${apiUrl}/saidas`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                      body: JSON.stringify(payloadDesc),
+                    });
+                  }
+
                   await carregarDados();
                 } catch (err) { alert('Erro ao salvar pagamento: ' + err); }
                 finally { setSalvando(false); }
@@ -2393,6 +2494,12 @@ export default function FolhaPagamento() {
                                       title={`${fr.pendentesAnteriores.length} pendência(s) de meses anteriores a descontar`}>
                                       ⏳ {fr.pendentesAnteriores.length} pend.
                                     </span>
+                                  )}
+                                  {(fr.saldoEspecialAberto || 0) > 0 && (
+                                    <div style={{ fontSize: '10px', color: '#7c3aed', fontWeight: 'bold', marginTop: '2px' }}
+                                      title={`Adiantamento especial em aberto: ${fmtMoeda(fr.saldoEspecialAberto)}`}>
+                                      🟣 Adto. esp.: {fmtMoeda(fr.saldoEspecialAberto)}
+                                    </div>
                                   )}
                                 </td>
                                 <td style={{ ...s.td, fontSize: '11px' }}>
