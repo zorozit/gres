@@ -158,13 +158,60 @@ export const Extrato: React.FC = () => {
           const nome  = colab?.nome || item.colaboradorId;
           const tc    = colab?.tipoContrato || (item.semana ? 'Freelancer' : 'CLT');
           const val   = R(item.totalFinal) || R(item.saldoFinal) || 0;
+          const isCLT = !item.semana || item.semana === true;
+
+          // Para CLT: gerar linha de Adiantamento (dia 20) separada quando pagoAdiantamento=true
+          if (isCLT && item.pagoAdiantamento === true) {
+            // Valor: adtoLiquido (calculado pelo frontend) ou soma dos logPagamentos tipo Adiantamento
+            const logsAdto = (item.logPagamentos || []).filter((l: any) => l.tipo === 'Adiantamento');
+            const adtoVal = R(item.adtoLiquido) || R(item.adtoContabil)
+              || logsAdto.reduce((s: number, l: any) => s + R(l.valor), 0)
+              || 0;
+            allItems.push({
+              id: `${item.id}_adto`,
+              colaboradorId: item.colaboradorId,
+              nomeColaborador: nome, tipoContrato: tc,
+              origem: 'folha', mes: item.mes, semana: undefined,
+              tipo: 'credito',
+              descricao: `Adiantamento CLT (dia 20) – ${item.mes}`,
+              valor: adtoVal,
+              pago: true,
+              dataPagamento: item.dataPgtoAdiantamento || undefined,
+              obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
+              formaPagamento: item.formaPagamento || undefined,
+              logPagamentos: [],
+              raw: item,
+            });
+          }
+
+          // Para CLT: gerar linha de Variável (dobras/motoboy) separada quando pagoVariavel=true
+          if (isCLT && item.pagoVariavel === true) {
+            const varVal = R(item.totalFinal) || 0;
+            allItems.push({
+              id: `${item.id}_var`,
+              colaboradorId: item.colaboradorId,
+              nomeColaborador: nome, tipoContrato: tc,
+              origem: 'folha', mes: item.mes, semana: undefined,
+              tipo: 'credito',
+              descricao: `Variável CLT (dobras/motoboy) – ${item.mes}`,
+              valor: varVal,
+              pago: true,
+              dataPagamento: item.dataPgtoVariavel || undefined,
+              obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
+              formaPagamento: item.formaPagamento || undefined,
+              logPagamentos: [],
+              raw: item,
+            });
+          }
+
+          // Linha principal: salário mensal CLT ou dobras freelancer
           allItems.push({
             id: item.id || `folha_${item.colaboradorId}_${item.mes}_${item.semana || ''}`,
             colaboradorId: item.colaboradorId,
             nomeColaborador: nome, tipoContrato: tc,
             origem: 'folha', mes: item.mes, semana: item.semana || undefined,
             tipo: 'credito',
-            descricao: item.semana
+            descricao: item.semana && item.semana !== true
               ? `Dobras semanais ${fmtDataBR(item.semana)} (${tc})`
               : `Pagamento mensal CLT – ${item.mes}`,
             valor: val, pago: item.pago === true,
@@ -172,10 +219,8 @@ export const Extrato: React.FC = () => {
             valorBruto: R(item.valorBruto), valorTransporte: R(item.valorTransporte),
             desconto: R(item.desconto), totalFinal: R(item.totalFinal), saldoFinal: R(item.saldoFinal),
             obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
-            // Forma de pagamento e log de registros individuais
             formaPagamento: item.formaPagamento || (Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0 ? item.logPagamentos[item.logPagamentos.length - 1].forma : undefined),
             logPagamentos: item.logPagamentos || [],
-            // Integridade de período
             periodoInicio: item.periodoInicio || undefined,
             periodoFim:    item.periodoFim    || undefined,
             diasPagos:     Array.isArray(item.diasPagos) ? item.diasPagos : [],
