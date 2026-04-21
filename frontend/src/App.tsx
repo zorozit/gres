@@ -17,6 +17,7 @@ import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
+import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
     <Router>
       <AuthProvider>
         <UnitProvider>
+          <UpdateBanner />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
