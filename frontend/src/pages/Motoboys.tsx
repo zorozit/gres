@@ -1078,187 +1078,204 @@ export const Motoboys: React.FC = () => {
                   );
                 })()}
 
-                {/* Tabela diária */}
+                {/* Tabela diária — agrupada por semana */}
                 {(() => {
                   const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
                   const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
-                  // Mostrar colunas de chegada sempre que for Freelancer (mesmo que valores sejam 0)
                   const showChegada = isFreelancerCtrl;
+                  const semanas = semanasMes(ctrlMesAno);
+
+                  // Detecta quais dias já foram pagos (pgto > 0 ou semana marcada paga)
+                  const semanasPagas = new Set(
+                    pagamentosSemana.filter((p: any) => p.pago === true).map((p: any) => p.semana || p.dataFechamento)
+                  );
+
+                  const headers = [
+                    'Data', 'DS', 'Sal.+Per.',
+                    'Ent.Dia', 'Caix.Dia',
+                    ...(showChegada ? ['Ch.Dia'] : []),
+                    'Ent.Noite', 'Caix.Noite',
+                    ...(showChegada ? ['Ch.Noite'] : []),
+                    'Caixa Total', 'Vl.Variável', 'Pgto', 'Status', 'Var.Acum.',
+                    ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
+                  ];
+
                   return (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                    <thead>
-                      <tr>
-                        {[
-                          'Data', 'Dia', 'Sal.+Per.',
-                          'Ent. Dia', 'Caix. Dia',
-                          ...(showChegada ? ['Ch. Dia'] : []),
-                          'Ent. Noite', 'Caix. Noite',
-                          ...(showChegada ? ['Ch. Noite'] : []),
-                          'Vl. Variável', 'Pgto', 'Var. Acum.',
-                          ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
-                        ].map(h => <th key={h} style={s.th}>{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {controleComAcumulado.map((l, idx) => {
-                        const dow = l.diaSemana ?? diaSemana(l.data);
-                        const folga = dow === 0 || dow === 1;
-                        const temDados = (l.saidasDia && l.saidasDia.length > 0) || (l.saidasNoite && l.saidasNoite.length > 0);
-                        const rowBg = temDados ? '#f0fff4' : folga ? '#f5f5f5' : idx % 2 === 0 ? '#fafff8' : 'white';
-                        return (
-                          <tr key={l.data} style={{ backgroundColor: rowBg }}>
-                            <td style={{ ...s.td, fontWeight: 'bold' }}>
-                              {l.data.split('-').reverse().join('/')}
-                              {temDados && <span style={{ marginLeft: '4px', color: '#2e7d32', fontSize: '10px' }}>●</span>}
-                            </td>
-                            <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
-                              {DIAS_SEMANA_ABREV[dow]}
-                            </td>
-                            <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
-                            {/* Campos editáveis ou só-leitura conforme modo */}
-                            {modoVisualizacao === 'manual' ? (
-                              <>
-                                {(['entDia', 'caixinhaDia'] as const).map(campo => (
-                                  <td key={campo} style={s.td}>
-                                    <input
-                                      type="number" step="0.01" min="0"
-                                      style={s.numInput}
-                                      value={(l as any)[campo] || ''}
-                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                      onFocus={e => e.target.select()}
-                                      placeholder="0"
-                                    />
-                                  </td>
-                                ))}
-                                {showChegada && (
-                                  <td key="chegadaDia" style={s.td}>
-                                    <input
-                                      type="number" step="0.01" min="0"
-                                      style={s.numInput}
-                                      value={R(l.chegadaDia) || ''}
-                                      onChange={e => handleCampoControle(idx, 'chegadaDia', e.target.value)}
-                                      onFocus={e => e.target.select()}
-                                      placeholder="0"
-                                    />
-                                  </td>
-                                )}
-                                {(['entNoite', 'caixinhaNoite'] as const).map(campo => (
-                                  <td key={campo} style={s.td}>
-                                    <input
-                                      type="number" step="0.01" min="0"
-                                      style={s.numInput}
-                                      value={(l as any)[campo] || ''}
-                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                      onFocus={e => e.target.select()}
-                                      placeholder="0"
-                                    />
-                                  </td>
-                                ))}
-                                {showChegada && (
-                                  <td key="chegadaNoite" style={s.td}>
-                                    <input
-                                      type="number" step="0.01" min="0"
-                                      style={s.numInput}
-                                      value={R(l.chegadaNoite) || ''}
-                                      onChange={e => handleCampoControle(idx, 'chegadaNoite', e.target.value)}
-                                      onFocus={e => e.target.select()}
-                                      placeholder="0"
-                                    />
-                                  </td>
-                                )}
-                                {(['vlVariavel', 'pgto'] as const).map(campo => (
-                                  <td key={campo} style={s.td}>
-                                    <input
-                                      type="number" step="0.01" min="0"
-                                      style={s.numInput}
-                                      value={(l as any)[campo] || ''}
-                                      onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                      onFocus={e => e.target.select()}
-                                      placeholder="0"
-                                    />
-                                  </td>
-                                ))}
-                              </>
-                            ) : (
-                              <>
-                                <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                  {R(l.entDia) > 0 ? <strong style={{ color: '#0288d1' }}>{l.entDia}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          {headers.map(h => <th key={h} style={s.th}>{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {semanas.map((sem) => {
+                          const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
+                          if (linhasSem.length === 0) return null;
+
+                          const semPaga = semanasPagas.has(sem.fim);
+                          const subEntDia   = linhasSem.reduce((s, l) => s + R(l.entDia), 0);
+                          const subCaixDia  = linhasSem.reduce((s, l) => s + R(l.caixinhaDia), 0);
+                          const subChDia    = linhasSem.reduce((s, l) => s + R(l.chegadaDia), 0);
+                          const subEntNoite = linhasSem.reduce((s, l) => s + R(l.entNoite), 0);
+                          const subCaixNoite= linhasSem.reduce((s, l) => s + R(l.caixinhaNoite), 0);
+                          const subChNoite  = linhasSem.reduce((s, l) => s + R(l.chegadaNoite), 0);
+                          const subCaixTotal= subCaixDia + subCaixNoite;
+                          const subVar      = linhasSem.reduce((s, l) => s + R(l.vlVariavel), 0);
+                          const subPgto     = linhasSem.reduce((s, l) => s + R(l.pgto), 0);
+
+                          return (
+                            <React.Fragment key={sem.fim}>
+                              {/* Cabeçalho da semana */}
+                              <tr style={{ backgroundColor: semPaga ? '#e8f5e9' : '#e3f2fd' }}>
+                                <td colSpan={headers.length} style={{ padding: '5px 8px', fontWeight: 'bold', fontSize: '12px', color: semPaga ? '#2e7d32' : '#1565c0', borderTop: '2px solid #90caf9' }}>
+                                  📅 {sem.label} &nbsp;
+                                  {semPaga
+                                    ? <span style={{ backgroundColor: '#c8e6c9', color: '#1b5e20', padding: '1px 8px', borderRadius: '10px', fontSize: '11px' }}>✅ Pago</span>
+                                    : <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '1px 8px', borderRadius: '10px', fontSize: '11px' }}>⏳ Em aberto</span>
+                                  }
                                 </td>
-                                <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                  {R(l.caixinhaDia) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                              </tr>
+
+                              {/* Linhas dos dias */}
+                              {linhasSem.map((l) => {
+                                const idx = controleComAcumulado.findIndex(c => c.data === l.data);
+                                const dow = l.diaSemana ?? diaSemana(l.data);
+                                const folga = dow === 0 || dow === 1;
+                                const temDados = R(l.vlVariavel) > 0 || R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.caixinhaDia) > 0 || R(l.caixinhaNoite) > 0;
+                                const diaPago = R(l.pgto) > 0 || semPaga;
+                                const caixaTotalDia = R(l.caixinhaDia) + R(l.caixinhaNoite);
+                                const rowBg = diaPago ? '#f1f8e9' : folga ? '#f5f5f5' : temDados ? '#fafff8' : idx % 2 === 0 ? '#fdfdfd' : 'white';
+
+                                return (
+                                  <tr key={l.data} style={{ backgroundColor: rowBg }}>
+                                    <td style={{ ...s.td, fontWeight: 'bold' }}>
+                                      {l.data.split('-').reverse().join('/')}
+                                      {temDados && <span style={{ marginLeft: '4px', color: '#2e7d32', fontSize: '10px' }}>●</span>}
+                                    </td>
+                                    <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
+                                      {DIAS_SEMANA_ABREV[dow]}
+                                    </td>
+                                    <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
+
+                                    {/* Campos editáveis modo manual */}
+                                    {(['entDia', 'caixinhaDia'] as const).map(campo => (
+                                      <td key={campo} style={s.td}>
+                                        <input type="number" step="0.01" min="0" style={s.numInput}
+                                          value={(l as any)[campo] || ''}
+                                          onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      </td>
+                                    ))}
+                                    {showChegada && (
+                                      <td key="chegadaDia" style={s.td}>
+                                        <input type="number" step="0.01" min="0" style={s.numInput}
+                                          value={R(l.chegadaDia) || ''}
+                                          onChange={e => handleCampoControle(idx, 'chegadaDia', e.target.value)}
+                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      </td>
+                                    )}
+                                    {(['entNoite', 'caixinhaNoite'] as const).map(campo => (
+                                      <td key={campo} style={s.td}>
+                                        <input type="number" step="0.01" min="0" style={s.numInput}
+                                          value={(l as any)[campo] || ''}
+                                          onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      </td>
+                                    ))}
+                                    {showChegada && (
+                                      <td key="chegadaNoite" style={s.td}>
+                                        <input type="number" step="0.01" min="0" style={s.numInput}
+                                          value={R(l.chegadaNoite) || ''}
+                                          onChange={e => handleCampoControle(idx, 'chegadaNoite', e.target.value)}
+                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      </td>
+                                    )}
+
+                                    {/* Caixa Total (dia + noite) — só leitura */}
+                                    <td style={{ ...s.td, textAlign: 'center' as const, fontWeight: 'bold', color: '#00838f' }}>
+                                      {caixaTotalDia > 0 ? fmt(caixaTotalDia) : <span style={{ color: '#ccc' }}>-</span>}
+                                    </td>
+
+                                    {(['vlVariavel', 'pgto'] as const).map(campo => (
+                                      <td key={campo} style={s.td}>
+                                        <input type="number" step="0.01" min="0" style={s.numInput}
+                                          value={(l as any)[campo] || ''}
+                                          onChange={e => handleCampoControle(idx, campo, e.target.value)}
+                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      </td>
+                                    ))}
+
+                                    {/* Status do dia */}
+                                    <td style={{ ...s.td, textAlign: 'center' as const, whiteSpace: 'nowrap' as const }}>
+                                      {diaPago
+                                        ? <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '1px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>✅ Pago</span>
+                                        : temDados
+                                          ? <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '1px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>⏳ Aberto</span>
+                                          : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>
+                                      }
+                                    </td>
+
+                                    <td style={{ ...s.td, textAlign: 'right' as const, color: R(l.variavel) < 0 ? '#c62828' : '#2e7d32', fontWeight: 'bold' }}>
+                                      {R(l.variavel) !== 0 ? fmt(R(l.variavel)) : <span style={{ color: '#ccc' }}>-</span>}
+                                    </td>
+
+                                    {mostrarSaidas && (
+                                      <>
+                                        <td style={s.td}>{l.saidasDia?.map(s2 => `${s2.descricao || s2.tipo}(R$${fmt(R(s2.valor))})`).join(', ') || ''}</td>
+                                        <td style={s.td}>{l.saidasNoite?.map(s2 => `${s2.descricao || s2.tipo}(R$${fmt(R(s2.valor))})`).join(', ') || ''}</td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+
+                              {/* Subtotal da semana */}
+                              <tr style={{ backgroundColor: semPaga ? '#c8e6c9' : '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
+                                <td style={{ padding: '5px 6px' }} colSpan={3}>Subtotal {sem.label}</td>
+                                <td style={{ padding: '5px 6px' }}>{subEntDia}</td>
+                                <td style={{ padding: '5px 6px' }}>{fmt(subCaixDia)}</td>
+                                {showChegada && <td style={{ padding: '5px 6px', color: '#e65100' }}>{fmt(subChDia)}</td>}
+                                <td style={{ padding: '5px 6px' }}>{subEntNoite}</td>
+                                <td style={{ padding: '5px 6px' }}>{fmt(subCaixNoite)}</td>
+                                {showChegada && <td style={{ padding: '5px 6px', color: '#7b1fa2' }}>{fmt(subChNoite)}</td>}
+                                <td style={{ padding: '5px 6px', color: '#00838f' }}>{fmt(subCaixTotal)}</td>
+                                <td style={{ padding: '5px 6px', color: '#2e7d32' }}>R$ {fmt(subVar)}</td>
+                                <td style={{ padding: '5px 6px', color: '#fb8c00' }}>{subPgto > 0 ? `R$ ${fmt(subPgto)}` : '—'}</td>
+                                <td style={{ padding: '5px 6px' }}>
+                                  {semPaga
+                                    ? <span style={{ color: '#1b5e20' }}>✅ Pago</span>
+                                    : <span style={{ color: '#e65100' }}>⏳ Aberto</span>}
                                 </td>
-                                {showChegada && (
-                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R(l.chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(l.chegadaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
-                                  </td>
-                                )}
-                                <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                  {R(l.entNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>{l.entNoite}</strong> : <span style={{ color: '#ccc' }}>-</span>}
-                                </td>
-                                <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                  {R(l.caixinhaNoite) > 0 ? <strong style={{ color: '#00838f' }}>{fmt(l.caixinhaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
-                                </td>
-                                {showChegada && (
-                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R(l.chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(l.chegadaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
-                                  </td>
-                                )}
-                                <td style={s.td}>
-                                  <input
-                                    type="number" step="0.01" min="0"
-                                    style={s.numInput}
-                                    value={R(l.vlVariavel) || ''}
-                                    onChange={e => handleCampoControle(idx, 'vlVariavel', e.target.value)}
-                                    onFocus={e => e.target.select()}
-                                    placeholder="0"
-                                  />
-                                </td>
-                                <td style={{ ...s.td }}>
-                                  {R(l.pgto) > 0 ? (
-                                    <span style={{ color: '#fb8c00', fontWeight: 'bold' }}>R$ {fmt(l.pgto)}</span>
-                                  ) : <span style={{ color: '#ccc' }}>-</span>}
-                                </td>
-                              </>
-                            )}
-                            <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32' }}>{fmt(l.variavel)}</td>
-                            {mostrarSaidas && (
-                              <>
-                                <td style={{ ...s.td, fontSize: '11px', color: '#0288d1', maxWidth: '200px' }}>
-                                  {(l.saidasDia || []).map(s => (
-                                    <div key={s.id}>{s.viagens ? `${s.viagens}viag` : ''} {s.valor ? `R$${s.valor.toFixed(2)}` : ''} {s.descricao || ''}</div>
-                                  ))}
-                                </td>
-                                <td style={{ ...s.td, fontSize: '11px', color: '#7b1fa2', maxWidth: '200px' }}>
-                                  {(l.saidasNoite || []).map(s => (
-                                    <div key={s.id}>{s.viagens ? `${s.viagens}viag` : ''} {s.valor ? `R$${s.valor.toFixed(2)}` : ''} {s.descricao || ''}</div>
-                                  ))}
-                                </td>
-                              </>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                        <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL</td>
-                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
-                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
-                        {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
-                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entNoite), 0)}</td>
-                        <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaNoite), 0))}</td>
-                        {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaNoite)}</td>}
-                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
-                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
-                        <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
-                        {mostrarSaidas && <td colSpan={2} />}
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                                <td style={{ padding: '5px 6px' }} colSpan={mostrarSaidas ? 3 : 1} />
+                              </tr>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL GERAL</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
+                          {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entNoite), 0)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaNoite), 0))}</td>
+                          {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaNoite)}</td>}
+                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#80deea' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0))}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} />
+                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
+                          {mostrarSaidas && <td colSpan={2} />}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                   );
                 })()}
+
+
 
                 {/* ── Resumo semanal com status de pagamento ──────── */}
                 {controleComAcumulado.length > 0 && (() => {
