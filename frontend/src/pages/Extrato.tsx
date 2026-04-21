@@ -7,6 +7,17 @@ import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
+interface PagamentoLog {
+  id?: string;
+  data: string;
+  valor: number;
+  forma: 'PIX' | 'Dinheiro' | 'Misto';
+  valorPix?: number;
+  valorDinheiro?: number;
+  tipo?: string;
+  obs?: string;
+}
+
 interface ExtratoItem {
   id: string;
   colaboradorId: string;
@@ -29,6 +40,9 @@ interface ExtratoItem {
   updatedAt?: string;
   unitId?: string;
   tipoSaida?: string;
+  // Forma de pagamento
+  formaPagamento?: 'PIX' | 'Dinheiro' | 'Misto';
+  logPagamentos?: PagamentoLog[];
   raw?: any;
 }
 
@@ -153,7 +167,11 @@ export const Extrato: React.FC = () => {
             dataPagamento: item.dataPagamento || undefined,
             valorBruto: R(item.valorBruto), valorTransporte: R(item.valorTransporte),
             desconto: R(item.desconto), totalFinal: R(item.totalFinal), saldoFinal: R(item.saldoFinal),
-            obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId, raw: item,
+            obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
+            // Forma de pagamento e log de registros individuais
+            formaPagamento: item.formaPagamento || (Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0 ? item.logPagamentos[item.logPagamentos.length - 1].forma : undefined),
+            logPagamentos: item.logPagamentos || [],
+            raw: item,
           });
         }
       }
@@ -196,7 +214,10 @@ export const Extrato: React.FC = () => {
             tipoSaida: tipo,
             obs: saida.observacao || saida.obs || '',
             updatedAt: saida.updatedAt || dataEfetiva,
-            unitId: saida.unitId, raw: saida,
+            unitId: saida.unitId,
+            formaPagamento: saida.formaPagamento,
+            logPagamentos: saida.logPagamentos || [],
+            raw: saida,
           });
         }
       };
@@ -238,6 +259,7 @@ export const Extrato: React.FC = () => {
         dataPagamento:  editForm.dataPagamento,
         data:           raw.data || editForm.dataPagamento,
         pago:           novoPago,   // explicit boolean
+        formaPagamento: editForm.formaPagamento || undefined,
         observacao:     editForm.obs,
         obs:            editForm.obs,
         updatedAt:      new Date().toISOString(),
@@ -262,11 +284,12 @@ export const Extrato: React.FC = () => {
             descricao:    editForm.descricao,
             valor:        parseFloat(editForm.valor) || 0,
             tipo:         isDebito ? 'debito' : 'credito',
-            tipoSaida:    editForm.tipoSaida,
-            dataPagamento:editForm.dataPagamento,
-            pago:         novoPago,  // explicit boolean — guaranteed to be true or false
-            obs:          editForm.obs,
-            raw:          { ...payload, pago: novoPago },  // keep pago explicit in raw too
+            tipoSaida:      editForm.tipoSaida,
+            dataPagamento:  editForm.dataPagamento,
+            pago:           novoPago,  // explicit boolean — guaranteed to be true or false
+            obs:            editForm.obs,
+            formaPagamento: editForm.formaPagamento || undefined,
+            raw:            { ...payload, pago: novoPago },  // keep pago explicit in raw too
           };
         }));
         setEditItem(null);
@@ -285,12 +308,13 @@ export const Extrato: React.FC = () => {
   const abrirEdicao = (item: ExtratoItem) => {
     setEditItem(item);
     setEditForm({
-      descricao:     item.descricao,
-      valor:         String(item.valor),
-      tipoSaida:     item.tipoSaida || 'A pagar',
-      dataPagamento: item.dataPagamento || hoje(),
-      pago:          item.pago,
-      obs:           item.obs || '',
+      descricao:      item.descricao,
+      valor:          String(item.valor),
+      tipoSaida:      item.tipoSaida || 'A pagar',
+      dataPagamento:  item.dataPagamento || hoje(),
+      pago:           item.pago,
+      obs:            item.obs || '',
+      formaPagamento: item.formaPagamento || '',
     });
   };
 
@@ -409,6 +433,7 @@ export const Extrato: React.FC = () => {
               ...(item.valorBruto    ? [{ label: 'Bruto (dobras)',   value: fmtMoeda(item.valorBruto) }]    : []),
               ...(item.valorTransporte ? [{ label: 'Transporte',    value: fmtMoeda(item.valorTransporte!) }] : []),
               ...(item.desconto      ? [{ label: 'Desconto saídas', value: fmtMoeda(item.desconto) }]      : []),
+              { label: 'Forma de Pagamento', value: item.formaPagamento ? (item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto') : '—' },
               { label: 'Status',          value: item.pago ? '✅ Pago' : '⏳ Pendente' },
               { label: 'Data Pagamento',  value: item.dataPagamento ? fmtDataBR(item.dataPagamento) : '—' },
               { label: 'Observação',      value: item.obs || '—' },
@@ -421,6 +446,28 @@ export const Extrato: React.FC = () => {
             ))}
           </tbody>
         </table>
+
+        {/* Log de pagamentos (para itens de folha com múltiplos lançamentos) */}
+        {(item.logPagamentos || []).length > 0 && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#1565c0', marginBottom: '6px' }}>📜 Histórico de Pagamentos</div>
+            {(item.logPagamentos || []).map((p, i) => (
+              <div key={i} style={{ display: 'flex', gap: '10px', padding: '6px 10px', backgroundColor: i % 2 === 0 ? '#f5f5f5' : 'white', borderRadius: '4px', fontSize: '12px', alignItems: 'center', marginBottom: '2px' }}>
+                <span style={{ fontWeight: 'bold', color: '#2e7d32', minWidth: '80px' }}>{fmtMoeda(p.valor)}</span>
+                <span style={{ color: p.forma === 'PIX' ? '#1565c0' : p.forma === 'Dinheiro' ? '#2e7d32' : '#e65100', fontWeight: 'bold' }}>
+                  {p.forma === 'PIX' ? '📱 PIX' : p.forma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                </span>
+                {p.forma === 'Misto' && p.valorPix !== undefined && (
+                  <span style={{ color: '#666', fontSize: '11px' }}>PIX {fmtMoeda(p.valorPix)} + Din. {fmtMoeda(p.valorDinheiro || 0)}</span>
+                )}
+                <span style={{ color: '#888' }}>{p.data}</span>
+                {p.tipo && <span style={{ color: '#9e9e9e', fontSize: '11px', backgroundColor: '#f0f0f0', padding: '1px 6px', borderRadius: '8px' }}>{p.tipo}</span>}
+                {p.obs && <span style={{ color: '#aaa', fontStyle: 'italic' }}>{p.obs}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={{ marginTop: '14px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           {item.origem === 'saida' && (
             <button onClick={() => { onClose(); abrirEdicao(item); }}
@@ -523,6 +570,19 @@ export const Extrato: React.FC = () => {
                 Quando for descontado, edite novamente e marque como <strong>Pago</strong>.
               </div>
             )}
+
+            {/* Forma de Pagamento */}
+            <div>
+              <label style={s.label}>💳 Forma de Pagamento</label>
+              <select value={editForm.formaPagamento || ''}
+                onChange={e => setEditForm({ ...editForm, formaPagamento: e.target.value || undefined })}
+                style={s.select}>
+                <option value="">— Não informada</option>
+                <option value="PIX">📱 PIX</option>
+                <option value="Dinheiro">💵 Dinheiro</option>
+                <option value="Misto">🔄 Misto (parte PIX + parte Dinheiro)</option>
+              </select>
+            </div>
 
             {/* Observação */}
             <div>
@@ -889,6 +949,7 @@ export const Extrato: React.FC = () => {
                     <th style={s.thC}>Data</th>
                     <th style={s.thC}>Semana</th>
                     <th style={s.th}>Descrição / Tipo</th>
+                    <th style={s.thC}>Forma</th>
                     <th style={s.thR}>Bruto</th>
                     <th style={s.thR}>Transp.</th>
                     <th style={s.thR}>Valor</th>
@@ -926,6 +987,23 @@ export const Extrato: React.FC = () => {
                         {item.tipoSaida && <div style={{ color: '#888', fontSize: '10px' }}>{item.tipoSaida}</div>}
                         {item.obs && <div style={{ color: '#aaa', fontSize: '10px', fontStyle: 'italic' }}>📝 {item.obs}</div>}
                       </td>
+                      {/* Coluna Forma de Pagamento */}
+                      <td style={s.tdC}>
+                        {item.formaPagamento ? (
+                          <span style={{
+                            padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                            backgroundColor: item.formaPagamento === 'PIX' ? '#e3f2fd' : item.formaPagamento === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
+                            color: item.formaPagamento === 'PIX' ? '#1565c0' : item.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100',
+                          }}>
+                            {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>
+                        )}
+                        {(item.logPagamentos || []).length > 1 && (
+                          <div style={{ fontSize: '9px', color: '#9e9e9e', marginTop: '2px' }}>{item.logPagamentos!.length} pgtos</div>
+                        )}
+                      </td>
                       <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{item.valorBruto ? fmtMoeda(item.valorBruto) : '—'}</td>
                       <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{item.valorTransporte ? fmtMoeda(item.valorTransporte) : '—'}</td>
                       <td style={{ ...s.tdR, fontWeight: 'bold', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
@@ -951,7 +1029,7 @@ export const Extrato: React.FC = () => {
                 </tbody>
                 <tfoot>
                   <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
-                    <td colSpan={8} style={{ padding: '8px 10px', fontSize: '12px' }}>
+                    <td colSpan={9} style={{ padding: '8px 10px', fontSize: '12px' }}>
                       TOTAIS ({filteredItems.length} lançamentos)
                     </td>
                     <td style={{ padding: '8px 10px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>

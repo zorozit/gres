@@ -92,7 +92,26 @@ interface FolhaMensal {
   dataPgtoAdiantamento?: string;
   pagoVariavel: boolean;
   dataPgtoVariavel?: string;
+  // Conferência contábil: campos do PDF (Cód.16 = 40% salBase, arredondamentos)
+  adtoContabil: number;        // Cód.16: 40% exato do salário base (sem periculosidade)
+  arredondamentoPos: number;   // Cód.19: centavos positivos para fechar no inteiro
+  arredondamentoNeg: number;   // Cód.20: centavos negativos do período anterior
+  adtoLiquido: number;         // Líquido que a contabilidade paga (número inteiro)
+  // Log de pagamentos (PIX/Dinheiro/Misto)
+  logPagamentos?: PagamentoRegistrado[];
   raw?: any;
+}
+
+/** Registro individual de pagamento (PIX, Dinheiro ou parte de cada) */
+interface PagamentoRegistrado {
+  id: string;           // uuid gerado no frontend
+  data: string;         // AAAA-MM-DD
+  valor: number;
+  forma: 'PIX' | 'Dinheiro' | 'Misto';
+  valorPix?: number;    // só quando forma=Misto
+  valorDinheiro?: number;
+  tipo: 'Adiantamento' | 'Variável' | 'Outro';
+  obs?: string;
 }
 
 /** Resumo semanal de fechamento para freelancers */
@@ -408,12 +427,18 @@ export default function FolhaPagamento() {
       const adiantValor = parseFloat((salBruto * adiantPct).toFixed(2));
       const difSal = parseFloat((salBruto - adiantValor).toFixed(2));
       const saldoFinal = difSal - inss - contrAssist;
+      // Cálculo contábil: Cód.16 = 40% do salário BASE (sem periculosidade)
+      const adtoContabil = parseFloat((salBase * 0.40).toFixed(2));
+      const adtoLiquido = Math.floor(adtoContabil); // número inteiro (liquido real)
+      const arredPos = parseFloat((adtoLiquido + 1 - adtoContabil > 0 && adtoContabil % 1 !== 0 ? adtoLiquido + 1 - adtoContabil : 0).toFixed(2));
+      const arredNeg = parseFloat((adtoContabil - adtoLiquido > 0 ? adtoContabil - adtoLiquido : 0).toFixed(2));
       const salva = folhasDB.find(f => f.colaboradorId === c.id);
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
         salarioBase: salBase, periculosidade: salBase * peri, inss, contrAssistencial: contrAssist,
         adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
+        adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
         diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
@@ -422,6 +447,7 @@ export default function FolhaPagamento() {
         dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
         pagoVariavel: salva?.pagoVariavel || false,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
+        logPagamentos: salva?.logPagamentos || [],
         raw: c,
       });
     }
@@ -464,12 +490,19 @@ export default function FolhaPagamento() {
       const descontos = inss + contrAssist;
       const saldoFinal = parseFloat((totalVariavel + salBruto - descontos).toFixed(2));
       const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
+      // Cálculo contábil motoboy: Cód.16 = 40% do salário BASE (sem periculosidade)
+      const adtoContabilMoto = parseFloat((salBase * 0.40).toFixed(2));
+      const adtoLiquidoMoto = Math.floor(adtoContabilMoto);
+      const arredPosMoto = parseFloat((adtoLiquidoMoto + 1 - adtoContabilMoto > 0 && adtoContabilMoto % 1 !== 0 ? adtoLiquidoMoto + 1 - adtoContabilMoto : 0).toFixed(2));
+      const arredNegMoto = parseFloat((adtoContabilMoto - adtoLiquidoMoto > 0 ? adtoContabilMoto - adtoLiquidoMoto : 0).toFixed(2));
       const salva = folhasDB.find(f => f.colaboradorId === m.id);
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
         salarioBase: salBase, periculosidade: periculosidadeValor, inss, contrAssistencial: contrAssist,
         adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
+        adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
+        arredondamentoPos: arredPosMoto, arredondamentoNeg: arredNegMoto,
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
@@ -478,6 +511,7 @@ export default function FolhaPagamento() {
         dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
         pagoVariavel: salva?.pagoVariavel || false,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
+        logPagamentos: salva?.logPagamentos || [],
         raw: m,
       });
     }
@@ -1302,39 +1336,207 @@ export default function FolhaPagamento() {
 
   /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
   // Hook called unconditionally (React rules) — state persists across renders
-  const [dataLocalCLT, setDataLocalCLT] = useState(new Date().toISOString().split('T')[0]);
-  // Reset date whenever modal opens
+  /* ── Estado do modal de pagamento com forma (PIX/Dinheiro/Misto) ── */
+  const [modalPgtoTipo, setModalPgtoTipo] = useState<'Adiantamento' | 'Variável'>('Adiantamento');
+  interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
+  const novaPgtoLinha = (): LinhaPgto => ({ id: Date.now().toString(), data: new Date().toISOString().split('T')[0], forma: 'PIX', valor: '', valorPix: '', valorDinheiro: '', obs: '' });
+  const [pgtoLinhas, setPgtoLinhas] = useState<LinhaPgto[]>([novaPgtoLinha()]);
+
   useEffect(() => {
-    if (modalPagamento) setDataLocalCLT(new Date().toISOString().split('T')[0]);
+    if (modalPagamento) {
+      setModalPgtoTipo('Adiantamento');
+      setPgtoLinhas([novaPgtoLinha()]);
+    }
   }, [modalPagamento]);
+
+  const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
+
+  const salvarPagamentoModal = async () => {
+    if (!modalPagamento) return;
+    const hoje2 = new Date().toISOString().split('T')[0];
+    const registros: PagamentoRegistrado[] = pgtoLinhas
+      .filter(l => parseFloat(l.valor) > 0)
+      .map(l => ({
+        id: l.id,
+        data: l.data || hoje2,
+        valor: parseFloat(l.valor),
+        forma: l.forma,
+        valorPix: l.forma === 'Misto' ? parseFloat(l.valorPix) || 0 : undefined,
+        valorDinheiro: l.forma === 'Misto' ? parseFloat(l.valorDinheiro) || 0 : undefined,
+        tipo: modalPgtoTipo,
+        obs: l.obs || undefined,
+      }));
+    if (registros.length === 0) { alert('Adicione ao menos um pagamento com valor.'); return; }
+    const dataPrimeiro = registros[0].data;
+    setSalvando(true);
+    try {
+      const existingLogs = modalPagamento.logPagamentos || [];
+      const newLogs = [...existingLogs, ...registros];
+      const isPagoAdto = modalPgtoTipo === 'Adiantamento' ? true : (modalPagamento.pagoAdiantamento);
+      const isPagoVar = modalPgtoTipo === 'Variável' ? true : (modalPagamento.pagoVariavel);
+      const payload = {
+        colaboradorId: modalPagamento.colaboradorId,
+        mes: mesAno, unitId,
+        pago: isPagoAdto,
+        dataPagamento: isPagoAdto ? dataPrimeiro : modalPagamento.dataPagamento,
+        pagoAdiantamento: isPagoAdto,
+        dataPgtoAdiantamento: isPagoAdto ? dataPrimeiro : modalPagamento.dataPgtoAdiantamento,
+        pagoVariavel: isPagoVar,
+        dataPgtoVariavel: isPagoVar ? dataPrimeiro : modalPagamento.dataPgtoVariavel,
+        saldoFinal: modalPagamento.saldoFinal,
+        logPagamentos: newLogs,
+      };
+      await fetch(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(payload),
+      });
+      setFolhasLocais(prev => prev.map(f =>
+        f.colaboradorId === modalPagamento.colaboradorId
+          ? { ...f, pagoAdiantamento: isPagoAdto, dataPgtoAdiantamento: isPagoAdto ? dataPrimeiro : f.dataPgtoAdiantamento,
+              pagoVariavel: isPagoVar, dataPgtoVariavel: isPagoVar ? dataPrimeiro : f.dataPgtoVariavel,
+              pago: isPagoAdto, logPagamentos: newLogs }
+          : f
+      ));
+      setModalPagamento(null);
+    } catch { alert('Erro ao salvar pagamento'); }
+    finally { setSalvando(false); }
+  };
 
   const ModalConfirmarPagamentoCLT = () => {
     if (!modalPagamento) return null;
+    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? modalPagamento.adtoLiquido : modalPagamento.totalVariavel;
+    const diff = totalPgtoLinhas - valorReferencia;
     return (
-      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalPagamento(null)}>
-        <div style={{ ...s.card, maxWidth: '380px', width: '94%', padding: '24px' }}
+        <div style={{ ...s.card, maxWidth: '560px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}
           onClick={e => e.stopPropagation()}>
-          <h3 style={{ margin: '0 0 16px', color: '#2e7d32' }}>✅ Confirmar Pagamento</h3>
-          <p style={{ margin: '0 0 4px', fontSize: '14px', color: '#333' }}>
-            <strong>{modalPagamento.nome}</strong>
-          </p>
-          <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#666' }}>
-            Saldo: <strong style={{ color: '#1976d2' }}>{fmtMoeda(modalPagamento.saldoFinal)}</strong>
-          </p>
-          <label style={{ ...s.label }}>Data do pagamento</label>
-          <input
-            type="date"
-            value={dataLocalCLT}
-            onChange={e => setDataLocalCLT(e.target.value)}
-            style={{ ...s.input, marginBottom: '16px' }}
-          />
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              onClick={async () => { setModalPagamento(null); await handleTogglePago(modalPagamento, dataLocalCLT); }}
-              style={s.btn('#43a047')}>✅ Confirmar
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0, color: '#2e7d32' }}>💳 Registrar Pagamento</h3>
+            <button onClick={() => setModalPagamento(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+
+          {/* Info colaborador */}
+          <div style={{ backgroundColor: '#e8f5e9', borderRadius: '6px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', borderLeft: '4px solid #2e7d32' }}>
+            <strong>{modalPagamento.nome}</strong> &middot; {modalPagamento.cargo}
+            <div style={{ marginTop: '6px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
+              <span>💵 Adto Líquido: <strong>{fmtMoeda(modalPagamento.adtoLiquido)}</strong></span>
+              {modalPagamento.totalVariavel > 0 && <span>📦 Variável: <strong>{fmtMoeda(modalPagamento.totalVariavel)}</strong></span>}
+              {modalPagamento.chavePix && <span>📲 PIX: <strong>{modalPagamento.chavePix}</strong></span>}
+            </div>
+          </div>
+
+          {/* Tipo de pagamento */}
+          <div style={{ marginBottom: '14px' }}>
+            <label style={s.label}>Tipo de pagamento *</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {(['Adiantamento', 'Variável'] as const).filter(t => t !== 'Variável' || modalPagamento.totalVariavel > 0).map(t => (
+                <button key={t} onClick={() => setModalPgtoTipo(t)}
+                  style={{ ...s.btn(modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e'), padding: '6px 16px', fontSize: '13px',
+                    outline: modalPgtoTipo === t ? '2px solid #1b5e20' : 'none' }}>
+                  {t === 'Adiantamento' ? '🏦 Adiantamento (Ctr. contabilidade)' : '📦 Variável (entregas/dobras)'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Linhas de pagamento */}
+          <div style={{ marginBottom: '10px' }}>
+            <label style={s.label}>💰 Lançamentos de pagamento</label>
+            {pgtoLinhas.map((linha, idx) => (
+              <div key={linha.id} style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', marginBottom: '8px', backgroundColor: '#fafafa' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div style={{ flex: '0 0 120px' }}>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Data</label>
+                    <input type="date" value={linha.data}
+                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, data: e.target.value } : l))}
+                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                  </div>
+                  <div style={{ flex: '0 0 110px' }}>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Forma *</label>
+                    <select value={linha.forma}
+                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, forma: e.target.value as any } : l))}
+                      style={{ ...s.select, fontSize: '12px', padding: '6px' }}>
+                      <option value="PIX">📱 PIX</option>
+                      <option value="Dinheiro">💵 Dinheiro</option>
+                      <option value="Misto">🔄 Misto</option>
+                    </select>
+                  </div>
+                  <div style={{ flex: '0 0 110px' }}>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Valor total (R$) *</label>
+                    <input type="number" step="0.01" min="0" value={linha.valor} placeholder="0,00"
+                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valor: e.target.value } : l))}
+                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                  </div>
+                  {linha.forma === 'Misto' && (
+                    <>
+                      <div style={{ flex: '0 0 100px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>disso PIX</label>
+                        <input type="number" step="0.01" min="0" value={linha.valorPix} placeholder="0,00"
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorPix: e.target.value } : l))}
+                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                      </div>
+                      <div style={{ flex: '0 0 100px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>disso Dinheiro</label>
+                        <input type="number" step="0.01" min="0" value={linha.valorDinheiro} placeholder="0,00"
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorDinheiro: e.target.value } : l))}
+                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                      </div>
+                    </>
+                  )}
+                  <div style={{ flex: '1', minWidth: '120px' }}>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Obs</label>
+                    <input type="text" value={linha.obs} placeholder="opcional"
+                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, obs: e.target.value } : l))}
+                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                  </div>
+                  {pgtoLinhas.length > 1 && (
+                    <button onClick={() => setPgtoLinhas(prev => prev.filter((_, i) => i !== idx))}
+                      style={{ ...s.btn('#e53935'), padding: '6px 10px', fontSize: '12px', alignSelf: 'flex-end' }}>🗑</button>
+                  )}
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setPgtoLinhas(prev => [...prev, novaPgtoLinha()])}
+              style={{ ...s.btn('#1565c0'), padding: '6px 14px', fontSize: '12px' }}>+ Adicionar lançamento</button>
+          </div>
+
+          {/* Conferência */}
+          <div style={{ backgroundColor: Math.abs(diff) < 0.05 ? '#e8f5e9' : '#fff3e0', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Total lançado: <strong>{fmtMoeda(totalPgtoLinhas)}</strong></span>
+              <span>Referência ({modalPgtoTipo}): <strong>{fmtMoeda(valorReferencia)}</strong></span>
+              <span style={{ color: Math.abs(diff) < 0.05 ? '#2e7d32' : diff > 0 ? '#c62828' : '#e65100', fontWeight: 'bold' }}>
+                {Math.abs(diff) < 0.05 ? '✅ Confere' : diff > 0 ? `⚠️ +${fmtMoeda(diff)} a mais` : `⚠️ ${fmtMoeda(diff)} faltando`}
+              </span>
+            </div>
+          </div>
+
+          {/* Histórico de pagamentos já registrados */}
+          {(modalPagamento.logPagamentos || []).length > 0 && (
+            <div style={{ marginBottom: '14px' }}>
+              <label style={s.label}>📜 Histórico de pagamentos registrados</label>
+              {(modalPagamento.logPagamentos || []).map((p, i) => (
+                <div key={i} style={{ display: 'flex', gap: '8px', padding: '6px 10px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '4px', fontSize: '12px', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 'bold', color: '#1b5e20' }}>{fmtMoeda(p.valor)}</span>
+                  <span style={{ color: p.forma === 'PIX' ? '#1565c0' : p.forma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                    {p.forma === 'PIX' ? '📱 PIX' : p.forma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                  </span>
+                  <span style={{ color: '#666' }}>{p.data}</span>
+                  <span style={{ color: '#9e9e9e', fontSize: '11px' }}>{p.tipo}</span>
+                  {p.obs && <span style={{ color: '#888', fontStyle: 'italic' }}>{p.obs}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+            <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0}
+              style={s.btn('#43a047')}>
+              {salvando ? '⏳ Salvando...' : '✅ Confirmar Pagamento'}
+            </button>
           </div>
         </div>
       </div>
@@ -1443,6 +1645,11 @@ export default function FolhaPagamento() {
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto dia 05</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Saldo Final</th>
+                      {/* Colunas de conferência contábil (PDF da contabilidade) */}
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.16 Adto</th>
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.19 Arr.+</th>
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.20 Arr.−</th>
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#311b92', fontSize: '11px' }}>Líquido ADTO</th>
                       <th style={{ ...s.thC, backgroundColor: '#1b5e20' }}>Adiantamento</th>
                       <th style={{ ...s.thC, backgroundColor: '#e65100' }}>Variável</th>
                       <th style={s.thC}>Ações</th>
@@ -1473,6 +1680,14 @@ export default function FolhaPagamento() {
                         <td style={{ ...s.tdR, fontWeight: 'bold', color: f.saldoFinal >= 0 ? '#2e7d32' : '#c62828' }}>
                           {fmtMoeda(f.saldoFinal)}
                         </td>
+                        {/* Cód.16: 40% do salário base (sem periculosidade) */}
+                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{fmtMoeda(f.adtoContabil)}</td>
+                        {/* Cód.19: arredondamento positivo */}
+                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoPos > 0 ? fmtMoeda(f.arredondamentoPos) : '—'}</td>
+                        {/* Cód.20: arredondamento negativo */}
+                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoNeg > 0 ? fmtMoeda(f.arredondamentoNeg) : '—'}</td>
+                        {/* Líquido = inteiro (o que a contabilidade paga) */}
+                        <td style={{ ...s.tdR, color: '#311b92', fontWeight: 'bold', fontSize: '12px' }}>{fmtMoeda(f.adtoLiquido)}</td>
                         {/* Coluna Adiantamento (fixo contábil) */}
                         <td style={{ ...s.td, textAlign: 'center' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
@@ -1543,6 +1758,10 @@ export default function FolhaPagamento() {
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.contrAssistencial, 0))}</td>
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#b3e5fc' }}>{fmtMoeda(totais.pgto05)}</td>
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>{fmtMoeda(totais.saldo)}</td>
+                      {/* totais conferencia contabil */}
+                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px', color: '#ce93d8' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.adtoContabil, 0))}</td>
+                      <td /><td />
+                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '12px', color: '#b39ddb', fontWeight: 'bold' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.adtoLiquido, 0))}</td>
                       <td colSpan={3} />
                     </tr>
                   </tfoot>
