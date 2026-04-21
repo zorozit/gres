@@ -142,6 +142,9 @@ interface FechamentoSemanalFreelancer {
     caixinhaDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes caixinha
     pendentesAnteriores: any[];     // Saídas pendentes de meses anteriores a descontar
     saldoEspecialAberto: number;    // Saldo de adiantamento especial em aberto (histórico)
+    diasPagos: { data: string; turno: string; valor: number }[]; // analítico por dia
+    periodoInicio: string;          // YYYY-MM-DD início real do período pago
+    periodoFim: string;             // YYYY-MM-DD fim real do período pago
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
@@ -592,15 +595,26 @@ export default function FolhaPagamento() {
           statusPresencaEscala(e) === 'presente'
         );
 
+        // Analítico por dia para auditoria
+        const diasPagos: { data: string; turno: string; valor: number }[] = [];
         let total = 0;
         if (usaTurno) {
           for (const esc of escalasSemanaConfirmadas) {
-            if (esc.turno === 'DiaNoite') total += vDia + vNoite;
-            else if (esc.turno === 'Dia')   total += vDia;
-            else if (esc.turno === 'Noite') total += vNoite;
+            let vDia2 = 0;
+            if (esc.turno === 'DiaNoite') vDia2 = vDia + vNoite;
+            else if (esc.turno === 'Dia')   vDia2 = vDia;
+            else if (esc.turno === 'Noite') vDia2 = vNoite;
+            total += vDia2;
+            diasPagos.push({ data: esc.data, turno: esc.turno, valor: vDia2 });
           }
         } else {
           total = parseFloat((dobras * vDobra).toFixed(2));
+          for (const esc of escalasSemanaConfirmadas) {
+            let dobrasEsc = 0;
+            if (esc.turno === 'DiaNoite') dobrasEsc = 2;
+            else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobrasEsc = 1;
+            diasPagos.push({ data: esc.data, turno: esc.turno, valor: parseFloat((dobrasEsc * vDobra).toFixed(2)) });
+          }
         }
         total = parseFloat(total.toFixed(2));
 
@@ -682,6 +696,9 @@ export default function FolhaPagamento() {
           diasCodigo, diasTrabalhados,
           pendentesAnteriores,
           saldoEspecialAberto,
+          diasPagos,      // analítico por dia para auditoria
+          periodoInicio: isoInicio,  // início real do período (pode ser customizado)
+          periodoFim:    isoFim,     // fim real do período (pode ser customizado)
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -1246,6 +1263,10 @@ export default function FolhaPagamento() {
                     semana: fech.dataFechamento, unitId,
                     pago: true,
                     dataPagamento: dataLocalFreelancer,
+                    // Período real pago (integridade e auditoria)
+                    periodoInicio: fr.periodoInicio,
+                    periodoFim:    fr.periodoFim,
+                    diasPagos:     fr.diasPagos,   // analítico linha a linha
                     valorBruto:          inclDobras ? fr.total : 0,
                     valorTransporte:     inclTransporte ? fr.transporteSaldo : 0,
                     transporteCalculado: fr.totalTransporte || 0,
