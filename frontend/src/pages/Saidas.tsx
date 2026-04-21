@@ -32,7 +32,7 @@ interface Categoria {
   dir: 'saida' | 'entrada' | 'neutro';
   hint: string;
   grupo: 'colaborador' | 'caixa';
-  regraFolha?: 'abate_transporte' | 'desconto_liquido' | 'credito_liquido' | 'adiantamento_clt' | null;
+  regraFolha?: 'abate_transporte' | 'desconto_transporte' | 'desconto_liquido' | 'credito_liquido' | 'adiantamento_clt' | 'saldo_especial' | 'abate_especial' | null;
   bg: string; text: string; border: string;
 }
 
@@ -55,6 +55,24 @@ const CATEGORIAS: Categoria[] = [
     dir: 'saida', grupo: 'colaborador', regraFolha: 'abate_transporte',
     hint: 'Transporte pago antecipado ao colaborador. Será abatido automaticamente do transporte calculado na semana de dobras (Folha → Freelancers).',
     bg: '#fff3e0', text: '#e65100', border: '#ffcc80',
+  },
+  {
+    value: 'Desconto Transporte', label: 'Desconto Transporte', emoji: '🚌',
+    dir: 'entrada', grupo: 'colaborador', regraFolha: 'desconto_transporte',
+    hint: 'Desconto/abatimento manual da carteira de transporte. Útil para registrar devolução parcelada sem perder o saldo histórico.',
+    bg: '#fff8e1', text: '#ef6c00', border: '#ffcc80',
+  },
+  {
+    value: 'Adiantamento Especial', label: 'Adiantamento Especial', emoji: '💸',
+    dir: 'saida', grupo: 'colaborador', regraFolha: 'saldo_especial',
+    hint: 'Empréstimo / adiantamento especial pago agora ao colaborador. O saldo fica aberto para abatimentos parcelados nas semanas seguintes.',
+    bg: '#f3e5f5', text: '#6a1b9a', border: '#ce93d8',
+  },
+  {
+    value: 'Desconto Adiantamento Especial', label: 'Desconto Adiantamento Especial', emoji: '🧾',
+    dir: 'entrada', grupo: 'colaborador', regraFolha: 'abate_especial',
+    hint: 'Parcela semanal do adiantamento especial. Deve ser lançada a cada abatimento para reduzir o saldo em aberto e descontar do líquido.',
+    bg: '#ede7f6', text: '#4527a0', border: '#b39ddb',
   },
   {
     value: 'Caixinha', label: 'Caixinha 🪙 (gorjeta a pagar)', emoji: '🪙',
@@ -484,6 +502,7 @@ export const Saidas: React.FC = () => {
                     <small style={{ color: '#888' }}>
                       Usada para cruzamento com semanas na Folha de Pagamento.
                       {catAtual.regraFolha === 'abate_transporte' && ' Deve estar dentro da semana de dobras para abater o transporte.'}
+                      {catAtual.regraFolha === 'abate_especial' && ' Deve estar dentro da semana/parcela em que o desconto do adiantamento especial será abatido.'}
                     </small>
                   </div>
 

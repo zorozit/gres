@@ -549,9 +549,9 @@ export default function FolhaPagamento() {
           data: saidaData(s),
         }));
 
-        // Descontos reais: apenas 'A receber' e 'Consumo Interno' (dëvida do colaborador)
-        // 'Caixinha' foi retirado desta lista — agora é crédito
-        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Consumo Interno'];
+        // Descontos reais do colaborador: vale/empréstimo, consumo e parcelas de adiantamento especial
+        // 'Caixinha' permanece como crédito e não entra nesta lista
+        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
         const saidasDescFreelancer = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
           TIPOS_DESCONTO_FREELANCER.includes(s.tipo || s.origem || s.referencia || '') &&
@@ -1919,7 +1919,7 @@ export default function FolhaPagamento() {
                       <em> "🚗 Adiantamento Transporte"</em> e informe o valor pago. O sistema abate automaticamente
                       esse valor do transporte calculado na semana correspondente e mostra o saldo restante.
                     </li>
-                    <li><strong>🔴 Descontos (A receber)</strong>: lan\u00e7amentos tipo <em>"A receber"</em> em Sa\u00eddas (vale, empr\u00e9stimo, etc.) s\u00e3o descontados automaticamente do l\u00edquido da semana.</li>
+                    <li><strong>🔴 Descontos automáticos</strong>: lançamentos tipo <em>"A receber"</em>, <em>"Consumo Interno"</em> e <em>"Desconto Adiantamento Especial"</em> em Saídas são descontados automaticamente do líquido da semana.</li>
                     <li><strong>Ajuste manual</strong>: use os campos <em>Extra / Desconto</em> no cabe\u00e7alho de cada semana para corre\u00e7\u00f5es avulsas que n\u00e3o se enquadram nos tipos acima.</li>
                   </ul>
                 </div>

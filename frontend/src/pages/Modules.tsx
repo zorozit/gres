@@ -88,6 +88,15 @@ export const Modules: React.FC = () => {
       adminRequired: true,
     },
     {
+      id: 'adiantamentos-saldos',
+      icon: '🧾',
+      title: 'Empréstimos e Saldos',
+      description: 'Controle adiantamentos especiais, parcelas semanais e saldos em aberto',
+      path: '/modulos/adiantamentos-saldos',
+      color: '#7b1fa2',
+      adminRequired: true,
+    },
+    {
       id: 'importacoes-contabeis',
       icon: '📥',
       title: 'Importações Contábeis',

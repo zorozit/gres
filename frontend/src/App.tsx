@@ -15,6 +15,7 @@ import { Motoboys } from './pages/Motoboys';
 import { UsuariosEdicao } from './pages/UsuariosEdicao';
 import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
+import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
 import './App.css';
 
@@ -122,6 +123,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Extrato />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/modulos/adiantamentos-saldos"
+              element={
+                <ProtectedRoute>
+                  <AdiantamentosSaldos />
                 </ProtectedRoute>
               }
             />

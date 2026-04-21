@@ -35,19 +35,23 @@ interface ExtratoItem {
 // Categorias de saída — créditos (a receber pelo colaborador) primeiro, depois débitos (descontos)
 const TIPOS_SAIDA = [
   // ── Créditos (valor pago AO colaborador) ──
-  'A pagar',              // pagamento normal / folha
-  'Adiantamento Salário', // adiantamento
+  'A pagar',
+  'Adiantamento Salário',
   'Adiantamento Transporte',
-  'Caixinha',             // gorjeta / bônus recebido pelo colaborador
-  'PIX',                  // transferência ao colaborador
-  'Caixa',                // retirada do caixa pelo colaborador
+  'Adiantamento Especial',
+  'Caixinha',
+  'PIX',
+  'Caixa',
   // ── Débitos (desconto DO colaborador) ──
-  'Consumo Interno',      // consumo de produto descontado
-  'Desconto',             // desconto genérico
-  'Sangria',              // sangria de caixa (a acertar)
+  'A receber',
+  'Consumo Interno',
+  'Desconto',
+  'Desconto Transporte',
+  'Desconto Adiantamento Especial',
+  'Sangria',
 ];
 // Categorias que representam DÉBITO (descontado do colaborador — valor negativo)
-const TIPOS_DEBITO = ['Consumo Interno', 'Desconto', 'Sangria'];
+const TIPOS_DEBITO = ['A receber', 'Consumo Interno', 'Desconto', 'Desconto Transporte', 'Desconto Adiantamento Especial', 'Sangria'];
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
