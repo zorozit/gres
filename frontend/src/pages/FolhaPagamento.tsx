@@ -117,7 +117,9 @@ interface PagamentoRegistrado {
 /** Resumo semanal de fechamento para freelancers */
 interface FechamentoSemanalFreelancer {
   semanaLabel: string;           // Ex: "01/03 – 07/03"
-  dataFechamento: string;        // YYYY-MM-DD
+  dataFechamento: string;        // YYYY-MM-DD (pode ser customizado)
+  dataFechamentoBase: string;    // YYYY-MM-DD original (chave do editFechamento)
+  dataInicioBase: string;        // YYYY-MM-DD início original da semana
   freelancers: {
     id: string;
     nome: string;
@@ -295,7 +297,7 @@ export default function FolhaPagamento() {
   const [salvando, setSalvando] = useState(false);
 
   // Campos editáveis do fechamento semanal (combustível, extra, desconto, obs)
-  const [editFechamento, setEditFechamento] = useState<Record<string, { combustivel: string; extra: string; desconto: string; obs: string }>>({});
+  const [editFechamento, setEditFechamento] = useState<Record<string, { combustivel: string; extra: string; desconto: string; obs: string; dataIniCustom?: string; dataFimCustom?: string }>>({});
 
   // Interface DobraSemanalCLT (used inline in tab)
   // Valores editados pelo gestor (valorDia, valorNoite, totalBruto overrides)
@@ -560,8 +562,16 @@ export default function FolhaPagamento() {
     const semanas = semanasFechamento(ano, mes);
 
     const fechamentos: FechamentoSemanalFreelancer[] = semanas.map(({ inicio, fim }) => {
-      const isoInicio = fmtDataISO(inicio);
-      const isoFim = fmtDataISO(fim);
+      const isoInicioBase = fmtDataISO(inicio);
+      const isoFimBase = fmtDataISO(fim);
+      // Permitir customização do período por semana
+      const efBase = editFechamento[isoFimBase] || {};
+      const isoInicio = efBase.dataIniCustom || isoInicioBase;
+      const isoFim    = efBase.dataFimCustom || isoFimBase;
+      // Label dinâmico reflete o período real
+      const [iniD, iniM] = isoInicio.split('-').slice(1).map(Number);
+      const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
+      const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} – ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
 
       const frList = freelancers.map(f => {
         const escalasSemana = escalas.filter(e =>
@@ -676,7 +686,7 @@ export default function FolhaPagamento() {
         };
       }).filter(fr => fr.dobras > 0);
 
-      const key = isoFim;
+      const key = isoFimBase; // chave sempre baseada no fim original da semana
       const ef = editFechamento[key] || {};
       const combustivel = parseFloat(ef.combustivel || '0') || 0;
       const extra = parseFloat(ef.extra || '0') || 0;
@@ -689,8 +699,10 @@ export default function FolhaPagamento() {
       const totalCaixinhaSemana = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
 
       return {
-        semanaLabel: `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
-        dataFechamento: isoFim,
+        semanaLabel: (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
+        dataFechamento: isoFim, // usa o fim customizado como chave de pagamento
+        dataFechamentoBase: isoFimBase, // chave original (para editFechamento)
+        dataInicioBase: isoInicioBase, // início original (para o input de data)
         freelancers: frList,
         totalSemana,
         totalCaixinha: totalCaixinhaSemana,           // caixinha total a pagar na semana
@@ -2444,18 +2456,42 @@ export default function FolhaPagamento() {
 
                 {/* Fechamento por semana */}
                 {fechamentosFreelancer.map((fech) => {
-                  const key = fech.dataFechamento;
+                  const key = fech.dataFechamentoBase;
                   const ef = editFechamento[key] || { combustivel: '0', extra: '0', desconto: '0', obs: '' };
                   const updateEf = (campo: string, val: string) => setEditFechamento(prev => ({
                     ...prev, [key]: { ...ef, [campo]: val }
                   }));
+                  const periodoCustomizado = !!(ef.dataIniCustom || ef.dataFimCustom);
                   return (
-                    <div key={key} style={{ ...s.card, marginBottom: '16px', borderTop: '3px solid #c2185b' }}>
+                    <div key={key} style={{ ...s.card, marginBottom: '16px', borderTop: `3px solid ${periodoCustomizado ? '#7b1fa2' : '#c2185b'}` }}>
                       {/* Cabeçalho da semana */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                        <h4 style={{ margin: 0, color: '#c2185b', fontSize: '15px' }}>
-                          📅 Semana {fech.semanaLabel}
-                        </h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                        <div>
+                          <h4 style={{ margin: '0 0 6px', color: periodoCustomizado ? '#7b1fa2' : '#c2185b', fontSize: '15px' }}>
+                            📅 Semana {fech.semanaLabel}
+                            {periodoCustomizado && <span style={{ fontSize: '11px', marginLeft: '8px', backgroundColor: '#f3e5f5', color: '#7b1fa2', padding: '1px 6px', borderRadius: '8px' }}>período ajustado</span>}
+                          </h4>
+                          {/* Ajuste de período */}
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '12px', color: '#888' }}>Período:</span>
+                            <input type="date" value={ef.dataIniCustom || fech.dataInicioBase}
+                              onChange={e => updateEf('dataIniCustom', e.target.value)}
+                              style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
+                            <span style={{ fontSize: '12px', color: '#888' }}>até</span>
+                            <input type="date" value={ef.dataFimCustom || fech.dataFechamentoBase}
+                              onChange={e => updateEf('dataFimCustom', e.target.value)}
+                              style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
+                            {periodoCustomizado && (
+                              <button onClick={() => setEditFechamento(prev => ({
+                                ...prev, [key]: { ...ef, dataIniCustom: '', dataFimCustom: '' }
+                              }))}
+                                style={{ padding: '2px 8px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#f3e5f5', color: '#7b1fa2', cursor: 'pointer' }}
+                                title="Restaurar período original">
+                                ↩ restaurar
+                              </button>
+                            )}
+                          </div>
+                        </div>
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '13px', color: '#666' }}>Combustível:</span>
                           <input type="number" step="10" min="0" value={ef.combustivel || '0'}
