@@ -136,7 +136,7 @@ export const AdiantamentosSaldos: React.FC = () => {
   const [mesesHistorico, setMesesHistorico] = useState('12');
   const [buscaColaborador, setBuscaColaborador] = useState('');
   const [filtroCarteira, setFiltroCarteira] = useState<'todas' | Carteira>('todas');
-  const [somenteComSaldo, setSomenteComSaldo] = useState(true);
+  const [somenteComSaldo, setSomenteComSaldo] = useState(false);
   const [colaboradorDetalhe, setColaboradorDetalhe] = useState('');
 
   const token = () => localStorage.getItem('auth_token');

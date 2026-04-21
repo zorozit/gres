@@ -305,8 +305,8 @@ export const Motoboys: React.FC = () => {
   // Escalas do motoboy selecionado no mês (para confirmar presença e calcular chegadas)
   const [escalasControle, setEscalasControle] = useState<EscalaMotoboy[]>([]);
 
-  // Modo de visualização do controle
-  const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('integrado');
+  // Modo de visualização do controle — padrão sempre Manual
+  const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('manual');
   const [mostrarSaidas, setMostrarSaidas] = useState(false);
 
   // Status de pagamento semanal (folha-pagamento)
@@ -1132,8 +1132,15 @@ export const Motoboys: React.FC = () => {
                                   </td>
                                 ))}
                                 {showChegada && (
-                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R(l.chegadaDia) > 0 ? <strong style={{ color: '#e65100' }}>R${fmt(l.chegadaDia)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  <td key="chegadaDia" style={s.td}>
+                                    <input
+                                      type="number" step="0.01" min="0"
+                                      style={s.numInput}
+                                      value={R(l.chegadaDia) || ''}
+                                      onChange={e => handleCampoControle(idx, 'chegadaDia', e.target.value)}
+                                      onFocus={e => e.target.select()}
+                                      placeholder="0"
+                                    />
                                   </td>
                                 )}
                                 {(['entNoite', 'caixinhaNoite'] as const).map(campo => (
@@ -1149,8 +1156,15 @@ export const Motoboys: React.FC = () => {
                                   </td>
                                 ))}
                                 {showChegada && (
-                                  <td style={{ ...s.td, textAlign: 'center' as const }}>
-                                    {R(l.chegadaNoite) > 0 ? <strong style={{ color: '#7b1fa2' }}>R${fmt(l.chegadaNoite)}</strong> : <span style={{ color: '#ccc' }}>-</span>}
+                                  <td key="chegadaNoite" style={s.td}>
+                                    <input
+                                      type="number" step="0.01" min="0"
+                                      style={s.numInput}
+                                      value={R(l.chegadaNoite) || ''}
+                                      onChange={e => handleCampoControle(idx, 'chegadaNoite', e.target.value)}
+                                      onFocus={e => e.target.select()}
+                                      placeholder="0"
+                                    />
                                   </td>
                                 )}
                                 {(['vlVariavel', 'pgto'] as const).map(campo => (
