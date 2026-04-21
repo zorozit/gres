@@ -424,8 +424,11 @@ export default function FolhaPagamento() {
       const inss = calcINSS(salBruto);
       const contrAssist = 0;
       const adiantPct = 0.40;
-      const adiantValor = parseFloat((salBruto * adiantPct).toFixed(2));
-      const difSal = parseFloat((salBruto - adiantValor).toFixed(2));
+      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) — padrão contabilidade
+      const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
+      // Diferença = 60% salBase + periculosidade (paga no dia 05)
+      const periBruto = salBase * peri;
+      const difSal = parseFloat((salBase * (1 - adiantPct) + periBruto).toFixed(2));
       const saldoFinal = difSal - inss - contrAssist;
       // Cálculo contábil: Cód.16 = 40% do salário BASE (sem periculosidade)
       const adtoContabil = parseFloat((salBase * 0.40).toFixed(2));
@@ -485,8 +488,10 @@ export default function FolhaPagamento() {
       varAte19 = parseFloat(varAte19.toFixed(2));
       varDe20a31 = parseFloat(varDe20a31.toFixed(2));
       const totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
-      const adiantValor = parseFloat((salBruto * 0.40).toFixed(2));
-      const difSal = parseFloat((salBruto * 0.60).toFixed(2));
+      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) — igual ao PDF Cód.16
+      const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
+      // Diferença = 60% salBase + periculosidade total (paga no dia 05)
+      const difSal = parseFloat((salBase * 0.60 + periculosidadeValor).toFixed(2));
       const descontos = inss + contrAssist;
       const saldoFinal = parseFloat((totalVariavel + salBruto - descontos).toFixed(2));
       const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
@@ -1767,9 +1772,9 @@ export default function FolhaPagamento() {
                   </tfoot>
                 </table>
                 <div style={{ marginTop: '10px', fontSize: '11px', color: '#666', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                  <span>🟠 <strong>Pgto dia 20</strong> = variável até 19 + adiantamento 40% sal.</span>
-                  <span>🔵 <strong>Pgto dia 05</strong> = variável 20–31 + diferença sal. (60%) − INSS − contr. assist.</span>
-                  <span>🟣 <strong>Periculosidade</strong>: CLT motoboy = 30% sobre salário base</span>
+                  <span>🟠 <strong>Pgto dia 20</strong> = variável até 19 + adiantamento (40% sal. base)</span>
+                  <span>🔵 <strong>Pgto dia 05</strong> = variável 20–31 + 60% sal. base + periculosidade − INSS − contr. assist.</span>
+                  <span>🟣 <strong>Periculosidade</strong>: 30% sobre salário base — paga integralmente no dia 05</span>
                 </div>
               </div>
             )}
