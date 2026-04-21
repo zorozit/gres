@@ -570,10 +570,35 @@ export default function FolhaPagamento() {
     // Chave: colaboradorId → Set<data> de dias que já têm registro de pagamento (pago=true)
     const diasJaPagosPorColab: Record<string, Set<string>> = {};
     for (const reg of folhasDB) {
-      if (!reg.colaboradorId || !Array.isArray(reg.diasPagos) || !reg.pago) continue;
+      if (!reg.colaboradorId || !reg.pago) continue;
       if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
-      for (const dp of reg.diasPagos) {
-        if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
+
+      if (Array.isArray(reg.diasPagos) && reg.diasPagos.length > 0) {
+        // Caso moderno: diasPagos preenchido — usar diretamente
+        for (const dp of reg.diasPagos) {
+          if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
+        }
+      } else if (reg.semana) {
+        // Fallback legado: sem diasPagos mas tem semana (pagamentos anteriores à feature)
+        // Inferir período: segunda-feira anterior até a data da semana (domingo)
+        const fimDate = new Date(reg.semana + 'T12:00:00');
+        const dow = fimDate.getDay(); // 0=Dom, 1=Seg...
+        // Retroceder até a segunda-feira (ou 6 dias no máximo)
+        const diasAteSegunda = dow === 0 ? 6 : dow - 1;
+        const iniDate = new Date(fimDate);
+        iniDate.setDate(iniDate.getDate() - diasAteSegunda);
+        const iniISO = iniDate.toISOString().split('T')[0];
+        const fimISO = fimDate.toISOString().split('T')[0];
+        // Marcar como pagos todos os dias de escalas confirmadas neste período
+        const escalasPagas = escalas.filter(e =>
+          e.colaboradorId === reg.colaboradorId &&
+          e.data >= iniISO && e.data <= fimISO &&
+          e.turno !== 'Folga' &&
+          statusPresencaEscala(e) === 'presente'
+        );
+        for (const e of escalasPagas) {
+          diasJaPagosPorColab[reg.colaboradorId].add(e.data);
+        }
       }
     }
 
@@ -1382,6 +1407,8 @@ export default function FolhaPagamento() {
     const usaTurno = vDia > 0 || vNoite > 0;
     const valorDobra = usaTurno ? (vDia + vNoite) : (R(fr.valorDobra) || R(fr.valorDia) || 120);
     const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    // Set de dias já pagos (do objeto fr calculado)
+    const diasPagosSet = new Set((fr.diasJaPagosDetalhe || []).map((d: any) => d.data));
     const linhas = escs.map(e => {
       const dow = new Date(e.data + 'T12:00:00').getDay();
       const turnoLabel = e.turno === 'DiaNoite' ? 'DN (D+N)' : e.turno === 'Dia' ? 'Dia' : e.turno === 'Noite' ? 'Noite' : e.turno;
@@ -1394,10 +1421,14 @@ export default function FolhaPagamento() {
       } else {
         valor = dobras * valorDobra;
       }
-      return { data: e.data, dia: DIAS_ABR[dow], turno: turnoLabel, dobras, valor };
-    }).filter(l => l.dobras > 0);
+      const jaPago = diasPagosSet.has(e.data);
+      return { data: e.data, dia: DIAS_ABR[dow], turno: turnoLabel, dobras, valor, jaPago };
+    }).filter(l => l.dobras > 0)
+      .sort((a, b) => a.data.localeCompare(b.data)); // ordenar por data
     const totalDobras = linhas.reduce((s, l) => s + l.dobras, 0);
-    const totalValor = linhas.reduce((s, l) => s + l.valor, 0);
+    const totalValor  = linhas.reduce((s, l) => s + l.valor,  0);
+    const totalPago   = linhas.filter(l => l.jaPago).reduce((s, l) => s + l.valor, 0);
+    const totalPendente = totalValor - totalPago;
     const transp = R(fr.valorTransporte) * linhas.length;
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
@@ -1421,13 +1452,14 @@ export default function FolhaPagamento() {
                 <th style={{ padding: '6px 8px' }}>Turno</th>
                 <th style={{ padding: '6px 8px', textAlign: 'right' }}>Dobras</th>
                 <th style={{ padding: '6px 8px', textAlign: 'right' }}>Valor</th>
+                <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
               </tr>
             </thead>
             <tbody>
               {linhas.map((l, i) => (
-                <tr key={i} style={{ backgroundColor: i % 2 === 0 ? '#fafafa' : 'white', borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{l.data}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 'bold', color: '#555' }}>{l.dia}</td>
+                <tr key={i} style={{ backgroundColor: l.jaPago ? '#f1f8e9' : (i % 2 === 0 ? '#fafafa' : 'white'), borderBottom: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: l.jaPago ? '#888' : '#333' }}>{l.data}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 'bold', color: l.jaPago ? '#aaa' : '#555' }}>{l.dia}</td>
                   <td style={{ padding: '6px 8px' }}>
                     <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
                       backgroundColor: l.dobras === 1 ? '#e8f5e9' : '#fff9c4',
@@ -1435,8 +1467,15 @@ export default function FolhaPagamento() {
                       {l.turno}
                     </span>
                   </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold' }}>{l.dobras}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1976d2', fontWeight: 'bold' }}>{fmtMoeda(l.valor)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: l.jaPago ? '#aaa' : '#333' }}>{l.dobras}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: l.jaPago ? '#aaa' : '#1976d2', fontWeight: 'bold',
+                    textDecoration: l.jaPago ? 'line-through' : 'none' }}>{fmtMoeda(l.valor)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                    {l.jaPago
+                      ? <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold' }}>✅ Pago</span>
+                      : <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold' }}>⏳ Pendente</span>
+                    }
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1445,16 +1484,26 @@ export default function FolhaPagamento() {
                 <td colSpan={3} style={{ padding: '8px' }}>SUBTOTAL DOBRAS</td>
                 <td style={{ padding: '8px', textAlign: 'right' }}>{totalDobras}</td>
                 <td style={{ padding: '8px', textAlign: 'right', color: '#f48fb1' }}>{fmtMoeda(totalValor)}</td>
+                <td />
               </tr>
+              {totalPago > 0 && (
+                <tr style={{ backgroundColor: '#388e3c', color: 'white' }}>
+                  <td colSpan={4} style={{ padding: '6px 8px' }}>✅ Já pago em pagamento(s) anterior(es)</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9' }}>−{fmtMoeda(totalPago)}</td>
+                  <td />
+                </tr>
+              )}
               {transp > 0 && (
                 <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                  <td colSpan={4} style={{ padding: '6px 8px' }}>🚗 Transporte ({linhas.length} dias × R$ {fmt(R(fr.valorTransporte))})</td>
+                  <td colSpan={4} style={{ padding: '6px 8px' }}>🚗 Transporte ({linhas.filter(l=>!l.jaPago).length} dias × R$ {fmt(R(fr.valorTransporte))})</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: '#90caf9' }}>+{fmtMoeda(transp)}</td>
+                  <td />
                 </tr>
               )}
               <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold', fontSize: '14px' }}>
-                <td colSpan={4} style={{ padding: '8px' }}>TOTAL A PAGAR</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalValor + transp)}</td>
+                <td colSpan={4} style={{ padding: '8px' }}>TOTAL A PAGAR {totalPago > 0 ? '(saldo pendente)' : ''}</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalPendente + transp)}</td>
+                <td />
               </tr>
             </tfoot>
           </table>
