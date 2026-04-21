@@ -566,40 +566,15 @@ export default function FolhaPagamento() {
     const [ano, mes] = mesAno.split('-').map(Number);
     const semanas = semanasFechamento(ano, mes);
 
-    // Dias já pagos neste mês — calculado UMA vez fora do loop de semanas
-    // Chave: colaboradorId → Set<data> de dias que já têm registro de pagamento (pago=true)
+    // Dias já pagos neste mês — fonte da verdade: campo diasPagos do banco
+    // Sem fallback: se diasPagos não existe no registro, o dia não é considerado pago
     const diasJaPagosPorColab: Record<string, Set<string>> = {};
     for (const reg of folhasDB) {
       if (!reg.colaboradorId || !reg.pago) continue;
+      if (!Array.isArray(reg.diasPagos) || reg.diasPagos.length === 0) continue;
       if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
-
-      if (Array.isArray(reg.diasPagos) && reg.diasPagos.length > 0) {
-        // Caso moderno: diasPagos preenchido — usar diretamente
-        for (const dp of reg.diasPagos) {
-          if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
-        }
-      } else if (reg.semana) {
-        // Fallback legado: sem diasPagos mas tem semana (pagamentos anteriores à feature)
-        // Inferir período: segunda-feira anterior até a data da semana (domingo)
-        const fimDate = new Date(reg.semana + 'T12:00:00');
-        const dow = fimDate.getDay(); // 0=Dom, 1=Seg...
-        // Retroceder até a segunda-feira (ou 6 dias no máximo)
-        const diasAteSegunda = dow === 0 ? 6 : dow - 1;
-        const iniDate = new Date(fimDate);
-        iniDate.setDate(iniDate.getDate() - diasAteSegunda);
-        const iniISO = iniDate.toISOString().split('T')[0];
-        const fimISO = fimDate.toISOString().split('T')[0];
-        // Marcar como pagos todos os dias de escalas no período
-        // Aceitar presenca='presente' OU presenca ausente (registros legados sem campo)
-        const escalasPagas = escalas.filter(e =>
-          e.colaboradorId === reg.colaboradorId &&
-          e.data >= iniISO && e.data <= fimISO &&
-          e.turno !== 'Folga' &&
-          (statusPresencaEscala(e) === 'presente' || !e.presenca)
-        );
-        for (const e of escalasPagas) {
-          diasJaPagosPorColab[reg.colaboradorId].add(e.data);
-        }
+      for (const dp of reg.diasPagos) {
+        if (dp?.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
       }
     }
 
@@ -766,7 +741,8 @@ export default function FolhaPagamento() {
           periodoFim:    isoFim,
           pago: false,
         };
-      }).filter(fr => fr.dobras > 0);
+      // Manter freelancers com dobras pendentes OU com dias já pagos no período (para visibilidade)
+      }).filter(fr => fr.dobras > 0 || fr.diasJaPagosDetalhe.length > 0);
 
       const key = isoFimBase; // chave sempre baseada no fim original da semana
       const ef = editFechamento[key] || {};
