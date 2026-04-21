@@ -717,8 +717,16 @@ export default function FolhaPagamento() {
         // Saídas pendentes de meses anteriores para este freelancer
         const pendentesAnteriores = saidasPendentesAnt.filter((s: any) => s.colaboradorId === f.id);
 
-        // Líquido = dobras + transporte saldo + caixinha (crédito) - descontos
+        // Liquid = dobras pendentes + transporte saldo + caixinha - descontos (o que resta a pagar)
         const totalLiquido = parseFloat((total + transporteSaldo + caixinhaTotal - saidasDesconto).toFixed(2));
+
+        // Total bruto do período inteiro (pendente + já pago) — para exibição na linha
+        const totalBrutoPeriodo = parseFloat((total + totalJaPago).toFixed(2));
+        const totalDobrasExib = dobras + diasJaPagosDetalhe.reduce((s, d) => {
+          if (d.turno === 'DiaNoite') return s + 2;
+          if (d.turno === 'Dia' || d.turno === 'Noite') return s + 1;
+          return s;
+        }, 0);
 
         // Saldo de adiantamento especial em aberto (toda a vida do colaborador)
         const saldoEspecialAberto = parseFloat((saldosEfetivos[f.id] || 0).toFixed(2));
@@ -730,6 +738,7 @@ export default function FolhaPagamento() {
           valorTransporte, totalTransporte,
           transporteAdiantado, transporteSaldo,
           total, totalLiquido, saidasDesconto, saidasDetalhe,
+          totalBrutoPeriodo, totalDobrasExib, // para exibição mostrando o período completo
           caixinhaTotal, caixinhaDetalhe,
           diasCodigo, diasTrabalhados,
           pendentesAnteriores,
@@ -2642,7 +2651,15 @@ export default function FolhaPagamento() {
                                   {fr.diasCodigo || '—'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>
-                                  {fr.dobras}
+                                  {(fr as any).totalDobrasExib ?? fr.dobras}
+                                  {(fr as any).totalJaPago > 0 && fr.dobras === 0 && (
+                                    <div style={{ fontSize: '9px', color: '#1565c0', fontWeight: 'normal' }}>tudo pago</div>
+                                  )}
+                                  {(fr as any).totalJaPago > 0 && fr.dobras > 0 && (
+                                    <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal' }}>
+                                      {fr.dobras} pend.
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right' }}>
                                   {(fr.valorDia > 0 || fr.valorNoite > 0)
@@ -2650,7 +2667,10 @@ export default function FolhaPagamento() {
                                     : <>R$ {fmt(fr.valorDobra)}</>}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1976d2', fontSize: '13px' }}>
-                                  {fmtMoeda(fr.total)}
+                                  {fmtMoeda((fr as any).totalBrutoPeriodo ?? fr.total)}
+                                  {(fr as any).totalJaPago > 0 && (
+                                    <div style={{ fontSize: '9px', color: '#2e7d32' }}>✓ {fmtMoeda((fr as any).totalJaPago)} pago</div>
+                                  )}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontSize: '11px' }}>
                                   {fr.totalTransporte > 0 ? (
@@ -2687,8 +2707,11 @@ export default function FolhaPagamento() {
                                     </span>
                                   ) : '—'}
                                 </td>
-                                <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                                <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: fr.totalLiquido > 0 ? '#1b5e20' : '#888', fontSize: '13px' }}>
                                   {fmtMoeda(fr.totalLiquido)}
+                                  {fr.totalLiquido === 0 && (fr as any).totalJaPago > 0 && (
+                                    <div style={{ fontSize: '9px', color: '#2e7d32', fontWeight: 'normal' }}>quitado</div>
+                                  )}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center' }}>
                                   <span style={frIsPago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
