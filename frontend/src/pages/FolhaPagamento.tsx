@@ -418,6 +418,9 @@ export default function FolhaPagamento() {
         // Manter apenas saldos positivos (dívida ainda em aberto)
         Object.keys(saldos).forEach(k => { if (saldos[k] <= 0) delete saldos[k]; });
         setSaldosEspeciais(saldos);
+        // Forçar recálculo dos fechamentos freelancer com os saldos recém-calculados
+        // (evita race condition onde o estado ainda não foi atualizado)
+        calcularFechamentosFreelancer(saldos);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -551,7 +554,8 @@ export default function FolhaPagamento() {
   };
 
   /* ── Cálculo Freelancers ─────────────────────────────────── */
-  const calcularFechamentosFreelancer = () => {
+  const calcularFechamentosFreelancer = (saldosOverride?: Record<string, number>) => {
+    const saldosEfetivos = saldosOverride ?? saldosEspeciais;
     const [ano, mes] = mesAno.split('-').map(Number);
     const semanas = semanasFechamento(ano, mes);
 
@@ -655,7 +659,7 @@ export default function FolhaPagamento() {
         const totalLiquido = parseFloat((total + transporteSaldo + caixinhaTotal - saidasDesconto).toFixed(2));
 
         // Saldo de adiantamento especial em aberto (toda a vida do colaborador)
-        const saldoEspecialAberto = parseFloat((saldosEspeciais[f.id] || 0).toFixed(2));
+        const saldoEspecialAberto = parseFloat((saldosEfetivos[f.id] || 0).toFixed(2));
 
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
@@ -708,7 +712,7 @@ export default function FolhaPagamento() {
   // Recalcular fechamentos quando editFechamento, saidas ou escalas mudam
   useEffect(() => {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
-  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt]);
+  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt, saldosEspeciais]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
