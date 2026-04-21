@@ -315,79 +315,44 @@ export const Motoboys: React.FC = () => {
 
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
-  /**
-   * Converte um registro bruto da API /colaboradores para Motoboy.
-   * A API /colaboradores usa valorDia = chegada turno dia e valorNoite = chegada turno noite.
-   * Para motoboys freelancers, valorTransporte é reutilizado como valorEntrega (valor por corrida).
-   */
-  const colabToMotoboy = (c: any, motoboyId?: string): Motoboy => ({
-    id: motoboyId || c.id,
-    colaboradorId: c.id,  // ID original do /colaboradores (usado nas escalas)
-    nome: c.nome,
-    cpf: c.cpf || '',
-    telefone: c.celular || c.telefone || '',
-    placa: c.placa || '',
-    dataAdmissao: c.dataAdmissao || '',
-    dataDemissao: c.dataDemissao || '',
-    comissao: R(c.comissao) || 0,
-    chavePix: c.chavePix || '',
-    unitId: c.unitId,
-    vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
-    salario: R(c.salario) || 0,
-    periculosidade: R(c.periculosidade) || 0,
-    // Mapeamento: API valorDia/valorNoite = chegada por turno para freelancers
-    valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorDia)   || R(c.valorChegada) || 0,
-    valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorNoite) || R(c.valorChegada) || 0,
-    // valorTransporte reutilizado como valorEntrega para motoboys freelancers
-    valorEntrega: R(c.valorEntrega) || R(c.valorTransporte) || 0,
-    ativo: c.ativo !== false,
-  });
-
   const fetchMotoboys = async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      // Carrega /colaboradores (fonte principal dos campos valorDia/valorNoite/valorTransporte)
-      const [rM, rC] = await Promise.all([
-        fetch(unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
-      ]);
+      // /motoboys agora retorna colaboradores com isMotoboy=true + tabela legada — fonte única
+      const rM = await fetch(
+        unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       const dM = await rM.json();
       const motosRaw: any[] = Array.isArray(dM) ? dM : [];
 
-      // Dados de /colaboradores
-      let colabsData: any[] = [];
-      if (rC?.ok) {
-        const dC = await rC.json();
-        colabsData = Array.isArray(dC) ? dC : (Array.isArray(dC?.colaboradores) ? dC.colaboradores : []);
-      }
+      // Mapear cada registro para Motoboy — API já entrega campos unificados
+      const motosDB: Motoboy[] = motosRaw.map((m: any) => ({
+        id: m.id,
+        colaboradorId: m.colaboradorId || m.id,
+        nome: m.nome,
+        cpf: m.cpf || '',
+        telefone: m.telefone || m.celular || '',
+        placa: m.placa || '',
+        dataAdmissao: m.dataAdmissao || '',
+        dataDemissao: m.dataDemissao || '',
+        comissao: R(m.comissao) || 0,
+        chavePix: m.chavePix || '',
+        unitId: m.unitId || '',
+        vinculo: m.vinculo === 'CLT' ? 'CLT' : 'Freelancer',
+        salario: R(m.salario) || 0,
+        periculosidade: R(m.periculosidade) || 0,
+        valorChegadaDia:   R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
+        valorChegadaNoite: R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
+        valorEntrega: R(m.valorEntrega) || 0,
+        ativo: m.ativo !== false,
+      }));
 
-      // Enriquecer registros de /motoboys com campos de /colaboradores (match por CPF)
-      // A API /motoboys não persiste valorChegadaDia/Noite/Entrega — usa /colaboradores como fonte
-      const motosDB: Motoboy[] = motosRaw.map((m: any) => {
-        const colabMatch = colabsData.find((c: any) =>
-          c.id === m.id || (m.cpf && m.cpf.trim() && c.cpf === m.cpf)
-        );
-        if (colabMatch) {
-          // Usa dados de /colaboradores como fonte principal para campos de pagamento
-          // Preserva o ID de /motoboys como id principal, guarda o ID de /colaboradores em colaboradorId
-          return colabToMotoboy({ ...colabMatch, placa: m.placa || colabMatch.placa }, m.id);
-        }
-        // Sem match: usa só dados de /motoboys (campos de pagamento serão 0)
-        return { ...m, valorChegadaDia: 0, valorChegadaNoite: 0, valorEntrega: 0 } as Motoboy;
-      });
-      console.log('[Motoboys] fetchMotoboys total=', motosDB.length, motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
+      console.log('[Motoboys] fetchMotoboys total=', motosDB.length,
+        motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
 
-      // Motoboys que só existem em /colaboradores (sem registro em /motoboys)
-      const motosFromColabs: Motoboy[] = colabsData
-        .filter((c: any) => {
-          const fn = (c.funcao || c.cargo || '').toLowerCase();
-          return fn.includes('motoboy') || fn.includes('entregador');
-        })
-        .filter((c: any) => !motosDB.some(m => m.id === c.id || (c.cpf && m.cpf === c.cpf)))
-        .map((c: any) => colabToMotoboy(c));
-
-      setMotoboys([...motosDB, ...motosFromColabs]);
+      setMotoboys(motosDB);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
