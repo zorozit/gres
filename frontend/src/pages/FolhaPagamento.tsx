@@ -87,6 +87,11 @@ interface FolhaMensal {
   saldoFinal: number;
   pago: boolean;
   dataPagamento?: string;
+  // Pagamentos segregados: fixo (contabilidade) e variavel (motoboys/dobras)
+  pagoAdiantamento: boolean;
+  dataPgtoAdiantamento?: string;
+  pagoVariavel: boolean;
+  dataPgtoVariavel?: string;
   raw?: any;
 }
 
@@ -412,7 +417,12 @@ export default function FolhaPagamento() {
         diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
-        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento, raw: c,
+        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
+        pagoAdiantamento: salva?.pagoAdiantamento || salva?.pago || false,
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
+        pagoVariavel: salva?.pagoVariavel || false,
+        dataPgtoVariavel: salva?.dataPgtoVariavel,
+        raw: c,
       });
     }
 
@@ -463,7 +473,12 @@ export default function FolhaPagamento() {
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
-        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento, raw: m,
+        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
+        pagoAdiantamento: salva?.pagoAdiantamento || salva?.pago || false,
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
+        pagoVariavel: salva?.pagoVariavel || false,
+        dataPgtoVariavel: salva?.dataPgtoVariavel,
+        raw: m,
       });
     }
     return folhas.sort((a, b) => a.nome.localeCompare(b.nome));
@@ -635,6 +650,7 @@ export default function FolhaPagamento() {
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
         pago: novoPago, dataPagamento: dataPgtoFinal,
+        pagoAdiantamento: novoPago, dataPgtoAdiantamento: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
       };
       await fetch(`${apiUrl}/folha-pagamento`, {
@@ -644,7 +660,35 @@ export default function FolhaPagamento() {
       });
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
-          ? { ...f, pago: novoPago, dataPagamento: novoPago ? (dataOverride || hoje2) : undefined }
+          ? { ...f, pago: novoPago, dataPagamento: novoPago ? (dataOverride || hoje2) : undefined,
+              pagoAdiantamento: novoPago, dataPgtoAdiantamento: novoPago ? (dataOverride || hoje2) : undefined }
+          : f
+      ));
+    } catch { alert('Erro ao salvar status'); }
+    finally { setSalvando(false); }
+  };
+
+  /* ── Toggle pago VARIÁVEL (independente do fixo) ─────────── */
+  const handleTogglePagoVariavel = async (folha: FolhaMensal, dataOverride?: string) => {
+    const novoPago = !folha.pagoVariavel;
+    const hoje2 = new Date().toISOString().split('T')[0];
+    const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
+    setSalvando(true);
+    try {
+      const payload = {
+        colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
+        pago: folha.pago,
+        pagoVariavel: novoPago, dataPgtoVariavel: dataPgtoFinal,
+        saldoFinal: folha.saldoFinal,
+      };
+      await fetch(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(payload),
+      });
+      setFolhasLocais(prev => prev.map(f =>
+        f.colaboradorId === folha.colaboradorId
+          ? { ...f, pagoVariavel: novoPago, dataPgtoVariavel: novoPago ? (dataOverride || hoje2) : undefined }
           : f
       ));
     } catch { alert('Erro ao salvar status'); }
@@ -1399,7 +1443,8 @@ export default function FolhaPagamento() {
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto dia 05</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Saldo Final</th>
-                      <th style={s.thC}>Status</th>
+                      <th style={{ ...s.thC, backgroundColor: '#1b5e20' }}>Adiantamento</th>
+                      <th style={{ ...s.thC, backgroundColor: '#e65100' }}>Variável</th>
                       <th style={s.thC}>Ações</th>
                     </tr>
                   </thead>
@@ -1428,13 +1473,47 @@ export default function FolhaPagamento() {
                         <td style={{ ...s.tdR, fontWeight: 'bold', color: f.saldoFinal >= 0 ? '#2e7d32' : '#c62828' }}>
                           {fmtMoeda(f.saldoFinal)}
                         </td>
+                        {/* Coluna Adiantamento (fixo contábil) */}
                         <td style={{ ...s.td, textAlign: 'center' }}>
-                          <span style={f.pago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
-                            {f.pago ? '✅ Pago' : '⏳ Pendente'}
-                          </span>
-                          {f.pago && f.dataPagamento && (
-                            <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>{f.dataPagamento}</div>
-                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                            <span style={f.pagoAdiantamento ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
+                              {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
+                            </span>
+                            {f.pagoAdiantamento && f.dataPgtoAdiantamento && (
+                              <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoAdiantamento}</div>
+                            )}
+                            <button
+                              onClick={() => f.pagoAdiantamento ? handleTogglePago(f) : setModalPagamento(f)}
+                              disabled={salvando}
+                              title={f.pagoAdiantamento ? 'Desfazer adiantamento' : 'Registrar adiantamento'}
+                              style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#1b5e20'), padding: '2px 8px', fontSize: '10px' }}>
+                              {f.pagoAdiantamento ? '↩ Adto' : '✅ Adto'}
+                            </button>
+                          </div>
+                        </td>
+                        {/* Coluna Variável (motoboy/dobras — separado do fixo) */}
+                        <td style={{ ...s.td, textAlign: 'center' }}>
+                          {f.totalVariavel > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                              <span style={f.pagoVariavel ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                                {f.pagoVariavel ? '✅ Pago' : '⏳ Pendente'}
+                              </span>
+                              {f.pagoVariavel && f.dataPgtoVariavel && (
+                                <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoVariavel}</div>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
+                                  const dt = window.prompt('Data do pagamento variável (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
+                                  if (dt !== null) handleTogglePagoVariavel(f, dt || undefined);
+                                }}
+                                disabled={salvando}
+                                title={f.pagoVariavel ? 'Desfazer variável' : 'Registrar variável pago'}
+                                style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#e65100'), padding: '2px 8px', fontSize: '10px' }}>
+                                {f.pagoVariavel ? '↩ Var.' : '✅ Var.'}
+                              </button>
+                            </div>
+                          ) : <span style={{ color: '#ccc', fontSize: '11px' }}>—</span>}
                         </td>
                         <td style={{ ...s.td, textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
@@ -1445,13 +1524,6 @@ export default function FolhaPagamento() {
                             <button onClick={() => abrirHistorico(f.colaboradorId)} style={{ ...s.btn('#6a1b9a'), padding: '4px 10px', fontSize: '11px' }}
                               title="Histórico analítico">
                               📊
-                            </button>
-                            <button
-                              onClick={() => f.pago ? handleTogglePago(f) : setModalPagamento(f)}
-                              disabled={salvando}
-                              title={f.pago ? 'Desfazer pagamento' : 'Registrar pagamento com data'}
-                              style={{ ...s.btn(f.pago ? '#e53935' : '#43a047'), padding: '4px 10px', fontSize: '11px' }}>
-                              {f.pago ? '↩' : '✅'}
                             </button>
                           </div>
                         </td>
@@ -1471,7 +1543,7 @@ export default function FolhaPagamento() {
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.contrAssistencial, 0))}</td>
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#b3e5fc' }}>{fmtMoeda(totais.pgto05)}</td>
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>{fmtMoeda(totais.saldo)}</td>
-                      <td colSpan={2} />
+                      <td colSpan={3} />
                     </tr>
                   </tfoot>
                 </table>
