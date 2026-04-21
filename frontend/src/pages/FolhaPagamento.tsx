@@ -1417,9 +1417,11 @@ export default function FolhaPagamento() {
       .sort((a, b) => a.data.localeCompare(b.data)); // ordenar por data
     const totalDobras = linhas.reduce((s, l) => s + l.dobras, 0);
     const totalValor  = linhas.reduce((s, l) => s + l.valor,  0);
-    const totalPago   = linhas.filter(l => l.jaPago).reduce((s, l) => s + l.valor, 0);
+    const totalPago   = linhas.filter(l =>  l.jaPago).reduce((s, l) => s + l.valor, 0);
     const totalPendente = totalValor - totalPago;
-    const transp = R(fr.valorTransporte) * linhas.length;
+    // Transporte: apenas dias PENDENTES (não pagos) — evitar cobrar transporte já incluso em pagamento anterior
+    const linhasPendentes = linhas.filter(l => !l.jaPago);
+    const transp = R(fr.valorTransporte) * linhasPendentes.length;
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
         <div style={{ ...s.card, maxWidth: '500px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
