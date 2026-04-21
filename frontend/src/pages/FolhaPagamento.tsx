@@ -2731,20 +2731,18 @@ export default function FolhaPagamento() {
                                   <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                     <button
                                       onClick={() => {
-                                        const fechFim = new Date(fech.dataFechamento + 'T12:00:00');
-                                        const fechIni = new Date(fechFim);
-                                        fechIni.setDate(fechIni.getDate() - 6);
-                                        const isoIni = fechIni.toISOString().split('T')[0];
+                                        // Usar o período real (customizado ou original) do fr calculado
+                                        const isoIni = fr.periodoInicio || fech.dataInicioBase;
+                                        const isoFimDet = fr.periodoFim || fech.dataFechamento;
+                                        // Buscar TODAS as escalas do período (pendentes + já pagas)
                                         const escalasSemana = escalas.filter(e =>
-                                          e.colaboradorId === fr.id && e.data >= isoIni && e.data <= fech.dataFechamento
+                                          e.colaboradorId === fr.id && e.data >= isoIni && e.data <= isoFimDet
                                         );
-                                        // Filter saídas for this freelancer in this week
-                                        // Use dataPagamento OR data (creation date) for matching
                                         const saidasSemana = saidasPeriodo.filter((s2: any) => {
                                           const sColabId = s2.colaboradorId || s2.colabId;
                                           if (sColabId !== fr.id) return false;
                                           const sData = s2.dataPagamento || s2.data || '';
-                                          return sData >= isoIni && sData <= fech.dataFechamento;
+                                          return sData >= isoIni && sData <= isoFimDet;
                                         });
                                         setDetalheFreelancer({ fr, semana: fech.semanaLabel, escalas: escalasSemana, saidaItems: saidasSemana });
                                       }}
