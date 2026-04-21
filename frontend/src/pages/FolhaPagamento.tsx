@@ -1395,7 +1395,7 @@ export default function FolhaPagamento() {
         <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', flexWrap: 'wrap' }}>
           <button style={s.tab(aba === 'clt')} onClick={() => setAba('clt')}>🧾 Colaboradores CLT</button>
           <button style={s.tab(aba === 'dobras')} onClick={() => setAba('dobras')}>
-            📅 Dobras Semanais
+            📅 Dobras Semanais CLT
           </button>
           <button style={s.tab(aba === 'freelancers')} onClick={() => setAba('freelancers')}>
             🎯 Freelancers {fechamentosFreelancer.length > 0 ? `(${fechamentosFreelancer.length} semana${fechamentosFreelancer.length > 1 ? 's' : ''})` : ''}
@@ -1599,23 +1599,17 @@ export default function FolhaPagamento() {
             tipoContrato: string; area?: string; funcao?: string;
             valorDia: number; valorNoite: number; valorDobra: number; valorTransporte: number;
           }
+          // Aba Dobras CLT: apenas colaboradores CLT (excluir Freelancers)
           const pessoas: PessoaDobra[] = [
-            ...colaboradores.map(c => ({
-              id: c.id, nome: c.nome, chavePix: c.chavePix, cargo: c.cargo,
-              tipoContrato: c.tipoContrato || 'CLT',
-              area: c.area, funcao: c.funcao,
-              valorDia: c.valorDia || 0, valorNoite: c.valorNoite || 0,
-              valorDobra: 0, valorTransporte: c.valorTransporte || 0,
-            })),
-            ...freelancers.map(f => ({
-              id: f.id, nome: f.nome, chavePix: f.chavePix, cargo: f.cargo,
-              tipoContrato: 'Freelancer' as const, area: f.area, funcao: f.funcao || f.cargo,
-              valorDia: R(f.valorDia) || 0,
-              valorNoite: R(f.valorNoite) || 0,
-              // valorDobra usado quando não há valorDia/valorNoite separados
-              valorDobra: R((f as any).valorDobra) || R(f.valorDia) || 120,
-              valorTransporte: f.valorTransporte || 0,
-            })),
+            ...colaboradores
+              .filter(c => c.tipoContrato !== 'Freelancer')
+              .map(c => ({
+                id: c.id, nome: c.nome, chavePix: c.chavePix, cargo: c.cargo,
+                tipoContrato: c.tipoContrato || 'CLT',
+                area: c.area, funcao: c.funcao,
+                valorDia: c.valorDia || 0, valorNoite: c.valorNoite || 0,
+                valorDobra: 0, valorTransporte: c.valorTransporte || 0,
+              })),
           ].sort((a,b) => {
             const aa = a.area || 'zzz', ba = b.area || 'zzz';
             return aa !== ba ? aa.localeCompare(ba) : a.nome.localeCompare(b.nome);
@@ -1626,7 +1620,7 @@ export default function FolhaPagamento() {
           return (
             <div style={{ borderRadius: '0 8px 8px 8px' }}>
               <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', borderLeft: '4px solid #2e7d32', borderRadius: '0 0 4px 4px', marginBottom: '8px', fontSize: '12px', color: '#1b5e20' }}>
-                📅 <strong>Dobras Semanais</strong> — controle semanal de turnos (CLT dobras + Freelancers). Valores editáveis. Marque como Pago para registrar data e log.
+                📅 <strong>Dobras Semanais CLT</strong> — controle semanal de turnos extras de colaboradores CLT. Valores editáveis. Marque como Pago para registrar data e log.
               </div>
 
               {loading ? (
