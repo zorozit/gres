@@ -968,10 +968,16 @@ export default function FolhaPagamento() {
   interface CheckItem { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
   const [dataLocalFreelancer, setDataLocalFreelancer] = useState(new Date().toISOString().split('T')[0]);
+  const [formaFreelancer, setFormaFreelancer] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
+  const [formaFreelancerPix, setFormaFreelancerPix] = useState('');
+  const [formaFreelancerDin, setFormaFreelancerDin] = useState('');
 
   // Reset checklist whenever a new freelancer payment modal opens
   useEffect(() => {
     if (!modalFreelancerPgto) return;
+    setFormaFreelancer('PIX');
+    setFormaFreelancerPix('');
+    setFormaFreelancerDin('');
     const { fr } = modalFreelancerPgto;
     const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
       ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
@@ -1078,6 +1084,35 @@ export default function FolhaPagamento() {
             </span>
           </div>
 
+          {/* Forma de pagamento */}
+          <div style={{ marginBottom: '14px' }}>
+            <label style={s.label}>💳 Forma de pagamento</label>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              {(['PIX', 'Dinheiro', 'Misto'] as const).map(f => (
+                <button key={f} onClick={() => setFormaFreelancer(f)}
+                  style={{ flex: 1, padding: '8px 6px', border: `2px solid ${formaFreelancer === f ? '#c2185b' : '#e0e0e0'}`, borderRadius: '6px',
+                    background: formaFreelancer === f ? '#fce4ec' : 'white', fontWeight: formaFreelancer === f ? 700 : 400,
+                    cursor: 'pointer', fontSize: '12px', color: formaFreelancer === f ? '#880e4f' : '#555' }}>
+                  {f === 'PIX' ? '📱 PIX' : f === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                </button>
+              ))}
+            </div>
+            {formaFreelancer === 'Misto' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div>
+                  <label style={{ ...s.label, fontSize: '11px' }}>Valor em PIX (R$)</label>
+                  <input type="number" step="0.01" min="0" value={formaFreelancerPix} placeholder="0,00"
+                    onChange={e => setFormaFreelancerPix(e.target.value)} style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                </div>
+                <div>
+                  <label style={{ ...s.label, fontSize: '11px' }}>Valor em Dinheiro (R$)</label>
+                  <input type="number" step="0.01" min="0" value={formaFreelancerDin} placeholder="0,00"
+                    onChange={e => setFormaFreelancerDin(e.target.value)} style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Data pagamento */}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ ...s.label }}>Data do pagamento</label>
@@ -1126,7 +1161,21 @@ export default function FolhaPagamento() {
                     caixinha:            caixinhaChecked,
                     desconto:            totalDebito,
                     totalFinal,
-                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
+                    // Forma de pagamento
+                    formaPagamento: formaFreelancer,
+                    valorPix:      formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerPix) || 0) : formaFreelancer === 'PIX' ? totalFinal : 0,
+                    valorDinheiro: formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerDin) || 0) : formaFreelancer === 'Dinheiro' ? totalFinal : 0,
+                    logPagamentos: [{
+                      id: Date.now().toString(),
+                      data: dataLocalFreelancer,
+                      valor: totalFinal,
+                      forma: formaFreelancer,
+                      valorPix:      formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerPix) || 0) : undefined,
+                      valorDinheiro: formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerDin) || 0) : undefined,
+                      tipo: 'Freelancer',
+                      obs: `sem. ${fech.semanaLabel}`,
+                    }],
+                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel} – ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -2408,6 +2457,12 @@ export default function FolhaPagamento() {
                                   </span>
                                   {frIsPago && frDataPgto && (
                                     <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{frDataPgto}</div>
+                                  )}
+                                  {frIsPago && frFolhaSalva?.formaPagamento && (
+                                    <div style={{ fontSize: '9px', marginTop: '2px', fontWeight: 'bold',
+                                      color: frFolhaSalva.formaPagamento === 'PIX' ? '#1565c0' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                                      {frFolhaSalva.formaPagamento === 'PIX' ? '📱 PIX' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                                    </div>
                                   )}
                                 </td>
                                 <td style={s.td}>
