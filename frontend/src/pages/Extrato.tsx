@@ -43,6 +43,10 @@ interface ExtratoItem {
   // Forma de pagamento
   formaPagamento?: 'PIX' | 'Dinheiro' | 'Misto';
   logPagamentos?: PagamentoLog[];
+  // Integridade de período (freelancers)
+  periodoInicio?: string;
+  periodoFim?: string;
+  diasPagos?: { data: string; turno: string; valor: number }[];
   raw?: any;
 }
 
@@ -171,6 +175,10 @@ export const Extrato: React.FC = () => {
             // Forma de pagamento e log de registros individuais
             formaPagamento: item.formaPagamento || (Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0 ? item.logPagamentos[item.logPagamentos.length - 1].forma : undefined),
             logPagamentos: item.logPagamentos || [],
+            // Integridade de período
+            periodoInicio: item.periodoInicio || undefined,
+            periodoFim:    item.periodoFim    || undefined,
+            diasPagos:     Array.isArray(item.diasPagos) ? item.diasPagos : [],
             raw: item,
           });
         }
@@ -426,6 +434,7 @@ export const Extrato: React.FC = () => {
               { label: 'Origem',          value: item.origem === 'folha' ? '💰 Folha de Pagamento' : '📤 Saída' },
               { label: 'Mês',             value: item.mes },
               { label: 'Semana',          value: item.semana ? fmtDataBR(item.semana) : 'Mensal' },
+              ...(item.periodoInicio ? [{ label: 'Período pago', value: `${fmtDataBR(item.periodoInicio)} – ${fmtDataBR(item.periodoFim || '')}` }] : []),
               { label: 'Tipo',            value: item.tipo === 'credito' ? '📈 Crédito' : '📉 Débito' },
               ...(item.tipoSaida ? [{ label: 'Tipo Saída', value: item.tipoSaida }] : []),
               { label: 'Descrição',       value: item.descricao },
@@ -465,6 +474,43 @@ export const Extrato: React.FC = () => {
                 {p.obs && <span style={{ color: '#aaa', fontStyle: 'italic' }}>{p.obs}</span>}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Analítico por dia/turno (freelancers) */}
+        {(item.diasPagos || []).length > 0 && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#2e7d32', marginBottom: '6px' }}>📅 Analítico por Dia/Turno</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#e8f5e9' }}>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 'bold', color: '#1b5e20' }}>Data</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 'bold', color: '#1b5e20' }}>Turno</th>
+                  <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20' }}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(item.diasPagos || []).map((d, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: i % 2 === 0 ? '#f9fbe7' : 'white' }}>
+                    <td style={{ padding: '5px 8px', color: '#333' }}>
+                      {new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                    </td>
+                    <td style={{ padding: '5px 8px' }}>
+                      <span style={{ backgroundColor: d.turno === 'DiaNoite' ? '#fff3e0' : d.turno === 'Dia' ? '#e3f2fd' : '#fce4ec', color: d.turno === 'DiaNoite' ? '#e65100' : d.turno === 'Dia' ? '#1565c0' : '#880e4f', padding: '1px 6px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold' }}>
+                        {d.turno === 'DiaNoite' ? '☀️🌙 DN' : d.turno === 'Dia' ? '☀️ D' : '🌙 N'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(d.valor)}</td>
+                  </tr>
+                ))}
+                <tr style={{ backgroundColor: '#e8f5e9', fontWeight: 'bold' }}>
+                  <td colSpan={2} style={{ padding: '5px 8px', color: '#1b5e20' }}>Total</td>
+                  <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1b5e20' }}>
+                    {fmtMoeda((item.diasPagos || []).reduce((s, d) => s + d.valor, 0))}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         )}
 

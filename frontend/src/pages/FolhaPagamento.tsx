@@ -142,7 +142,9 @@ interface FechamentoSemanalFreelancer {
     caixinhaDetalhe: { descricao: string; valor: number; data: string }[]; // detalhes caixinha
     pendentesAnteriores: any[];     // Saídas pendentes de meses anteriores a descontar
     saldoEspecialAberto: number;    // Saldo de adiantamento especial em aberto (histórico)
-    diasPagos: { data: string; turno: string; valor: number }[]; // analítico por dia
+    diasPagos: { data: string; turno: string; valor: number }[];         // dias pendentes (a pagar)
+    diasJaPagosDetalhe: { data: string; turno: string; valor: number }[]; // dias já pagos anteriormente
+    totalJaPago: number;            // valor já pago em outros registros no período
     periodoInicio: string;          // YYYY-MM-DD início real do período pago
     periodoFim: string;             // YYYY-MM-DD fim real do período pago
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
@@ -576,11 +578,21 @@ export default function FolhaPagamento() {
       const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
       const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} – ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
 
+      // Dias já pagos neste mês para qualquer freelancer (indexados por colaboradorId → Set<data>)
+      const diasJaPagosPorColab: Record<string, Set<string>> = {};
+      for (const reg of folhasDB) {
+        if (!reg.colaboradorId || !Array.isArray(reg.diasPagos) || !reg.pago) continue;
+        if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
+        for (const dp of reg.diasPagos) {
+          if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
+        }
+      }
+
       const frList = freelancers.map(f => {
         const escalasSemana = escalas.filter(e =>
           e.colaboradorId === f.id && e.data >= isoInicio && e.data <= isoFim
         );
-        const { dobras, diasCodigo, diasTrabalhados } = contarDobras(escalasSemana, f.id);
+        const { diasCodigo } = contarDobras(escalasSemana, f.id);
 
         // Se tem valorDia E/OU valorNoite configurados, calcular por turno
         const vDia   = R(f.valorDia);
@@ -588,35 +600,59 @@ export default function FolhaPagamento() {
         const vDobra = R((f as any).valorDobra) || 120;
         const usaTurno = vDia > 0 || vNoite > 0;
 
-        // Apenas escalas com presença EXPLICITAMENTE confirmada como 'presente'
-        // undefined/null = não confirmado = não conta (evita falsos positivos)
+        // Apenas escalas confirmadas com presença
         const escalasSemanaConfirmadas = escalasSemana.filter(e =>
           e.turno !== 'Folga' &&
           statusPresencaEscala(e) === 'presente'
         );
 
-        // Analítico por dia para auditoria
+        // Separar: dias ainda não pagos (pendentes) vs já pagos
+        const diasJaPagos = diasJaPagosPorColab[f.id] || new Set<string>();
+        const escalasPendentes  = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
+        const escalasJaPagas    = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
+
+        // Analítico: diasPagos = dias pendentes (a pagar agora)
         const diasPagos: { data: string; turno: string; valor: number }[] = [];
-        let total = 0;
-        if (usaTurno) {
-          for (const esc of escalasSemanaConfirmadas) {
-            let vDia2 = 0;
-            if (esc.turno === 'DiaNoite') vDia2 = vDia + vNoite;
-            else if (esc.turno === 'Dia')   vDia2 = vDia;
-            else if (esc.turno === 'Noite') vDia2 = vNoite;
-            total += vDia2;
-            diasPagos.push({ data: esc.data, turno: esc.turno, valor: vDia2 });
-          }
-        } else {
-          total = parseFloat((dobras * vDobra).toFixed(2));
-          for (const esc of escalasSemanaConfirmadas) {
+        // Analítico: diasJaPagosDetalhe = dias que já foram pagos anteriormente
+        const diasJaPagosDetalhe: { data: string; turno: string; valor: number }[] = [];
+
+        let total = 0; // valor dos dias PENDENTES (a pagar)
+        let totalJaPago = 0; // valor dos dias já pagos
+
+        const calcValorEsc = (esc: EscalaItem): number => {
+          if (usaTurno) {
+            if (esc.turno === 'DiaNoite') return vDia + vNoite;
+            if (esc.turno === 'Dia')      return vDia;
+            if (esc.turno === 'Noite')    return vNoite;
+            return 0;
+          } else {
             let dobrasEsc = 0;
             if (esc.turno === 'DiaNoite') dobrasEsc = 2;
             else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobrasEsc = 1;
-            diasPagos.push({ data: esc.data, turno: esc.turno, valor: parseFloat((dobrasEsc * vDobra).toFixed(2)) });
+            return parseFloat((dobrasEsc * vDobra).toFixed(2));
           }
+        };
+
+        for (const esc of escalasPendentes) {
+          const v = calcValorEsc(esc);
+          total += v;
+          diasPagos.push({ data: esc.data, turno: esc.turno, valor: v });
+        }
+        for (const esc of escalasJaPagas) {
+          const v = calcValorEsc(esc);
+          totalJaPago += v;
+          diasJaPagosDetalhe.push({ data: esc.data, turno: esc.turno, valor: v });
         }
         total = parseFloat(total.toFixed(2));
+        totalJaPago = parseFloat(totalJaPago.toFixed(2));
+
+        // dobras e diasTrabalhados só dos pendentes (para exibição)
+        const dobras = diasPagos.reduce((s, d) => {
+          if (d.turno === 'DiaNoite') return s + 2;
+          if (d.turno === 'Dia' || d.turno === 'Noite') return s + 1;
+          return s;
+        }, 0);
+        const diasTrabalhados = escalasPendentes.length;
 
         // valorDobra para exibição
         const valorDobra = usaTurno ? (vDia + vNoite) : vDobra;
@@ -696,9 +732,11 @@ export default function FolhaPagamento() {
           diasCodigo, diasTrabalhados,
           pendentesAnteriores,
           saldoEspecialAberto,
-          diasPagos,      // analítico por dia para auditoria
-          periodoInicio: isoInicio,  // início real do período (pode ser customizado)
-          periodoFim:    isoFim,     // fim real do período (pode ser customizado)
+          diasPagos,             // dias PENDENTES a pagar agora
+          diasJaPagosDetalhe,    // dias já pagos anteriormente (para exibição/auditoria)
+          totalJaPago,           // valor já pago em outros registros no período
+          periodoInicio: isoInicio,
+          periodoFim:    isoFim,
           pago: false,
         };
       }).filter(fr => fr.dobras > 0);
@@ -2560,6 +2598,12 @@ export default function FolhaPagamento() {
                                     <div style={{ fontSize: '10px', color: '#7c3aed', fontWeight: 'bold', marginTop: '2px' }}
                                       title={`Adiantamento especial em aberto: ${fmtMoeda(fr.saldoEspecialAberto)}`}>
                                       🟣 Adto. esp.: {fmtMoeda(fr.saldoEspecialAberto)}
+                                    </div>
+                                  )}
+                                  {(fr.diasJaPagosDetalhe?.length || 0) > 0 && (
+                                    <div style={{ fontSize: '10px', color: '#1565c0', marginTop: '2px', fontStyle: 'italic' }}
+                                      title={`Já pago: ${fr.diasJaPagosDetalhe.map(d => `${d.data.substring(8)} ${d.turno}`).join(', ')}`}>
+                                      ✅ {fr.diasJaPagosDetalhe.length} dia(s) já pago(s): {fmtMoeda(fr.totalJaPago)}
                                     </div>
                                   )}
                                 </td>
