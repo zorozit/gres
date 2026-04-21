@@ -566,6 +566,17 @@ export default function FolhaPagamento() {
     const [ano, mes] = mesAno.split('-').map(Number);
     const semanas = semanasFechamento(ano, mes);
 
+    // Dias já pagos neste mês — calculado UMA vez fora do loop de semanas
+    // Chave: colaboradorId → Set<data> de dias que já têm registro de pagamento (pago=true)
+    const diasJaPagosPorColab: Record<string, Set<string>> = {};
+    for (const reg of folhasDB) {
+      if (!reg.colaboradorId || !Array.isArray(reg.diasPagos) || !reg.pago) continue;
+      if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
+      for (const dp of reg.diasPagos) {
+        if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
+      }
+    }
+
     const fechamentos: FechamentoSemanalFreelancer[] = semanas.map(({ inicio, fim }) => {
       const isoInicioBase = fmtDataISO(inicio);
       const isoFimBase = fmtDataISO(fim);
@@ -577,16 +588,6 @@ export default function FolhaPagamento() {
       const [iniD, iniM] = isoInicio.split('-').slice(1).map(Number);
       const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
       const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} – ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
-
-      // Dias já pagos neste mês para qualquer freelancer (indexados por colaboradorId → Set<data>)
-      const diasJaPagosPorColab: Record<string, Set<string>> = {};
-      for (const reg of folhasDB) {
-        if (!reg.colaboradorId || !Array.isArray(reg.diasPagos) || !reg.pago) continue;
-        if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
-        for (const dp of reg.diasPagos) {
-          if (dp.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
-        }
-      }
 
       const frList = freelancers.map(f => {
         const escalasSemana = escalas.filter(e =>
