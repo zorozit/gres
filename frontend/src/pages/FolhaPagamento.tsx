@@ -1395,7 +1395,11 @@ export default function FolhaPagamento() {
     const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
     // Set de dias já pagos (do objeto fr calculado)
     const diasPagosSet = new Set((fr.diasJaPagosDetalhe || []).map((d: any) => d.data));
-    const linhas = escs.map(e => {
+    // Filtrar apenas escalas com presença confirmada OU já pagas (dias pagos sempre exibidos)
+    const escsVisiveis = escs.filter(e =>
+      statusPresencaEscala(e) === 'presente' || diasPagosSet.has(e.data)
+    );
+    const linhas = escsVisiveis.map(e => {
       const dow = new Date(e.data + 'T12:00:00').getDay();
       const turnoLabel = e.turno === 'DiaNoite' ? 'DN (D+N)' : e.turno === 'Dia' ? 'Dia' : e.turno === 'Noite' ? 'Noite' : e.turno;
       const dobras = e.turno === 'DiaNoite' ? 1 : (e.turno === 'Dia' || e.turno === 'Noite') ? 0.5 : 0;
