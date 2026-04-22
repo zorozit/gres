@@ -149,6 +149,7 @@ export const Saidas: React.FC = () => {
     origem: 'A pagar',
     dataPagamento: getLocalDate(),
     observacao: '',
+    formaPagamento: 'Dinheiro',
   });
 
   // aba Movimentos
@@ -280,7 +281,7 @@ export const Saidas: React.FC = () => {
         alert('✅ Saída registrada com sucesso!');
         setNovoRegistro({
           responsavel: email, colaboradorId: '', descricao: '', valor: 0,
-          tipo: 'A pagar', origem: 'A pagar', dataPagamento: getLocalDate(), observacao: '',
+          tipo: 'A pagar', origem: 'A pagar', dataPagamento: getLocalDate(), observacao: '', formaPagamento: 'Dinheiro',
         });
         // Reload movimentos if visible
         if (abaSelecionada === 'movimentos') handleFiltrar();
@@ -504,6 +505,22 @@ export const Saidas: React.FC = () => {
                       {catAtual.regraFolha === 'abate_transporte' && ' Deve estar dentro da semana de dobras para abater o transporte.'}
                       {catAtual.regraFolha === 'abate_especial' && ' Deve estar dentro da semana/parcela em que o desconto do adiantamento especial será abatido.'}
                     </small>
+                  </div>
+
+                  <div>
+                    <label style={s.label}>Forma de Pagamento:</label>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {['Dinheiro', 'PIX', 'Misto'].map(f => (
+                        <button key={f} type="button"
+                          onClick={() => setNovoRegistro({ ...novoRegistro, formaPagamento: f })}
+                          style={{ padding: '6px 16px', borderRadius: '20px', border: '2px solid', cursor: 'pointer', fontWeight: 700, fontSize: '13px',
+                            borderColor: novoRegistro.formaPagamento === f ? '#1565c0' : '#ccc',
+                            background: novoRegistro.formaPagamento === f ? '#e3f2fd' : '#fff',
+                            color: novoRegistro.formaPagamento === f ? '#1565c0' : '#666' }}>
+                          {f === 'Dinheiro' ? '💵' : f === 'PIX' ? '📱' : '🔄'} {f}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
