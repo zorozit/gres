@@ -97,6 +97,15 @@ export const Modules: React.FC = () => {
       adminRequired: true,
     },
     {
+      id: 'fechamento-dinheiro',
+      icon: '💵',
+      title: 'Fechamento Dinheiro',
+      description: 'Batimento de sangrias × pagamentos em dinheiro — sobra do período',
+      path: '/modulos/fechamento-dinheiro',
+      color: '#2e7d32',
+      adminRequired: false,
+    },
+    {
       id: 'importacoes-contabeis',
       icon: '📥',
       title: 'Importações Contábeis',

@@ -1,312 +1,227 @@
 import React, { useMemo } from 'react';
 
-interface DashboardPercData {
-  weeklyData: WeekData[];
+interface DayData {
+  label: string;           // DD/MM
+  data: string;            // YYYY-MM-DD
+  faturamento_dia: number;
+  faturamento_noite: number;
+  faturamento_total: number;
+  custo_dia: number;
+  custo_noite: number;
+  custo_total: number;
+  func_dia: number;
+  func_noite: number;
+}
+
+interface Props {
+  dailyData: DayData[];
   colaboradores: any[];
   escalas: any[];
 }
 
-interface WeekData {
-  label: string;
-  faturamento: number;
-  custoCLT: number;
-  custoFree: number;
-  custo: number;
+const fmtM = (v: number) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtP = (v: number) => isFinite(v) ? v.toFixed(1) + '%' : '—';
+
+function percColor(p: number): { bg: string; color: string; label: string } {
+  if (p <= 0)   return { bg: '#f5f5f5', color: '#999',    label: 'Sem fat.' };
+  if (p < 20)   return { bg: '#e8f5e9', color: '#1b5e20', label: '✅ Ótimo' };
+  if (p < 30)   return { bg: '#f1f8e9', color: '#33691e', label: '👍 Bom' };
+  if (p < 40)   return { bg: '#fff8e1', color: '#f57f17', label: '⚠️ Atenção' };
+  if (p < 55)   return { bg: '#fff3e0', color: '#e65100', label: '🔴 Alto' };
+  return           { bg: '#ffebee', color: '#b71c1c', label: '🚨 Crítico' };
 }
 
-const R = (v: any) => parseFloat(v) || 0;
-const fmtMoeda = (v: number) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtPerc = (v: number) => v.toFixed(1) + '%';
+export const DashboardPercentuais: React.FC<Props> = ({ dailyData }) => {
 
-export const DashboardPercentuais: React.FC<DashboardPercData> = ({ weeklyData, colaboradores, escalas }) => {
-  
-  // Cálculos mensais consolidados
   const mensal = useMemo(() => {
-    const faturamento = weeklyData.reduce((s, d) => s + d.faturamento, 0);
-    const custoCLT = weeklyData.reduce((s, d) => s + d.custoCLT, 0);
-    const custoFree = weeklyData.reduce((s, d) => s + d.custoFree, 0);
-    const custoTotal = custoCLT + custoFree;
-    
-    const percCLT = faturamento > 0 ? (custoCLT / faturamento) * 100 : 0;
-    const percFree = faturamento > 0 ? (custoFree / faturamento) * 100 : 0;
-    const percTotal = faturamento > 0 ? (custoTotal / faturamento) * 100 : 0;
-    
-    return { faturamento, custoCLT, custoFree, custoTotal, percCLT, percFree, percTotal };
-  }, [weeklyData]);
+    const fat  = dailyData.reduce((s, d) => s + d.faturamento_total, 0);
+    const custo= dailyData.reduce((s, d) => s + d.custo_total, 0);
+    const fat_dia   = dailyData.reduce((s, d) => s + d.faturamento_dia, 0);
+    const fat_noite = dailyData.reduce((s, d) => s + d.faturamento_noite, 0);
+    return { fat, custo, fat_dia, fat_noite, perc: fat > 0 ? (custo / fat) * 100 : 0 };
+  }, [dailyData]);
 
-  // Cálculos por função
-  const porFuncao = useMemo(() => {
-    const funcoes: { [key: string]: { clt: number; free: number } } = {};
-    
-    for (const colab of colaboradores) {
-      if (colab.ativo === false) continue;
-      
-      const funcao = colab.funcao || 'Outros';
-      if (!funcoes[funcao]) funcoes[funcao] = { clt: 0, free: 0 };
-      
-      const isFree = colab.tipoContrato === 'Freelancer';
-      
-      // Calcular custo total do mês para este colaborador
-      const escsColab = escalas.filter((e: any) => e.colaboradorId === colab.id);
-      let custoColab = 0;
-      
-      if (isFree) {
-        let dC = 0, nC = 0, dnC = 0;
-        for (const e of escsColab) {
-          if (e.turno === 'Dia') dC++;
-          else if (e.turno === 'Noite') nC++;
-          else if (e.turno === 'DiaNoite') { dnC++; dC++; nC++; }
-        }
-        const diasTrab = escsColab.filter((e: any) => e.turno !== 'Folga').length;
-        const vd = R(colab.valorDia) || 120;
-        const dobras = dnC + (dC - dnC) * 0.5 + (nC - dnC) * 0.5;
-        const transp = R(colab.valorTransporte) * diasTrab;
-        custoColab = dobras * vd + transp;
-      } else {
-        // CLT: salário mensal completo
-        custoColab = R(colab.salario);
-      }
-      
-      if (isFree) {
-        funcoes[funcao].free += custoColab;
-      } else {
-        funcoes[funcao].clt += custoColab;
-      }
-    }
-    
-    // Converter para array e calcular %
-    const arr = Object.entries(funcoes).map(([funcao, custos]) => {
-      const total = custos.clt + custos.free;
-      const percCLT = mensal.faturamento > 0 ? (custos.clt / mensal.faturamento) * 100 : 0;
-      const percFree = mensal.faturamento > 0 ? (custos.free / mensal.faturamento) * 100 : 0;
-      const percTotal = mensal.faturamento > 0 ? (total / mensal.faturamento) * 100 : 0;
-      
-      return { funcao, clt: custos.clt, free: custos.free, total, percCLT, percFree, percTotal };
-    });
-    
-    // Ordenar por % total decrescente
-    arr.sort((a, b) => b.percTotal - a.percTotal);
-    
-    return arr;
-  }, [colaboradores, escalas, mensal.faturamento]);
+  const maxFat = Math.max(...dailyData.map(d => d.faturamento_total), 1);
 
-  // Dados semanais com %
-  const semanalPerc = useMemo(() => {
-    return weeklyData.map(d => ({
-      ...d,
-      percCLT: d.faturamento > 0 ? (d.custoCLT / d.faturamento) * 100 : 0,
-      percFree: d.faturamento > 0 ? (d.custoFree / d.faturamento) * 100 : 0,
-      percTotal: d.faturamento > 0 ? (d.custo / d.faturamento) * 100 : 0,
-    }));
-  }, [weeklyData]);
-
-  const maxPerc = Math.max(...semanalPerc.map(d => d.percTotal), 1);
+  const th: React.CSSProperties = {
+    padding: '9px 8px', background: '#f0f4f8', textAlign: 'left',
+    fontWeight: 700, color: '#444', borderBottom: '2px solid #d0d0d0',
+    fontSize: '12px', whiteSpace: 'nowrap',
+  };
+  const td = (extra?: React.CSSProperties): React.CSSProperties => ({
+    padding: '8px 8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px',
+    whiteSpace: 'nowrap', ...extra,
+  });
 
   return (
     <div>
-      {/* Cards Mensais */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-        <div style={cardStyle('#2e7d32')}>
-          <div style={labelStyle}>Faturamento Mensal</div>
-          <div style={valueStyle('#2e7d32')}>{fmtMoeda(mensal.faturamento)}</div>
-        </div>
-        
-        <div style={cardStyle('#1565c0')}>
-          <div style={labelStyle}>Custo CLT</div>
-          <div style={valueStyle('#1565c0')}>{fmtMoeda(mensal.custoCLT)}</div>
-          <div style={percStyle('#1565c0')}>{fmtPerc(mensal.percCLT)} do faturamento</div>
-        </div>
-        
-        <div style={cardStyle('#c2185b')}>
-          <div style={labelStyle}>Custo Freelancer</div>
-          <div style={valueStyle('#c2185b')}>{fmtMoeda(mensal.custoFree)}</div>
-          <div style={percStyle('#c2185b')}>{fmtPerc(mensal.percFree)} do faturamento</div>
-        </div>
-        
-        <div style={cardStyle('#e65100')}>
-          <div style={labelStyle}>Custo Total</div>
-          <div style={valueStyle('#e65100')}>{fmtMoeda(mensal.custoTotal)}</div>
-          <div style={percStyle('#e65100')}>{fmtPerc(mensal.percTotal)} do faturamento</div>
-        </div>
+      {/* ── Cards resumo ── */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:'12px', marginBottom:'22px' }}>
+        {[
+          { label:'Faturamento Total', value: fmtM(mensal.fat),      color:'#2e7d32' },
+          { label:'Faturamento Dia',   value: fmtM(mensal.fat_dia),   color:'#f57c00' },
+          { label:'Faturamento Noite', value: fmtM(mensal.fat_noite), color:'#1565c0' },
+          { label:'Custo Mão de Obra', value: fmtM(mensal.custo),     color:'#c62828' },
+          { label:'% Custo / Fat.',    value: fmtP(mensal.perc),      color: mensal.perc < 30 ? '#2e7d32' : mensal.perc < 45 ? '#e65100' : '#b71c1c' },
+        ].map((c, i) => (
+          <div key={i} style={{ background:'#fff', border:'1px solid #e0e0e0', borderLeft:`4px solid ${c.color}`, borderRadius:'8px', padding:'14px' }}>
+            <div style={{ fontSize:'11px', color:'#777', marginBottom:'5px', textTransform:'uppercase', fontWeight:600 }}>{c.label}</div>
+            <div style={{ fontSize:'17px', fontWeight:700, color: c.color }}>{c.value}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Tabela por Função */}
-      <div style={{ backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', marginBottom: '24px' }}>
-        <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 'bold', color: '#333' }}>
-          📊 Custo por Função (% sobre Faturamento)
+      {/* ── Tabela diária ── */}
+      <div style={{ background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'20px', marginBottom:'22px' }}>
+        <h4 style={{ margin:'0 0 14px', fontSize:'15px', fontWeight:700, color:'#333' }}>
+          📅 Custo × Faturamento por Dia e Turno
         </h4>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
             <thead>
-              <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                <th style={thStyle}>Função</th>
-                <th style={thStyle}>CLT (R$)</th>
-                <th style={thStyle}>CLT (%)</th>
-                <th style={thStyle}>Freelancer (R$)</th>
-                <th style={thStyle}>Freelancer (%)</th>
-                <th style={thStyle}>Total (R$)</th>
-                <th style={thStyle}>Total (%)</th>
+              <tr>
+                <th style={th}>Data</th>
+                {/* Dia */}
+                <th style={{ ...th, borderLeft:'2px solid #ffe0b2' }}>Fat. Dia</th>
+                <th style={th}>Custo Dia</th>
+                <th style={th}>% Dia</th>
+                <th style={th}>Func. Dia</th>
+                {/* Noite */}
+                <th style={{ ...th, borderLeft:'2px solid #bbdefb' }}>Fat. Noite</th>
+                <th style={th}>Custo Noite</th>
+                <th style={th}>% Noite</th>
+                <th style={th}>Func. Noite</th>
+                {/* Total */}
+                <th style={{ ...th, borderLeft:'2px solid #e0e0e0' }}>Fat. Total</th>
+                <th style={th}>Custo Total</th>
+                <th style={th}>% Total</th>
+                <th style={th}>Status</th>
               </tr>
             </thead>
             <tbody>
-              {porFuncao.map((f, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={tdStyle}><strong>{f.funcao}</strong></td>
-                  <td style={tdStyle}>{fmtMoeda(f.clt)}</td>
-                  <td style={{...tdStyle, color: '#1565c0', fontWeight: 'bold'}}>{fmtPerc(f.percCLT)}</td>
-                  <td style={tdStyle}>{fmtMoeda(f.free)}</td>
-                  <td style={{...tdStyle, color: '#c2185b', fontWeight: 'bold'}}>{fmtPerc(f.percFree)}</td>
-                  <td style={tdStyle}>{fmtMoeda(f.total)}</td>
-                  <td style={{...tdStyle, color: '#e65100', fontWeight: 'bold'}}>{fmtPerc(f.percTotal)}</td>
-                </tr>
-              ))}
-              <tr style={{ backgroundColor: '#f9f9f9', fontWeight: 'bold', borderTop: '2px solid #ddd' }}>
-                <td style={tdStyle}>TOTAL</td>
-                <td style={tdStyle}>{fmtMoeda(mensal.custoCLT)}</td>
-                <td style={{...tdStyle, color: '#1565c0'}}>{fmtPerc(mensal.percCLT)}</td>
-                <td style={tdStyle}>{fmtMoeda(mensal.custoFree)}</td>
-                <td style={{...tdStyle, color: '#c2185b'}}>{fmtPerc(mensal.percFree)}</td>
-                <td style={tdStyle}>{fmtMoeda(mensal.custoTotal)}</td>
-                <td style={{...tdStyle, color: '#e65100'}}>{fmtPerc(mensal.percTotal)}</td>
-              </tr>
+              {dailyData.map((d, i) => {
+                const pDia   = d.faturamento_dia   > 0 ? (d.custo_dia   / d.faturamento_dia)   * 100 : 0;
+                const pNoite = d.faturamento_noite > 0 ? (d.custo_noite / d.faturamento_noite) * 100 : 0;
+                const pTotal = d.faturamento_total > 0 ? (d.custo_total / d.faturamento_total) * 100 : 0;
+                const st = percColor(pTotal);
+                const rowBg = i % 2 === 0 ? '#fff' : '#fafafa';
+                const cellPerc = (p: number): React.CSSProperties => {
+                  const c = percColor(p);
+                  return { ...td({ textAlign:'center', fontWeight:700, background: c.bg, color: c.color }), borderRadius:'4px' };
+                };
+                return (
+                  <tr key={d.data} style={{ background: pTotal > 55 ? '#fff5f5' : pTotal > 0 && pTotal < 20 ? '#f9fff9' : rowBg }}>
+                    <td style={td({ fontWeight:600 })}>{d.label}</td>
+                    {/* Dia */}
+                    <td style={{ ...td({ borderLeft:'2px solid #ffe0b2' }), color:'#f57c00', fontWeight:600 }}>
+                      {d.faturamento_dia > 0 ? fmtM(d.faturamento_dia) : <span style={{ color:'#bbb' }}>—</span>}
+                    </td>
+                    <td style={td()}>{d.custo_dia > 0 ? fmtM(d.custo_dia) : <span style={{ color:'#bbb' }}>—</span>}</td>
+                    <td style={cellPerc(pDia)}>{d.faturamento_dia > 0 ? fmtP(pDia) : '—'}</td>
+                    <td style={td({ textAlign:'center' })}>
+                      {d.func_dia > 0 ? <span style={{ background:'#fff3e0', color:'#e65100', padding:'1px 7px', borderRadius:'10px', fontWeight:600 }}>{d.func_dia}</span> : '—'}
+                    </td>
+                    {/* Noite */}
+                    <td style={{ ...td({ borderLeft:'2px solid #bbdefb' }), color:'#1565c0', fontWeight:600 }}>
+                      {d.faturamento_noite > 0 ? fmtM(d.faturamento_noite) : <span style={{ color:'#bbb' }}>—</span>}
+                    </td>
+                    <td style={td()}>{d.custo_noite > 0 ? fmtM(d.custo_noite) : <span style={{ color:'#bbb' }}>—</span>}</td>
+                    <td style={cellPerc(pNoite)}>{d.faturamento_noite > 0 ? fmtP(pNoite) : '—'}</td>
+                    <td style={td({ textAlign:'center' })}>
+                      {d.func_noite > 0 ? <span style={{ background:'#e3f2fd', color:'#1565c0', padding:'1px 7px', borderRadius:'10px', fontWeight:600 }}>{d.func_noite}</span> : '—'}
+                    </td>
+                    {/* Total */}
+                    <td style={{ ...td({ fontWeight:700, borderLeft:'2px solid #e0e0e0' }) }}>{d.faturamento_total > 0 ? fmtM(d.faturamento_total) : '—'}</td>
+                    <td style={td({ fontWeight:600, color:'#c62828' })}>{d.custo_total > 0 ? fmtM(d.custo_total) : '—'}</td>
+                    <td style={cellPerc(pTotal)}>{d.faturamento_total > 0 ? fmtP(pTotal) : '—'}</td>
+                    <td style={td({ textAlign:'center' })}>
+                      <span style={{ background: st.bg, color: st.color, padding:'2px 8px', borderRadius:'10px', fontSize:'11px', fontWeight:700 }}>
+                        {st.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
+            {/* Totais */}
+            <tfoot>
+              <tr style={{ background:'#f5f5f5', fontWeight:700, borderTop:'2px solid #ccc' }}>
+                <td style={td({ fontWeight:700 })}>TOTAL</td>
+                <td style={{ ...td({ borderLeft:'2px solid #ffe0b2' }), color:'#f57c00', fontWeight:700 }}>{fmtM(mensal.fat_dia)}</td>
+                <td style={td()}>{fmtM(dailyData.reduce((s,d)=>s+d.custo_dia,0))}</td>
+                <td style={td({ textAlign:'center', color: mensal.fat_dia > 0 ? percColor(dailyData.reduce((s,d)=>s+d.custo_dia,0)/mensal.fat_dia*100).color : '#999' })}>
+                  {mensal.fat_dia > 0 ? fmtP(dailyData.reduce((s,d)=>s+d.custo_dia,0)/mensal.fat_dia*100) : '—'}
+                </td>
+                <td style={td()}></td>
+                <td style={{ ...td({ borderLeft:'2px solid #bbdefb' }), color:'#1565c0', fontWeight:700 }}>{fmtM(mensal.fat_noite)}</td>
+                <td style={td()}>{fmtM(dailyData.reduce((s,d)=>s+d.custo_noite,0))}</td>
+                <td style={td({ textAlign:'center' })}>
+                  {mensal.fat_noite > 0 ? fmtP(dailyData.reduce((s,d)=>s+d.custo_noite,0)/mensal.fat_noite*100) : '—'}
+                </td>
+                <td style={td()}></td>
+                <td style={{ ...td({ fontWeight:700, borderLeft:'2px solid #e0e0e0' }) }}>{fmtM(mensal.fat)}</td>
+                <td style={td({ fontWeight:700, color:'#c62828' })}>{fmtM(mensal.custo)}</td>
+                <td style={td({ textAlign:'center', fontWeight:700, color: percColor(mensal.perc).color })}>
+                  {fmtP(mensal.perc)}
+                </td>
+                <td style={td()}></td>
+              </tr>
+            </tfoot>
           </table>
+        </div>
+        <div style={{ marginTop:'10px', fontSize:'11px', color:'#888', borderTop:'1px solid #f0f0f0', paddingTop:'8px' }}>
+          💡 <strong>Legenda %:</strong>&nbsp;
+          <span style={{ color:'#1b5e20' }}>✅ &lt;20% Ótimo</span> &nbsp;
+          <span style={{ color:'#33691e' }}>👍 20–30% Bom</span> &nbsp;
+          <span style={{ color:'#f57f17' }}>⚠️ 30–40% Atenção</span> &nbsp;
+          <span style={{ color:'#e65100' }}>🔴 40–55% Alto</span> &nbsp;
+          <span style={{ color:'#b71c1c' }}>🚨 &gt;55% Crítico</span>
         </div>
       </div>
 
-      {/* Gráfico Semanal de % */}
-      <div style={{ backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px' }}>
-        <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 'bold', color: '#333' }}>
-          📈 % de Custo sobre Faturamento (Semanal)
+      {/* ── Gráfico de barras horizontal (fat vs custo por dia) ── */}
+      <div style={{ background:'#fff', border:'1px solid #e0e0e0', borderRadius:'10px', padding:'20px' }}>
+        <h4 style={{ margin:'0 0 14px', fontSize:'15px', fontWeight:700, color:'#333' }}>
+          📈 Faturamento × Custo por Dia
         </h4>
-        
-        {/* Legend */}
-        <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '14px', height: '14px', backgroundColor: '#1565c0', borderRadius: '3px' }} />
-            % CLT
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '14px', height: '14px', backgroundColor: '#c2185b', borderRadius: '3px' }} />
-            % Freelancer
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '14px', height: '14px', backgroundColor: '#e65100', borderRadius: '3px' }} />
-            % Total
-          </span>
+        <div style={{ display:'flex', gap:'16px', marginBottom:'12px', fontSize:'12px' }}>
+          {[
+            { color:'#667eea', label:'Faturamento' },
+            { color:'#e53935', label:'Custo Mão de Obra' },
+          ].map(l => (
+            <span key={l.label} style={{ display:'flex', alignItems:'center', gap:'5px' }}>
+              <span style={{ width:'12px', height:'12px', background:l.color, borderRadius:'2px', display:'inline-block' }} />
+              {l.label}
+            </span>
+          ))}
         </div>
-
-        <div style={{ overflowX: 'auto' }}>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', minWidth: `${semanalPerc.length * 150}px`, height: '220px' }}>
-            {semanalPerc.map((d, i) => {
-              const hCLT = maxPerc > 0 ? Math.round((d.percCLT / maxPerc) * 180) : 0;
-              const hFree = maxPerc > 0 ? Math.round((d.percFree / maxPerc) * 180) : 0;
-              const hTotal = maxPerc > 0 ? Math.round((d.percTotal / maxPerc) * 180) : 0;
-              
-              return (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '130px' }}>
-                  {/* Bars */}
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end', height: '180px', paddingTop: '10px' }}>
-                    {/* CLT */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <span style={{ fontSize: '10px', color: '#1565c0', fontWeight: 'bold', marginBottom: '2px' }}>
-                        {fmtPerc(d.percCLT)}
-                      </span>
-                      <div style={{
-                        width: '32px', height: `${Math.max(hCLT, 2)}px`,
-                        backgroundColor: '#1565c0', borderRadius: '3px 3px 0 0',
-                      }} title={`CLT: ${fmtPerc(d.percCLT)}`} />
-                    </div>
-                    
-                    {/* Free */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <span style={{ fontSize: '10px', color: '#c2185b', fontWeight: 'bold', marginBottom: '2px' }}>
-                        {fmtPerc(d.percFree)}
-                      </span>
-                      <div style={{
-                        width: '32px', height: `${Math.max(hFree, 2)}px`,
-                        backgroundColor: '#c2185b', borderRadius: '3px 3px 0 0',
-                      }} title={`Free: ${fmtPerc(d.percFree)}`} />
-                    </div>
-                    
-                    {/* Total */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <span style={{ fontSize: '10px', color: '#e65100', fontWeight: 'bold', marginBottom: '2px' }}>
-                        {fmtPerc(d.percTotal)}
-                      </span>
-                      <div style={{
-                        width: '32px', height: `${Math.max(hTotal, 2)}px`,
-                        backgroundColor: '#e65100', borderRadius: '3px 3px 0 0',
-                      }} title={`Total: ${fmtPerc(d.percTotal)}`} />
-                    </div>
+        <div style={{ overflowY:'auto', maxHeight:'420px' }}>
+          {dailyData.map(d => {
+            const wFat  = maxFat > 0 ? (d.faturamento_total / maxFat) * 100 : 0;
+            const wCust = maxFat > 0 ? (d.custo_total / maxFat) * 100 : 0;
+            const pTotal = d.faturamento_total > 0 ? (d.custo_total / d.faturamento_total) * 100 : 0;
+            const st = percColor(pTotal);
+            return (
+              <div key={d.data} style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+                <div style={{ width:'36px', fontSize:'11px', color:'#666', textAlign:'right', flexShrink:0 }}>{d.label}</div>
+                <div style={{ flex:1, display:'flex', flexDirection:'column', gap:'3px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <div style={{ height:'12px', width:`${wFat}%`, background:'#667eea', borderRadius:'2px', minWidth:'2px', transition:'width .3s' }} />
+                    <span style={{ fontSize:'11px', color:'#444' }}>{fmtM(d.faturamento_total)}</span>
                   </div>
-
-                  {/* Baseline */}
-                  <div style={{ width: '100%', height: '2px', backgroundColor: '#e0e0e0', marginBottom: '6px' }} />
-
-                  {/* Week label */}
-                  <div style={{ fontSize: '10px', color: '#555', textAlign: 'center', fontWeight: 'bold' }}>
-                    {d.label}
-                  </div>
-                  
-                  {/* Faturamento */}
-                  <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>
-                    {fmtMoeda(d.faturamento)}
+                  <div style={{ display:'flex', alignItems:'center', gap:'4px' }}>
+                    <div style={{ height:'12px', width:`${wCust}%`, background:'#e53935', borderRadius:'2px', minWidth:'2px', transition:'width .3s' }} />
+                    <span style={{ fontSize:'11px', color:'#c62828' }}>{fmtM(d.custo_total)}</span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ marginTop: '12px', fontSize: '11px', color: '#888', borderTop: '1px solid #f0f0f0', paddingTop: '8px' }}>
-          💡 <strong>Percentuais sobre faturamento:</strong> Quanto maior o %, maior o impacto do custo na receita.
-          Meta ideal: manter custo total abaixo de 35% do faturamento.
+                <div style={{ width:'60px', fontSize:'11px', textAlign:'center', background: st.bg, color: st.color, padding:'2px 4px', borderRadius:'4px', fontWeight:700, flexShrink:0 }}>
+                  {d.faturamento_total > 0 ? fmtP(pTotal) : '—'}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
   );
-};
-
-// Estilos
-const cardStyle = (cor: string): React.CSSProperties => ({
-  backgroundColor: 'white',
-  border: '1px solid #e0e0e0',
-  borderLeft: `4px solid ${cor}`,
-  borderRadius: '8px',
-  padding: '16px',
-});
-
-const labelStyle: React.CSSProperties = {
-  fontSize: '12px',
-  color: '#666',
-  marginBottom: '6px',
-};
-
-const valueStyle = (cor: string): React.CSSProperties => ({
-  fontSize: '18px',
-  fontWeight: 'bold',
-  color: cor,
-  marginBottom: '4px',
-});
-
-const percStyle = (cor: string): React.CSSProperties => ({
-  fontSize: '13px',
-  fontWeight: 'bold',
-  color: cor,
-  backgroundColor: `${cor}15`,
-  padding: '4px 8px',
-  borderRadius: '4px',
-  display: 'inline-block',
-});
-
-const thStyle: React.CSSProperties = {
-  padding: '12px 8px',
-  textAlign: 'left',
-  fontWeight: 'bold',
-  color: '#333',
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: '10px 8px',
 };

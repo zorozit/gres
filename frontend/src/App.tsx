@@ -17,6 +17,7 @@ import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
+import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
 import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
@@ -141,6 +142,14 @@ function App() {
               element={
                 <ProtectedRoute adminOnly={true}>
                   <ImportacoesContabeis />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/modulos/fechamento-dinheiro"
+              element={
+                <ProtectedRoute>
+                  <FechamentoCaixaDinheiro />
                 </ProtectedRoute>
               }
             />
