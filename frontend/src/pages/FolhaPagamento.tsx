@@ -8,6 +8,22 @@ import * as XLSX from 'xlsx';
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
 
+interface AcordoTurnoTabela {
+  [dia: string]: { D?: number; N?: number; DN?: number };
+}
+
+interface AcordoFreelancer {
+  // valor_dia_noite
+  valorDia?: number;
+  valorNoite?: number;
+  // motoboy
+  chegadaDia?: number;
+  chegadaNoite?: number;
+  valorEntrega?: number;
+  // valor_turno
+  tabela?: AcordoTurnoTabela;
+}
+
 interface Colaborador {
   id: string;
   nome: string;
@@ -20,12 +36,16 @@ interface Colaborador {
   area?: string;
   tipoContrato?: 'CLT' | 'Freelancer';
   salario?: number;
-  valorDia?: number;      // CLT: valor dobra-dia; Freelancer: valor por dobra
+  valorDia?: number;      // CLT: valor dobra-dia; Freelancer: valor por dobra (retrocompat)
   valorNoite?: number;    // CLT: valor dobra-noite
   valorTransporte?: number;
   periculosidade?: number;
   unitId?: string;
   ativo?: boolean;
+  // Tipos de acordo freelancer
+  isMotoboy?: boolean;
+  tipoAcordo?: 'motoboy' | 'valor_turno' | 'valor_dia_noite';
+  acordo?: AcordoFreelancer;
 }
 
 interface Motoboy extends Colaborador {
@@ -691,7 +711,25 @@ export default function FolhaPagamento() {
           const escalasPendentes = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
           const escalasJaPagas   = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
 
+          // Mapa dow (0=Dom..6=Sab) -> chave da tabela de acordo
+          const DOW_KEY = ['dom','seg','ter','qua','qui','sex','sab'];
+
           const calcValorEsc = (esc: EscalaItem): number => {
+            // Tipo valor_turno: busca valor exato por dia da semana + turno na tabela
+            if ((f as any).tipoAcordo === 'valor_turno' && (f as any).acordo?.tabela) {
+              const tabela: AcordoTurnoTabela = (f as any).acordo.tabela;
+              const dow = new Date(esc.data + 'T12:00:00').getDay();
+              const diaKey = DOW_KEY[dow];
+              const vals = tabela[diaKey] || {};
+              if (esc.turno === 'DiaNoite') {
+                // DN: usa valor DN se configurado, senão D+N
+                return R(vals.DN) || (R(vals.D) + R(vals.N));
+              }
+              if (esc.turno === 'Dia')   return R(vals.D);
+              if (esc.turno === 'Noite') return R(vals.N);
+              return 0;
+            }
+            // Tipos valor_dia_noite / sem acordo: usa valorDia/valorNoite fixos
             if (usaTurno) {
               if (esc.turno === 'DiaNoite') return vDia + vNoite;
               if (esc.turno === 'Dia')      return vDia;
@@ -806,6 +844,9 @@ export default function FolhaPagamento() {
         return {
           id: f.id, nome: f.nome, chavePix: f.chavePix,
           telefone: f.celular || f.telefone,
+          // Tipo de acordo (para cálculo correto no modal de detalhe)
+          tipoAcordo: (f as any).tipoAcordo || null,
+          acordo: (f as any).acordo || null,
           dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
           valorTransporte, totalTransporte,
           transporteAdiantado, transporteSaldo,
@@ -1488,6 +1529,7 @@ export default function FolhaPagamento() {
     const usaTurno = vDia > 0 || vNoite > 0;
     const valorDobra = usaTurno ? (vDia + vNoite) : (R(fr.valorDobra) || R(fr.valorDia) || 120);
     const DIAS_ABR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const DOW_KEY_DET = ['dom','seg','ter','qua','qui','sex','sab'];
     // Set de dias já pagos (do objeto fr calculado)
     const diasPagosSet = new Set((fr.diasJaPagosDetalhe || []).map((d: any) => d.data));
     // Filtrar apenas escalas com presença confirmada OU já pagas (dias pagos sempre exibidos)
@@ -1499,7 +1541,14 @@ export default function FolhaPagamento() {
       const turnoLabel = e.turno === 'DiaNoite' ? 'DN (D+N)' : e.turno === 'Dia' ? 'Dia' : e.turno === 'Noite' ? 'Noite' : e.turno;
       const dobras = e.turno === 'DiaNoite' ? 1 : (e.turno === 'Dia' || e.turno === 'Noite') ? 0.5 : 0;
       let valor = 0;
-      if (usaTurno) {
+      // valor_turno: busca valor exato da tabela por dia da semana
+      if (fr.tipoAcordo === 'valor_turno' && fr.acordo?.tabela) {
+        const diaKey = DOW_KEY_DET[dow];
+        const vals = fr.acordo.tabela[diaKey] || {};
+        if (e.turno === 'DiaNoite') valor = R(vals.DN) || (R(vals.D) + R(vals.N));
+        else if (e.turno === 'Dia')   valor = R(vals.D);
+        else if (e.turno === 'Noite') valor = R(vals.N);
+      } else if (usaTurno) {
         if (e.turno === 'DiaNoite') valor = vDia + vNoite;
         else if (e.turno === 'Dia')   valor = vDia;
         else if (e.turno === 'Noite') valor = vNoite;
@@ -1526,7 +1575,9 @@ export default function FolhaPagamento() {
           </div>
           <div style={{ fontSize: '13px', color: '#555', marginBottom: '12px' }}>
             <strong>{fr.nome}</strong> · Semana {semana}
-            {usaTurno
+            {fr.tipoAcordo === 'valor_turno'
+              ? <> · 📅 Tabela por dia da semana</>
+              : usaTurno
               ? <> · ☀️ R$ {fmt(vDia)}/dia · 🌙 R$ {fmt(vNoite)}/noite</>
               : <> · R$ {fmt(valorDobra)}/dobra</>}
           </div>
