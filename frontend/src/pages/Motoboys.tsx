@@ -319,38 +319,53 @@ export const Motoboys: React.FC = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      // /motoboys agora retorna colaboradores com isMotoboy=true + tabela legada — fonte única
-      const rM = await fetch(
-        unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      // Buscar motoboys e colaboradores em paralelo
+      const [rM, rC] = await Promise.all([
+        fetch(unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`,
+          { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`,
+          { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
+      ]);
       const dM = await rM.json();
       const motosRaw: any[] = Array.isArray(dM) ? dM : [];
 
-      // Mapear cada registro para Motoboy — API já entrega campos unificados
-      const motosDB: Motoboy[] = motosRaw.map((m: any) => ({
-        id: m.id,
-        colaboradorId: m.colaboradorId || m.id,
-        nome: m.nome,
-        cpf: m.cpf || '',
-        telefone: m.telefone || m.celular || '',
-        placa: m.placa || '',
-        dataAdmissao: m.dataAdmissao || '',
-        dataDemissao: m.dataDemissao || '',
-        comissao: R(m.comissao) || 0,
-        chavePix: m.chavePix || '',
-        unitId: m.unitId || '',
-        vinculo: m.vinculo === 'CLT' ? 'CLT' : 'Freelancer',
-        salario: R(m.salario) || 0,
-        periculosidade: R(m.periculosidade) || 0,
-        valorChegadaDia:   R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
-        valorChegadaNoite: R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
-        valorEntrega: R(m.valorEntrega) || 0,
-        ativo: m.ativo !== false,
-      }));
+      // Colaboradores — fonte de verdade para campos de pagamento (valorDia/Noite/Transporte)
+      let colabsMap: Record<string, any> = {};
+      if (rC?.ok) {
+        const dC = await rC.json();
+        const colabs: any[] = Array.isArray(dC) ? dC : [];
+        for (const c of colabs) {
+          if (c.cpf) colabsMap[c.cpf] = c;
+          colabsMap[c.id] = c;
+        }
+      }
 
-      console.log('[Motoboys] fetchMotoboys total=', motosDB.length,
-        motosDB.map((m:any)=>({nome:m.nome,vinculo:m.vinculo,vCD:m.valorChegadaDia,vCN:m.valorChegadaNoite,vE:m.valorEntrega})));
+      // Mapear cada motoboy, enriquecendo com dados de colaboradores
+      const motosDB: Motoboy[] = motosRaw.map((m: any) => {
+        // Encontrar colaborador correspondente por CPF (mais confiável) ou ID
+        const colab = (m.cpf && colabsMap[m.cpf]) || colabsMap[m.id] || m;
+        return {
+          id: m.id,
+          colaboradorId: colab.id || m.colaboradorId || m.id,
+          nome: m.nome,
+          cpf: m.cpf || '',
+          telefone: m.telefone || m.celular || '',
+          placa: m.placa || '',
+          dataAdmissao: m.dataAdmissao || colab.dataAdmissao || '',
+          dataDemissao: m.dataDemissao || colab.dataDemissao || '',
+          comissao: R(m.comissao) || 0,
+          chavePix: m.chavePix || colab.chavePix || '',
+          unitId: m.unitId || '',
+          vinculo: m.vinculo === 'CLT' ? 'CLT' : 'Freelancer',
+          salario: R(m.salario) || 0,
+          periculosidade: R(m.periculosidade) || 0,
+          // Campos de pagamento: colaboradores é a fonte de verdade
+          valorChegadaDia:   R(colab.valorDia)        || R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
+          valorChegadaNoite: R(colab.valorNoite)      || R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
+          valorEntrega:      R(colab.valorTransporte) || R(m.valorEntrega)       || 0,
+          ativo: m.ativo !== false,
+        };
+      });
 
       setMotoboys(motosDB);
     } catch (e) { console.error(e); }
@@ -690,28 +705,41 @@ export const Motoboys: React.FC = () => {
       const isEdit = !!editandoId;
       const colabPayload = buildColabPayload();
 
-      // Encontrar ID do registro em /colaboradores pelo CPF (pode ser diferente do ID em /motoboys)
+      // Fonte de verdade: /colaboradores
+      // Buscar por CPF para garantir o ID correto independente de como foi criado
       let colabId = editandoId || '';
-      if (isEdit && formData.cpf) {
-        // Buscar colaborador pelo CPF para usar o ID correto
-        try {
-          const rc = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } });
-          if (rc.ok) {
-            const dc = await rc.json();
-            const colabs: any[] = Array.isArray(dc) ? dc : (dc?.colaboradores || dc?.data || []);
-            const match = colabs.find((c: any) => c.cpf === formData.cpf || c.id === editandoId);
-            if (match) colabId = match.id;
-          }
-        } catch {}
-      }
+      try {
+        const rc = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (rc.ok) {
+          const dc = await rc.json();
+          const colabs: any[] = Array.isArray(dc) ? dc : [];
+          // Tentar por CPF primeiro (mais confiável), depois por ID
+          const match = colabs.find((c: any) => formData.cpf && c.cpf === formData.cpf)
+                     || colabs.find((c: any) => c.id === editandoId);
+          if (match) colabId = match.id;
+        }
+      } catch {}
 
-      // 1. Salvar campos de pagamento em /colaboradores (fonte de verdade para valorDia/Noite/Transporte)
+      // 1. Salvar em /colaboradores (fonte de verdade para valorDia/Noite/Transporte)
+      //    PUT se existe, POST se ainda não tem colaborador (novo cadastro)
       if (colabId) {
-        await fetch(`${apiUrl}/colaboradores/${colabId}`, {
+        const rColab = await fetch(`${apiUrl}/colaboradores/${colabId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify(colabPayload),
-        }).catch(() => {});
+        });
+        if (!rColab.ok) console.warn('Falha ao atualizar colaborador:', await rColab.text());
+      } else if (!isEdit) {
+        // Novo motoboy: criar colaborador primeiro
+        const rColab = await fetch(`${apiUrl}/colaboradores`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(colabPayload),
+        });
+        if (rColab.ok) {
+          const dColab = await rColab.json();
+          colabId = dColab.id || colabId;
+        }
       }
 
       // 2. Salvar dados operacionais em /motoboys (vinculo, placa, datas)

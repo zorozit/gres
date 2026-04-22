@@ -370,7 +370,21 @@ export default function FolhaPagamento() {
       setFreelancers(todosColabs.filter(c => c.tipoContrato === 'Freelancer'));
 
       const dM = await rM.json();
-      const motos: Motoboy[] = Array.isArray(dM) ? dM.filter((m: Motoboy) => m.ativo !== false) : [];
+      // Enriquecer motoboys com dados de colaboradores (valorDia/Noite/Transporte vêm de /colaboradores)
+      const colabsMapFolha: Record<string, any> = {};
+      for (const c of todosColabs) {
+        if ((c as any).cpf) colabsMapFolha[(c as any).cpf] = c;
+        colabsMapFolha[c.id] = c;
+      }
+      const motos: Motoboy[] = (Array.isArray(dM) ? dM : []).filter((m: Motoboy) => m.ativo !== false).map((m: any) => {
+        const colab = (m.cpf && colabsMapFolha[m.cpf]) || colabsMapFolha[m.id] || m;
+        return {
+          ...m,
+          valorChegadaDia:   R(colab.valorDia)        || R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
+          valorChegadaNoite: R(colab.valorNoite)      || R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
+          valorEntrega:      R(colab.valorTransporte) || R(m.valorEntrega)       || 0,
+        };
+      });
       setMotoboys(motos);
 
       if (rE?.ok) {
@@ -385,7 +399,11 @@ export default function FolhaPagamento() {
             headers: { Authorization: `Bearer ${token()}` },
           });
           const d = await r.json();
-          if (Array.isArray(d)) ctrlMap[m.id] = d;
+          if (Array.isArray(d)) {
+            // Indexar pelo ID do motoboy E pelo CPF (para cruzar com colaborador)
+            ctrlMap[m.id] = d;
+            if (m.cpf) ctrlMap[m.cpf] = d;
+          }
         } catch { ctrlMap[m.id] = []; }
       }));
       setControlesMap(ctrlMap);
@@ -599,13 +617,15 @@ export default function FolhaPagamento() {
 
       const frList = freelancers.map(f => {
         // ── Detectar se é motoboy Freelancer (usa controle-motoboy, não escalas) ──
-        const isMotoboy = (f as any).cargo === 'Motoboy' ||
-          motoboys.some(m => m.id === f.id || (m.cpf && m.cpf === (f as any).cpf));
-        // ID do motoboy correspondente (pode ser igual ao colaborador ou ligado por CPF)
+        const fCpf = (f as any).cpf || '';
         const motoboyMatch = motoboys.find(m =>
-          m.id === f.id || (m.cpf && m.cpf === (f as any).cpf)
+          m.id === f.id || (fCpf && m.cpf === fCpf)
         );
+        const isMotoboy = !!motoboyMatch || (f as any).cargo === 'Motoboy';
         const motoboyId = motoboyMatch?.id || f.id;
+        // Controle indexado por ID do motoboy ou por CPF
+        const ctrlLinhas: ControleDia[] =
+          controlesMap[motoboyId] || (fCpf ? controlesMap[fCpf] : undefined) || [];
 
         const vDia   = R(f.valorDia);
         const vNoite = R(f.valorNoite);
@@ -628,8 +648,7 @@ export default function FolhaPagamento() {
 
         if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
           // ── Cálculo baseado em controle-motoboy ──────────────────────────────
-          const linhasMes: ControleDia[] = controlesMap[motoboyId] || [];
-          const linhasSemana = linhasMes.filter(l => l.data >= isoInicio && l.data <= isoFim);
+          const linhasSemana = ctrlLinhas.filter(l => l.data >= isoInicio && l.data <= isoFim);
 
           for (const linha of linhasSemana) {
             const jaPago = diasJaPagos.has(linha.data);
@@ -638,7 +657,9 @@ export default function FolhaPagamento() {
             const chegD = temDia   ? vDia   : 0;
             const chegN = temNoite ? vNoite : 0;
             const totalEntregas = (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
-            const vlLinha = parseFloat((chegD + chegN + totalEntregas).toFixed(2));
+            // Usar vlVariavel já calculado pelo módulo Motoboys se os valores de chegada não resolverem
+            const vlCalculado = chegD + chegN + totalEntregas;
+            const vlLinha = parseFloat((vlCalculado > 0 ? vlCalculado : R(linha.vlVariavel)).toFixed(2));
 
             // Turno de exibição
             const turno = (temDia && temNoite) ? 'DiaNoite' : temDia ? 'Dia' : temNoite ? 'Noite' : 'Dia';
