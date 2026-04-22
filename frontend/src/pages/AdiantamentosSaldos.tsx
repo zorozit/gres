@@ -405,16 +405,15 @@ export const AdiantamentosSaldos: React.FC = () => {
   };
 
   /* ── Modal JSX ────────────────────────────── */
-  const ModalLancamento = () => {
-    if (!modalAberto) return null;
-    const colabSel = colaboradores.find(c => c.id === formLanc.colaboradorId);
-    const TIPOS_LANCAMENTO = [
-      { value: 'Desconto Adiantamento Especial', label: '➖ Desconto / Parcela abatida (quitar dívida)' },
-      { value: 'Adiantamento Especial', label: '➕ Novo Adiantamento Especial (novo empréstimo)' },
-      { value: 'Adiantamento Transporte', label: '🚗 Adiantamento Transporte' },
-      { value: 'Desconto Transporte', label: '➖ Desconto Transporte' },
-    ];
-    return (
+  const TIPOS_LANCAMENTO = [
+    { value: 'Desconto Adiantamento Especial', label: '➖ Desconto / Parcela abatida (quitar dívida)' },
+    { value: 'Adiantamento Especial', label: '➕ Novo Adiantamento Especial (novo empréstimo)' },
+    { value: 'Adiantamento Transporte', label: '🚗 Adiantamento Transporte' },
+    { value: 'Desconto Transporte', label: '➖ Desconto Transporte' },
+  ];
+  // JSX inline — não subcomponente — para evitar remontagem que faz inputs perderem foco
+  const colabSelModal = colaboradores.find(c => c.id === formLanc.colaboradorId);
+  const modalLancamentoJSX = !modalAberto ? null : (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalAberto(false)}>
         <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '28px', maxWidth: '520px', width: '96%', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
@@ -491,7 +490,7 @@ export const AdiantamentosSaldos: React.FC = () => {
           {/* Resumo */}
           {formLanc.colaboradorId && formLanc.valor && (
             <div style={{ backgroundColor: formLanc.tipo.startsWith('Desconto') ? '#f3e8ff' : '#ecfdf5', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '13px' }}>
-              <strong>{colabSel?.nome}</strong> &rarr; {formLanc.tipo.startsWith('Desconto') ? '➖ abatimento de ' : '➕ novo adiantamento de '}
+              <strong>{colabSelModal?.nome}</strong> &rarr; {formLanc.tipo.startsWith('Desconto') ? '➖ abatimento de ' : '➕ novo adiantamento de '}
               <strong>R$ {parseFloat(formLanc.valor || '0').toFixed(2).replace('.', ',')}</strong>
               &nbsp;via <strong>{formLanc.formaPagamento}</strong> em {formLanc.data}
             </div>
@@ -507,13 +506,12 @@ export const AdiantamentosSaldos: React.FC = () => {
           </div>
         </div>
       </div>
-    );
-  };
+  );
 
   return (
     <div style={s.page as React.CSSProperties}>
       <Header title="Antecipações e Saldos" />
-      <ModalLancamento />
+      {modalLancamentoJSX}
       <div style={s.wrap as React.CSSProperties}>
         <div style={{ ...s.card, ...s.section, marginBottom: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
