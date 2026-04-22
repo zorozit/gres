@@ -126,8 +126,10 @@ const badge = (bg: string, color: string) => ({
 export const AdiantamentosSaldos: React.FC = () => {
   const navigate = useNavigate();
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
+  const { user, email } = useAuth() as any;
   const unitId = activeUnit?.id || (user as any)?.unitId || localStorage.getItem('unit_id') || '';
+  const userId = localStorage.getItem('user_id') || '';
+  const responsavelEmail = email || (user as any)?.email || localStorage.getItem('user_email') || 'sistema';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
   const [loading, setLoading] = useState(false);
@@ -166,6 +168,8 @@ export const AdiantamentosSaldos: React.FC = () => {
     try {
       const payload = {
         unitId,
+        responsavel: responsavelEmail,
+        responsavelId: userId,
         colaboradorId: formLanc.colaboradorId,
         tipo: formLanc.tipo,
         origem: formLanc.tipo,

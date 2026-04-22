@@ -269,7 +269,7 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
 export default function FolhaPagamento() {
   const navigate = useNavigate();
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
+  const { user, email: authEmail } = useAuth() as any;
   const unitId = activeUnit?.id || (user as any)?.unitId || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
@@ -326,6 +326,8 @@ export default function FolhaPagamento() {
   };
 
   const token = () => localStorage.getItem('auth_token');
+  const responsavelEmail = authEmail || (user as any)?.email || localStorage.getItem('user_email') || 'sistema';
+  const responsavelId    = localStorage.getItem('user_id') || '';
 
   const carregarDados = async () => {
     setLoading(true);
@@ -1373,6 +1375,8 @@ export default function FolhaPagamento() {
                   if (abaterEspecial && vlAbate > 0) {
                     const payloadDesc = {
                       unitId,
+                      responsavel: responsavelEmail,
+                      responsavelId,
                       colaboradorId: fr.id,
                       tipo: 'Desconto Adiantamento Especial',
                       origem: 'Desconto Adiantamento Especial',
