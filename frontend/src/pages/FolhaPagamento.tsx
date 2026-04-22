@@ -1126,18 +1126,19 @@ export default function FolhaPagamento() {
     setDataLocalFreelancer(new Date().toISOString().split('T')[0]);
   }, [modalFreelancerPgto]);
 
-  const ModalConfirmarPgtoFreelancer = () => {
-    if (!modalFreelancerPgto) return null;
+  // Renderizado como JSX inline (não como subcomponente) para evitar remontagem
+  // que faz inputs perderem foco a cada keystroke.
+  const totalSelecionadoFreelancer = checkItems.reduce((sum, item) => {
+    if (!item.checked) return sum;
+    return item.tipo === 'credito' ? sum + item.valor : sum - item.valor;
+  }, 0);
+  const toggleItemFreelancer = (key: string) => {
+    setCheckItems(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
+  };
+  const modalConfirmarPgtoFreelancerJSX = !modalFreelancerPgto ? null : (() => {
     const { fr, fech } = modalFreelancerPgto;
-
-    const totalSelecionado = checkItems.reduce((sum, item) => {
-      if (!item.checked) return sum;
-      return item.tipo === 'credito' ? sum + item.valor : sum - item.valor;
-    }, 0);
-
-    const toggleItem = (key: string) => {
-      setCheckItems(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
-    };
+    const totalSelecionado = totalSelecionadoFreelancer;
+    const toggleItem = toggleItemFreelancer;
 
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -1383,7 +1384,7 @@ export default function FolhaPagamento() {
         </div>
       </div>
     );
-  };
+  })();
 
   /* ── Modal detalhe Freelancer ────────────────────────────── */
   const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[]; saidaItems?: any[] }; onClose: () => void }) => {
@@ -1820,7 +1821,7 @@ export default function FolhaPagamento() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
       <ModalConfirmarPagamentoCLT />
-      <ModalConfirmarPgtoFreelancer />
+      {modalConfirmarPgtoFreelancerJSX}
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
       {historicoColabId && (
