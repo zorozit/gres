@@ -1295,7 +1295,7 @@ exports.handler = async (event) => {
           observacao: observacao || '',
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
-          formaPagamento: formaPagamento || 'Dinheiro',
+          formaPagamento: formaPagamento || 'PIX',
           unitId: itemUnitId,
           timestamp: new Date().toISOString(),
           createdAt: new Date().toISOString()

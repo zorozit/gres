@@ -62,9 +62,10 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
       setSaidasRows(saidasArr);
 
       // Pré-preenche formaMap com o valor já salvo no banco
+      // Padrão: PIX (dinheiro é exceção)
       const mapa: Record<string, string> = {};
       saidasArr.forEach((s: Saida) => {
-        if (s.formaPagamento) mapa[s.id] = s.formaPagamento;
+        mapa[s.id] = s.formaPagamento || 'PIX';
       });
       setFormaMap(mapa);
       setCarregado(true);
@@ -259,8 +260,7 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
               <span style={{ fontSize:'12px', fontWeight:400, color:'#888' }}>({saidasRows.length} registros)</span>
             </div>
             <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'12px', color:'#795548' }}>
-              💡 <strong>Como usar:</strong> Para cada saída, clique no botão correspondente à forma como o pagamento foi feito.
-              Saídas marcadas como <strong>💵 Dinheiro</strong> ou <strong>🔄 Misto</strong> entram no cálculo da sobra. PIX não desconta do caixa físico.
+              💡 <strong>Como usar:</strong> O padrão é <strong>📱 PIX</strong>. Clique em <strong>💵 Din.</strong> apenas nas saídas que foram pagas em dinheiro físico — essas entram no cálculo da sobra. PIX não desconta do caixa físico.
             </div>
             {saidasRows.length === 0 ? (
               <p style={{ color:'#999', fontSize:'13px' }}>Nenhuma saída registrada no período.</p>

@@ -149,7 +149,7 @@ export const Saidas: React.FC = () => {
     origem: 'A pagar',
     dataPagamento: getLocalDate(),
     observacao: '',
-    formaPagamento: 'Dinheiro',
+    formaPagamento: 'PIX',
   });
 
   // aba Movimentos
@@ -281,7 +281,7 @@ export const Saidas: React.FC = () => {
         alert('✅ Saída registrada com sucesso!');
         setNovoRegistro({
           responsavel: email, colaboradorId: '', descricao: '', valor: 0,
-          tipo: 'A pagar', origem: 'A pagar', dataPagamento: getLocalDate(), observacao: '', formaPagamento: 'Dinheiro',
+          tipo: 'A pagar', origem: 'A pagar', dataPagamento: getLocalDate(), observacao: '', formaPagamento: 'PIX',
         });
         // Reload movimentos if visible
         if (abaSelecionada === 'movimentos') handleFiltrar();
