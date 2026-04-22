@@ -1,7 +1,7 @@
 import { useVersionCheck } from '../hooks/useVersionCheck'
 
 export function UpdateBanner() {
-  const { updateAvailable, version, gitHash } = useVersionCheck()
+  const { updateAvailable, countdown, version, gitHash } = useVersionCheck()
 
   if (!updateAvailable) return null
 
@@ -20,7 +20,7 @@ export function UpdateBanner() {
         display: 'flex',
         alignItems: 'center',
         gap: '1rem',
-        maxWidth: '360px',
+        maxWidth: '380px',
         fontFamily: 'inherit',
         fontSize: '0.875rem',
         animation: 'slideUp 0.3s ease-out',
@@ -41,13 +41,17 @@ export function UpdateBanner() {
         <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
           Nova versão disponível
         </div>
-        <div style={{ opacity: 0.8, fontSize: '0.78rem' }}>
-          Versão atual: <code style={{ background: 'rgba(255,255,255,0.15)', borderRadius: 4, padding: '1px 5px' }}>{version}</code>
-          {' '}· <span style={{ opacity: 0.7 }}>#{gitHash}</span>
+        <div style={{ opacity: 0.85, fontSize: '0.78rem' }}>
+          {countdown !== null && countdown > 0
+            ? <>Atualizando automaticamente em <strong>{countdown}s</strong>…</>
+            : <>Atualizando…</>}
+        </div>
+        <div style={{ opacity: 0.6, fontSize: '0.72rem', marginTop: '2px' }}>
+          v{version} · #{gitHash}
         </div>
       </div>
 
-      {/* Botão atualizar */}
+      {/* Botão atualizar agora */}
       <button
         onClick={() => window.location.reload()}
         style={{
@@ -61,11 +65,12 @@ export function UpdateBanner() {
           cursor: 'pointer',
           flexShrink: 0,
           transition: 'background 0.15s',
+          whiteSpace: 'nowrap',
         }}
         onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#dbeafe')}
         onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#fff')}
       >
-        Atualizar
+        Agora
       </button>
     </div>
   )
