@@ -305,8 +305,16 @@ const buildAcordoCompatFields = (tipoAcordo: string, acordo: any) => {
 };
 
 const AcordoFreelancerForm = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => {
-  const tipoAcordo = data.tipoAcordo || 'valor_dia_noite';
-  const acordo = data.acordo || {};
+  const tipoAcordo = data.tipoAcordo || (data.isMotoboy ? 'motoboy' : 'valor_dia_noite');
+  // Compatibilidade: colaboradores antigos sem campo `acordo` — usar campos raiz como fallback
+  const acordo: Acordo = data.acordo || {
+    valorDia:      data.valorDia      || 0,
+    valorNoite:    data.valorNoite    || 0,
+    chegadaDia:    (data as any).valorChegadaDia   || data.valorDia    || 0,
+    chegadaNoite:  (data as any).valorChegadaNoite || data.valorNoite  || 0,
+    valorEntrega:  (data as any).valorEntrega       || 0,
+    tabela:        undefined,
+  };
 
   const setAcordo = (patch: any) => {
     const novoAcordo = { ...acordo, ...patch };
@@ -315,11 +323,14 @@ const AcordoFreelancerForm = ({ data, onChange }: { data: Partial<Colaborador>; 
   };
 
   const setTipo = (tipo: string) => {
+    // Preserva valores existentes ao mudar tipo
+    const vDia   = acordo.valorDia   || data.valorDia   || 0;
+    const vNoite = acordo.valorNoite || data.valorNoite || 0;
     const novoAcordo = tipo === 'motoboy'
-      ? { chegadaDia: 0, chegadaNoite: 0, valorEntrega: 0 }
+      ? { chegadaDia: acordo.chegadaDia || vDia, chegadaNoite: acordo.chegadaNoite || vNoite, valorEntrega: acordo.valorEntrega || 0 }
       : tipo === 'valor_turno'
-      ? { tabela: {} }
-      : { valorDia: 0, valorNoite: 0 };
+      ? { tabela: acordo.tabela || {} }
+      : { valorDia: vDia, valorNoite: vNoite };
     const compat = buildAcordoCompatFields(tipo, novoAcordo);
     onChange({ tipoAcordo: tipo as any, acordo: novoAcordo, isMotoboy: tipo === 'motoboy', ...compat });
   };
@@ -523,9 +534,9 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
             />
           </div>
         )}
-        {/* Acordo Freelancer — formulário dinâmico */}
+        {/* Acordo Freelancer — formulário dinâmico; key força remontagem ao trocar colaborador ou tipo de acordo */}
         {isFreelancer && (
-          <AcordoFreelancerForm data={data} onChange={onChange} />
+          <AcordoFreelancerForm key={`${(data as any).id || 'novo'}-${data.tipoAcordo || 'default'}`} data={data} onChange={onChange} />
         )}
         {/* Valor Dia / Noite — só CLT (dobras) */}
         {!isFreelancer && (
