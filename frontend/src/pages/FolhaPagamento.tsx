@@ -1132,6 +1132,9 @@ export default function FolhaPagamento() {
     if (!item.checked) return sum;
     return item.tipo === 'credito' ? sum + item.valor : sum - item.valor;
   }, 0);
+  // Valor efetivamente a desembolsar = total dos itens − abatimento do adiantamento especial
+  const vlAbateFreelancer = abaterEspecial ? (parseFloat(valorAbatimento) || 0) : 0;
+  const totalADesembolsarFreelancer = Math.max(0, totalSelecionadoFreelancer - vlAbateFreelancer);
   const toggleItemFreelancer = (key: string) => {
     setCheckItems(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
   };
@@ -1198,11 +1201,29 @@ export default function FolhaPagamento() {
           </div>
 
           {/* Total selecionado */}
-          <div style={{ backgroundColor: totalSelecionado >= 0 ? '#e8f5e9' : '#ffebee', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>💰 Total a pagar:</span>
-            <span style={{ fontSize: '20px', fontWeight: 'bold', color: totalSelecionado >= 0 ? '#2e7d32' : '#c62828' }}>
-              {fmtMoeda(Math.max(0, totalSelecionado))}
-            </span>
+          <div style={{ backgroundColor: totalSelecionado >= 0 ? '#e8f5e9' : '#ffebee', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>
+                {vlAbateFreelancer > 0 ? '🧾 Subtotal bruto:' : '💰 Total a pagar:'}
+              </span>
+              <span style={{ fontSize: vlAbateFreelancer > 0 ? '15px' : '20px', fontWeight: 'bold', color: totalSelecionado >= 0 ? '#2e7d32' : '#c62828' }}>
+                {fmtMoeda(Math.max(0, totalSelecionado))}
+              </span>
+            </div>
+            {vlAbateFreelancer > 0 && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                  <span style={{ fontSize: '12px', color: '#7c3aed' }}>➖ Abatimento adto. especial:</span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#7c3aed' }}>−{fmtMoeda(vlAbateFreelancer)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', borderTop: '1px solid #c3d9c3', paddingTop: '6px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>💰 A desembolsar:</span>
+                  <span style={{ fontSize: '20px', fontWeight: 'bold', color: totalADesembolsarFreelancer >= 0 ? '#2e7d32' : '#c62828' }}>
+                    {fmtMoeda(totalADesembolsarFreelancer)}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Abatimento de Adiantamento Especial */}
@@ -1220,21 +1241,16 @@ export default function FolhaPagamento() {
                 </span>
               </div>
               {abaterEspecial && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px' }}>
-                  <div>
-                    <label style={{ ...s.label, fontSize: '11px', color: '#5b21b6' }}>Valor a abater neste pagamento (R$)</label>
-                    <input type="number" step="0.01" min="0.01"
-                      max={Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)).toString()}
-                      value={valorAbatimento}
-                      placeholder={`máx. ${fmtMoeda(Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)))}`}
-                      onChange={e => setValorAbatimento(e.target.value)}
-                      style={{ ...s.input, fontSize: '12px', padding: '6px', borderColor: '#a78bfa' }} />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                    <div style={{ fontSize: '12px', color: '#7c3aed', lineHeight: 1.6 }}>
-                      <div>💰 Recebe: <strong>{fmtMoeda(Math.max(0, totalSelecionado - (parseFloat(valorAbatimento) || 0)))}</strong></div>
-                      <div>➖ Abate: <strong>{fmtMoeda(parseFloat(valorAbatimento) || 0)}</strong></div>
-                    </div>
+                <div style={{ marginTop: '6px' }}>
+                  <label style={{ ...s.label, fontSize: '11px', color: '#5b21b6' }}>Valor a abater neste pagamento (R$)</label>
+                  <input type="number" step="0.01" min="0.01"
+                    max={Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)).toString()}
+                    value={valorAbatimento}
+                    placeholder={`máx. ${fmtMoeda(Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)))}`}
+                    onChange={e => setValorAbatimento(e.target.value)}
+                    style={{ ...s.input, fontSize: '12px', padding: '6px', borderColor: '#a78bfa' }} />
+                  <div style={{ fontSize: '11px', color: '#6d28d9', marginTop: '4px' }}>
+                    Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0, fr.saldoEspecialAberto - (parseFloat(valorAbatimento) || 0)))}</strong>
                   </div>
                 </div>
               )}
@@ -1296,7 +1312,9 @@ export default function FolhaPagamento() {
                   const debitoItems  = checkItems.filter(it => it.checked && it.tipo === 'debito');
                   const totalCredito = creditoItems.reduce((s, it) => s + it.valor, 0);
                   const totalDebito  = debitoItems.reduce((s, it) => s + it.valor, 0);
-                  const totalFinal   = Math.max(0, totalCredito - totalDebito);
+                  // Abatimento do adiantamento especial reduz o valor efetivamente pago
+                  const vlAbate      = abaterEspecial ? (parseFloat(valorAbatimento) || 0) : 0;
+                  const totalFinal   = Math.max(0, totalCredito - totalDebito - vlAbate);
 
                   const inclTransporte = checkItems.find(it => it.key === 'transporte')?.checked ?? false;
                   const inclDobras     = checkItems.find(it => it.key === 'dobras')?.checked ?? false;
@@ -1323,7 +1341,9 @@ export default function FolhaPagamento() {
                     transporteCalculado: fr.totalTransporte || 0,
                     transporteAdiantado: fr.transporteAdiantado || 0,
                     caixinha:            caixinhaChecked,
-                    desconto:            totalDebito,
+                    // desconto inclui itens do checklist + abatimento de adiantamento especial
+                    desconto:            totalDebito + vlAbate,
+                    abatimentoEspecial:  vlAbate,
                     totalFinal,
                     // Forma de pagamento
                     formaPagamento: formaFreelancer,
@@ -1332,14 +1352,15 @@ export default function FolhaPagamento() {
                     logPagamentos: [{
                       id: Date.now().toString(),
                       data: dataLocalFreelancer,
+                      // valor = o que foi efetivamente desembolsado (já com abatimento deduzido)
                       valor: totalFinal,
                       forma: formaFreelancer,
                       valorPix:      formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerPix) || 0) : undefined,
                       valorDinheiro: formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerDin) || 0) : undefined,
                       tipo: 'Freelancer',
-                      obs: `sem. ${fech.semanaLabel}`,
+                      obs: `sem. ${fech.semanaLabel}${vlAbate > 0 ? ` (abateu R$${fmt(vlAbate)} adto.esp.)` : ''}`,
                     }],
-                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel} – ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}`,
+                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel} – ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` – Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -1349,7 +1370,6 @@ export default function FolhaPagamento() {
                   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
                   // Lançar abatimento de adiantamento especial automaticamente
-                  const vlAbate = parseFloat(valorAbatimento) || 0;
                   if (abaterEspecial && vlAbate > 0) {
                     const payloadDesc = {
                       unitId,
@@ -1377,7 +1397,7 @@ export default function FolhaPagamento() {
                 finally { setSalvando(false); }
               }}
               style={{ ...s.btn('#43a047'), flex: 1 }}>
-              {salvando ? '⏳ Salvando...' : `✅ Confirmar ${fmtMoeda(Math.max(0, totalSelecionado))}`}
+              {salvando ? '⏳ Salvando...' : `✅ Confirmar ${fmtMoeda(totalADesembolsarFreelancer)}`}
             </button>
             <button onClick={() => setModalFreelancerPgto(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
           </div>
