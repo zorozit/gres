@@ -51,6 +51,11 @@ interface ControleDia {
   vlVariavel: number;
   pgto: number;
   variavel: number;
+  // Campos opcionais calculados por preencherControleComSaidas (módulo Motoboys)
+  chegadaDia?: number;
+  chegadaNoite?: number;
+  salDia?: number;
+  diaSemana?: number;
 }
 
 /** Escala de um colaborador/freelancer em um dia */
@@ -593,75 +598,119 @@ export default function FolhaPagamento() {
       const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} – ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
 
       const frList = freelancers.map(f => {
-        const escalasSemana = escalas.filter(e =>
-          e.colaboradorId === f.id && e.data >= isoInicio && e.data <= isoFim
+        // ── Detectar se é motoboy Freelancer (usa controle-motoboy, não escalas) ──
+        const isMotoboy = (f as any).cargo === 'Motoboy' ||
+          motoboys.some(m => m.id === f.id || (m.cpf && m.cpf === (f as any).cpf));
+        // ID do motoboy correspondente (pode ser igual ao colaborador ou ligado por CPF)
+        const motoboyMatch = motoboys.find(m =>
+          m.id === f.id || (m.cpf && m.cpf === (f as any).cpf)
         );
-        const { diasCodigo } = contarDobras(escalasSemana, f.id);
+        const motoboyId = motoboyMatch?.id || f.id;
 
-        // Se tem valorDia E/OU valorNoite configurados, calcular por turno
         const vDia   = R(f.valorDia);
         const vNoite = R(f.valorNoite);
+        const vEntrega = R((f as any).valorTransporte); // para motoboy: valor por entrega
         const vDobra = R((f as any).valorDobra) || 120;
         const usaTurno = vDia > 0 || vNoite > 0;
-
-        // Apenas escalas confirmadas com presença
-        const escalasSemanaConfirmadas = escalasSemana.filter(e =>
-          e.turno !== 'Folga' &&
-          statusPresencaEscala(e) === 'presente'
-        );
-
-        // Separar: dias ainda não pagos (pendentes) vs já pagos
-        const diasJaPagos = diasJaPagosPorColab[f.id] || new Set<string>();
-        const escalasPendentes  = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
-        const escalasJaPagas    = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
 
         // Analítico: diasPagos = dias pendentes (a pagar agora)
         const diasPagos: { data: string; turno: string; valor: number }[] = [];
         // Analítico: diasJaPagosDetalhe = dias que já foram pagos anteriormente
         const diasJaPagosDetalhe: { data: string; turno: string; valor: number }[] = [];
 
-        let total = 0; // valor dos dias PENDENTES (a pagar)
-        let totalJaPago = 0; // valor dos dias já pagos
+        let total = 0;
+        let totalJaPago = 0;
+        let dobras = 0;
+        let diasTrabalhados = 0;
+        let diasCodigo = '';
 
-        const calcValorEsc = (esc: EscalaItem): number => {
-          if (usaTurno) {
-            if (esc.turno === 'DiaNoite') return vDia + vNoite;
-            if (esc.turno === 'Dia')      return vDia;
-            if (esc.turno === 'Noite')    return vNoite;
-            return 0;
-          } else {
-            let dobrasEsc = 0;
-            if (esc.turno === 'DiaNoite') dobrasEsc = 2;
-            else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobrasEsc = 1;
-            return parseFloat((dobrasEsc * vDobra).toFixed(2));
+        const diasJaPagos = diasJaPagosPorColab[f.id] || new Set<string>();
+
+        if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
+          // ── Cálculo baseado em controle-motoboy ──────────────────────────────
+          const linhasMes: ControleDia[] = controlesMap[motoboyId] || [];
+          const linhasSemana = linhasMes.filter(l => l.data >= isoInicio && l.data <= isoFim);
+
+          for (const linha of linhasSemana) {
+            const jaPago = diasJaPagos.has(linha.data);
+            const temDia   = R(linha.entDia) > 0 || R(linha.chegadaDia) > 0 || R(linha.salDia) > 0;
+            const temNoite = R(linha.entNoite) > 0 || R(linha.chegadaNoite) > 0;
+            const chegD = temDia   ? vDia   : 0;
+            const chegN = temNoite ? vNoite : 0;
+            const totalEntregas = (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
+            const vlLinha = parseFloat((chegD + chegN + totalEntregas).toFixed(2));
+
+            // Turno de exibição
+            const turno = (temDia && temNoite) ? 'DiaNoite' : temDia ? 'Dia' : temNoite ? 'Noite' : 'Dia';
+
+            if (jaPago) {
+              totalJaPago += vlLinha;
+              diasJaPagosDetalhe.push({ data: linha.data, turno, valor: vlLinha });
+            } else if (vlLinha > 0) {
+              total += vlLinha;
+              diasPagos.push({ data: linha.data, turno, valor: vlLinha });
+              dobras += (temDia && temNoite) ? 2 : 1;
+              diasTrabalhados++;
+            }
           }
-        };
+          total = parseFloat(total.toFixed(2));
+          totalJaPago = parseFloat(totalJaPago.toFixed(2));
+          diasCodigo = diasPagos.map(d => d.data.slice(8)).join(',');
+        } else {
+          // ── Cálculo baseado em escalas (freelancer padrão) ───────────────────
+          const escalasSemana = escalas.filter(e =>
+            e.colaboradorId === f.id && e.data >= isoInicio && e.data <= isoFim
+          );
+          ({ diasCodigo } = contarDobras(escalasSemana, f.id));
 
-        for (const esc of escalasPendentes) {
-          const v = calcValorEsc(esc);
-          total += v;
-          diasPagos.push({ data: esc.data, turno: esc.turno, valor: v });
-        }
-        for (const esc of escalasJaPagas) {
-          const v = calcValorEsc(esc);
-          totalJaPago += v;
-          diasJaPagosDetalhe.push({ data: esc.data, turno: esc.turno, valor: v });
-        }
-        total = parseFloat(total.toFixed(2));
-        totalJaPago = parseFloat(totalJaPago.toFixed(2));
+          const escalasSemanaConfirmadas = escalasSemana.filter(e =>
+            e.turno !== 'Folga' &&
+            statusPresencaEscala(e) === 'presente'
+          );
+          const escalasPendentes = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
+          const escalasJaPagas   = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
 
-        // dobras e diasTrabalhados só dos pendentes (para exibição)
-        const dobras = diasPagos.reduce((s, d) => {
-          if (d.turno === 'DiaNoite') return s + 2;
-          if (d.turno === 'Dia' || d.turno === 'Noite') return s + 1;
-          return s;
-        }, 0);
-        const diasTrabalhados = escalasPendentes.length;
+          const calcValorEsc = (esc: EscalaItem): number => {
+            if (usaTurno) {
+              if (esc.turno === 'DiaNoite') return vDia + vNoite;
+              if (esc.turno === 'Dia')      return vDia;
+              if (esc.turno === 'Noite')    return vNoite;
+              return 0;
+            } else {
+              let dobrasEsc = 0;
+              if (esc.turno === 'DiaNoite') dobrasEsc = 2;
+              else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobrasEsc = 1;
+              return parseFloat((dobrasEsc * vDobra).toFixed(2));
+            }
+          };
+
+          for (const esc of escalasPendentes) {
+            const v = calcValorEsc(esc);
+            total += v;
+            diasPagos.push({ data: esc.data, turno: esc.turno, valor: v });
+          }
+          for (const esc of escalasJaPagas) {
+            const v = calcValorEsc(esc);
+            totalJaPago += v;
+            diasJaPagosDetalhe.push({ data: esc.data, turno: esc.turno, valor: v });
+          }
+          total = parseFloat(total.toFixed(2));
+          totalJaPago = parseFloat(totalJaPago.toFixed(2));
+
+          dobras = diasPagos.reduce((s, d) => {
+            if (d.turno === 'DiaNoite') return s + 2;
+            if (d.turno === 'Dia' || d.turno === 'Noite') return s + 1;
+            return s;
+          }, 0);
+          diasTrabalhados = escalasPendentes.length;
+        }
 
         // valorDobra para exibição
         const valorDobra = usaTurno ? (vDia + vNoite) : vDobra;
-        const valorTransporte = R(f.valorTransporte);
-        const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
+        // Motoboy Freelancer: valorTransporte = valor/entrega (já incluso no total)
+        //                     não tem transporte de deslocamento separado
+        const valorTransporte = isMotoboy ? 0 : R(f.valorTransporte);
+        const totalTransporte = isMotoboy ? 0 : parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
 
         // Helper: data efetiva da saída (dataPagamento ou data de lançamento)
         const saidaData = (s: any) => s.dataPagamento || s.data || '';
@@ -793,7 +842,7 @@ export default function FolhaPagamento() {
   // Recalcular fechamentos quando editFechamento, saidas ou escalas mudam
   useEffect(() => {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
-  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt, saldosEspeciais]);
+  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt, saldosEspeciais, controlesMap, motoboys]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
