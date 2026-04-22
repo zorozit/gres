@@ -5,6 +5,28 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 
 /* ─── Interfaces ──────────────────────────────────────────────────────────── */
+interface AcordoTurno {
+  seg?: { D?: number; N?: number; DN?: number };
+  ter?: { D?: number; N?: number; DN?: number };
+  qua?: { D?: number; N?: number; DN?: number };
+  qui?: { D?: number; N?: number; DN?: number };
+  sex?: { D?: number; N?: number; DN?: number };
+  sab?: { D?: number; N?: number; DN?: number };
+  dom?: { D?: number; N?: number; DN?: number };
+}
+
+interface Acordo {
+  // motoboy
+  chegadaDia?: number;
+  chegadaNoite?: number;
+  valorEntrega?: number;
+  // valor_turno
+  tabela?: AcordoTurno;
+  // valor_dia_noite
+  valorDia?: number;
+  valorNoite?: number;
+}
+
 interface Colaborador {
   id: string;
   unitId: string;
@@ -38,6 +60,10 @@ interface Colaborador {
   podeTrabalharNoite: boolean;
   dataCadastro: string;
   ativo: boolean;
+  // Novos campos para tipos de acordo freelancer
+  isMotoboy?: boolean;
+  tipoAcordo?: 'motoboy' | 'valor_turno' | 'valor_dia_noite';
+  acordo?: Acordo;
 }
 
 interface FuncaoEscala {
@@ -253,6 +279,154 @@ const CamposEndereco = ({ data, onChange }: CamposEnderecoProps) => (
   </div>
 );
 
+/* ─── Formulário dinâmico por tipo de acordo (Freelancer) ────────────────── */
+const DIAS_ACORDO = [
+  { key: 'seg', label: 'Seg' }, { key: 'ter', label: 'Ter' }, { key: 'qua', label: 'Qua' },
+  { key: 'qui', label: 'Qui' }, { key: 'sex', label: 'Sex' }, { key: 'sab', label: 'Sáb' }, { key: 'dom', label: 'Dom' },
+];
+
+const buildAcordoCompatFields = (tipoAcordo: string, acordo: any) => {
+  if (tipoAcordo === 'motoboy') {
+    return { valorDia: acordo?.chegadaDia || 0, valorNoite: acordo?.chegadaNoite || 0, isMotoboy: true };
+  }
+  if (tipoAcordo === 'valor_turno') {
+    const tab = acordo?.tabela || {};
+    const dias = Object.values(tab) as any[];
+    const dsArr = dias.map((d: any) => d?.D || 0).filter(Boolean);
+    const nsArr = dias.map((d: any) => d?.N || 0).filter(Boolean);
+    const avgD = dsArr.length ? Math.round(dsArr.reduce((a: number, b: number) => a + b, 0) / dsArr.length) : 0;
+    const avgN = nsArr.length ? Math.round(nsArr.reduce((a: number, b: number) => a + b, 0) / nsArr.length) : 0;
+    return { valorDia: avgD, valorNoite: avgN, isMotoboy: false };
+  }
+  if (tipoAcordo === 'valor_dia_noite') {
+    return { valorDia: acordo?.valorDia || 0, valorNoite: acordo?.valorNoite || 0, isMotoboy: false };
+  }
+  return {};
+};
+
+const AcordoFreelancerForm = ({ data, onChange }: { data: Partial<Colaborador>; onChange: (p: Partial<Colaborador>) => void }) => {
+  const tipoAcordo = data.tipoAcordo || 'valor_dia_noite';
+  const acordo = data.acordo || {};
+
+  const setAcordo = (patch: any) => {
+    const novoAcordo = { ...acordo, ...patch };
+    const compat = buildAcordoCompatFields(tipoAcordo, novoAcordo);
+    onChange({ acordo: novoAcordo, ...compat });
+  };
+
+  const setTipo = (tipo: string) => {
+    const novoAcordo = tipo === 'motoboy'
+      ? { chegadaDia: 0, chegadaNoite: 0, valorEntrega: 0 }
+      : tipo === 'valor_turno'
+      ? { tabela: {} }
+      : { valorDia: 0, valorNoite: 0 };
+    const compat = buildAcordoCompatFields(tipo, novoAcordo);
+    onChange({ tipoAcordo: tipo as any, acordo: novoAcordo, isMotoboy: tipo === 'motoboy', ...compat });
+  };
+
+  const inputSt: React.CSSProperties = { border: '1px solid #ccc', borderRadius: '4px', padding: '6px 8px', fontSize: '13px', width: '100%', boxSizing: 'border-box' };
+
+  return (
+    <div style={{ gridColumn: '1 / -1', background: '#fff8e1', borderRadius: '8px', padding: '16px', border: '1px solid #ffe082', marginBottom: '8px' }}>
+      <div style={{ marginBottom: '12px' }}>
+        <label style={{ fontWeight: 600, fontSize: '13px', color: '#e65100', display: 'block', marginBottom: '6px' }}>⚖️ Tipo de Acordo</label>
+        <select value={tipoAcordo} style={{ ...inputSt, background: '#fff' }}
+          onChange={e => setTipo(e.target.value)}>
+          <option value="valor_dia_noite">⏰ Valor Dia/Noite Fixo</option>
+          <option value="valor_turno">📅 Valor por Turno/Dia da Semana</option>
+          <option value="motoboy">🏍️ Motoboy (chegada + entregas)</option>
+        </select>
+      </div>
+
+      {tipoAcordo === 'motoboy' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555', display: 'block', marginBottom: '4px' }}>Chegada Dia (R$)</label>
+            <input type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(acordo.chegadaDia || 0)} style={inputSt}
+              onFocus={e => e.target.select()}
+              onBlur={e => setAcordo({ chegadaDia: brParaNum(e.target.value) })} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555', display: 'block', marginBottom: '4px' }}>Chegada Noite (R$)</label>
+            <input type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(acordo.chegadaNoite || 0)} style={inputSt}
+              onFocus={e => e.target.select()}
+              onBlur={e => setAcordo({ chegadaNoite: brParaNum(e.target.value) })} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555', display: 'block', marginBottom: '4px' }}>Valor por Entrega (R$)</label>
+            <input type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(acordo.valorEntrega || 0)} style={inputSt}
+              onFocus={e => e.target.select()}
+              onBlur={e => setAcordo({ valorEntrega: brParaNum(e.target.value) })} />
+          </div>
+        </div>
+      )}
+
+      {tipoAcordo === 'valor_dia_noite' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555', display: 'block', marginBottom: '4px' }}>Valor Turno Dia (R$)</label>
+            <input type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(acordo.valorDia || 0)} style={inputSt}
+              onFocus={e => e.target.select()}
+              onBlur={e => setAcordo({ valorDia: brParaNum(e.target.value) })} />
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555', display: 'block', marginBottom: '4px' }}>Valor Turno Noite (R$)</label>
+            <input type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR(acordo.valorNoite || 0)} style={inputSt}
+              onFocus={e => e.target.select()}
+              onBlur={e => setAcordo({ valorNoite: brParaNum(e.target.value) })} />
+          </div>
+        </div>
+      )}
+
+      {tipoAcordo === 'valor_turno' && (
+        <div>
+          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 8px' }}>Preencha os valores por turno para cada dia da semana (deixe 0 para dias não trabalhados).</p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '12px' }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '6px 8px', textAlign: 'left', color: '#666', fontWeight: 600, borderBottom: '2px solid #ffe082' }}>Dia</th>
+                  {['D (Dia)', 'N (Noite)', 'DN (Dia+Noite)'].map(h => (
+                    <th key={h} style={{ padding: '6px 8px', textAlign: 'center', color: '#666', fontWeight: 600, borderBottom: '2px solid #ffe082', minWidth: '90px' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {DIAS_ACORDO.map(({ key, label }) => {
+                  const tab = (acordo.tabela || {}) as any;
+                  const vals = tab[key] || {};
+                  return (
+                    <tr key={key} style={{ borderBottom: '1px solid #fff3cd' }}>
+                      <td style={{ padding: '4px 8px', fontWeight: 600, color: '#555' }}>{label}</td>
+                      {(['D', 'N', 'DN'] as const).map(turno => (
+                        <td key={turno} style={{ padding: '4px 6px' }}>
+                          <input type="text" inputMode="decimal" placeholder="0"
+                            defaultValue={vals[turno] || ''} style={{ ...inputSt, textAlign: 'center', padding: '4px 6px' }}
+                            onFocus={e => e.target.select()}
+                            onBlur={e => {
+                              const v = brParaNum(e.target.value);
+                              const novaTab = { ...(acordo.tabela || {}), [key]: { ...vals, [turno]: v } };
+                              setAcordo({ tabela: novaTab });
+                            }} />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposContratacaoProps) => {
   const isFreelancer = data.tipoContrato === 'Freelancer';
   return (
@@ -349,36 +523,35 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
             />
           </div>
         )}
-        {/* Valor Dia */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>
-            {isFreelancer ? 'Valor Dobra-Dia (R$)' : 'Adicional Dobra-Dia (R$)'}
-            <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>
-              {isFreelancer ? 'R$ por turno Dia / DN' : 'Adicional sobre salário'}
-            </span>
-          </label>
-          <input
-            type="text" inputMode="decimal" placeholder="0,00"
-            defaultValue={numParaBR(data.valorDia)} style={styles.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })}
-          />
-        </div>
-        {/* Valor Noite */}
-        <div style={styles.formGroup}>
-          <label style={styles.label}>
-            {isFreelancer ? 'Valor Dobra-Noite (R$)' : 'Adicional Dobra-Noite (R$)'}
-            <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>
-              {isFreelancer ? 'R$ por turno N / DN' : 'Adicional sobre salário'}
-            </span>
-          </label>
-          <input
-            type="text" inputMode="decimal" placeholder="0,00"
-            defaultValue={numParaBR(data.valorNoite)} style={styles.input}
-            onFocus={e => e.target.select()}
-            onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })}
-          />
-        </div>
+        {/* Acordo Freelancer — formulário dinâmico */}
+        {isFreelancer && (
+          <AcordoFreelancerForm data={data} onChange={onChange} />
+        )}
+        {/* Valor Dia / Noite — só CLT (dobras) */}
+        {!isFreelancer && (
+          <>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>
+                Adicional Dobra-Dia (R$)
+                <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>Adicional sobre salário</span>
+              </label>
+              <input type="text" inputMode="decimal" placeholder="0,00"
+                defaultValue={numParaBR(data.valorDia)} style={styles.input}
+                onFocus={e => e.target.select()}
+                onBlur={e => onChange({ valorDia: brParaNum(e.target.value) })} />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>
+                Adicional Dobra-Noite (R$)
+                <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>Adicional sobre salário</span>
+              </label>
+              <input type="text" inputMode="decimal" placeholder="0,00"
+                defaultValue={numParaBR(data.valorNoite)} style={styles.input}
+                onFocus={e => e.target.select()}
+                onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })} />
+            </div>
+          </>
+        )}
         {/* Transporte */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Transporte Ida+Volta por dia (R$)</label>
@@ -486,6 +659,15 @@ const CardColaborador = ({ colab, onEditar, onDesligar, onReativar }: CardColabo
           }}>
             {colab.tipoContrato}
           </span>
+          {isFreelancer && colab.tipoAcordo && (
+            <span style={{
+              ...styles.badge,
+              backgroundColor: colab.tipoAcordo === 'motoboy' ? '#1565c0' : colab.tipoAcordo === 'valor_turno' ? '#e65100' : '#2e7d32',
+              fontSize: '10px',
+            }}>
+              {colab.tipoAcordo === 'motoboy' ? '🏍️ Motoboy' : colab.tipoAcordo === 'valor_turno' ? '📅 Turno/Dia' : '⏰ Dia/Noite'}
+            </span>
+          )}
           {colab.area && (
             <span style={{ ...styles.badge, backgroundColor: '#546e7a', fontSize: '10px' }}>
               {colab.area}

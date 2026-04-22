@@ -418,7 +418,9 @@ exports.handler = async (event) => {
         salario, chavePix, dataAdmissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
         diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
-        unitId, ativo
+        unitId, ativo,
+        isMotoboy, tipoAcordo, acordo,
+        valorChegadaDia, valorChegadaNoite, valorEntrega
       } = body;
 
       const celularFinal = celular || telefone || '';
@@ -475,7 +477,15 @@ exports.handler = async (event) => {
           ativo:            ativo !== false,
           dataCadastro:     new Date().toISOString().split('T')[0],
           createdAt:        new Date().toISOString(),
-          updatedAt:        new Date().toISOString()
+          updatedAt:        new Date().toISOString(),
+          // Tipos de acordo freelancer
+          isMotoboy:        isMotoboy === true || isMotoboy === 'true' || false,
+          tipoAcordo:       tipoAcordo || (isMotoboy ? 'motoboy' : null),
+          acordo:           acordo || null,
+          // Campos de chegada motoboy (retrocompat)
+          valorChegadaDia:  parseFloat(valorChegadaDia) || 0,
+          valorChegadaNoite:parseFloat(valorChegadaNoite) || 0,
+          valorEntrega:     parseFloat(valorEntrega) || 0,
         };
 
         await dynamodb.put({
@@ -502,7 +512,9 @@ exports.handler = async (event) => {
         salario, chavePix, dataAdmissao, dataDemissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
         diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
-        ativo
+        ativo,
+        isMotoboy, tipoAcordo, acordo,
+        valorChegadaDia, valorChegadaNoite, valorEntrega
       } = body;
 
       const celularFinal = celular || telefone || '';
@@ -550,7 +562,15 @@ exports.handler = async (event) => {
           podeTrabalharDia:   podeTrabalharDia   !== undefined ? (podeTrabalharDia   === true || podeTrabalharDia   === 'true') : (original.Item.podeTrabalharDia   || false),
           podeTrabalharNoite: podeTrabalharNoite !== undefined ? (podeTrabalharNoite === true || podeTrabalharNoite === 'true') : (original.Item.podeTrabalharNoite || false),
           ativo:            ativo !== undefined ? (ativo === true || ativo === 'true') : (original.Item.ativo !== false),
-          updatedAt:        new Date().toISOString()
+          updatedAt:        new Date().toISOString(),
+          // Tipos de acordo freelancer
+          isMotoboy:        isMotoboy !== undefined ? (isMotoboy === true || isMotoboy === 'true') : (original.Item.isMotoboy || false),
+          tipoAcordo:       tipoAcordo !== undefined ? tipoAcordo : (original.Item.tipoAcordo || null),
+          acordo:           acordo !== undefined ? acordo : (original.Item.acordo || null),
+          // Campos de chegada motoboy (retrocompat)
+          valorChegadaDia:  valorChegadaDia !== undefined ? (parseFloat(valorChegadaDia) || 0) : (original.Item.valorChegadaDia || 0),
+          valorChegadaNoite:valorChegadaNoite !== undefined ? (parseFloat(valorChegadaNoite) || 0) : (original.Item.valorChegadaNoite || 0),
+          valorEntrega:     valorEntrega !== undefined ? (parseFloat(valorEntrega) || 0) : (original.Item.valorEntrega || 0),
         };
 
         await dynamodb.put({
@@ -698,20 +718,53 @@ exports.handler = async (event) => {
       }
     }
 
-    // GET MOTOBOYS
+    // GET MOTOBOYS — fonte única: colaboradores com isMotoboy=true
     if ((rawPath === '/motoboys' || rawPath.includes('/motoboys')) && httpMethod === 'GET') {
       try {
         const unitIdRaw = queryParams.unitId;
         const unitIdClean = unitIdRaw ? resolveUnitId(unitIdRaw) : null;
-        let params = { TableName: 'gres-prod-motoboys' };
+
+        // Buscar colaboradores com isMotoboy = true (fonte única de verdade)
+        let params = {
+          TableName: 'gres-prod-colaboradores',
+          FilterExpression: 'isMotoboy = :true AND (#at = :atTrue OR attribute_not_exists(#at))',
+          ExpressionAttributeNames: { '#at': 'ativo' },
+          ExpressionAttributeValues: { ':true': true, ':atTrue': true },
+        };
 
         if (unitIdClean) {
-          params.FilterExpression = 'unitId = :uid';
-          params.ExpressionAttributeValues = { ':uid': unitIdClean };
+          params.FilterExpression += ' AND unitId = :uid';
+          params.ExpressionAttributeValues[':uid'] = unitIdClean;
         }
 
         const result = await dynamodb.scan(params).promise();
-        return response(200, (result.Items || []).sort((a, b) => (a.nome || '').localeCompare(b.nome || '')));
+        const motoboys = (result.Items || []).map(c => ({
+          // Compatibilidade com campos esperados pelo frontend Motoboys.tsx
+          id: c.id,
+          colaboradorId: c.id,
+          nome: c.nome,
+          cpf: c.cpf || '',
+          telefone: c.telefone || c.celular || '',
+          placa: c.placa || '',
+          dataAdmissao: c.dataAdmissao || '',
+          dataDemissao: c.dataDemissao || '',
+          comissao: c.comissao || 0,
+          chavePix: c.chavePix || '',
+          unitId: c.unitId || '',
+          vinculo: c.tipoContrato || c.vinculo || 'Freelancer',
+          salario: c.salario || 0,
+          periculosidade: c.periculosidade || 0,
+          valorChegadaDia:   c.valorChegadaDia   || c.valorDia   || 0,
+          valorChegadaNoite: c.valorChegadaNoite || c.valorNoite || 0,
+          valorEntrega:      c.valorEntrega || c.valorTransporte || 0,
+          isMotoboy: true,
+          ativo: c.ativo !== false,
+          // Preservar tipoAcordo para uso futuro
+          tipoAcordo: c.tipoAcordo || 'motoboy',
+          acordo: c.acordo || null,
+        }));
+
+        return response(200, motoboys.sort((a, b) => (a.nome || '').localeCompare(b.nome || '')));
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao buscar motoboys' });
