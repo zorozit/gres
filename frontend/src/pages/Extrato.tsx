@@ -157,8 +157,13 @@ export const Extrato: React.FC = () => {
           const colab = colabs.find((c: any) => c.id === item.colaboradorId);
           const nome  = colab?.nome || item.colaboradorId;
           const tc    = colab?.tipoContrato || (item.semana ? 'Freelancer' : 'CLT');
-          const val   = R(item.totalFinal) || R(item.saldoFinal) || 0;
           const isCLT = !item.semana || item.semana === true;
+          // Freelancer: usar valorBruto (dobras sem descontos) para que as Saídas
+          // de desconto apareçam como linhas independentes sem dupla contagem.
+          // CLT: manter totalFinal (já é o valor líquido correto).
+          const val = !isCLT && R(item.valorBruto) > 0
+            ? R(item.valorBruto)
+            : R(item.totalFinal) || R(item.saldoFinal) || 0;
 
           // Para CLT: gerar linha de Adiantamento (dia 20) separada quando pagoAdiantamento=true
           if (isCLT && item.pagoAdiantamento === true) {
@@ -729,7 +734,8 @@ export const Extrato: React.FC = () => {
               { label: 'Folha / Dobras',       val: fmtMoeda(folhaTotal),                          bg: '#e8f5e9', color: '#2e7d32' },
               { label: 'Adiantamentos',         val: fmtMoeda(saidaCred),                           bg: '#fff3e0', color: '#e65100' },
               { label: 'Descontos / A receber', val: fmtMoeda(saidaDeb),                            bg: '#fce4ec', color: '#c62828' },
-              { label: 'Líquido estimado',      val: fmtMoeda(folhaTotal + saidaCred - saidaDeb),   bg: '#e3f2fd', color: '#1565c0' },
+              // Líquido = Folha bruta - Descontos - Adiantamentos já pagos
+              { label: 'Líquido estimado',      val: fmtMoeda(folhaTotal - saidaDeb - saidaCred),   bg: '#e3f2fd', color: '#1565c0' },
               ...(pendentes.length > 0 ? [{ label: `⏳ Pendentes (${pendentes.length})`, val: fmtMoeda(pendentes.reduce((s,i)=>s+i.valor,0)), bg: '#fff9c4', color: '#f57f17' }] : []),
             ].map(c => (
               <div key={c.label} style={{ padding: '8px 12px', backgroundColor: c.bg, borderRadius: '8px', minWidth: '120px' }}>
@@ -818,7 +824,7 @@ export const Extrato: React.FC = () => {
                   <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
                     <td colSpan={3} style={{ padding: '8px' }}>TOTAL DO MÊS</td>
                     <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7', fontSize: '13px' }}>
-                      {fmtMoeda(folhaTotal + saidaCred - saidaDeb)}
+                      {fmtMoeda(folhaTotal - saidaDeb - saidaCred)}
                     </td>
                     <td colSpan={2} />
                   </tr>
