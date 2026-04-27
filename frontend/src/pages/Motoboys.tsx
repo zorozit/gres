@@ -977,7 +977,7 @@ export const Motoboys: React.FC = () => {
                     const sel = !!pgtoDiasSel[l.data];
                     const dow = new Date(l.data + 'T12:00:00').getDay();
                     const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-                    const fmtDt = (iso: string) => { const [y,m,d] = iso.split('-'); return `${d}/${m} ${DIAS[dow]}`; };
+                    const fmtDt = (iso: string) => { const [,m,d] = iso.split('-'); return `${d}/${m} ${DIAS[dow]}`; };
                     return (
                       <tr key={l.data} style={{ background: sel?(i%2===0?'#e3f2fd':'#e8f4fd'):(i%2===0?'#fafafa':'#fff'), cursor:'pointer' }}
                         onClick={() => setPgtoDiasSel(prev => ({...prev, [l.data]: !prev[l.data] }))}>
