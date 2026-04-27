@@ -1145,58 +1145,97 @@ export default function FolhaPagamento() {
         </div>
         {items.length === 0 ? (
           <p style={{ textAlign: 'center', color: '#999' }}>Nenhum registro de pagamento encontrado.</p>
-        ) : (
+        ) : (() => {
+          // Separar granulares (novo modelo) de legados
+          const granulares = items.filter((x: any) => x.tipo === 'freelancer-dia' && x.data);
+          const legados    = items.filter((x: any) => x.tipo !== 'freelancer-dia' && !x.migrado);
+
+          // Agrupar granulares por semana (campo semana ou derivar da data)
+          const semanaGrupos: Record<string, any[]> = {};
+          for (const g of granulares) {
+            const key = g.semana || g.data?.substring(0, 7) || 'sem-semana';
+            if (!semanaGrupos[key]) semanaGrupos[key] = [];
+            semanaGrupos[key].push(g);
+          }
+          // Montar linhas agrupadas
+          const linhasGranulares = Object.entries(semanaGrupos).map(([sem, dias]) => ({
+            id: `grupo-${sem}`,
+            tipo: 'granular-grupo',
+            mes: dias[0].mes,
+            semana: sem,
+            diasDetalhe: dias.sort((a: any, b: any) => a.data.localeCompare(b.data)),
+            total: dias.reduce((s: number, d: any) => s + R(d.valor), 0),
+            pago: dias.every((d: any) => d.pago),
+            parcial: dias.some((d: any) => d.pago) && dias.some((d: any) => !d.pago),
+            dataPagamento: dias.filter((d: any) => d.dataPagamento).sort((a: any, b: any) => (b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento || '',
+            formaPagamento: dias[0]?.formaPagamento || 'PIX',
+          }));
+
+          const todasLinhas = [
+            ...linhasGranulares.sort((a, b) => (b.semana||'').localeCompare(a.semana||'')),
+            ...legados.sort((a: any, b: any) => (b.semana||b.mes||'').localeCompare(a.semana||a.mes||'')),
+          ];
+          const totalPago = [
+            ...granulares.filter((x: any) => x.pago).map((x: any) => R(x.valor)),
+            ...legados.filter((x: any) => x.pago).map((x: any) => R(x.totalFinal || x.saldoFinal)),
+          ].reduce((s, v) => s + v, 0);
+
+          return (
           <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead>
               <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                {['Mês', 'Semana', 'Bruto', 'Transp', 'Total', 'Status', 'Data Pgto', 'Obs'].map(h => (
+                {['Mês', 'Semana', 'Dias/Turnos', 'Valor', 'Status', 'Data Pgto', 'Forma'].map(h => (
                   <th key={h} style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {items.map((item, i) => (
+              {todasLinhas.map((item: any, i) => (
                 <tr key={item.id} style={{ backgroundColor: i % 2 === 0 ? '#f9f9f9' : 'white', borderBottom: '1px solid #eee' }}>
                   <td style={{ padding: '6px 8px' }}>{item.mes}</td>
                   <td style={{ padding: '6px 8px', color: '#666', fontSize: '11px' }}>{item.semana || '-'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1976d2' }}>
-                    {item.valorBruto > 0 ? fmtMoeda(item.valorBruto) : fmtMoeda(item.saldoFinal || 0)}
-                  </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1565c0' }}>
-                    {item.valorTransporte > 0 ? fmtMoeda(item.valorTransporte) : '-'}
+                  <td style={{ padding: '6px 8px', fontSize: '11px', color: '#444' }}>
+                    {item.tipo === 'granular-grupo'
+                      ? item.diasDetalhe.map((d: any) => `${d.data.substring(8)}/${d.turno === 'Dia' ? '☀️' : '🌙'}`).join(' · ')
+                      : (item.obs || '-').substring(0, 60)}
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20' }}>
-                    {fmtMoeda(item.totalFinal || item.saldoFinal || 0)}
+                    {item.tipo === 'granular-grupo'
+                      ? fmtMoeda(item.total)
+                      : fmtMoeda(item.totalFinal || item.saldoFinal || 0)}
                   </td>
                   <td style={{ padding: '6px 8px' }}>
-                    <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                      backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4',
-                      color: item.pago ? '#2e7d32' : '#f57f17' }}>
-                      {item.pago ? '✅ Pago' : '⏳ Pendente'}
-                    </span>
+                    {item.tipo === 'granular-grupo' && item.parcial
+                      ? <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#fff9c4', color: '#f57f17' }}>🟡 Parcial</span>
+                      : <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                          backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4',
+                          color: item.pago ? '#2e7d32' : '#f57f17' }}>
+                          {item.pago ? '✅ Pago' : '⏳ Pendente'}
+                        </span>
+                    }
                   </td>
                   <td style={{ padding: '6px 8px', fontSize: '11px', color: item.dataPagamento ? '#2e7d32' : '#bbb' }}>
                     {item.dataPagamento || '-'}
                   </td>
-                  <td style={{ padding: '6px 8px', fontSize: '11px', color: '#666', maxWidth: '120px' }}>
-                    {item.obs || '-'}
+                  <td style={{ padding: '6px 8px', fontSize: '11px', fontWeight: 'bold',
+                    color: (item.formaPagamento || item.forma) === 'PIX' ? '#1565c0' : '#2e7d32' }}>
+                    {item.formaPagamento || item.forma || '-'}
                   </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                <td colSpan={4} style={{ padding: '8px' }}>TOTAL PAGO (histórico)</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>
-                  {fmtMoeda(items.filter((x: any) => x.pago).reduce((sum: number, x: any) => sum + R(x.totalFinal || x.saldoFinal), 0))}
-                </td>
+                <td colSpan={3} style={{ padding: '8px' }}>TOTAL PAGO (histórico)</td>
+                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalPago)}</td>
                 <td colSpan={3} />
               </tr>
             </tfoot>
           </table>
           </div>
-        )}
+          );
+        })()}
         <div style={{ marginTop: '12px', textAlign: 'right' }}>
           <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
         </div>

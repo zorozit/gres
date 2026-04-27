@@ -1241,17 +1241,22 @@ exports.handler = async (event) => {
       const { unitId, mes, colaboradorId } = queryParams;
       const unitCnpj = unitId ? toCnpj(unitId) : null;
       try {
+        // Paginated scan (DynamoDB truncates at 1MB per call)
         let items = [];
         const filters = [];
         const exprVals = {};
-        // Filter by mes and colaboradorId in DynamoDB (these are stable values)
         if (mes) { filters.push('mes = :m'); exprVals[':m'] = mes; }
         if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
-        const r = await dynamodb.scan({
+        const scanParams = {
           TableName: 'gres-prod-folha-pagamento',
           ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
-        }).promise();
-        items = r.Items || [];
+        };
+        let lastKey = undefined;
+        do {
+          const r = await dynamodb.scan({ ...scanParams, ...(lastKey ? { ExclusiveStartKey: lastKey } : {}) }).promise();
+          items = items.concat(r.Items || []);
+          lastKey = r.LastEvaluatedKey;
+        } while (lastKey);
         // Filter unitId client-side with CNPJ normalization
         if (unitCnpj) {
           items = items.filter(i => {
