@@ -762,71 +762,67 @@ export default function FolhaPagamento() {
             e.turno !== 'Folga' &&
             (statusPresencaEscala(e) === 'presente' || statusPresencaEscala(e) === 'presente_parcial')
           );
-          const escalasPendentes = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
-          const escalasJaPagas   = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
+          // Para escalas DiaNoite: verificar cada turno individualmente
+          // turnosPagosPorColab usa chave "{data}-{Dia|Noite}"
+          const turnPagos = turnosPagosPorColab[f.id] || new Map();
+          const isTurnoPago = (data: string, turno: 'Dia' | 'Noite') =>
+            turnPagos.has(`${data}-${turno}`);
 
-          // Mapa dow (0=Dom..6=Sab) -> chave da tabela de acordo
-          const DOW_KEY = ['dom','seg','ter','qua','qui','sex','sab'];
+          // Expandir escalas em unidades de turno simples para checagem granular
+          type TurnoUnit = { data: string; turno: 'Dia' | 'Noite'; esc: EscalaItem };
+          const turnosUnidade: TurnoUnit[] = [];
+          for (const esc of escalasSemanaConfirmadas) {
+            const st = statusPresencaEscala(esc);
+            if (esc.turno === 'DiaNoite') {
+              // presente_parcial: só o turno com presença marcada
+              if (st === 'presente_parcial') {
+                const t = esc.presenca === 'presente' ? 'Dia' : 'Noite';
+                turnosUnidade.push({ data: esc.data, turno: t, esc });
+              } else {
+                turnosUnidade.push({ data: esc.data, turno: 'Dia',   esc });
+                turnosUnidade.push({ data: esc.data, turno: 'Noite', esc });
+              }
+            } else {
+              const t = (esc.turno === 'Noite' ? 'Noite' : 'Dia') as 'Dia' | 'Noite';
+              turnosUnidade.push({ data: esc.data, turno: t, esc });
+            }
+          }
 
-          const calcValorEsc = (esc: EscalaItem): number => {
-            const status = statusPresencaEscala(esc);
-            // Para DiaNoite parcial: pagar apenas o turno que foi presente
-            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
-              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
-              : esc.turno;
+          const escalasPendentes = turnosUnidade.filter(u => !isTurnoPago(u.data, u.turno));
+          const escalasJaPagas   = turnosUnidade.filter(u =>  isTurnoPago(u.data, u.turno));
 
-            // Tipo valor_turno: busca valor exato por dia da semana + turno na tabela
+          // calcValorTurno: valor por turno simples Dia ou Noite
+          const calcValorTurno = (esc: EscalaItem, efetivaTurno: 'Dia' | 'Noite'): number => {
             if ((f as any).tipoAcordo === 'valor_turno' && (f as any).acordo?.tabela) {
               const tabela: AcordoTurnoTabela = (f as any).acordo.tabela;
-              const dow = new Date(esc.data + 'T12:00:00').getDay();
-              const diaKey = DOW_KEY[dow];
-              const vals = tabela[diaKey] || {};
-              if (efetivaTurno === 'DiaNoite') return R(vals.DN) || (R(vals.D) + R(vals.N));
-              if (efetivaTurno === 'Dia')   return R(vals.D);
-              if (efetivaTurno === 'Noite') return R(vals.N);
-              return 0;
+              const DOW_K = ['dom','seg','ter','qua','qui','sex','sab'];
+              const dow2 = new Date(esc.data + 'T12:00:00').getDay();
+              const vals = tabela[DOW_K[dow2]] || {};
+              return efetivaTurno === 'Dia' ? R(vals.D) : R(vals.N);
             }
-            // Tipos valor_dia_noite / sem acordo: usa valorDia/valorNoite fixos
-            if (usaTurno) {
-              if (efetivaTurno === 'DiaNoite') return vDia + vNoite;
-              if (efetivaTurno === 'Dia')      return vDia;
-              if (efetivaTurno === 'Noite')    return vNoite;
-              return 0;
-            } else {
-              let dobrasEsc = 0;
-              if (efetivaTurno === 'DiaNoite') dobrasEsc = 2;
-              else if (efetivaTurno === 'Dia' || efetivaTurno === 'Noite') dobrasEsc = 1;
-              return parseFloat((dobrasEsc * vDobra).toFixed(2));
-            }
+            if (usaTurno) return efetivaTurno === 'Dia' ? vDia : vNoite;
+            return parseFloat(vDobra.toFixed(2));
           };
 
-          for (const esc of escalasPendentes) {
-            const status = statusPresencaEscala(esc);
-            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
-              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
-              : esc.turno;
-            const v = calcValorEsc(esc);
+          for (const u of escalasPendentes) {
+            const v = calcValorTurno(u.esc, u.turno);
             total += v;
-            diasPagos.push({ data: esc.data, turno: efetivaTurno, valor: v });
+            diasPagos.push({ data: u.data, turno: u.turno, valor: v });
           }
-          for (const esc of escalasJaPagas) {
-            const status = statusPresencaEscala(esc);
-            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
-              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
-              : esc.turno;
-            const v = calcValorEsc(esc);
+          for (const u of escalasJaPagas) {
+            const v = calcValorTurno(u.esc, u.turno);
             totalJaPago += v;
-            diasJaPagosDetalhe.push({ data: esc.data, turno: efetivaTurno, valor: v });
+            diasJaPagosDetalhe.push({ data: u.data, turno: u.turno, valor: v });
           }
           total = parseFloat(total.toFixed(2));
           totalJaPago = parseFloat(totalJaPago.toFixed(2));
 
           dobras = diasPagos.reduce((s, d) => {
-            if (d.turno === 'DiaNoite') return s + 2;
             if (d.turno === 'Dia' || d.turno === 'Noite') return s + 1;
             return s;
-          }, 0);
-          diasTrabalhados = escalasPendentes.length;
+          }, 0) / 2;  // converte turnos em dobras (2 turnos = 1 dobra)
+          dobras = parseFloat(dobras.toFixed(1));
+          diasTrabalhados = new Set(escalasPendentes.map(u => u.data)).size;
         }
 
         // valorDobra para exibição
