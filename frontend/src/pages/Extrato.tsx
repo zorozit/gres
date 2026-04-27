@@ -153,17 +153,59 @@ export const Extrato: React.FC = () => {
       // ── Folha ──────────────────────────────────────────────────────────────
       if (rF?.ok) {
         const dF = await rF.json();
-        for (const item of (Array.isArray(dF) ? dF : [])) {
+        const rawFolha: any[] = Array.isArray(dF) ? dF : [];
+
+        // ─ Agrupar registros granulares (tipo='freelancer-dia') por colaborador+semana
+        const granulares = rawFolha.filter(i => i.tipo === 'freelancer-dia' && i.data);
+        const legadoFolha = rawFolha.filter(i => i.tipo !== 'freelancer-dia' && !i.migrado);
+
+        // Construir grupos: key = colaboradorId + semana
+        const grpMap: Record<string, any[]> = {};
+        for (const g of granulares) {
+          const key = `${g.colaboradorId}__${g.semana || g.data?.substring(0,7)}`;
+          if (!grpMap[key]) grpMap[key] = [];
+          grpMap[key].push(g);
+        }
+        // Converter grupos em itens sintéticos compatíveis com o loop abaixo
+        const granularesAgrupados = Object.values(grpMap).map(dias => {
+          const totalPago = dias.filter(d => d.pago).reduce((s: number, d: any) => s + R(d.valor), 0);
+          const totalPend = dias.filter(d => !d.pago).reduce((s: number, d: any) => s + R(d.valor), 0);
+          const algumPago = dias.some(d => d.pago);
+          const todosPagos = dias.every(d => d.pago);
+          const ref = dias[0];
+          return {
+            id: `grp__${ref.colaboradorId}__${ref.semana}`,
+            colaboradorId: ref.colaboradorId,
+            mes: ref.mes,
+            semana: ref.semana,
+            pago: todosPagos,
+            pagoParcial: algumPago && !todosPagos,
+            valorBruto: totalPago + totalPend,   // total da semana
+            totalFinal: totalPago,                // só o que foi pago
+            totalPendente: totalPend,
+            dataPagamento: dias.filter(d => d.dataPagamento).sort((a: any,b: any) => (b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento || null,
+            formaPagamento: ref.formaPagamento || 'PIX',
+            unitId: ref.unitId,
+            obs: dias.map((d: any) => `${d.data?.substring(8)}/${d.turno === 'Dia' ? 'D' : 'N'}`).join(' · '),
+            tipo: 'freelancer-dia-grupo',
+            diasDetalhe: dias,
+          };
+        });
+
+        // Processar todos os itens: granulares agrupados + legados
+        for (const item of [...granularesAgrupados, ...legadoFolha]) {
           const colab = colabs.find((c: any) => c.id === item.colaboradorId);
           const nome  = colab?.nome || item.colaboradorId;
           const tc    = colab?.tipoContrato || (item.semana ? 'Freelancer' : 'CLT');
           const isCLT = !item.semana || item.semana === true;
-          // Freelancer: usar valorBruto (dobras sem descontos) para que as Saídas
-          // de desconto apareçam como linhas independentes sem dupla contagem.
-          // CLT: manter totalFinal (já é o valor líquido correto).
-          const val = !isCLT && R(item.valorBruto) > 0
-            ? R(item.valorBruto)
-            : R(item.totalFinal) || R(item.saldoFinal) || 0;
+          // Para granulares agrupados: totalFinal = soma dos pagos, valorBruto = total semana
+          // Para legados freelancer: valorBruto (dobras), para CLT: totalFinal
+          const isGranular = item.tipo === 'freelancer-dia-grupo';
+          const val = isGranular
+            ? R(item.totalFinal)   // só o que foi efetivamente pago
+            : (!isCLT && R(item.valorBruto) > 0
+                ? R(item.valorBruto)
+                : R(item.totalFinal) || R(item.saldoFinal) || 0);
 
           // Para CLT: gerar linha de Adiantamento (dia 20) separada quando pagoAdiantamento=true
           if (isCLT && item.pagoAdiantamento === true) {
@@ -210,20 +252,44 @@ export const Extrato: React.FC = () => {
           }
 
           // Linha principal: salário mensal CLT ou dobras freelancer
+          const descricaoPrincipal = isGranular
+            ? `Dobras semanais ${fmtDataBR(item.semana)} – ${item.obs}${item.pagoParcial ? ` [⚠️ Parcial: +R$${R(item.totalPendente).toFixed(2)} pend.]` : ''}`
+            : (item.semana && item.semana !== true
+                ? `Dobras semanais ${fmtDataBR(item.semana)} (${tc})`
+                : `Pagamento mensal CLT – ${item.mes}`);
+
+          // Para granulares parcialmente pagos: empurrar também linha de pendente
+          if (isGranular && item.pagoParcial && R(item.totalPendente) > 0) {
+            allItems.push({
+              id: `${item.id}_pend`,
+              colaboradorId: item.colaboradorId,
+              nomeColaborador: nome, tipoContrato: tc,
+              origem: 'folha', mes: item.mes, semana: item.semana,
+              tipo: 'credito',
+              descricao: `⏳ Pendente – Dobras semanais ${fmtDataBR(item.semana)}`,
+              valor: R(item.totalPendente), pago: false,
+              dataPagamento: undefined,
+              valorBruto: R(item.totalPendente), valorTransporte: 0,
+              desconto: 0, totalFinal: R(item.totalPendente), saldoFinal: 0,
+              obs: `Turnos pendentes: ${(item.diasDetalhe || []).filter((d: any) => !d.pago).map((d: any) => `${d.data?.substring(8)}/${d.turno === 'Dia' ? 'D' : 'N'}`).join(' · ')}`,
+              updatedAt: '', unitId: item.unitId,
+              formaPagamento: undefined, logPagamentos: [],
+              raw: item,
+            });
+          }
+
           allItems.push({
             id: item.id || `folha_${item.colaboradorId}_${item.mes}_${item.semana || ''}`,
             colaboradorId: item.colaboradorId,
             nomeColaborador: nome, tipoContrato: tc,
             origem: 'folha', mes: item.mes, semana: item.semana || undefined,
             tipo: 'credito',
-            descricao: item.semana && item.semana !== true
-              ? `Dobras semanais ${fmtDataBR(item.semana)} (${tc})`
-              : `Pagamento mensal CLT – ${item.mes}`,
-            valor: val, pago: item.pago === true,
+            descricao: descricaoPrincipal,
+            valor: val, pago: isGranular ? (item.pago || item.pagoParcial) : item.pago === true,
             dataPagamento: item.dataPagamento || undefined,
             valorBruto: R(item.valorBruto), valorTransporte: R(item.valorTransporte),
             desconto: R(item.desconto), totalFinal: R(item.totalFinal), saldoFinal: R(item.saldoFinal),
-            obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
+            obs: item.obs || '', updatedAt: item.updatedAt || '', unitId: item.unitId,
             formaPagamento: item.formaPagamento || (Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0 ? item.logPagamentos[item.logPagamentos.length - 1].forma : undefined),
             logPagamentos: item.logPagamentos || [],
             periodoInicio: item.periodoInicio || undefined,
