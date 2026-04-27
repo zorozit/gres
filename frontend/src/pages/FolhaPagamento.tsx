@@ -630,15 +630,48 @@ export default function FolhaPagamento() {
     const [ano, mes] = mesAno.split('-').map(Number);
     const semanas = semanasFechamento(ano, mes);
 
-    // Dias já pagos neste mês - fonte da verdade: campo diasPagos do banco
-    // Sem fallback: se diasPagos não existe no registro, o dia não é considerado pago
-    const diasJaPagosPorColab: Record<string, Set<string>> = {};
+    // Dias já pagos neste mês - NOVO MODELO: 1 registro por dia/turno (tipo='freelancer-dia')
+    // Formato id: folha-{colabId}-{YYYY-MM-DD}-{Dia|Noite}
+    // Legado (diasPagos embutido): também absorvido para retrocompatível
+    // Estrutura: colabId → Set<"YYYY-MM-DD"> (qualquer turno pago nesse dia conta)
+    // Detalhe por turno: colabId → Map<"YYYY-MM-DD-Turno", {valor, dataPagamento, formaPagamento}>
+    const diasJaPagosPorColab: Record<string, Set<string>> = {};  // data paga (qualquer turno)
+    const turnosPagosPorColab: Record<string, Map<string, {valor: number; dataPagamento: string; forma: string}>> = {};
+
     for (const reg of folhasDB) {
       if (!reg.colaboradorId || !reg.pago) continue;
-      if (!Array.isArray(reg.diasPagos) || reg.diasPagos.length === 0) continue;
-      if (!diasJaPagosPorColab[reg.colaboradorId]) diasJaPagosPorColab[reg.colaboradorId] = new Set();
-      for (const dp of reg.diasPagos) {
-        if (dp?.data) diasJaPagosPorColab[reg.colaboradorId].add(dp.data);
+      const cid = reg.colaboradorId;
+      if (!diasJaPagosPorColab[cid]) diasJaPagosPorColab[cid] = new Set();
+      if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Map();
+
+      // ─ NOVO MODELO: registros granulares (id começa com 'folha-' e tem data no id)
+      if (typeof reg.id === 'string' && reg.id.startsWith('folha-') && reg.data && reg.turno) {
+        diasJaPagosPorColab[cid].add(reg.data);
+        const chave = `${reg.data}-${reg.turno}`;
+        turnosPagosPorColab[cid].set(chave, {
+          valor: R(reg.valor),
+          dataPagamento: reg.dataPagamento || '',
+          forma: reg.formaPagamento || 'PIX',
+        });
+        continue;
+      }
+
+      // ─ LEGADO: diasPagos embutido
+      if (Array.isArray(reg.diasPagos) && reg.diasPagos.length > 0) {
+        for (const dp of reg.diasPagos) {
+          if (!dp?.data) continue;
+          diasJaPagosPorColab[cid].add(dp.data);
+          const turno = dp.turno || 'Dia';
+          // DiaNoite legado: marcar ambos
+          const turnos = (turno === 'DiaNoite' || turno === 'DN') ? ['Dia','Noite'] : [turno];
+          for (const t of turnos) {
+            turnosPagosPorColab[cid].set(`${dp.data}-${t}`, {
+              valor: R(dp.valor) / turnos.length,
+              dataPagamento: reg.dataPagamento || '',
+              forma: reg.formaPagamento || 'PIX',
+            });
+          }
+        }
       }
     }
 
@@ -1552,49 +1585,50 @@ export default function FolhaPagamento() {
 
                   const inclTransporte = checkItems.find(it => it.key === 'transporte')?.checked ?? false;
                   const inclDobras     = checkItems.find(it => it.key === 'dobras')?.checked ?? false;
-                  const obsLabel       = (fr.valorDia > 0 || fr.valorNoite > 0)
-                    ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
-                    : `R$${fmt(fr.valorDobra)}/dobra`;
-
                   // Caixinha items checked (crédito)
                   const caixinhaChecked = checkItems
                     .filter(it => it.checked && it.key.startsWith('caix_'))
                     .reduce((s, it) => s + it.valor, 0);
 
+                  // ─ NOVO MODELO: 1 POST por dia/turno selecionado (dobras) ──────────────────
+                  // Monta array de dias a partir dos diasPagos pendentes (somente os de dobras)
+                  const diasParaPagar: {data: string; turno: string; valor: number}[] = [];
+                  if (inclDobras && fr.diasPagos) {
+                    for (const dp of fr.diasPagos) {
+                      const turno = dp.turno || 'Dia';
+                      // DiaNoite já vem expandido em registros separados Dia/Noite
+                      // mas pode ainda vir agrupado — expandir
+                      if (turno === 'DiaNoite' || turno === 'DN') {
+                        diasParaPagar.push({ data: dp.data, turno: 'Dia',   valor: R(fr.valorDia)   || dp.valor/2 });
+                        diasParaPagar.push({ data: dp.data, turno: 'Noite', valor: R(fr.valorNoite) || dp.valor/2 });
+                      } else {
+                        diasParaPagar.push({ data: dp.data, turno, valor: dp.valor });
+                      }
+                    }
+                  }
+
+                  const obsLabel2 = (fr.valorDia > 0 || fr.valorNoite > 0)
+                    ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
+                    : `R$${fmt(fr.valorDobra)}/dobra`;
+
+                  // Envia todos os dias de uma vez (backend itera e salva um por um)
                   const payload = {
                     colaboradorId: fr.id, mes: mesAno,
                     semana: fech.dataFechamento, unitId,
                     pago: true,
                     dataPagamento: dataLocalFreelancer,
-                    // Período real pago (integridade e auditoria)
-                    periodoInicio: fr.periodoInicio,
-                    periodoFim:    fr.periodoFim,
-                    diasPagos:     fr.diasPagos,   // analítico linha a linha
-                    valorBruto:          inclDobras ? fr.total : 0,
+                    formaPagamento: formaFreelancer,
+                    // NOVO: array de dias/turnos
+                    dias: diasParaPagar,
+                    // Transporte como registro separado (continua no modelo legado por simplicidade)
                     valorTransporte:     inclTransporte ? fr.transporteSaldo : 0,
                     transporteCalculado: fr.totalTransporte || 0,
                     transporteAdiantado: fr.transporteAdiantado || 0,
                     caixinha:            caixinhaChecked,
-                    // desconto inclui itens do checklist + abatimento de adiantamento especial
                     desconto:            totalDebito + vlAbate,
                     abatimentoEspecial:  vlAbate,
                     totalFinal,
-                    // Forma de pagamento
-                    formaPagamento: formaFreelancer,
-                    valorPix:      formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerPix) || 0) : formaFreelancer === 'PIX' ? totalFinal : 0,
-                    valorDinheiro: formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerDin) || 0) : formaFreelancer === 'Dinheiro' ? totalFinal : 0,
-                    logPagamentos: [{
-                      id: Date.now().toString(),
-                      data: dataLocalFreelancer,
-                      // valor = o que foi efetivamente desembolsado (já com abatimento deduzido)
-                      valor: totalFinal,
-                      forma: formaFreelancer,
-                      valorPix:      formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerPix) || 0) : undefined,
-                      valorDinheiro: formaFreelancer === 'Misto' ? (parseFloat(formaFreelancerDin) || 0) : undefined,
-                      tipo: 'Freelancer',
-                      obs: `sem. ${fech.semanaLabel}${vlAbate > 0 ? ` (abateu R$${fmt(vlAbate)} adto.esp.)` : ''}`,
-                    }],
-                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
+                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -2952,16 +2986,35 @@ export default function FolhaPagamento() {
                           </thead>
                           <tbody>
                             {fech.freelancers.map((fr, fi) => {
+                              // NOVO MODELO: status derivado dos registros granulares por dia/turno
+                              // fr.diasJaPagosDetalhe = dias já pagos nesta semana
+                              // fr.diasPagos = dias PENDENTES (a pagar)
+                              const diasJaPagesSemana = (fr.diasJaPagosDetalhe || []).length;
+                              const diasPendentesSemana = (fr.diasPagos || []).length;
+
+                              // Registro legado (semana agrupada) - para forma de pagamento e data
                               const frFolhaSalva = folhasDB.find((f: any) =>
                                 f.colaboradorId === fr.id && f.mes === mesAno && f.semana === fech.dataFechamento
                               );
-                              const frIsPago = frFolhaSalva?.pago || fr.pago || false;
-                              const frDataPgto = frFolhaSalva?.dataPagamento;
-                              // Detectar qualidade do pagamento
-                              const diasPagosSalvos: any[] = Array.isArray(frFolhaSalva?.diasPagos) ? frFolhaSalva.diasPagos : [];
-                              const semDetalheDias = frIsPago && diasPagosSalvos.length === 0;
-                              const pagoParcial = frIsPago && diasPagosSalvos.length > 0 && fr.dobras > 0; // ainda tem pendentes
-                              const pagoCompleto = frIsPago && !semDetalheDias && fr.dobras === 0;
+                              // Data e forma do pagamento mais recente desta semana
+                              const diasNovoModelo = folhasDB.filter((f: any) =>
+                                f.colaboradorId === fr.id && f.mes === mesAno &&
+                                f.data >= (fr.periodoInicio || fech.dataInicioBase) &&
+                                f.data <= (fr.periodoFim || fech.dataFechamento) &&
+                                f.pago === true && f.tipo === 'freelancer-dia'
+                              );
+                              const frDataPgto = diasNovoModelo.length > 0
+                                ? diasNovoModelo.sort((a: any, b: any) => (b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento
+                                : frFolhaSalva?.dataPagamento;
+                              const frForma = diasNovoModelo.length > 0
+                                ? diasNovoModelo[0]?.formaPagamento
+                                : frFolhaSalva?.formaPagamento;
+
+                              // Status inteligente
+                              const frIsPago = diasJaPagesSemana > 0 || frFolhaSalva?.pago || fr.pago || false;
+                              const semDetalheDias = frFolhaSalva?.pago && diasJaPagesSemana === 0 && (frFolhaSalva?.diasPagos?.length || 0) === 0;
+                              const pagoParcial = frIsPago && diasPendentesSemana > 0 && diasJaPagesSemana > 0;
+                              const pagoCompleto = diasJaPagesSemana > 0 && diasPendentesSemana === 0;
                               return (
                               <tr key={fr.id} style={{ backgroundColor: (fr.pendentesAnteriores?.length > 0) ? '#fffde7' : (fi % 2 === 0 ? '#fafafa' : 'white'), borderLeft: fr.pendentesAnteriores?.length > 0 ? '3px solid #f9a825' : '3px solid transparent' }}>
                                 <td style={{ ...s.td, fontWeight: 'bold' }}>
@@ -3073,10 +3126,10 @@ export default function FolhaPagamento() {
                                   {frIsPago && frDataPgto && (
                                     <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{frDataPgto}</div>
                                   )}
-                                  {frIsPago && frFolhaSalva?.formaPagamento && (
+                                  {frIsPago && frForma && (
                                     <div style={{ fontSize: '9px', marginTop: '2px', fontWeight: 'bold',
-                                      color: frFolhaSalva.formaPagamento === 'PIX' ? '#1565c0' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
-                                      {frFolhaSalva.formaPagamento === 'PIX' ? '📱 PIX' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                                      color: frForma === 'PIX' ? '#1565c0' : frForma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                                      {frForma === 'PIX' ? '📱 PIX' : frForma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
                                     </div>
                                   )}
                                   {semDetalheDias && (
@@ -3143,34 +3196,45 @@ export default function FolhaPagamento() {
                                           setModalFreelancerPgto({ fr, fech });
                                           return;
                                         }
-                                        // Desfazer pagamento diretamente
+                                        // Desfazer pagamento: marca todos os registros granulares da semana como não pagos
                                         setSalvando(true);
                                         try {
-                                          const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
-                                            ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
-                                            : `R$${fmt(fr.valorDobra)}/dobra`;
-                                          const payload = {
-                                            colaboradorId: fr.id, mes: mesAno,
-                                            semana: fech.dataFechamento, unitId,
-                                            pago: false,
-                                            dataPagamento: null,
-                                            valorBruto: fr.total,
-                                            valorTransporte: fr.transporteSaldo || 0,
-                                            transporteCalculado: fr.totalTransporte || 0,
-                                            transporteAdiantado: fr.transporteAdiantado || 0,
-                                            desconto: fr.saidasDesconto || 0,
-                                            caixinha: (fr as any).caixinhaTotal || 0,
-                                            totalFinal: fr.totalLiquido,
-                                            obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsValor}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${(fr as any).caixinhaTotal > 0 ? ` - Caixinha: +R$${fmt((fr as any).caixinhaTotal)}` : ''}${fr.saidasDesconto > 0 ? ` - Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
-                                          };
-                                          const resp = await fetch(`${apiUrl}/folha-pagamento`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                                            body: JSON.stringify(payload),
-                                          });
-                                          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                                          // Dias já pagos nesta semana (novo modelo)
+                                          const isoIniDes = fr.periodoInicio || fech.dataInicioBase;
+                                          const isoFimDes = fr.periodoFim    || fech.dataFechamento;
+                                          const diasJaPagosNovos = folhasDB.filter((f: any) =>
+                                            f.colaboradorId === fr.id && f.tipo === 'freelancer-dia' &&
+                                            f.data >= isoIniDes && f.data <= isoFimDes && f.pago
+                                          );
+                                          if (diasJaPagosNovos.length > 0) {
+                                            // Desfaz cada registro granular
+                                            const payloadDias = {
+                                              colaboradorId: fr.id, mes: mesAno, semana: fech.dataFechamento, unitId,
+                                              pago: false,
+                                              dias: diasJaPagosNovos.map((d: any) => ({ data: d.data, turno: d.turno, valor: d.valor })),
+                                            };
+                                            const r1 = await fetch(`${apiUrl}/folha-pagamento`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                              body: JSON.stringify(payloadDias),
+                                            });
+                                            if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
+                                          } else {
+                                            // Legado: desfaz o registro semanal agrupado
+                                            const payloadLeg = {
+                                              colaboradorId: fr.id, mes: mesAno,
+                                              semana: fech.dataFechamento, unitId,
+                                              pago: false, dataPagamento: null, diasPagos: [],
+                                            };
+                                            const r2 = await fetch(`${apiUrl}/folha-pagamento`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                              body: JSON.stringify(payloadLeg),
+                                            });
+                                            if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
+                                          }
                                           await carregarDados();
-                                        } catch (err) { alert('Erro ao salvar status: ' + err); }
+                                        } catch (err) { alert('Erro ao desfazer pagamento: ' + err); }
                                         finally { setSalvando(false); }
                                       }}
                                       style={{ ...s.btn(frIsPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}

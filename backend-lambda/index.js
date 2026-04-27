@@ -1162,40 +1162,72 @@ exports.handler = async (event) => {
     }
 
     // ── FOLHA DE PAGAMENTO ──────────────────────────────────────────────
-    // POST /folha-pagamento — salva status de pagamento (mensal CLT ou semanal dobra)
+    // POST /folha-pagamento — salva pagamento
+    // Novo modelo: body.dias = [{data, turno, valor}] → 1 registro por dia/turno
+    // Legado: body.semana (sem dias) → 1 registro por semana (retrocompatível)
     if (rawPath === '/folha-pagamento' && httpMethod === 'POST') {
       const { colaboradorId, mes, semana, unitId, pago, dataPagamento, saldoFinal,
-              valorBruto, valorTransporte, totalFinal, obs } = body;
+              valorBruto, valorTransporte, transporteCalculado, transporteAdiantado,
+              desconto, caixinha, totalFinal, obs, formaPagamento, diasPagos,
+              dias } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
-        // id includes semana when it's a weekly dobra payment
-        const itemId = semana ? `${colaboradorId}_${mes}_${semana}` : `${colaboradorId}_${mes}`;
         const now = new Date().toISOString();
         const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
+        const dtPgto = pago ? (dataPagamento || now.split('T')[0]) : null;
+
+        // ── NOVO MODELO: array de dias ──────────────────────────────────────
+        if (Array.isArray(dias) && dias.length > 0) {
+          const saved = [];
+          for (const d of dias) {
+            const { data, turno, valor } = d;
+            if (!data || !turno) continue;
+            const dayId = `folha-${colaboradorId}-${data}-${turno}`;
+            const item = {
+              id: dayId,
+              tipo: 'freelancer-dia',
+              colaboradorId, data, turno, mes,
+              semana: semana || null,
+              unitId: normalizedUnitId,
+              valor: parseFloat(valor) || 0,
+              pago: pago !== false,
+              dataPagamento: dtPgto,
+              formaPagamento: formaPagamento || 'PIX',
+              obs: obs || '',
+              updatedAt: now,
+            };
+            if (pago === false) {
+              // Desfazer: marcar como não pago
+              item.pago = false;
+              item.dataPagamento = null;
+            }
+            await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
+            saved.push(dayId);
+          }
+          return response(200, { success: true, ids: saved, count: saved.length });
+        }
+
+        // ── LEGADO: registro semanal agrupado (CLT ou desfazer pagamento antigo) ──
+        const itemId = semana ? `${colaboradorId}_${mes}_${semana}` : `${colaboradorId}_${mes}`;
         const item = {
           id: itemId,
           colaboradorId, mes, semana: semana || null,
           unitId: normalizedUnitId,
           pago: pago === true,
-          dataPagamento: pago ? (dataPagamento || now.split('T')[0]) : null,
+          dataPagamento: dtPgto,
+          formaPagamento: formaPagamento || 'PIX',
           saldoFinal: parseFloat(saldoFinal) || 0,
           valorBruto: parseFloat(valorBruto) || 0,
           valorTransporte: parseFloat(valorTransporte) || 0,
+          transporteCalculado: parseFloat(transporteCalculado) || 0,
+          transporteAdiantado: parseFloat(transporteAdiantado) || 0,
+          desconto: parseFloat(desconto) || 0,
+          caixinha: parseFloat(caixinha) || 0,
           totalFinal: parseFloat(totalFinal) || 0,
+          diasPagos: Array.isArray(diasPagos) ? diasPagos : [],
           obs: obs || '',
           updatedAt: now,
-          // Histórico analítico: append ao log
-          logPagamentos: pago ? [{ data: now.split('T')[0], valor: parseFloat(totalFinal) || parseFloat(saldoFinal) || 0, obs: obs || 'Pagamento registrado' }] : []
         };
-        // If marking as pago, preserve previous log entries
-        if (pago) {
-          try {
-            const existing = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
-            if (existing.Item && Array.isArray(existing.Item.logPagamentos)) {
-              item.logPagamentos = [...existing.Item.logPagamentos, ...item.logPagamentos];
-            }
-          } catch (_) { /* ignore */ }
-        }
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
         return response(200, { success: true, id: itemId });
       } catch (err) {
