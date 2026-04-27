@@ -141,7 +141,7 @@ interface PagamentoRegistrado {
 
 /** Resumo semanal de fechamento para freelancers */
 interface FechamentoSemanalFreelancer {
-  semanaLabel: string;           // Ex: "01/03 – 07/03"
+  semanaLabel: string;           // Ex: "01/03 - 07/03"
   dataFechamento: string;        // YYYY-MM-DD (pode ser customizado)
   dataFechamentoBase: string;    // YYYY-MM-DD original (chave do editFechamento)
   dataInicioBase: string;        // YYYY-MM-DD início original da semana
@@ -348,6 +348,9 @@ export default function FolhaPagamento() {
   // Interface DobraSemanalCLT (used inline in tab)
   // Valores editados pelo gestor (valorDia, valorNoite, totalBruto overrides)
   const [editDobras, setEditDobras] = useState<Record<string, { valorBruto?: string; valorTransporte?: string; obs?: string }>>({});
+  // Filtro de período da aba Dobras CLT
+  const [dobrasFiltroIni, setDobrasFiltroIni] = useState<string>('');
+  const [dobrasFiltroFim, setDobrasFiltroFim] = useState<string>('');
 
   useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
 
@@ -522,7 +525,7 @@ export default function FolhaPagamento() {
       const inss = calcINSS(salBruto);
       const contrAssist = 0;
       const adiantPct = 0.40;
-      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) — padrão contabilidade
+      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - padrão contabilidade
       const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
       // Diferença = 60% salBase + periculosidade (paga no dia 05)
       const periBruto = salBase * peri;
@@ -565,7 +568,7 @@ export default function FolhaPagamento() {
       const contrAssist = 32.62;
       const dia19 = `${mesAno}-19`;
 
-      // Saídas do motoboy no período — complementam o controle quando não há dados salvos
+      // Saídas do motoboy no período - complementam o controle quando não há dados salvos
       const saidasMotoboy = saidasPeriodo.filter(s => s.colaboradorId === m.id);
       const totalPagoSaidas = saidasMotoboy.reduce((sum: number, s: any) => sum + R(s.valor), 0);
 
@@ -586,7 +589,7 @@ export default function FolhaPagamento() {
       varAte19 = parseFloat(varAte19.toFixed(2));
       varDe20a31 = parseFloat(varDe20a31.toFixed(2));
       const totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
-      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) — igual ao PDF Cód.16
+      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - igual ao PDF Cód.16
       const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
       // Diferença = 60% salBase + periculosidade total (paga no dia 05)
       const difSal = parseFloat((salBase * 0.60 + periculosidadeValor).toFixed(2));
@@ -627,7 +630,7 @@ export default function FolhaPagamento() {
     const [ano, mes] = mesAno.split('-').map(Number);
     const semanas = semanasFechamento(ano, mes);
 
-    // Dias já pagos neste mês — fonte da verdade: campo diasPagos do banco
+    // Dias já pagos neste mês - fonte da verdade: campo diasPagos do banco
     // Sem fallback: se diasPagos não existe no registro, o dia não é considerado pago
     const diasJaPagosPorColab: Record<string, Set<string>> = {};
     for (const reg of folhasDB) {
@@ -649,7 +652,7 @@ export default function FolhaPagamento() {
       // Label dinâmico reflete o período real
       const [iniD, iniM] = isoInicio.split('-').slice(1).map(Number);
       const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
-      const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} – ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
+      const labelPeriodo = `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} - ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
 
       const frList = freelancers.map(f => {
         // ── Detectar se é motoboy Freelancer (usa controle-motoboy, não escalas) ──
@@ -857,7 +860,7 @@ export default function FolhaPagamento() {
         // Liquid = dobras pendentes + transporte saldo + caixinha - descontos (o que resta a pagar)
         const totalLiquido = parseFloat((total + transporteSaldo + caixinhaTotal - saidasDesconto).toFixed(2));
 
-        // Total bruto do período inteiro (pendente + já pago) — para exibição na linha
+        // Total bruto do período inteiro (pendente + já pago) - para exibição na linha
         const totalBrutoPeriodo = parseFloat((total + totalJaPago).toFixed(2));
         const totalDobrasExib = dobras + diasJaPagosDetalhe.reduce((s, d) => {
           if (d.turno === 'DiaNoite') return s + 2;
@@ -906,7 +909,7 @@ export default function FolhaPagamento() {
       const totalCaixinhaSemana = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
 
       return {
-        semanaLabel: (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} – ${fmtDataBR(fim)}`,
+        semanaLabel: (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} - ${fmtDataBR(fim)}`,
         dataFechamento: isoFim, // usa o fim customizado como chave de pagamento
         dataFechamentoBase: isoFimBase, // chave original (para editFechamento)
         dataInicioBase: isoInicioBase, // início original (para o input de data)
@@ -1072,7 +1075,7 @@ export default function FolhaPagamento() {
       <div style={{ ...s.card, maxWidth: '700px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ margin: 0, color: '#1565c0' }}>📊 Histórico Analítico — {nome}</h3>
+          <h3 style={{ margin: 0, color: '#1565c0' }}>📊 Histórico Analítico - {nome}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
         </div>
         {items.length === 0 ? (
@@ -1091,12 +1094,12 @@ export default function FolhaPagamento() {
               {items.map((item, i) => (
                 <tr key={item.id} style={{ backgroundColor: i % 2 === 0 ? '#f9f9f9' : 'white', borderBottom: '1px solid #eee' }}>
                   <td style={{ padding: '6px 8px' }}>{item.mes}</td>
-                  <td style={{ padding: '6px 8px', color: '#666', fontSize: '11px' }}>{item.semana || '—'}</td>
+                  <td style={{ padding: '6px 8px', color: '#666', fontSize: '11px' }}>{item.semana || '-'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1976d2' }}>
                     {item.valorBruto > 0 ? fmtMoeda(item.valorBruto) : fmtMoeda(item.saldoFinal || 0)}
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1565c0' }}>
-                    {item.valorTransporte > 0 ? fmtMoeda(item.valorTransporte) : '—'}
+                    {item.valorTransporte > 0 ? fmtMoeda(item.valorTransporte) : '-'}
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20' }}>
                     {fmtMoeda(item.totalFinal || item.saldoFinal || 0)}
@@ -1109,10 +1112,10 @@ export default function FolhaPagamento() {
                     </span>
                   </td>
                   <td style={{ padding: '6px 8px', fontSize: '11px', color: item.dataPagamento ? '#2e7d32' : '#bbb' }}>
-                    {item.dataPagamento || '—'}
+                    {item.dataPagamento || '-'}
                   </td>
                   <td style={{ padding: '6px 8px', fontSize: '11px', color: '#666', maxWidth: '120px' }}>
-                    {item.obs || '—'}
+                    {item.obs || '-'}
                   </td>
                 </tr>
               ))}
@@ -1143,7 +1146,7 @@ export default function FolhaPagamento() {
       <div style={{ ...s.card, maxWidth: '520px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ margin: 0 }}>💰 Resumo Mensal — {f.nome.split(' ')[0]}</h3>
+          <h3 style={{ margin: 0 }}>💰 Resumo Mensal - {f.nome.split(' ')[0]}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
         </div>
         <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
@@ -1174,10 +1177,10 @@ export default function FolhaPagamento() {
               <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
                 <td style={{ padding: '6px 8px', fontStyle: (row as any).italic ? 'italic' : 'normal', color: (row as any).italic ? '#c62828' : 'inherit' }}>{row.desc}</td>
                 <td style={{ padding: '6px 8px', textAlign: 'right', color: row.cred > 0 ? '#2e7d32' : '#bbb' }}>
-                  {row.cred > 0 ? fmtMoeda(row.cred) : '—'}
+                  {row.cred > 0 ? fmtMoeda(row.cred) : '-'}
                 </td>
                 <td style={{ padding: '6px 8px', textAlign: 'right', color: row.deb > 0 ? '#c62828' : '#bbb' }}>
-                  {row.deb > 0 ? fmtMoeda(row.deb) : '—'}
+                  {row.deb > 0 ? fmtMoeda(row.deb) : '-'}
                 </td>
               </tr>
             ))}
@@ -1217,7 +1220,7 @@ export default function FolhaPagamento() {
 
 
   /* ── Modal confirmar pagamento Freelancer (checklist + data editável) ── */
-  // Hooks must be called unconditionally (React rules) — states are always created
+  // Hooks must be called unconditionally (React rules) - states are always created
   // even when the modal is not open; they are reset via useEffect when modal opens.
   interface CheckItem { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
@@ -1272,7 +1275,7 @@ export default function FolhaPagamento() {
 
       const items: CheckItem[] = [
         { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
-        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias − R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias - R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
         ...caixDetalhe.map((d, i) => ({
           key: `caix_${i}`,
           label: `🪙 ${d.descricao} (${d.data})`,
@@ -1320,7 +1323,7 @@ export default function FolhaPagamento() {
     if (!item.checked) return sum;
     return item.tipo === 'credito' ? sum + item.valor : sum - item.valor;
   }, 0);
-  // Valor efetivamente a desembolsar = total dos itens − abatimento do adiantamento especial
+  // Valor efetivamente a desembolsar = total dos itens - abatimento do adiantamento especial
   const vlAbateFreelancer = abaterEspecial ? (parseFloat(valorAbatimento) || 0) : 0;
   const totalADesembolsarFreelancer = Math.max(0, totalSelecionadoFreelancer - vlAbateFreelancer);
   const toggleItemFreelancer = (key: string) => {
@@ -1381,7 +1384,7 @@ export default function FolhaPagamento() {
                   <span style={{ fontWeight: 'bold', fontSize: '13px', minWidth: '80px', textAlign: 'right',
                     color: item.tipo === 'credito' ? '#2e7d32' : '#c62828',
                     opacity: item.checked ? 1 : 0.35 }}>
-                    {item.tipo === 'credito' ? '+' : '−'}{fmtMoeda(item.valor)}
+                    {item.tipo === 'credito' ? '+' : '-'}{fmtMoeda(item.valor)}
                   </span>
                 </label>
               ))}
@@ -1402,7 +1405,7 @@ export default function FolhaPagamento() {
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
                   <span style={{ fontSize: '12px', color: '#7c3aed' }}>➖ Abatimento adto. especial:</span>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#7c3aed' }}>−{fmtMoeda(vlAbateFreelancer)}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#7c3aed' }}>-{fmtMoeda(vlAbateFreelancer)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', borderTop: '1px solid #c3d9c3', paddingTop: '6px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#444' }}>💰 A desembolsar:</span>
@@ -1443,7 +1446,7 @@ export default function FolhaPagamento() {
                 </div>
               )}
               <div style={{ marginTop: '6px', fontSize: '11px', color: '#6d28d9' }}>
-                ℹ️ O desconto será lançado automaticamente como <strong>Desconto Adiantamento Especial</strong> nas Saídas.
+                i️ O desconto será lançado automaticamente como <strong>Desconto Adiantamento Especial</strong> nas Saídas.
               </div>
             </div>
           )}
@@ -1548,7 +1551,7 @@ export default function FolhaPagamento() {
                       tipo: 'Freelancer',
                       obs: `sem. ${fech.semanaLabel}${vlAbate > 0 ? ` (abateu R$${fmt(vlAbate)} adto.esp.)` : ''}`,
                     }],
-                    obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsLabel} – ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` – Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` – Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` – Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
+                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -1567,7 +1570,7 @@ export default function FolhaPagamento() {
                       tipo: 'Desconto Adiantamento Especial',
                       origem: 'Desconto Adiantamento Especial',
                       referencia: 'Desconto Adiantamento Especial',
-                      descricao: `Abatimento adto. especial – pgto sem. ${fech.semanaLabel}`,
+                      descricao: `Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`,
                       valor: vlAbate,
                       dataPagamento: dataLocalFreelancer,
                       data: dataLocalFreelancer,
@@ -1645,7 +1648,7 @@ export default function FolhaPagamento() {
     const totalValor  = linhas.reduce((s, l) => s + l.valor,  0);
     const totalPago   = linhas.filter(l =>  l.jaPago).reduce((s, l) => s + l.valor, 0);
     const totalPendente = totalValor - totalPago;
-    // Transporte: apenas dias PENDENTES (não pagos) — evitar cobrar transporte já incluso em pagamento anterior
+    // Transporte: apenas dias PENDENTES (não pagos) - evitar cobrar transporte já incluso em pagamento anterior
     const linhasPendentes = linhas.filter(l => !l.jaPago);
     const transp = R(fr.valorTransporte) * linhasPendentes.length;
     return (
@@ -1709,7 +1712,7 @@ export default function FolhaPagamento() {
               {totalPago > 0 && (
                 <tr style={{ backgroundColor: '#388e3c', color: 'white' }}>
                   <td colSpan={4} style={{ padding: '6px 8px' }}>✅ Já pago em pagamento(s) anterior(es)</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9' }}>−{fmtMoeda(totalPago)}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9' }}>-{fmtMoeda(totalPago)}</td>
                   <td />
                 </tr>
               )}
@@ -1751,12 +1754,12 @@ export default function FolhaPagamento() {
                           {s2.tipo}
                         </span>
                       </td>
-                      <td style={{ padding: '4px 6px', color: '#555' }}>{s2.descricao || '—'}</td>
+                      <td style={{ padding: '4px 6px', color: '#555' }}>{s2.descricao || '-'}</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold',
                         color: s2.tipo === 'A receber' ? '#c62828' : '#e65100' }}>
-                        {s2.tipo === 'A receber' ? '−' : '+'}{fmtMoeda(R(s2.valor))}
+                        {s2.tipo === 'A receber' ? '-' : '+'}{fmtMoeda(R(s2.valor))}
                       </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>{s2.dataPagamento || s2.data || '—'}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>{s2.dataPagamento || s2.data || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1792,12 +1795,12 @@ export default function FolhaPagamento() {
                           {p.tipo || p.origem || 'Pendente'}
                         </span>
                       </td>
-                      <td style={{ padding: '4px 6px', color: '#555' }}>{p.descricao || '—'}</td>
+                      <td style={{ padding: '4px 6px', color: '#555' }}>{p.descricao || '-'}</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold', color: '#c62828' }}>
-                        −{fmtMoeda(R(p.valor))}
+                        -{fmtMoeda(R(p.valor))}
                       </td>
                       <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>
-                        {p.dataPagamento || p.data || '—'}
+                        {p.dataPagamento || p.data || '-'}
                       </td>
                       <td style={{ padding: '4px 6px', textAlign: 'center' }}>
                         <button
@@ -1835,7 +1838,7 @@ export default function FolhaPagamento() {
   };
 
   /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
-  // Hook called unconditionally (React rules) — state persists across renders
+  // Hook called unconditionally (React rules) - state persists across renders
   /* ── Estado do modal de pagamento com forma (PIX/Dinheiro/Misto) ── */
   const [modalPgtoTipo, setModalPgtoTipo] = useState<'Adiantamento' | 'Variável'>('Adiantamento');
   interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
@@ -2140,7 +2143,7 @@ export default function FolhaPagamento() {
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável ≤19</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#fb8c00' }}>Pgto dia 20</th>
                       <th style={{ ...s.th, textAlign: 'right' }}>Dif. Sal.</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20–31</th>
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20-31</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>INSS</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto dia 05</th>
@@ -2148,7 +2151,7 @@ export default function FolhaPagamento() {
                       {/* Colunas de conferência contábil (PDF da contabilidade) */}
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.16 Adto</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.19 Arr.+</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.20 Arr.−</th>
+                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.20 Arr.-</th>
                       <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#311b92', fontSize: '11px' }}>Líquido ADTO</th>
                       <th style={{ ...s.thC, backgroundColor: '#1b5e20' }}>Adiantamento</th>
                       <th style={{ ...s.thC, backgroundColor: '#e65100' }}>Variável</th>
@@ -2169,13 +2172,13 @@ export default function FolhaPagamento() {
                           </span>
                         </td>
                         <td style={s.tdR}>{fmtMoeda(f.salarioBase)}</td>
-                        <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '—'}</td>
-                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelAte19 > 0 ? fmtMoeda(f.variavelAte19) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '-'}</td>
+                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelAte19 > 0 ? fmtMoeda(f.variavelAte19) : '-'}</td>
                         <td style={{ ...s.tdR, color: '#fb8c00', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</td>
                         <td style={s.tdR}>{fmtMoeda(f.diferencaSalario)}</td>
-                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelDe20a31 > 0 ? fmtMoeda(f.variavelDe20a31) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelDe20a31 > 0 ? fmtMoeda(f.variavelDe20a31) : '-'}</td>
                         <td style={{ ...s.tdR, color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
-                        <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '-'}</td>
                         <td style={{ ...s.tdR, color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia05)}</td>
                         <td style={{ ...s.tdR, fontWeight: 'bold', color: f.saldoFinal >= 0 ? '#2e7d32' : '#c62828' }}>
                           {fmtMoeda(f.saldoFinal)}
@@ -2183,9 +2186,9 @@ export default function FolhaPagamento() {
                         {/* Cód.16: 40% do salário base (sem periculosidade) */}
                         <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{fmtMoeda(f.adtoContabil)}</td>
                         {/* Cód.19: arredondamento positivo */}
-                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoPos > 0 ? fmtMoeda(f.arredondamentoPos) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoPos > 0 ? fmtMoeda(f.arredondamentoPos) : '-'}</td>
                         {/* Cód.20: arredondamento negativo */}
-                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoNeg > 0 ? fmtMoeda(f.arredondamentoNeg) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoNeg > 0 ? fmtMoeda(f.arredondamentoNeg) : '-'}</td>
                         {/* Líquido = inteiro (o que a contabilidade paga) */}
                         <td style={{ ...s.tdR, color: '#311b92', fontWeight: 'bold', fontSize: '12px' }}>{fmtMoeda(f.adtoLiquido)}</td>
                         {/* Coluna Adiantamento (fixo contábil) */}
@@ -2206,7 +2209,7 @@ export default function FolhaPagamento() {
                             </button>
                           </div>
                         </td>
-                        {/* Coluna Variável (motoboy/dobras — separado do fixo) */}
+                        {/* Coluna Variável (motoboy/dobras - separado do fixo) */}
                         <td style={{ ...s.td, textAlign: 'center' }}>
                           {f.totalVariavel > 0 ? (
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
@@ -2228,7 +2231,7 @@ export default function FolhaPagamento() {
                                 {f.pagoVariavel ? '↩ Var.' : '✅ Var.'}
                               </button>
                             </div>
-                          ) : <span style={{ color: '#ccc', fontSize: '11px' }}>—</span>}
+                          ) : <span style={{ color: '#ccc', fontSize: '11px' }}>-</span>}
                         </td>
                         <td style={{ ...s.td, textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
@@ -2268,8 +2271,8 @@ export default function FolhaPagamento() {
                 </table>
                 <div style={{ marginTop: '10px', fontSize: '11px', color: '#666', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                   <span>🟠 <strong>Pgto dia 20</strong> = variável até 19 + adiantamento (40% sal. base)</span>
-                  <span>🔵 <strong>Pgto dia 05</strong> = variável 20–31 + 60% sal. base + periculosidade − INSS − contr. assist.</span>
-                  <span>🟣 <strong>Periculosidade</strong>: 30% sobre salário base — paga integralmente no dia 05</span>
+                  <span>🔵 <strong>Pgto dia 05</strong> = variável 20-31 + 60% sal. base + periculosidade - INSS - contr. assist.</span>
+                  <span>🟣 <strong>Periculosidade</strong>: 30% sobre salário base - paga integralmente no dia 05</span>
                 </div>
               </div>
             )}
@@ -2300,7 +2303,7 @@ export default function FolhaPagamento() {
             const pdow = ps.getDay();
             ps.setDate(ps.getDate() + (pdow === 1 ? 0 : pdow === 0 ? 1 : 8 - pdow));
             semanas.push({
-              label: `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')} – ${fimReal.getDate().toString().padStart(2,'0')}/${(fimReal.getMonth()+1).toString().padStart(2,'0')}`,
+              label: `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')} - ${fimReal.getDate().toString().padStart(2,'0')}/${(fimReal.getMonth()+1).toString().padStart(2,'0')}`,
               inicio: inicioStr,
               fim: fimStr,
               proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
@@ -2318,10 +2321,17 @@ export default function FolhaPagamento() {
             tipoContrato: string; area?: string; funcao?: string;
             valorDia: number; valorNoite: number; valorDobra: number; valorTransporte: number;
           }
-          // Aba Dobras CLT: apenas colaboradores CLT (excluir Freelancers)
+          // Aba Dobras CLT: apenas colaboradores CLT - excluir Freelancers E Motoboys
+          const motoboyIds = new Set(motoboys.map(m => m.id));
+          const motoboyCpfs = new Set(motoboys.filter(m => m.cpf).map(m => m.cpf));
           const pessoas: PessoaDobra[] = [
             ...colaboradores
-              .filter(c => c.tipoContrato !== 'Freelancer')
+              .filter(c =>
+                c.tipoContrato !== 'Freelancer' &&
+                !motoboyIds.has(c.id) &&
+                !(c.cpf && motoboyCpfs.has(c.cpf)) &&
+                c.cargo?.toLowerCase() !== 'motoboy'
+              )
               .map(c => ({
                 id: c.id, nome: c.nome, chavePix: c.chavePix, cargo: c.cargo,
                 tipoContrato: c.tipoContrato || 'CLT',
@@ -2336,15 +2346,45 @@ export default function FolhaPagamento() {
 
           const areasP = [...new Set(pessoas.map(p => p.area || 'Sem Área'))].sort();
 
+          // Aplicar filtro de período nas semanas
+          const semanasFiltradas = semanas.filter(sem => {
+            if (dobrasFiltroIni && sem.fim < dobrasFiltroIni) return false;
+            if (dobrasFiltroFim && sem.inicio > dobrasFiltroFim) return false;
+            return true;
+          });
+
           return (
             <div style={{ borderRadius: '0 8px 8px 8px' }}>
               <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', borderLeft: '4px solid #2e7d32', borderRadius: '0 0 4px 4px', marginBottom: '8px', fontSize: '12px', color: '#1b5e20' }}>
-                📅 <strong>Dobras Semanais CLT</strong> — controle semanal de turnos extras de colaboradores CLT. Valores editáveis. Marque como Pago para registrar data e log.
+                📅 <strong>Dobras Semanais CLT</strong> — controle semanal de turnos extras (exceto Motoboys, que possuem módulo próprio). Valores editáveis. Marque como Pago para registrar data e log.
+              </div>
+
+              {/* Filtro de período */}
+              <div style={{ ...s.card, marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap', padding: '12px 16px' }}>
+                <div>
+                  <label style={{ ...s.label, fontSize: '11px' }}>Período — de</label>
+                  <input type="date" value={dobrasFiltroIni}
+                    onChange={e => setDobrasFiltroIni(e.target.value)}
+                    style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+                </div>
+                <div>
+                  <label style={{ ...s.label, fontSize: '11px' }}>até</label>
+                  <input type="date" value={dobrasFiltroFim}
+                    onChange={e => setDobrasFiltroFim(e.target.value)}
+                    style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+                </div>
+                <button onClick={() => { setDobrasFiltroIni(''); setDobrasFiltroFim(''); }}
+                  style={{ ...s.btn('#78909c'), padding: '5px 12px', fontSize: '12px' }}>
+                  ✕ Limpar
+                </button>
+                <span style={{ fontSize: '11px', color: '#888', alignSelf: 'center' }}>
+                  {semanasFiltradas.length} de {semanas.length} semanas
+                </span>
               </div>
 
               {loading ? (
                 <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
-              ) : semanas.map(sem => {
+              ) : semanasFiltradas.map(sem => {
                 // Pessoas que trabalharam nesta semana
                 interface LinhaCalc {
                   pessoa: PessoaDobra;
@@ -2363,13 +2403,13 @@ export default function FolhaPagamento() {
                     const ds = d.toISOString().split('T')[0];
                     const esc = escalas.find(e => e.colaboradorId === p.id && e.data === ds);
                     // Somente 'presente' explícito conta como dia trabalhado
-                    if (!esc || esc.turno === 'Folga') { codigos.push('—'); continue; }
+                    if (!esc || esc.turno === 'Folga') { codigos.push('-'); continue; }
                     const presStatus = statusPresencaEscala(esc);
                     if (presStatus === 'falta') { codigos.push('F'); continue; }
                     if (presStatus === 'falta_justificada') { codigos.push('FJ'); continue; }
                     if (presStatus !== 'presente' && presStatus !== 'presente_parcial') {
                       // undefined/null = sem confirmação (aguardando)
-                      codigos.push(ds > ISO_HOJE_FP ? '…' : '?'); continue;
+                      codigos.push(ds > ISO_HOJE_FP ? '...' : '?'); continue;
                     }
                     // DiaNoite parcial: pagar apenas o turno presente
                     const efTurno = (esc.turno === 'DiaNoite' && presStatus === 'presente_parcial')
@@ -2390,7 +2430,7 @@ export default function FolhaPagamento() {
                     const dobrasCalc = dnC + (dC - dnC) * 0.5 + (nC - dnC) * 0.5;
                     totalBruto = vd * dobrasCalc;
                   }
-                  const diasTrab = codigos.filter(c => c !== '—').length;
+                  const diasTrab = codigos.filter(c => c !== '-').length;
                   const totalTransporte = p.valorTransporte * diasTrab;
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte };
                 }).filter(l => l.dC + l.nC + l.dnC > 0);
@@ -2452,9 +2492,11 @@ export default function FolhaPagamento() {
                                       </th>;
                                     });
                                   })()}
-                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>D</th>
-                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>N</th>
-                                  <th style={{ ...s.thC, backgroundColor: '#0d47a1', minWidth: '28px', fontSize: '10px' }}>DN</th>
+                                  <th style={{ ...s.thC, backgroundColor: '#f57f17', minWidth: '28px', fontSize: '10px' }}>D☀️</th>
+                                  <th style={{ ...s.thC, backgroundColor: '#3949ab', minWidth: '28px', fontSize: '10px' }}>N🌙</th>
+                                  <th style={{ ...s.thC, backgroundColor: '#2e7d32', minWidth: '28px', fontSize: '10px' }}>DN</th>
+                                  <th style={{ ...s.th, backgroundColor: '#f57f17', textAlign: 'right', minWidth: '72px', fontSize: '10px' }}>Val. Dia</th>
+                                  <th style={{ ...s.th, backgroundColor: '#3949ab', textAlign: 'right', minWidth: '72px', fontSize: '10px' }}>Val. Noite</th>
                                   <th style={{ ...s.th, backgroundColor: '#1b5e20', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Bruto (R$)</th>
                                   <th style={{ ...s.th, backgroundColor: '#1565c0', textAlign: 'right', minWidth: '70px', fontSize: '11px' }}>🚗 Transp</th>
                                   <th style={{ ...s.th, backgroundColor: '#2e7d32', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Total</th>
@@ -2492,24 +2534,39 @@ export default function FolhaPagamento() {
                                           {p.tipoContrato==='CLT' ? 'CLT' : 'Free'}
                                         </span>
                                       </td>
-                                      <td style={{ ...s.td, fontSize: '11px', color: '#555' }}>{p.funcao || p.cargo || '—'}</td>
+                                      <td style={{ ...s.td, fontSize: '11px', color: '#555' }}>{p.funcao || p.cargo || '-'}</td>
                                       {days2.map((ds, di) => {
-                                        const c = cod[di] || '—';
+                                        const c = cod[di] || '-';
                                         let bg = 'transparent', tc = '#bbb';
                                         if (c==='D') { bg='#fff9c4'; tc='#f57f17'; }
                                         else if (c==='N') { bg='#e8eaf6'; tc='#3949ab'; }
                                         else if (c==='DN') { bg='#e8f5e9'; tc='#2e7d32'; }
                                         else if (c==='F') { bg='#ffebee'; tc='#c62828'; }
                                         else if (c==='FJ') { bg='#fce4ec'; tc='#880e4f'; }
-                                        else if (c==='…') { bg='#f5f5f5'; tc='#9e9e9e'; } // futuro sem presença
-                                        return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px', opacity: c==='…' ? 0.6 : 1 }}>
-                                          <span title={c==='…' ? 'Turno agendado — aguardando confirmação de presença' : undefined}
+                                        else if (c==='...') { bg='#f5f5f5'; tc='#9e9e9e'; } // futuro sem presença
+                                        return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px', opacity: c==='...' ? 0.6 : 1 }}>
+                                          <span title={c==='...' ? 'Turno agendado - aguardando confirmação de presença' : undefined}
                                             style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
                                         </td>;
                                       })}
                                       <td style={{ ...s.td, fontWeight: 'bold', color: '#f57f17' }}>{l.dC}</td>
                                       <td style={{ ...s.td, fontWeight: 'bold', color: '#3949ab' }}>{l.nC}</td>
                                       <td style={{ ...s.td, fontWeight: 'bold', color: '#2e7d32' }}>{l.dnC}</td>
+                                      {/* Valor por turno (informação, não editável) */}
+                                      <td style={{ ...s.td, textAlign: 'right', fontSize: '11px', color: '#f57f17' }}>
+                                        {p.valorDia > 0 ? (
+                                          <span title={`${l.dC - l.dnC} dia(s) × R$${fmt(p.valorDia)}`}>
+                                            {l.dC - l.dnC > 0 ? fmtMoeda((l.dC - l.dnC) * p.valorDia) : '—'}
+                                          </span>
+                                        ) : <span style={{ color: '#ccc' }}>—</span>}
+                                      </td>
+                                      <td style={{ ...s.td, textAlign: 'right', fontSize: '11px', color: '#3949ab' }}>
+                                        {p.valorNoite > 0 ? (
+                                          <span title={`${l.nC - l.dnC} noite(s) × R$${fmt(p.valorNoite)}`}>
+                                            {l.nC - l.dnC > 0 ? fmtMoeda((l.nC - l.dnC) * p.valorNoite) : '—'}
+                                          </span>
+                                        ) : <span style={{ color: '#ccc' }}>—</span>}
+                                      </td>
                                       {/* Bruto editável */}
                                       <td style={{ ...s.td, textAlign: 'right', padding: '4px 4px' }}>
                                         <input
@@ -2596,7 +2653,7 @@ export default function FolhaPagamento() {
                                             style={{ cursor: 'pointer', color: '#1976d2', fontSize: '11px' }}
                                             title="Clique para copiar PIX"
                                           >💳 {p.chavePix}</span>
-                                        ) : <span style={{ color: '#bbb' }}>—</span>}
+                                        ) : <span style={{ color: '#bbb' }}>-</span>}
                                       </td>
                                     </tr>
                                   );
@@ -2610,7 +2667,7 @@ export default function FolhaPagamento() {
                                     const d1 = new Date(sem.inicio + 'T12:00:00');
                                     const d2 = new Date(sem.fim + 'T12:00:00');
                                     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) days3.push(d.toISOString().split('T')[0]);
-                                    return <td colSpan={days3.length + 3} />;
+                                    return <td colSpan={days3.length + 5} />; {/* +2 colunas Val.Dia / Val.Noite */}
                                   })()}
                                   <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', fontSize: '12px' }}>
                                     {fmtMoeda(gp.reduce((s,l) => {
@@ -2698,7 +2755,7 @@ export default function FolhaPagamento() {
               <>
                 {/* Informações sobre transporte e descontos */}
                 <div style={{ backgroundColor: '#e3f2fd', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', color: '#1565c0', borderLeft: '4px solid #1976d2' }}>
-                  <strong>ℹ️ Como funciona o pagamento semanal de freelancers:</strong>
+                  <strong>i️ Como funciona o pagamento semanal de freelancers:</strong>
                   <ul style={{ margin: '6px 0 0 16px', padding: 0, lineHeight: '1.8' }}>
                     <li><strong>Transporte calculado</strong>: dias com escala lançada × valor/dia configurado no cadastro. Se o colaborador faltar e a escala for removida, não é contabilizado.</li>
                     <li>
@@ -2728,7 +2785,7 @@ export default function FolhaPagamento() {
                     <div style={{ ...s.card, marginBottom: '16px', borderLeft: '4px solid #f9a825', backgroundColor: '#fffde7' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
                         <h4 style={{ margin: 0, color: '#f57f17', fontSize: '14px' }}>
-                          ⏳ Checklist de Pendências — Saídas a Descontar no Próximo Pagamento
+                          ⏳ Checklist de Pendências - Saídas a Descontar no Próximo Pagamento
                         </h4>
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                           <span style={{ fontSize: '12px', color: '#5d4037', fontWeight: 'bold' }}>
@@ -2758,8 +2815,8 @@ export default function FolhaPagamento() {
                             {pends.map((p: any, i: number) => (
                               <div key={i} style={{ backgroundColor: '#fff8e1', borderRadius: '6px', padding: '4px 10px', fontSize: '11px', border: '1px solid #ffe082', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span style={{ color: '#e65100', fontWeight: 'bold' }}>{p.tipo || p.origem || 'Saída'}</span>
-                                <span style={{ color: '#555' }}>{p.descricao || '—'}</span>
-                                <span style={{ color: '#c62828', fontWeight: 'bold' }}>−{fmtMoeda(R(p.valor))}</span>
+                                <span style={{ color: '#555' }}>{p.descricao || '-'}</span>
+                                <span style={{ color: '#c62828', fontWeight: 'bold' }}>-{fmtMoeda(R(p.valor))}</span>
                                 <span style={{ color: '#888', fontFamily: 'monospace' }}>{(p.dataPagamento || p.data || '').substring(0, 10)}</span>
                               </div>
                             ))}
@@ -2885,7 +2942,7 @@ export default function FolhaPagamento() {
                                   {fr.telefone && <div>📱 {fr.telefone}</div>}
                                 </td>
                                 <td style={{ ...s.td, fontSize: '11px', color: '#555', maxWidth: '200px' }}>
-                                  {fr.diasCodigo || '—'}
+                                  {fr.diasCodigo || '-'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>
                                   {(fr as any).totalDobrasExib ?? fr.dobras}
@@ -2926,23 +2983,23 @@ export default function FolhaPagamento() {
                                         </div>
                                       )}
                                     </div>
-                                  ) : '—'}
+                                  ) : '-'}
                                 </td>
-                                {/* 🪙 Caixinha — crédito a pagar ao colaborador */}
+                                {/* 🪙 Caixinha - crédito a pagar ao colaborador */}
                                 <td style={{ ...s.td, textAlign: 'right', color: (fr as any).caixinhaTotal > 0 ? '#f57f17' : '#aaa', fontSize: '12px' }}>
                                   {(fr as any).caixinhaTotal > 0 ? (
                                     <span style={{ color: '#e65100', fontWeight: 'bold' }}
                                       title={((fr as any).caixinhaDetalhe || []).map((d: any) => `${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>
                                       +{fmtMoeda((fr as any).caixinhaTotal)}
                                     </span>
-                                  ) : '—'}
+                                  ) : '-'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', color: fr.saidasDesconto > 0 ? '#c62828' : '#aaa', fontSize: '12px' }}>
                                   {fr.saidasDesconto > 0 ? (
                                     <span title={fr.saidasDetalhe.map(d => `${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>
-                                      −{fmtMoeda(fr.saidasDesconto)}
+                                      -{fmtMoeda(fr.saidasDesconto)}
                                     </span>
-                                  ) : '—'}
+                                  ) : '-'}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: fr.totalLiquido > 0 ? '#1b5e20' : '#888', fontSize: '13px' }}>
                                   {fmtMoeda(fr.totalLiquido)}
@@ -3013,7 +3070,7 @@ export default function FolhaPagamento() {
                                             desconto: fr.saidasDesconto || 0,
                                             caixinha: (fr as any).caixinhaTotal || 0,
                                             totalFinal: fr.totalLiquido,
-                                            obs: `Freelancer sem. ${fech.semanaLabel} – ${fr.dobras} dobras – ${obsValor}${fr.transporteAdiantado > 0 ? ` – Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${(fr as any).caixinhaTotal > 0 ? ` – Caixinha: +R$${fmt((fr as any).caixinhaTotal)}` : ''}${fr.saidasDesconto > 0 ? ` – Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
+                                            obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsValor}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${(fr as any).caixinhaTotal > 0 ? ` - Caixinha: +R$${fmt((fr as any).caixinhaTotal)}` : ''}${fr.saidasDesconto > 0 ? ` - Desc. saídas: R$${fmt(fr.saidasDesconto)}` : ''}`,
                                           };
                                           const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                                             method: 'POST',
@@ -3058,7 +3115,7 @@ export default function FolhaPagamento() {
                                 <td style={{ padding: '6px 8px', color: '#e65100', fontSize: '11px' }} colSpan={5}>✔ Transporte já pago (adiantado via Saídas)</td>
                                 <td colSpan={1} />
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#e65100', fontSize: '11px' }}>
-                                  −{fmtMoeda(fech.totalTransporteAdiantado || 0)}
+                                  -{fmtMoeda(fech.totalTransporteAdiantado || 0)}
                                 </td>
                                 <td colSpan={4} />
                               </tr>
@@ -3070,17 +3127,17 @@ export default function FolhaPagamento() {
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9', fontSize: '11px' }}>
                                 {fech.totalTransporte > 0
-                                  ? <span title={`Calculado: ${fmtMoeda(fech.totalTransporteCalculado||0)}${(fech.totalTransporteAdiantado||0) > 0 ? ` | Adiantado: −${fmtMoeda(fech.totalTransporteAdiantado||0)}` : ''}`}>
+                                  ? <span title={`Calculado: ${fmtMoeda(fech.totalTransporteCalculado||0)}${(fech.totalTransporteAdiantado||0) > 0 ? ` | Adiantado: -${fmtMoeda(fech.totalTransporteAdiantado||0)}` : ''}`}>
                                       +{fmtMoeda(fech.totalTransporte)}{(fech.totalTransporteAdiantado||0) > 0 ? ' *' : ''}
                                     </span>
-                                  : (fech.totalTransporteCalculado||0) > 0 ? <span style={{ color: '#a5d6a7' }}>✔ quitado</span> : '—'}
+                                  : (fech.totalTransporteCalculado||0) > 0 ? <span style={{ color: '#a5d6a7' }}>✔ quitado</span> : '-'}
                               </td>
                               {/* 🪙 Caixinha total da semana (crédito) */}
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80', fontSize: '11px' }}>
-                                {(fech.totalCaixinha || 0) > 0 ? `+${fmtMoeda(fech.totalCaixinha || 0)}` : '—'}
+                                {(fech.totalCaixinha || 0) > 0 ? `+${fmtMoeda(fech.totalCaixinha || 0)}` : '-'}
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
-                                {fech.totalSaidasDesconto > 0 ? `−${fmtMoeda(fech.totalSaidasDesconto)}` : '—'}
+                                {fech.totalSaidasDesconto > 0 ? `-${fmtMoeda(fech.totalSaidasDesconto)}` : '-'}
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7', fontWeight: 'bold' }}>
                                 {fmtMoeda(fech.totalSemana + fech.totalTransporte + (fech.totalCaixinha || 0) - fech.totalSaidasDesconto)}
@@ -3106,7 +3163,7 @@ export default function FolhaPagamento() {
                                 {parseFloat(ef.combustivel || '0') > 0 && (
                                   <tr style={{ backgroundColor: '#fff3e0' }}>
                                     <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#e65100' }} colSpan={8}>⛽ Combustível (ajuste manual)</td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>−{fmtMoeda(parseFloat(ef.combustivel || '0'))}</td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>-{fmtMoeda(parseFloat(ef.combustivel || '0'))}</td>
                                     <td colSpan={2} />
                                   </tr>
                                 )}
@@ -3120,7 +3177,7 @@ export default function FolhaPagamento() {
                                 {parseFloat(ef.desconto || '0') > 0 && (
                                   <tr style={{ backgroundColor: '#fce4ec' }}>
                                     <td style={{ padding: '6px 8px', fontStyle: 'italic', color: '#c62828' }} colSpan={8}>➖ Desconto (ajuste manual)</td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>−{fmtMoeda(parseFloat(ef.desconto || '0'))}</td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>-{fmtMoeda(parseFloat(ef.desconto || '0'))}</td>
                                     <td colSpan={2} />
                                   </tr>
                                 )}
@@ -3176,7 +3233,7 @@ export default function FolhaPagamento() {
                         return (
                           <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
                             <td style={{ ...s.td, fontWeight: 'bold' }}>{fr.nome}</td>
-                            <td style={{ ...s.td, fontSize: '11px' }}>{fr.chavePix || '—'}</td>
+                            <td style={{ ...s.td, fontSize: '11px' }}>{fr.chavePix || '-'}</td>
                             <td style={{ ...s.td, textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>{totalDobras}</td>
                             <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#c2185b', fontSize: '13px' }}>
                               {fmtMoeda(totalMesLiquido)}
