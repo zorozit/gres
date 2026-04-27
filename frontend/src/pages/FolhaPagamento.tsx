@@ -2957,6 +2957,11 @@ export default function FolhaPagamento() {
                               );
                               const frIsPago = frFolhaSalva?.pago || fr.pago || false;
                               const frDataPgto = frFolhaSalva?.dataPagamento;
+                              // Detectar qualidade do pagamento
+                              const diasPagosSalvos: any[] = Array.isArray(frFolhaSalva?.diasPagos) ? frFolhaSalva.diasPagos : [];
+                              const semDetalheDias = frIsPago && diasPagosSalvos.length === 0;
+                              const pagoParcial = frIsPago && diasPagosSalvos.length > 0 && fr.dobras > 0; // ainda tem pendentes
+                              const pagoCompleto = frIsPago && !semDetalheDias && fr.dobras === 0;
                               return (
                               <tr key={fr.id} style={{ backgroundColor: (fr.pendentesAnteriores?.length > 0) ? '#fffde7' : (fi % 2 === 0 ? '#fafafa' : 'white'), borderLeft: fr.pendentesAnteriores?.length > 0 ? '3px solid #f9a825' : '3px solid transparent' }}>
                                 <td style={{ ...s.td, fontWeight: 'bold' }}>
@@ -3051,9 +3056,20 @@ export default function FolhaPagamento() {
                                   )}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'center' }}>
-                                  <span style={frIsPago ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
-                                    {frIsPago ? '✅ Pago' : '⏳ Pend.'}
-                                  </span>
+                                  {/* Status inteligente: distingue pago completo / parcial / sem detalhe / pendente */}
+                                  {semDetalheDias ? (
+                                    <span style={{ ...s.badge('#fff3e0','#e65100'), fontSize:'9px' }} title="Pago mas sem registro analítico de dias. Reabra e repague para corrigir.">
+                                      ⚠️ Pago*
+                                    </span>
+                                  ) : pagoParcial ? (
+                                    <span style={{ ...s.badge('#fff9c4','#f57f17'), fontSize:'9px' }} title="Pagamento parcial — ainda há dias pendentes nesta semana">
+                                      🟡 Parcial
+                                    </span>
+                                  ) : pagoCompleto ? (
+                                    <span style={s.badge('#e8f5e9', '#2e7d32')}>✅ Pago</span>
+                                  ) : (
+                                    <span style={s.badge('#fff9c4', '#f57f17')}>⏳ Pend.</span>
+                                  )}
                                   {frIsPago && frDataPgto && (
                                     <div style={{ fontSize: '9px', color: '#666', marginTop: '2px' }}>{frDataPgto}</div>
                                   )}
@@ -3061,6 +3077,11 @@ export default function FolhaPagamento() {
                                     <div style={{ fontSize: '9px', marginTop: '2px', fontWeight: 'bold',
                                       color: frFolhaSalva.formaPagamento === 'PIX' ? '#1565c0' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
                                       {frFolhaSalva.formaPagamento === 'PIX' ? '📱 PIX' : frFolhaSalva.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                                    </div>
+                                  )}
+                                  {semDetalheDias && (
+                                    <div style={{ fontSize: '9px', color: '#e65100', marginTop: '3px' }}>
+                                      * sem detalhe de dias
                                     </div>
                                   )}
                                 </td>
@@ -3087,6 +3108,33 @@ export default function FolhaPagamento() {
                                       title="Ver detalhamento">
                                       📋 Ver
                                     </button>
+                                    {/* Botão especial: Reabrir + Pagar (para pagamentos sem detalhe de dias) */}
+                                    {semDetalheDias && (
+                                      <button
+                                        disabled={salvando}
+                                        title="Desfaz o pagamento e reabre o modal para pagar com os dias corretos"
+                                        onClick={async () => {
+                                          if (!window.confirm(`Reabrir pagamento de ${fr.nome} para corrigir os dias? O pagamento atual será desfeito e você poderá repagar com os dias corretos.`)) return;
+                                          setSalvando(true);
+                                          try {
+                                            const payload = { colaboradorId: fr.id, mes: mesAno, semana: fech.dataFechamento, unitId, pago: false, dataPagamento: null, diasPagos: [] };
+                                            const resp = await fetch(`${apiUrl}/folha-pagamento`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                              body: JSON.stringify(payload),
+                                            });
+                                            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                                            await carregarDados();
+                                            // Abre o modal de pagamento automaticamente
+                                            setTimeout(() => setModalFreelancerPgto({ fr, fech }), 300);
+                                          } catch (err) { alert('Erro: ' + err); }
+                                          finally { setSalvando(false); }
+                                        }}
+                                        style={{ ...s.btn('#e65100'), padding: '3px 8px', fontSize: '11px' }}
+                                      >
+                                        🔧 Corrigir
+                                      </button>
+                                    )}
                                     <button
                                       disabled={salvando}
                                       onClick={async () => {
