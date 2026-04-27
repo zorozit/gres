@@ -255,16 +255,28 @@ function fmtDataISO(d: Date) {
  */
 const ISO_HOJE_FP = new Date().toISOString().split('T')[0];
 
-function statusPresencaEscala(esc?: EscalaItem): 'presente' | 'falta' | 'falta_justificada' | undefined {
+// Retorna o status de presença de uma escala.
+// Para DiaNoite com turnos parcialmente presentes, retorna 'presente_parcial'
+// para que o cálculo pague apenas o turno efetivamente trabalhado.
+function statusPresencaEscala(esc?: EscalaItem): 'presente' | 'presente_parcial' | 'falta' | 'falta_justificada' | undefined {
   if (!esc) return undefined;
-  if (esc.turno === 'Noite') return esc.presencaNoite || esc.presenca;
+  if (esc.turno === 'Noite') return (esc.presencaNoite || esc.presenca) as any;
   if (esc.turno === 'DiaNoite') {
-    if (esc.presenca === 'presente' || esc.presencaNoite === 'presente') return 'presente';
-    if (esc.presenca === 'falta_justificada' || esc.presencaNoite === 'falta_justificada') return 'falta_justificada';
-    if (esc.presenca === 'falta' || esc.presencaNoite === 'falta') return 'falta';
-    return esc.presenca || esc.presencaNoite;
+    const pD  = esc.presenca;
+    const pN  = esc.presencaNoite;
+    const diaPresente   = pD === 'presente';
+    const noitePresente = pN === 'presente';
+    // Ambos presentes → DiaNoite completo
+    if (diaPresente && noitePresente) return 'presente';
+    // Um presente, outro falta/vazio → parcial (paga só quem foi)
+    if (diaPresente || noitePresente) return 'presente_parcial';
+    // Ambos falta/justificada
+    if (pD === 'falta_justificada' || pN === 'falta_justificada') return 'falta_justificada';
+    if (pD === 'falta' || pN === 'falta') return 'falta';
+    // Nenhum marcado
+    return pD || pN as any || undefined;
   }
-  return esc.presenca;
+  return esc.presenca as any;
 }
 
 function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: number; diasCodigo: string; diasTrabalhados: number } {
@@ -275,16 +287,20 @@ function contarDobras(escalas: EscalaItem[], freelancerId: string): { dobras: nu
     .filter(e =>
       e.colaboradorId === freelancerId &&
       e.turno !== 'Folga' &&
-      statusPresencaEscala(e) === 'presente'   // só conta presença explicitamente confirmada
+      (statusPresencaEscala(e) === 'presente' || statusPresencaEscala(e) === 'presente_parcial')
     )
     .sort((a,b) => a.data.localeCompare(b.data));
   for (const esc of dias) {
+    const status = statusPresencaEscala(esc);
+    const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
+      ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
+      : esc.turno;
     const dow = new Date(esc.data + 'T12:00:00').getDay();
-    const label = `${DIAS_SEMANA_ABREV[dow]} ${esc.turno === 'DiaNoite' ? 'DN' : esc.turno === 'Dia' ? 'D' : esc.turno === 'Noite' ? 'N' : 'F'}`;
+    const label = `${DIAS_SEMANA_ABREV[dow]} ${efetivaTurno === 'DiaNoite' ? 'DN' : efetivaTurno === 'Dia' ? 'D' : efetivaTurno === 'Noite' ? 'N' : 'F'}`;
     linhas.push(label);
     diasTrabalhados++;
-    if (esc.turno === 'DiaNoite') dobras += 1;
-    else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobras += 0.5;
+    if (efetivaTurno === 'DiaNoite') dobras += 1;
+    else if (efetivaTurno === 'Dia' || efetivaTurno === 'Noite') dobras += 0.5;
   }
   return { dobras, diasCodigo: linhas.join(' | '), diasTrabalhados };
 }
@@ -706,7 +722,7 @@ export default function FolhaPagamento() {
 
           const escalasSemanaConfirmadas = escalasSemana.filter(e =>
             e.turno !== 'Folga' &&
-            statusPresencaEscala(e) === 'presente'
+            (statusPresencaEscala(e) === 'presente' || statusPresencaEscala(e) === 'presente_parcial')
           );
           const escalasPendentes = escalasSemanaConfirmadas.filter(e => !diasJaPagos.has(e.data));
           const escalasJaPagas   = escalasSemanaConfirmadas.filter(e =>  diasJaPagos.has(e.data));
@@ -715,43 +731,54 @@ export default function FolhaPagamento() {
           const DOW_KEY = ['dom','seg','ter','qua','qui','sex','sab'];
 
           const calcValorEsc = (esc: EscalaItem): number => {
+            const status = statusPresencaEscala(esc);
+            // Para DiaNoite parcial: pagar apenas o turno que foi presente
+            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
+              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
+              : esc.turno;
+
             // Tipo valor_turno: busca valor exato por dia da semana + turno na tabela
             if ((f as any).tipoAcordo === 'valor_turno' && (f as any).acordo?.tabela) {
               const tabela: AcordoTurnoTabela = (f as any).acordo.tabela;
               const dow = new Date(esc.data + 'T12:00:00').getDay();
               const diaKey = DOW_KEY[dow];
               const vals = tabela[diaKey] || {};
-              if (esc.turno === 'DiaNoite') {
-                // DN: usa valor DN se configurado, senão D+N
-                return R(vals.DN) || (R(vals.D) + R(vals.N));
-              }
-              if (esc.turno === 'Dia')   return R(vals.D);
-              if (esc.turno === 'Noite') return R(vals.N);
+              if (efetivaTurno === 'DiaNoite') return R(vals.DN) || (R(vals.D) + R(vals.N));
+              if (efetivaTurno === 'Dia')   return R(vals.D);
+              if (efetivaTurno === 'Noite') return R(vals.N);
               return 0;
             }
             // Tipos valor_dia_noite / sem acordo: usa valorDia/valorNoite fixos
             if (usaTurno) {
-              if (esc.turno === 'DiaNoite') return vDia + vNoite;
-              if (esc.turno === 'Dia')      return vDia;
-              if (esc.turno === 'Noite')    return vNoite;
+              if (efetivaTurno === 'DiaNoite') return vDia + vNoite;
+              if (efetivaTurno === 'Dia')      return vDia;
+              if (efetivaTurno === 'Noite')    return vNoite;
               return 0;
             } else {
               let dobrasEsc = 0;
-              if (esc.turno === 'DiaNoite') dobrasEsc = 2;
-              else if (esc.turno === 'Dia' || esc.turno === 'Noite') dobrasEsc = 1;
+              if (efetivaTurno === 'DiaNoite') dobrasEsc = 2;
+              else if (efetivaTurno === 'Dia' || efetivaTurno === 'Noite') dobrasEsc = 1;
               return parseFloat((dobrasEsc * vDobra).toFixed(2));
             }
           };
 
           for (const esc of escalasPendentes) {
+            const status = statusPresencaEscala(esc);
+            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
+              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
+              : esc.turno;
             const v = calcValorEsc(esc);
             total += v;
-            diasPagos.push({ data: esc.data, turno: esc.turno, valor: v });
+            diasPagos.push({ data: esc.data, turno: efetivaTurno, valor: v });
           }
           for (const esc of escalasJaPagas) {
+            const status = statusPresencaEscala(esc);
+            const efetivaTurno = (esc.turno === 'DiaNoite' && status === 'presente_parcial')
+              ? (esc.presenca === 'presente' ? 'Dia' : 'Noite')
+              : esc.turno;
             const v = calcValorEsc(esc);
             totalJaPago += v;
-            diasJaPagosDetalhe.push({ data: esc.data, turno: esc.turno, valor: v });
+            diasJaPagosDetalhe.push({ data: esc.data, turno: efetivaTurno, valor: v });
           }
           total = parseFloat(total.toFixed(2));
           totalJaPago = parseFloat(totalJaPago.toFixed(2));
@@ -1532,26 +1559,33 @@ export default function FolhaPagamento() {
     const DOW_KEY_DET = ['dom','seg','ter','qua','qui','sex','sab'];
     // Set de dias já pagos (do objeto fr calculado)
     const diasPagosSet = new Set((fr.diasJaPagosDetalhe || []).map((d: any) => d.data));
-    // Filtrar apenas escalas com presença confirmada OU já pagas (dias pagos sempre exibidos)
+    // Filtrar apenas escalas com presença confirmada (total ou parcial) OU já pagas
     const escsVisiveis = escs.filter(e =>
-      statusPresencaEscala(e) === 'presente' || diasPagosSet.has(e.data)
+      statusPresencaEscala(e) === 'presente' ||
+      statusPresencaEscala(e) === 'presente_parcial' ||
+      diasPagosSet.has(e.data)
     );
     const linhas = escsVisiveis.map(e => {
+      const status = statusPresencaEscala(e);
+      // Para DiaNoite parcial: usar apenas o turno efetivamente presente
+      const efetivaTurno = (e.turno === 'DiaNoite' && status === 'presente_parcial')
+        ? (e.presenca === 'presente' ? 'Dia' : 'Noite')
+        : e.turno;
       const dow = new Date(e.data + 'T12:00:00').getDay();
-      const turnoLabel = e.turno === 'DiaNoite' ? 'DN (D+N)' : e.turno === 'Dia' ? 'Dia' : e.turno === 'Noite' ? 'Noite' : e.turno;
-      const dobras = e.turno === 'DiaNoite' ? 1 : (e.turno === 'Dia' || e.turno === 'Noite') ? 0.5 : 0;
+      const turnoLabel = efetivaTurno === 'DiaNoite' ? 'DN (D+N)' : efetivaTurno === 'Dia' ? 'Dia' : efetivaTurno === 'Noite' ? 'Noite' : efetivaTurno;
+      const dobras = efetivaTurno === 'DiaNoite' ? 1 : (efetivaTurno === 'Dia' || efetivaTurno === 'Noite') ? 0.5 : 0;
       let valor = 0;
       // valor_turno: busca valor exato da tabela por dia da semana
       if (fr.tipoAcordo === 'valor_turno' && fr.acordo?.tabela) {
         const diaKey = DOW_KEY_DET[dow];
         const vals = fr.acordo.tabela[diaKey] || {};
-        if (e.turno === 'DiaNoite') valor = R(vals.DN) || (R(vals.D) + R(vals.N));
-        else if (e.turno === 'Dia')   valor = R(vals.D);
-        else if (e.turno === 'Noite') valor = R(vals.N);
+        if (efetivaTurno === 'DiaNoite') valor = R(vals.DN) || (R(vals.D) + R(vals.N));
+        else if (efetivaTurno === 'Dia')   valor = R(vals.D);
+        else if (efetivaTurno === 'Noite') valor = R(vals.N);
       } else if (usaTurno) {
-        if (e.turno === 'DiaNoite') valor = vDia + vNoite;
-        else if (e.turno === 'Dia')   valor = vDia;
-        else if (e.turno === 'Noite') valor = vNoite;
+        if (efetivaTurno === 'DiaNoite') valor = vDia + vNoite;
+        else if (efetivaTurno === 'Dia')   valor = vDia;
+        else if (efetivaTurno === 'Noite') valor = vNoite;
       } else {
         valor = dobras * valorDobra;
       }
@@ -2285,13 +2319,16 @@ export default function FolhaPagamento() {
                     const presStatus = statusPresencaEscala(esc);
                     if (presStatus === 'falta') { codigos.push('F'); continue; }
                     if (presStatus === 'falta_justificada') { codigos.push('FJ'); continue; }
-                    if (presStatus !== 'presente') {
+                    if (presStatus !== 'presente' && presStatus !== 'presente_parcial') {
                       // undefined/null = sem confirmação (aguardando)
                       codigos.push(ds > ISO_HOJE_FP ? '…' : '?'); continue;
                     }
-                    if (esc.turno === 'Dia') { dC++; codigos.push('D'); }
-                    else if (esc.turno === 'Noite') { nC++; codigos.push('N'); }
-                    else if (esc.turno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
+                    // DiaNoite parcial: pagar apenas o turno presente
+                    const efTurno = (esc.turno === 'DiaNoite' && presStatus === 'presente_parcial')
+                      ? (esc.presenca === 'presente' ? 'Dia' : 'Noite') : esc.turno;
+                    if (efTurno === 'Dia') { dC++; codigos.push('D'); }
+                    else if (efTurno === 'Noite') { nC++; codigos.push('N'); }
+                    else if (efTurno === 'DiaNoite') { dnC++; dC++; nC++; codigos.push('DN'); }
                   }
                   let totalBruto = 0;
                   const vDia = p.valorDia || 0;
