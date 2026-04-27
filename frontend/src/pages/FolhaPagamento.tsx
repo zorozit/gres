@@ -1435,14 +1435,25 @@ export default function FolhaPagamento() {
                 <div style={{ marginTop: '6px' }}>
                   <label style={{ ...s.label, fontSize: '11px', color: '#5b21b6' }}>Valor a abater neste pagamento (R$)</label>
                   <input type="number" step="0.01" min="0.01"
-                    max={Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)).toString()}
+                    max={fr.saldoEspecialAberto.toString()}
                     value={valorAbatimento}
-                    placeholder={`máx. ${fmtMoeda(Math.min(fr.saldoEspecialAberto, Math.max(0, totalSelecionado)))}`}
+                    placeholder={`máx. ${fmtMoeda(fr.saldoEspecialAberto)}`}
                     onChange={e => setValorAbatimento(e.target.value)}
                     style={{ ...s.input, fontSize: '12px', padding: '6px', borderColor: '#a78bfa' }} />
                   <div style={{ fontSize: '11px', color: '#6d28d9', marginTop: '4px' }}>
                     Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0, fr.saldoEspecialAberto - (parseFloat(valorAbatimento) || 0)))}</strong>
                   </div>
+                  {/* Aviso quando o total dos itens não cobre o abatimento (saldo devedor) */}
+                  {(() => {
+                    const vlAbate = parseFloat(valorAbatimento) || 0;
+                    const saldoDevedor = vlAbate - Math.max(0, totalSelecionado);
+                    return saldoDevedor > 0 ? (
+                      <div style={{ marginTop: '6px', padding: '6px 10px', background: '#fff3e0', borderRadius: '5px', fontSize: '11px', color: '#e65100', border: '1px solid #ffcc80' }}>
+                        ⚠️ O abatimento de {fmtMoeda(vlAbate)} supera o líquido dos itens selecionados ({fmtMoeda(Math.max(0, totalSelecionado))}).
+                        Isso registra uma <strong>dívida de {fmtMoeda(saldoDevedor)}</strong> a ser compensada em pagamentos futuros — o desembolso desta vez será R$ 0,00.
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               )}
               <div style={{ marginTop: '6px', fontSize: '11px', color: '#6d28d9' }}>
