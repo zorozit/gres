@@ -313,6 +313,18 @@ export const Motoboys: React.FC = () => {
   const [pagamentosSemana, setPagamentosSemana] = useState<any[]>([]);
   const [salvandoPgtoSemana, setSalvandoPgtoSemana] = useState<string | null>(null);
 
+  // Modal de pagamento motoboy
+  interface ModalPgtoMoto {
+    semana: { inicio: string; fim: string; label: string };
+    motoboy: Motoboy;
+    linhas: any[]; // linhas do controle nesta semana
+  }
+  const [modalPgtoMoto, setModalPgtoMoto] = useState<ModalPgtoMoto | null>(null);
+  const [pgtoForma, setPgtoForma] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
+  const [pgtoData, setPgtoData] = useState(new Date().toISOString().split('T')[0]);
+  const [pgtoDiasSel, setPgtoDiasSel] = useState<Record<string, boolean>>({});
+  const [salvandoModal, setSalvandoModal] = useState(false);
+
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
   const fetchMotoboys = async () => {
@@ -472,6 +484,61 @@ export const Motoboys: React.FC = () => {
       }
     } catch (e) { console.error(e); }
   }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl]);
+
+  const abrirModalPgto = (sem: { inicio: string; fim: string; label: string }) => {
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    if (!motoboy) return;
+    const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim && R(l.vlVariavel) > 0);
+    // Pre-selecionar todos os dias com variável > 0 e não pagos
+    const pgSemana = pagamentosSemana.find(p => p.semana === sem.fim || p.dataFechamento === sem.fim);
+    const diasJaPagosSet = new Set<string>(
+      (pgSemana?.diasPagos || []).map((d: any) => d.data || d)
+    );
+    const sel: Record<string, boolean> = {};
+    for (const l of linhasSem) {
+      sel[l.data] = !diasJaPagosSet.has(l.data);
+    }
+    setPgtoDiasSel(sel);
+    setPgtoForma('PIX');
+    setPgtoData(new Date().toISOString().split('T')[0]);
+    setModalPgtoMoto({ semana: sem, motoboy, linhas: linhasSem });
+  };
+
+  const confirmarPagamentoModal = async () => {
+    if (!modalPgtoMoto || !ctrlMotoboyId) return;
+    setSalvandoModal(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const { semana, motoboy } = modalPgtoMoto;
+      const diasSelecionados = modalPgtoMoto.linhas.filter(l => pgtoDiasSel[l.data]);
+      if (diasSelecionados.length === 0) { alert('Selecione ao menos um dia.'); setSalvandoModal(false); return; }
+      const totalFinal = parseFloat(diasSelecionados.reduce((s: number, l: any) => s + R(l.vlVariavel), 0).toFixed(2));
+      const diasPagos = diasSelecionados.map((l: any) => ({ data: l.data, valor: R(l.vlVariavel) }));
+      const payload = {
+        colaboradorId: ctrlMotoboyId,
+        mes: ctrlMesAno,
+        semana: semana.fim,
+        unitId,
+        pago: true,
+        dataPagamento: pgtoData,
+        diasPagos,
+        totalBruto: totalFinal,
+        totalLiquido: totalFinal,
+        formaPagamento: pgtoForma,
+        obs: `Semana ${semana.label} — Motoboy ${motoboy.nome} — ${diasSelecionados.length} dia(s) — ${pgtoForma}`,
+        logPagamentos: [{ id: Date.now().toString(), data: pgtoData, valor: totalFinal, forma: pgtoForma, tipo: 'Motoboy' }],
+      };
+      const r = await fetch(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setModalPgtoMoto(null);
+      await fetchPagamentosSemana();
+    } catch (e) { console.error(e); alert('Erro ao salvar pagamento: ' + e); }
+    finally { setSalvandoModal(false); }
+  };
 
   const marcarPagamentoSemana = async (semanaFim: string, pago: boolean, dataPgto?: string) => {
     if (!ctrlMotoboyId) return;
@@ -854,9 +921,141 @@ export const Motoboys: React.FC = () => {
     },
   };
 
+  /* ── Modal Pagamento Motoboy ──────────────────────────── */
+  const R2 = (v: any) => parseFloat(v) || 0;
+  const fmt2 = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ModalPagamentoMotoboy = modalPgtoMoto ? (() => {
+    const { semana, motoboy, linhas } = modalPgtoMoto;
+    const diasSelecionados = linhas.filter(l => pgtoDiasSel[l.data]);
+    const totalSel = parseFloat(diasSelecionados.reduce((s: number, l: any) => s + R2(l.vlVariavel), 0).toFixed(2));
+    const totalSemana = parseFloat(linhas.reduce((s: number, l: any) => s + R2(l.vlVariavel), 0).toFixed(2));
+    const btnForma = (f: 'PIX' | 'Dinheiro' | 'Misto', label: string) => (
+      <button type="button" onClick={() => setPgtoForma(f)}
+        style={{ flex: 1, padding: '8px 4px', border: `2px solid ${pgtoForma===f?'#1565c0':'#ddd'}`,
+          borderRadius: '6px', background: pgtoForma===f?'#e3f2fd':'#fafafa',
+          fontWeight: pgtoForma===f?700:400, cursor: 'pointer', fontSize: '12px',
+          color: pgtoForma===f?'#0d47a1':'#555' }}>{label}</button>
+    );
+    return (
+      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}
+        onClick={() => setModalPgtoMoto(null)}>
+        <div style={{ background:'#fff', borderRadius:'12px', padding:'24px', width:'94%', maxWidth:'500px', maxHeight:'90vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,.25)' }}
+          onClick={e => e.stopPropagation()}>
+
+          {/* Header */}
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
+            <div>
+              <div style={{ fontSize:'16px', fontWeight:700, color:'#1565c0' }}>💳 Confirmar Pagamento Motoboy</div>
+              <div style={{ fontSize:'12px', color:'#888', marginTop:'2px' }}>Semana {semana.label} — {motoboy.nome}</div>
+            </div>
+            <button onClick={() => setModalPgtoMoto(null)} style={{ background:'none', border:'none', fontSize:'20px', cursor:'pointer', color:'#999' }}>✕</button>
+          </div>
+
+          {/* Seleção de dias */}
+          <div style={{ marginBottom:'16px' }}>
+            <div style={{ fontSize:'13px', fontWeight:700, color:'#333', marginBottom:'8px' }}>
+              Selecione os dias a pagar:
+              <button type="button" onClick={() => {
+                const all = linhas.reduce((acc: Record<string,boolean>, l: any) => ({...acc, [l.data]: true}), {});
+                setPgtoDiasSel(all);
+              }} style={{ marginLeft:'10px', padding:'2px 8px', fontSize:'11px', border:'1px solid #1565c0', color:'#1565c0', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Todos</button>
+              <button type="button" onClick={() => setPgtoDiasSel({})} style={{ marginLeft:'4px', padding:'2px 8px', fontSize:'11px', border:'1px solid #ccc', color:'#888', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Nenhum</button>
+            </div>
+            <div style={{ border:'1px solid #e0e0e0', borderRadius:'8px', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
+                <thead>
+                  <tr style={{ background:'#f5f5f5' }}>
+                    <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:600, color:'#555' }}></th>
+                    <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:600, color:'#555' }}>Data</th>
+                    <th style={{ padding:'6px 8px', textAlign:'center', fontWeight:600, color:'#f57f17' }}>D☀️</th>
+                    <th style={{ padding:'6px 8px', textAlign:'center', fontWeight:600, color:'#3949ab' }}>N🌙</th>
+                    <th style={{ padding:'6px 8px', textAlign:'right', fontWeight:600, color:'#2e7d32' }}>Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhas.map((l: any, i: number) => {
+                    const sel = !!pgtoDiasSel[l.data];
+                    const dow = new Date(l.data + 'T12:00:00').getDay();
+                    const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+                    const fmtDt = (iso: string) => { const [y,m,d] = iso.split('-'); return `${d}/${m} ${DIAS[dow]}`; };
+                    return (
+                      <tr key={l.data} style={{ background: sel?(i%2===0?'#e3f2fd':'#e8f4fd'):(i%2===0?'#fafafa':'#fff'), cursor:'pointer' }}
+                        onClick={() => setPgtoDiasSel(prev => ({...prev, [l.data]: !prev[l.data] }))}>
+                        <td style={{ padding:'6px 8px', textAlign:'center' }}>
+                          <input type="checkbox" checked={sel} readOnly
+                            style={{ width:'14px', height:'14px', accentColor:'#1565c0', cursor:'pointer' }} />
+                        </td>
+                        <td style={{ padding:'6px 8px', fontWeight: sel?700:400, color: sel?'#0d47a1':'#555' }}>{fmtDt(l.data)}</td>
+                        <td style={{ padding:'6px 8px', textAlign:'center', color:'#f57f17', fontWeight:600 }}>{R2(l.entDia)||'—'}</td>
+                        <td style={{ padding:'6px 8px', textAlign:'center', color:'#3949ab', fontWeight:600 }}>{R2(l.entNoite)||'—'}</td>
+                        <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:700, color: sel?'#2e7d32':'#aaa' }}>R$ {fmt2(R2(l.vlVariavel))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background:'#e8f5e9', fontWeight:700, fontSize:'13px' }}>
+                    <td colSpan={4} style={{ padding:'8px 10px', color:'#1b5e20' }}>
+                      {diasSelecionados.length} de {linhas.length} dias selecionados
+                      {diasSelecionados.length < linhas.length && <span style={{ fontSize:'11px', fontWeight:400, color:'#888', marginLeft:'6px' }}>(total semana: R$ {fmt2(totalSemana)})</span>}
+                    </td>
+                    <td style={{ padding:'8px 10px', textAlign:'right', color:'#1b5e20', fontSize:'15px' }}>R$ {fmt2(totalSel)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          {/* Forma de pagamento */}
+          <div style={{ marginBottom:'14px' }}>
+            <div style={{ fontSize:'12px', fontWeight:700, color:'#555', marginBottom:'6px' }}>Forma de pagamento</div>
+            <div style={{ display:'flex', gap:'6px' }}>
+              {btnForma('PIX','📱 PIX')}
+              {btnForma('Dinheiro','💵 Dinheiro')}
+              {btnForma('Misto','🔄 Misto')}
+            </div>
+          </div>
+
+          {/* Data */}
+          <div style={{ marginBottom:'18px' }}>
+            <div style={{ fontSize:'12px', fontWeight:700, color:'#555', marginBottom:'4px' }}>Data do pagamento</div>
+            <input type="date" value={pgtoData} onChange={e => setPgtoData(e.target.value)}
+              style={{ width:'100%', padding:'8px 10px', border:'1px solid #ccc', borderRadius:'6px', fontSize:'13px', boxSizing:'border-box' as const }} />
+          </div>
+
+          {/* Chave PIX */}
+          {motoboy.chavePix && (
+            <div style={{ marginBottom:'14px', background:'#f3f4f6', borderRadius:'8px', padding:'10px 14px', fontSize:'12px' }}>
+              <span style={{ color:'#555' }}>Chave PIX: </span>
+              <strong style={{ color:'#1565c0' }}>{motoboy.chavePix}</strong>
+              <button type="button" onClick={() => navigator.clipboard.writeText(motoboy.chavePix!)}
+                style={{ marginLeft:'10px', padding:'2px 8px', fontSize:'11px', border:'1px solid #1565c0', color:'#1565c0', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Copiar</button>
+            </div>
+          )}
+
+          {/* Resumo e botões */}
+          <div style={{ background: totalSel>0?'#e8f5e9':'#f5f5f5', borderRadius:'8px', padding:'12px 16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span style={{ fontSize:'13px', color:'#555' }}>Total a pagar:</span>
+            <span style={{ fontSize:'20px', fontWeight:700, color: totalSel>0?'#1b5e20':'#aaa' }}>R$ {fmt2(totalSel)}</span>
+          </div>
+          <div style={{ display:'flex', gap:'10px' }}>
+            <button onClick={confirmarPagamentoModal} disabled={salvandoModal||diasSelecionados.length===0||totalSel<=0}
+              style={{ flex:1, padding:'10px', background: diasSelecionados.length>0&&totalSel>0?'#2e7d32':'#aaa',
+                color:'#fff', border:'none', borderRadius:'8px', fontWeight:700, fontSize:'14px', cursor: diasSelecionados.length>0?'pointer':'not-allowed' }}>
+              {salvandoModal ? '⏳ Salvando...' : `✅ Confirmar R$ ${fmt2(totalSel)}`}
+            </button>
+            <button onClick={() => setModalPgtoMoto(null)}
+              style={{ padding:'10px 20px', background:'#f5f5f5', border:'1px solid #ccc', borderRadius:'8px', cursor:'pointer', fontSize:'13px', color:'#555' }}>Cancelar</button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
+
   /* ── Render ──────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
+      {ModalPagamentoMotoboy}
       <Header title="🏍️ Gestão de Motoboys" showBack={true} />
       <div style={{ flex: 1, padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
 
@@ -1309,33 +1508,40 @@ export const Motoboys: React.FC = () => {
                                   R$ {fmt(saldo)}
                                 </td>
                                 <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                  {pago ? (
-                                    <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
-                                      ✅ Pago {dataPgto ? `em ${dataPgto.split('-').reverse().join('/')}` : ''}
-                                    </span>
-                                  ) : (
-                                    <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
-                                      ⏳ Pendente
-                                    </span>
-                                  )}
+                                  {(() => {
+                                    const diasPagos: any[] = pgDB?.diasPagos || [];
+                                    const totalDias = linhasSem.filter((l: any) => R(l.vlVariavel) > 0).length;
+                                    const diasPagosCt = diasPagos.length;
+                                    const parcial = pago && diasPagosCt > 0 && diasPagosCt < totalDias;
+                                    return pago ? (
+                                      <div>
+                                        <span style={{ backgroundColor: parcial?'#fff8e1':'#e8f5e9', color: parcial?'#e65100':'#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
+                                          {parcial ? `⚠️ Parcial (${diasPagosCt}/${totalDias} dias)` : `✅ Pago ${dataPgto ? `em ${dataPgto.split('-').reverse().join('/')}` : ''}`}
+                                        </span>
+                                        {pgDB?.formaPagamento && <div style={{ fontSize:'10px', color:'#888', marginTop:'2px' }}>{pgDB.formaPagamento}</div>}
+                                      </div>
+                                    ) : (
+                                      <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
+                                        ⏳ Pendente
+                                      </span>
+                                    );
+                                  })()}
                                 </td>
                                 <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                  {pago ? (
+                                  <div style={{ display:'flex', gap:'4px', justifyContent:'flex-end' }}>
                                     <button
-                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: pago?'#fff3e0':'#1976d2', color: pago?'#e65100':'white', border: pago?'1px solid #e65100':'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                                       disabled={salvando}
-                                      onClick={() => { if (window.confirm('Desfazer pagamento desta semana?')) marcarPagamentoSemana(sem.fim, false); }}
-                                    >↩ Desfazer</button>
-                                  ) : (
-                                    <button
-                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                                      disabled={salvando}
-                                      onClick={() => {
-                                        const dt = window.prompt('Data do pagamento (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
-                                        if (dt !== null) marcarPagamentoSemana(sem.fim, true, dt || undefined);
-                                      }}
-                                    >{salvando ? '...' : '✅ Pagar'}</button>
-                                  )}
+                                      onClick={() => abrirModalPgto(sem)}
+                                    >💳 {pago ? 'Pagar mais' : '✅ Pagar'}</button>
+                                    {pago && (
+                                      <button
+                                        style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
+                                        disabled={salvando}
+                                        onClick={() => { if (window.confirm('Desfazer pagamento desta semana?')) marcarPagamentoSemana(sem.fim, false); }}
+                                      >↩</button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
