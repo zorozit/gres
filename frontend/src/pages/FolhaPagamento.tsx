@@ -804,19 +804,51 @@ export default function FolhaPagamento() {
         // Helper: data efetiva da saída (dataPagamento ou data de lançamento)
         const saidaData = (s: any) => s.dataPagamento || s.data || '';
 
-        // Saídas "Adiantamento Transporte" do freelancer nesta semana (transporte já pago)
-        const saidasTransporte = saidasPeriodo.filter((s: any) =>
+        // ── Controle de adiantamento de transporte ──────────────────────────
+        // O adiantamento pode ter sido feito em qualquer momento do mês (normalmente no início),
+        // não apenas dentro da janela da semana atual.
+        //
+        // Lógica:
+        // - adiantadoMes: total pago via saída "Adiantamento Transporte" no mês
+        // - pago em semanas anteriores: soma dos valorTransporte já registrados em folha-pagamento
+        // - saldo disponível do adiantamento = adiantadoMes - o que já foi abatido em semanas anteriores
+        // - transporteSaldo desta semana = max(0, totalTransporte - saldo disponível)
+
+        // 1. Total adiantado no mês todo
+        const saidasTransporteMes = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
-          (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte' &&
-          saidaData(s) >= isoInicio &&
-          saidaData(s) <= isoFim
+          (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
         );
-        const transporteAdiantado = parseFloat(
-          saidasTransporte.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+        const transporteAdiantadoMes = parseFloat(
+          saidasTransporteMes.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
-        // Saldo = quanto ainda é devido (transporte calculado menos o que já foi adiantado)
-        // Não fica negativo: se adiantou mais do que calculado, saldo = 0
-        const transporteSaldo = parseFloat(Math.max(0, totalTransporte - transporteAdiantado).toFixed(2));
+
+        // 2. Quanto do adiantamento já foi "consumido" em semanas anteriores desta iteração
+        //    (semanas que terminam ANTES de isoInicio e que já foram calculadas neste loop)
+        //    Nota: folhasDB contém pagamentos salvos; mas para o cálculo em tempo real,
+        //    usamos o transporteAdiantadoMes diretamente contra totalTransporte acumulado
+        //    das semanas anteriores no mês.
+        // Calculamos o transporte total das semanas que antecedem esta semana no mês:
+        const [anoFr, mesFr] = mesAno.split('-').map(Number);
+        const semanasAnteriores = semanasFechamento(anoFr, mesFr).filter(
+          s => fmtDataISO(s.fim) < isoInicio
+        );
+        const transporteSemanasAnteriores = semanasAnteriores.reduce((acc, s) => {
+          const escsAntes = escalas.filter(e =>
+            e.colaboradorId === f.id &&
+            e.data >= fmtDataISO(s.inicio) && e.data <= fmtDataISO(s.fim) &&
+            (statusPresencaEscala(e) === 'presente' || statusPresencaEscala(e) === 'presente_parcial') &&
+            e.turno !== 'Folga'
+          );
+          return acc + R(f.valorTransporte) * escsAntes.length;
+        }, 0);
+
+        // 3. Saldo do adiantamento ainda disponível para esta semana
+        const adiantamentoDisponivel = parseFloat(Math.max(0, transporteAdiantadoMes - transporteSemanasAnteriores).toFixed(2));
+
+        // 4. Saldo desta semana = o que não foi coberto pelo adiantamento
+        const transporteAdiantado = adiantamentoDisponivel;
+        const transporteSaldo = parseFloat(Math.max(0, totalTransporte - adiantamentoDisponivel).toFixed(2));
 
         // 🪙 Caixinha a receber: o restaurante coletou a gorjeta e DEVE pagar ao colaborador
         // é um CRÉDITO (soma ao líquido), não um desconto
@@ -1275,7 +1307,7 @@ export default function FolhaPagamento() {
 
       const items: CheckItem[] = [
         { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
-        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias - R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))}${fr.transporteAdiantado > 0 ? ` − R$${fmt(fr.transporteAdiantado)} adiant. no mês` : ''} = saldo R$${fmt(fr.transporteSaldo)})`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
         ...caixDetalhe.map((d, i) => ({
           key: `caix_${i}`,
           label: `🪙 ${d.descricao} (${d.data})`,
