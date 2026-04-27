@@ -1234,36 +1234,84 @@ export default function FolhaPagamento() {
     setFormaFreelancer('PIX');
     setFormaFreelancerPix('');
     setFormaFreelancerDin('');
+    setCheckItems([]); // limpa enquanto recarrega
     // Sugerir abatimento se tiver saldo especial em aberto
     const saldo = modalFreelancerPgto.fr.saldoEspecialAberto || 0;
     setAbaterEspecial(saldo > 0);
     setValorAbatimento(saldo > 0 ? '' : '');
-    const { fr } = modalFreelancerPgto;
-    const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
-      ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
-      : `R$${fmt(fr.valorDobra)}/dobra`;
-    const items: CheckItem[] = [
-      { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
-      ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias − R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
-      // 🪙 Caixinha é CRÉDITO: restaurante deve pagar ao colaborador
-      ...((fr.caixinhaDetalhe || []).map((d: { descricao: string; valor: number; data: string }, i: number) => ({
-        key: `caix_${i}`,
-        label: `🪙 ${d.descricao} (${d.data})`,
-        valor: d.valor,
-        tipo: 'credito' as const,
-        checked: true,
-      }))),
-      ...fr.saidasDetalhe.map((d: { descricao: string; valor: number; data: string }, i: number) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
-      ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
-        key: `pend_${i}`,
-        label: `⏳ Pendente anterior: [${p.tipo || p.origem}] ${p.descricao || ''} (${(p.dataPagamento || p.data || '').substring(0, 10)})`,
-        valor: R(p.valor),
-        tipo: 'debito' as const,
-        checked: false,
-      })),
-    ];
-    setCheckItems(items);
     setDataLocalFreelancer(new Date().toISOString().split('T')[0]);
+
+    // ── Buscar saídas FRESCAS do banco antes de montar o checklist ──
+    // Garante que descontos lançados após o último carregarDados() apareçam
+    const { fr, fech } = modalFreelancerPgto;
+    const isoIni = fr.periodoInicio || fech.dataInicioBase;
+    const isoFim = fr.periodoFim   || fech.dataFechamentoBase;
+
+    const buildChecklist = (saidasFrescas: any[]) => {
+      const TIPOS_DESCONTO = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
+      const TIPOS_CAIXINHA = ['Caixinha'];
+      const saidaData = (s: any) => s.dataPagamento || s.data || '';
+
+      const saidasDescFr = saidasFrescas.filter((s: any) =>
+        s.colaboradorId === fr.id &&
+        TIPOS_DESCONTO.includes(s.tipo || s.origem || s.referencia || '') &&
+        saidaData(s) >= isoIni && saidaData(s) <= isoFim
+      );
+      const saidasCaixFr = saidasFrescas.filter((s: any) =>
+        s.colaboradorId === fr.id &&
+        TIPOS_CAIXINHA.includes(s.tipo || s.origem || s.referencia || '') &&
+        saidaData(s) >= isoIni && saidaData(s) <= isoFim
+      );
+
+      const descDetalhe = saidasDescFr.map((s: any) => ({ descricao: s.descricao || s.tipo || 'Desconto', valor: R(s.valor), data: saidaData(s) }));
+      const caixDetalhe = saidasCaixFr.map((s: any) => ({ descricao: `Caixinha: ${s.descricao || 'Gorjeta'}`, valor: R(s.valor), data: saidaData(s) }));
+
+      const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
+        ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
+        : `R$${fmt(fr.valorDobra)}/dobra`;
+
+      const items: CheckItem[] = [
+        { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
+        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (saldo: ${fr.diasTrabalhados} dias − R$${fmt(fr.transporteAdiantado)} adiant.)`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+        ...caixDetalhe.map((d, i) => ({
+          key: `caix_${i}`,
+          label: `🪙 ${d.descricao} (${d.data})`,
+          valor: d.valor,
+          tipo: 'credito' as const,
+          checked: true,
+        })),
+        ...descDetalhe.map((d, i) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
+        ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
+          key: `pend_${i}`,
+          label: `⏳ Pendente anterior: [${p.tipo || p.origem}] ${p.descricao || ''} (${(p.dataPagamento || p.data || '').substring(0, 10)})`,
+          valor: R(p.valor),
+          tipo: 'debito' as const,
+          checked: false,
+        })),
+      ];
+      setCheckItems(items);
+    };
+
+    // Buscar saídas frescas para o período do freelancer
+    const mesAnoLocal = mesAno;
+    const [ano, mes] = mesAnoLocal.split('-').map(Number);
+    const dataInicio = `${mesAnoLocal}-01`;
+    const ultimoDia  = new Date(ano, mes, 0).getDate();
+    const dataFim    = `${mesAnoLocal}-${String(ultimoDia).padStart(2,'0')}`;
+
+    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, {
+      headers: { Authorization: `Bearer ${token()}` }
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then((saidasFrescas: any[]) => {
+        // Atualiza também o estado global para que o grid reflita os dados novos
+        setSaidasPeriodo(Array.isArray(saidasFrescas) ? saidasFrescas : []);
+        buildChecklist(Array.isArray(saidasFrescas) ? saidasFrescas : []);
+      })
+      .catch(() => {
+        // Se falhar, usa os dados em cache
+        buildChecklist(saidasPeriodo);
+      });
   }, [modalFreelancerPgto]);
 
   // Renderizado como JSX inline (não como subcomponente) para evitar remontagem
