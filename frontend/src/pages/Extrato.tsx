@@ -157,7 +157,9 @@ export const Extrato: React.FC = () => {
 
         // ─ Agrupar registros granulares (tipo='freelancer-dia') por colaborador+semana
         const granulares = rawFolha.filter(i => i.tipo === 'freelancer-dia' && i.data);
-        const legadoFolha = rawFolha.filter(i => i.tipo !== 'freelancer-dia' && !i.migrado);
+        // migrado pode ser booleano true ou string 'True' (DynamoDB serialization quirk)
+        const isMigrado = (i: any) => i.migrado === true || i.migrado === 'True' || i.migrado === 'true';
+        const legadoFolha = rawFolha.filter(i => i.tipo !== 'freelancer-dia' && !isMigrado(i));
 
         // Construir grupos: key = colaboradorId + semana
         const grpMap: Record<string, any[]> = {};
