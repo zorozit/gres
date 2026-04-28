@@ -46,6 +46,41 @@ const resolveUnitId = (val) => toCnpj(val);
 const caixaId = (unitId, data, periodo) =>
   `${toCnpj(unitId)}-${data}-${(periodo || 'dia').toLowerCase()}`;
 
+/**
+ * Registra log de alteracao de escala em gres-prod-escalas-log.
+ * Sempre best-effort: se falhar, nao quebra a operacao principal.
+ * Campos chave: escalaId (HASH do GSI), timestamp (RANGE do GSI), evento, valoresAntes/Depois
+ */
+async function logEscalaAlteracao({ escalaId, evento, valoresAntes, valoresDepois, usuarioId, usuarioNome, observacao }) {
+  try {
+    const ts = new Date().toISOString();
+    const item = {
+      id: `log-esc-${escalaId}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      escalaId,
+      timestamp: ts,
+      evento: evento || 'alterado',         // criado | confirmado | desconfirmado | alterado | observacao | deletado
+      valoresAntes: valoresAntes || null,
+      valoresDepois: valoresDepois || null,
+      usuarioId: usuarioId || 'desconhecido',
+      usuarioNome: usuarioNome || 'desconhecido',
+      observacao: observacao || '',
+    };
+    await dynamodb.put({ TableName: 'gres-prod-escalas-log', Item: item }).promise();
+  } catch (e) {
+    console.warn('logEscalaAlteracao falhou (best-effort):', e.message);
+  }
+}
+
+/** Diff helper: retorna campos que mudaram entre 2 objetos (escalas) */
+function diffEscala(antes, depois) {
+  const campos = ['turno', 'presenca', 'presencaNoite', 'observacao', 'colaboradorId', 'data'];
+  const diffs = {};
+  for (const c of campos) {
+    if ((antes?.[c] ?? null) !== (depois?.[c] ?? null)) diffs[c] = { antes: antes?.[c] ?? null, depois: depois?.[c] ?? null };
+  }
+  return Object.keys(diffs).length > 0 ? diffs : null;
+}
+
 // ─────────────────────────────────────────────────────────
 // Helpers de integridade do DynamoDB
 // Garantem referências cruzadas entre entidades para
@@ -984,6 +1019,15 @@ exports.handler = async (event) => {
           timestamp: new Date().toISOString(), createdAt: new Date().toISOString()
         };
         await dynamodb.put({ TableName: 'gres-prod-escalas', Item: item }).promise();
+        await logEscalaAlteracao({
+          escalaId: item.id,
+          evento: 'criado',
+          valoresAntes: null,
+          valoresDepois: { data, colaboradorId, turno, observacao: observacao || '' },
+          usuarioId: body.responsavelId || body.responsavel || '',
+          usuarioNome: body.responsavelNome || body.responsavel || '',
+          observacao: 'Escala criada',
+        });
         return response(201, { success: true, id: item.id });
       } catch (err) {
         console.error('DynamoDB error:', err);
@@ -1057,6 +1101,30 @@ exports.handler = async (event) => {
           updatedAt: new Date().toISOString(),
         };
         await dynamodb.put({ TableName: 'gres-prod-escalas', Item: updated }).promise();
+        // ── LOG ──
+        const diffs = diffEscala(originalItem, updated);
+        if (diffs) {
+          // Determinar evento mais específico
+          let evento = 'alterado';
+          if (diffs.presenca || diffs.presencaNoite) {
+            const newPres = updated.presenca || updated.presencaNoite;
+            const oldPres = originalItem.presenca || originalItem.presencaNoite;
+            if (newPres === 'presente' || newPres === 'presente_parcial') evento = 'confirmado';
+            else if ((oldPres === 'presente' || oldPres === 'presente_parcial') && (!newPres || newPres === 'pendente' || newPres === 'falta')) evento = 'desconfirmado';
+            else if (newPres === 'falta') evento = 'falta';
+          } else if (diffs.observacao && !diffs.turno) {
+            evento = 'observacao';
+          }
+          await logEscalaAlteracao({
+            escalaId: escId,
+            evento,
+            valoresAntes: { turno: originalItem.turno, presenca: originalItem.presenca, presencaNoite: originalItem.presencaNoite, observacao: originalItem.observacao },
+            valoresDepois: { turno: updated.turno, presenca: updated.presenca, presencaNoite: updated.presencaNoite, observacao: updated.observacao },
+            usuarioId: body.responsavelId || body.responsavel || '',
+            usuarioNome: body.responsavelNome || body.responsavel || '',
+            observacao: body.motivoAlteracao || '',
+          });
+        }
         return response(200, { success: true, id: escId });
       } catch (err) {
         return response(500, { error: 'Erro ao atualizar escala: ' + err.message });
@@ -1068,6 +1136,20 @@ exports.handler = async (event) => {
       const escId = rawPath.split('/').pop();
       if (!escId) return response(400, { error: 'ID obrigatório' });
       try {
+        // Pegar item antes de deletar (para o log)
+        let originalItem = null;
+        try {
+          const r = await dynamodb.get({ TableName: 'gres-prod-escalas', Key: { id: escId } }).promise();
+          originalItem = r.Item || null;
+        } catch (e) { /* ignore */ }
+        if (!originalItem) {
+          const scan = await dynamodb.scan({
+            TableName: 'gres-prod-escalas',
+            FilterExpression: 'id = :eid',
+            ExpressionAttributeValues: { ':eid': escId }
+          }).promise();
+          originalItem = (scan.Items && scan.Items.length > 0) ? scan.Items[0] : null;
+        }
         // Try direct delete first (works if 'id' is the partition key)
         let deleted = false;
         try {
@@ -1077,24 +1159,65 @@ exports.handler = async (event) => {
           console.warn('DELETE escalas direct failed:', e.message);
         }
         // If direct delete failed or item might have different key, mark as deleted via PUT
-        if (!deleted) {
-          const scan = await dynamodb.scan({
+        if (!deleted && originalItem) {
+          // Mark as deleted (soft delete - update turno to empty string to exclude from results)
+          await dynamodb.put({
             TableName: 'gres-prod-escalas',
-            FilterExpression: 'id = :eid',
-            ExpressionAttributeValues: { ':eid': escId }
+            Item: { ...originalItem, turno: 'Deletado', _deleted: true, updatedAt: new Date().toISOString() }
           }).promise();
-          if (scan.Items && scan.Items.length > 0) {
-            const item = scan.Items[0];
-            // Mark as deleted (soft delete - update turno to empty string to exclude from results)
-            await dynamodb.put({
-              TableName: 'gres-prod-escalas',
-              Item: { ...item, turno: 'Deletado', _deleted: true, updatedAt: new Date().toISOString() }
-            }).promise();
-          }
+        }
+        if (originalItem) {
+          await logEscalaAlteracao({
+            escalaId: escId,
+            evento: 'deletado',
+            valoresAntes: { turno: originalItem.turno, presenca: originalItem.presenca, presencaNoite: originalItem.presencaNoite, observacao: originalItem.observacao, data: originalItem.data, colaboradorId: originalItem.colaboradorId },
+            valoresDepois: null,
+            usuarioId: queryParams?.responsavelId || '',
+            usuarioNome: queryParams?.responsavelNome || '',
+            observacao: queryParams?.motivo || 'Escala removida',
+          });
         }
         return response(200, { success: true });
       } catch (err) {
         return response(500, { error: 'Erro ao deletar escala' });
+      }
+    }
+
+    // GET /escalas-log/:escalaId — historico de uma escala
+    if (rawPath.match(/\/escalas-log\/.+/) && httpMethod === 'GET') {
+      const escalaId = rawPath.split('/').pop();
+      if (!escalaId) return response(400, { error: 'escalaId obrigatorio' });
+      try {
+        const r = await dynamodb.query({
+          TableName: 'gres-prod-escalas-log',
+          IndexName: 'escalaId-timestamp-index',
+          KeyConditionExpression: 'escalaId = :eid',
+          ExpressionAttributeValues: { ':eid': escalaId },
+          ScanIndexForward: true,  // ordem cronológica
+        }).promise();
+        return response(200, r.Items || []);
+      } catch (err) {
+        console.error('GET escalas-log error:', err);
+        return response(500, { error: 'Erro ao buscar historico de escala' });
+      }
+    }
+
+    // GET /escalas-log?unitId=&dataIni=&dataFim= — logs por unidade/período
+    if (rawPath === '/escalas-log' && httpMethod === 'GET') {
+      try {
+        const r = await dynamodb.scan({ TableName: 'gres-prod-escalas-log' }).promise();
+        let items = r.Items || [];
+        // Filtros opcionais
+        if (queryParams.dataIni && queryParams.dataFim) {
+          items = items.filter(i => i.timestamp >= queryParams.dataIni && i.timestamp <= queryParams.dataFim + 'T23:59:59');
+        }
+        if (queryParams.escalaId) {
+          items = items.filter(i => i.escalaId === queryParams.escalaId);
+        }
+        items.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao buscar logs de escala' });
       }
     }
 

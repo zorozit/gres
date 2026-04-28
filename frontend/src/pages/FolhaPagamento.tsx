@@ -1756,6 +1756,47 @@ export default function FolhaPagamento() {
                     });
                   }
 
+                  // ── NOVO: Desconto Transporte automatico (1 por dia trabalhado) ──
+                  // Cria 1 saida "Desconto Transporte" para cada dia físico pago, com o
+                  // valorTransporte do colaborador. Limite: total adiantado no mês (FIFO).
+                  // Excedentes recebem flag excedeAdto=true para o operador decidir caso a caso.
+                  const valorTransporteColab = R(fr.valorTransporte);
+                  if (valorTransporteColab > 0 && inclDobras && fr.diasPagos && fr.diasPagos.length > 0) {
+                    // dias únicos físicos pagos nesta semana (DiaNoite = 1 dia)
+                    const diasUnicosSemana = Array.from(new Set(
+                      fr.diasPagos.map((dp: any) => dp.data)
+                    )).sort() as string[];
+                    // Saldo do adto. ainda disponível = total adto. mês − já consumido em sem. anteriores
+                    let saldoDispAtual = R(fr.transporteAdiantado);
+                    for (const data of diasUnicosSemana) {
+                      const excede = saldoDispAtual < valorTransporteColab;
+                      const payloadDescTransp = {
+                        unitId,
+                        responsavel: responsavelEmail,
+                        responsavelId,
+                        colaboradorId: fr.id,
+                        tipo: 'Desconto Transporte',
+                        origem: 'Desconto Transporte',
+                        referencia: 'Desconto Transporte',
+                        descricao: `Transporte do dia ${data} (consumo do adto.)`,
+                        valor: valorTransporteColab,
+                        dataPagamento: data,
+                        data: data,
+                        pago: true,
+                        excedeAdto: excede,
+                        pagamentoIdLigado: pagamentoIdGerado,
+                        obs: `Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede ? ' [excede adto]' : ''}`,
+                        updatedAt: new Date().toISOString(),
+                      };
+                      await fetch(`${apiUrl}/saidas`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                        body: JSON.stringify(payloadDescTransp),
+                      });
+                      saldoDispAtual = Math.max(0, saldoDispAtual - valorTransporteColab);
+                    }
+                  }
+
                   // Lançar abatimento de adiantamento especial automaticamente
                   if (abaterEspecial && vlAbate > 0) {
                     const payloadDesc = {

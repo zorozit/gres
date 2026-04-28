@@ -68,3 +68,4 @@ Thumbs.db
 # MacOS
 .AppleDouble
 .AppleDB
+backend-lambda/lambda-deploy.zip

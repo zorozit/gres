@@ -182,6 +182,11 @@ export const Escalas: React.FC = () => {
   // Presenças
   const [presencaMap, setPresencaMap] = useState<Record<string, Record<string, string>>>({});
   const [salvandoPres, setSalvandoPres] = useState(false);
+  // Histórico de alterações de uma escala (modal)
+  const [historicoEscalaId, setHistoricoEscalaId] = useState<string | null>(null);
+  const [historicoLogs, setHistoricoLogs] = useState<any[]>([]);
+  const [historicoLoading, setHistoricoLoading] = useState(false);
+  const [historicoMeta, setHistoricoMeta] = useState<{nome?: string; data?: string; turno?: string} | null>(null);
 
   const [ano, mes] = mesAno.split('-').map(Number);
   const dias   = useMemo(() => diasDoMes(ano, mes), [ano, mes]);
@@ -398,6 +403,9 @@ export const Escalas: React.FC = () => {
   };
 
   /* ── Presença ciclo ──────────────────────────────────────── */
+  // Identificação do operador (para audit log)
+  const responsavelId = typeof window !== 'undefined' ? (localStorage.getItem('user_id') || '') : '';
+  const responsavelNome = typeof window !== 'undefined' ? (localStorage.getItem('user_email') || localStorage.getItem('user_name') || 'sistema') : 'sistema';
   // presKey can be pessoaId (dia) or pessoaId_N (noite)
   const salvarPresencaValor = useCallback(async (presKey:string, data:string, next:string) => {
     const isNoite = presKey.endsWith('_N');
@@ -408,7 +416,7 @@ export const Escalas: React.FC = () => {
       await fetch(`${apiUrl}/escalas/${esc.id}`, {
         method:'PUT',
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-        body: JSON.stringify({ [field]: next }),
+        body: JSON.stringify({ [field]: next, responsavelId, responsavelNome }),
       });
     } else if (next) {
       const turno = isNoite ? 'Noite' : 'Dia';
@@ -416,10 +424,10 @@ export const Escalas: React.FC = () => {
       await fetch(`${apiUrl}/escalas`, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
-        body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next }),
+        body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next, responsavelId, responsavelNome }),
       });
     }
-  },[escalasMap,apiUrl,unitId]);
+  },[escalasMap,apiUrl,unitId,responsavelId,responsavelNome]);
 
   const handlePresenca = useCallback(async (presKey:string, data:string, cur:string) => {
     const ciclo = ['','presente','falta','falta_justificada'];
@@ -654,8 +662,124 @@ export const Escalas: React.FC = () => {
   /* ─── Render ─────────────────────────────────────────────── */
   const semAtual = semanas[semanaIdx] || semanas[0];
 
+  /* ── Histórico de alterações de uma escala (modal) ── */
+  const abrirHistoricoEscala = async (escId: string, meta: {nome?: string; data?: string; turno?: string}) => {
+    setHistoricoEscalaId(escId);
+    setHistoricoMeta(meta);
+    setHistoricoLoading(true);
+    try {
+      const r = await fetch(`${apiUrl}/escalas-log/${escId}`, {
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      if (r.ok) {
+        const items = await r.json();
+        setHistoricoLogs(Array.isArray(items) ? items : []);
+      } else {
+        setHistoricoLogs([]);
+      }
+    } catch { setHistoricoLogs([]); }
+    finally { setHistoricoLoading(false); }
+  };
+
+  const HistoricoEscalaModal = () => {
+    if (!historicoEscalaId) return null;
+    const meta = historicoMeta || {};
+    const fmtTs = (ts: string) => {
+      try { return new Date(ts).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+      catch { return ts; }
+    };
+    const eventoLabel: Record<string, {emoji: string; label: string; cor: string}> = {
+      'criado':       { emoji: '✨', label: 'Criada',          cor: '#1565c0' },
+      'confirmado':   { emoji: '✅', label: 'Confirmada',      cor: '#2e7d32' },
+      'desconfirmado':{ emoji: '↩️', label: 'Desconfirmada',   cor: '#f57c00' },
+      'falta':        { emoji: '❌', label: 'Marcada falta',   cor: '#c62828' },
+      'alterado':     { emoji: '✏️', label: 'Alterada',        cor: '#7b1fa2' },
+      'observacao':   { emoji: '📝', label: 'Observação',      cor: '#455a64' },
+      'deletado':     { emoji: '🗑️', label: 'Removida',        cor: '#b71c1c' },
+    };
+    return (
+      <div style={{ position:'fixed', inset:0, backgroundColor:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}
+        onClick={() => { setHistoricoEscalaId(null); setHistoricoLogs([]); }}>
+        <div onClick={e => e.stopPropagation()} style={{ backgroundColor:'white', borderRadius:'10px', padding:'18px', maxWidth:'620px', width:'94%', maxHeight:'85vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.25)' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px' }}>
+            <h3 style={{ margin:0, color:'#1565c0' }}>🕒 Histórico da Escala</h3>
+            <button onClick={() => { setHistoricoEscalaId(null); setHistoricoLogs([]); }}
+              style={{ background:'none', border:'none', fontSize:'20px', cursor:'pointer' }}>✕</button>
+          </div>
+          {meta.nome && (
+            <div style={{ fontSize:'13px', color:'#555', marginBottom:'12px' }}>
+              <strong>{meta.nome}</strong> · {meta.data} · {meta.turno}
+            </div>
+          )}
+          {historicoLoading ? (
+            <div style={{ textAlign:'center', padding:'30px', color:'#666' }}>⏳ Carregando...</div>
+          ) : historicoLogs.length === 0 ? (
+            <div style={{ textAlign:'center', padding:'20px', color:'#999', fontStyle:'italic' }}>
+              Nenhuma alteração registrada ainda.
+              <div style={{ fontSize:'11px', color:'#bbb', marginTop:'6px' }}>
+                (escalas anteriores ao log só têm o estado atual)
+              </div>
+            </div>
+          ) : (
+            <div style={{ position:'relative' }}>
+              <div style={{ position:'absolute', left:'14px', top:'0', bottom:'0', width:'2px', backgroundColor:'#e0e0e0' }} />
+              {historicoLogs.map((log: any, idx: number) => {
+                const ev = eventoLabel[log.evento] || { emoji:'•', label: log.evento, cor:'#555' };
+                return (
+                  <div key={log.id || idx} style={{ display:'flex', gap:'14px', marginBottom:'14px', position:'relative' }}>
+                    <div style={{ width:'30px', height:'30px', minWidth:'30px', borderRadius:'50%', backgroundColor:ev.cor, color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', flexShrink:0, zIndex:1 }}>
+                      {ev.emoji}
+                    </div>
+                    <div style={{ flex:1, backgroundColor:'#f9f9f9', borderRadius:'6px', padding:'10px 12px', fontSize:'12px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'4px' }}>
+                        <strong style={{ color:ev.cor }}>{ev.label}</strong>
+                        <span style={{ fontSize:'10px', color:'#666' }}>{fmtTs(log.timestamp)}</span>
+                      </div>
+                      {log.usuarioNome && <div style={{ color:'#555', fontSize:'11px' }}>👤 {log.usuarioNome}</div>}
+                      {log.valoresAntes && log.valoresDepois && (
+                        <div style={{ marginTop:'6px', fontSize:'11px', color:'#444', lineHeight:'1.6' }}>
+                          {Object.keys(log.valoresDepois).map((k: string) => {
+                            const a = log.valoresAntes[k];
+                            const d = log.valoresDepois[k];
+                            if (a === d) return null;
+                            return (
+                              <div key={k}>
+                                <strong>{k}:</strong>{' '}
+                                <span style={{ textDecoration:'line-through', color:'#999' }}>{String(a ?? '—')}</span>
+                                {' → '}
+                                <span style={{ color:'#2e7d32', fontWeight:'bold' }}>{String(d ?? '—')}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {log.evento === 'criado' && log.valoresDepois && (
+                        <div style={{ marginTop:'6px', fontSize:'11px', color:'#444' }}>
+                          Turno: <strong>{log.valoresDepois.turno}</strong>
+                          {log.valoresDepois.observacao && <div>Obs: "{log.valoresDepois.observacao}"</div>}
+                        </div>
+                      )}
+                      {log.observacao && <div style={{ marginTop:'4px', fontSize:'11px', color:'#666', fontStyle:'italic' }}>📝 {log.observacao}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ marginTop:'12px', textAlign:'right' }}>
+            <button onClick={() => { setHistoricoEscalaId(null); setHistoricoLogs([]); }}
+              style={{ padding:'8px 14px', backgroundColor:'#9e9e9e', color:'white', border:'none', borderRadius:'4px', cursor:'pointer', fontWeight:'bold' }}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display:'flex', flexDirection:'column', minHeight:'100vh', backgroundColor:'#f4f6f9' }}>
+      <HistoricoEscalaModal />
       <Header title="📅 Gestão de Escalas" showBack={true} />
       <div style={{ flex:1, padding:'20px', maxWidth:'1800px', margin:'0 auto', width:'100%' }}>
 
@@ -724,6 +848,7 @@ export const Escalas: React.FC = () => {
                   ))}
                   <span style={{ backgroundColor:'#fce4ec', color:'#c62828', padding:'2px 8px', borderRadius:'10px', fontWeight:'bold', border:'1px dashed #e53935' }}>🎉 Feriado</span>
                   <span style={{ color:'#666', fontSize:'11px', marginLeft:'8px' }}>D=Dia | N=Noite | DN=Dobra | F=Folga</span>
+                  <span style={{ color:'#1565c0', fontSize:'11px', marginLeft:'auto', fontStyle:'italic' }}>💡 <strong>Shift+clique</strong> em uma célula com escala = ver histórico de alterações</span>
                 </div>
 
                 {areasUnicas.filter(a=>filtroArea==='Todos'||a===filtroArea).map(area=>{
@@ -1128,8 +1253,20 @@ export const Escalas: React.FC = () => {
                                   <td key={ds} style={{ ...s.td, cursor:'pointer',
                                     backgroundColor:isFer?'#fff9e0':pb?pb.bg:(hasThisTurno?(tLabel==='Dia'?'#fffde7':'#e8eaf6'):(isWeekend?'#f5f5f5':undefined)),
                                     opacity:hasThisTurno?1:0.45, minWidth:'64px', padding:'3px' }}
-                                    title={hasThisTurno?(tLabel+' — clique para pontuar'):(tLabel+' — sem turno lançado (clique para registrar presença manual)')}
-                                    onClick={()=>handlePresenca(presKey,ds,cur)}>
+                                    title={hasThisTurno
+                                      ? (tLabel + ' — clique para pontuar / shift+clique para histórico')
+                                      : (tLabel + ' — sem turno lançado (clique para registrar presença manual)')
+                                    }
+                                    onClick={(ev)=>{
+                                      // Shift+click → abre histórico (em vez de pontuar)
+                                      if (ev.shiftKey && esc?.id) {
+                                        ev.preventDefault();
+                                        ev.stopPropagation();
+                                        abrirHistoricoEscala(esc.id, { nome: p.nome, data: ds, turno: tLabel });
+                                        return;
+                                      }
+                                      handlePresenca(presKey, ds, cur);
+                                    }}>
                                     {hasThisTurno ? (
                                       <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'1px' }}>
                                         <span style={{ fontSize:'8px', fontWeight:'bold',
