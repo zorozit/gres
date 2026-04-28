@@ -47,6 +47,10 @@ interface ExtratoItem {
   periodoInicio?: string;
   periodoFim?: string;
   diasPagos?: { data: string; turno: string; valor: number }[];
+  // Conta-corrente
+  pagamentoId?: string;           // amarra turnos do mesmo ato de pagamento
+  confiabilidade?: 'real' | 'recalculado' | 'legado'; // qualidade do dado
+  transacaoBancariaId?: string;   // reservado para conciliação bancária (fase 3 MVP)
   raw?: any;
 }
 
@@ -155,42 +159,60 @@ export const Extrato: React.FC = () => {
         const dF = await rF.json();
         const rawFolha: any[] = Array.isArray(dF) ? dF : [];
 
-        // ─ Agrupar registros granulares (tipo='freelancer-dia') por colaborador+semana
-        const granulares = rawFolha.filter(i => i.tipo === 'freelancer-dia' && i.data);
+        // ─ Separar granulares (tipo='freelancer-dia') dos legados
+        const granulares = rawFolha.filter((i: any) => i.tipo === 'freelancer-dia' && i.data);
         // migrado pode ser booleano true ou string 'True' (DynamoDB serialization quirk)
         const isMigrado = (i: any) => i.migrado === true || i.migrado === 'True' || i.migrado === 'true';
-        const legadoFolha = rawFolha.filter(i => i.tipo !== 'freelancer-dia' && !isMigrado(i));
+        const legadoFolha = rawFolha.filter((i: any) => i.tipo !== 'freelancer-dia' && !isMigrado(i));
 
-        // Construir grupos: key = colaboradorId + semana
+        // ─ Agrupar granulares por lote de pagamento:
+        //   1º preferência: pagamentoId (registros novos — amarra turnos do mesmo ato de pagar)
+        //   2º fallback:    colaboradorId + semana (registros legados sem pagamentoId)
         const grpMap: Record<string, any[]> = {};
         for (const g of granulares) {
-          const key = `${g.colaboradorId}__${g.semana || g.data?.substring(0,7)}`;
+          const key = g.pagamentoId
+            ? `pgto__${g.pagamentoId}`                                       // lote real
+            : `sem__${g.colaboradorId}__${g.semana || g.data?.substring(0,7)}`; // fallback legado
           if (!grpMap[key]) grpMap[key] = [];
           grpMap[key].push(g);
         }
-        // Converter grupos em itens sintéticos compatíveis com o loop abaixo
-        const granularesAgrupados = Object.values(grpMap).map(dias => {
-          const totalPago = dias.filter(d => d.pago).reduce((s: number, d: any) => s + R(d.valor), 0);
-          const totalPend = dias.filter(d => !d.pago).reduce((s: number, d: any) => s + R(d.valor), 0);
-          const algumPago = dias.some(d => d.pago);
-          const todosPagos = dias.every(d => d.pago);
-          const ref = dias[0];
+
+        // Converter grupos em itens sintéticos
+        const granularesAgrupados = Object.values(grpMap).map((dias: any[]) => {
+          const pagos = dias.filter(d => d.pago === true);
+          const pends = dias.filter(d => d.pago !== true);
+          const totalPago = pagos.reduce((s, d) => s + R(d.valor), 0);
+          const totalPend = pends.reduce((s, d) => s + R(d.valor), 0);
+          const algumPago  = pagos.length > 0;
+          const todosPagos = pends.length === 0;
+          const ref = pagos[0] || dias[0];
+          // Detectar se algum turno é recalculado (migração) ou real
+          const temRecalculado = dias.some(d => d.reconstituido === true || d.reconstituido === 'True' || d.reconstituido === 'true');
+          const confiabilidade = temRecalculado ? 'recalculado' : (dias.every(d => d.confiabilidade === 'real') ? 'real' : 'legado');
+          // Turnos: só dobras (Dia/Noite) — transporte tem tipoCodigo diferente
+          const diasDobras = dias.filter(d => !d.tipoCodigo || d.tipoCodigo === 'freelancer-dia' || d.tipoCodigo === 'freelancer-noite');
+          const diasTransp = dias.filter(d => d.tipoCodigo === 'transporte-freelancer');
           return {
-            id: `grp__${ref.colaboradorId}__${ref.semana}`,
+            id: `grp__${ref.colaboradorId}__${ref.semana}__${ref.pagamentoId || 'legado'}`,
             colaboradorId: ref.colaboradorId,
             mes: ref.mes,
             semana: ref.semana,
-            pago: todosPagos,
+            pagamentoId: ref.pagamentoId || null,
+            pago: todosPagos && algumPago,
             pagoParcial: algumPago && !todosPagos,
-            valorBruto: totalPago + totalPend,   // total da semana
-            totalFinal: totalPago,                // só o que foi pago
+            valorBruto: totalPago + totalPend,
+            totalFinal: totalPago,
             totalPendente: totalPend,
-            dataPagamento: dias.filter(d => d.dataPagamento).sort((a: any,b: any) => (b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento || null,
+            dataPagamento: pagos[0]?.dataPagamento || null,
             formaPagamento: ref.formaPagamento || 'PIX',
             unitId: ref.unitId,
-            obs: dias.map((d: any) => `${d.data?.substring(8)}/${d.turno === 'Dia' ? 'D' : 'N'}`).join(' · '),
+            confiabilidade,
+            obs: diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')
+              + (diasTransp.length > 0 ? ` + Transp. R$${diasTransp.reduce((s: number,d: any)=>s+R(d.valor),0).toFixed(2)}` : ''),
             tipo: 'freelancer-dia-grupo',
             diasDetalhe: dias,
+            diasDobras,
+            diasTransp,
           };
         });
 
@@ -254,26 +276,33 @@ export const Extrato: React.FC = () => {
           }
 
           // Linha principal: salário mensal CLT ou dobras freelancer
+          const confBadge = isGranular
+            ? (item.confiabilidade === 'recalculado' ? ' ⚠️' : item.confiabilidade === 'real' ? '' : '')
+            : '';
           const descricaoPrincipal = isGranular
-            ? `Dobras semanais ${fmtDataBR(item.semana)} – ${item.obs}${item.pagoParcial ? ` [⚠️ Parcial: +R$${R(item.totalPendente).toFixed(2)} pend.]` : ''}`
+            ? `Dobras semanais ${fmtDataBR(item.semana)} – ${item.obs}${confBadge}${item.pagoParcial ? ` — +R$${R(item.totalPendente).toFixed(2)} pend.` : ''}`
             : (item.semana && item.semana !== true
                 ? `Dobras semanais ${fmtDataBR(item.semana)} (${tc})`
                 : `Pagamento mensal CLT – ${item.mes}`);
 
-          // Para granulares parcialmente pagos: empurrar também linha de pendente
-          if (isGranular && item.pagoParcial && R(item.totalPendente) > 0) {
+          // Turnos pendentes: só existem como escalas confirmadas sem lançamento
+          // NÃO gerar linha de pendente para recalculados (não sabemos se foram realmente pagos)
+          if (isGranular && item.pagoParcial && R(item.totalPendente) > 0 && item.confiabilidade !== 'recalculado') {
+            const turnosPend = (item.diasDetalhe || [])
+              .filter((d: any) => d.pago !== true)
+              .map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`);
             allItems.push({
               id: `${item.id}_pend`,
               colaboradorId: item.colaboradorId,
               nomeColaborador: nome, tipoContrato: tc,
               origem: 'folha', mes: item.mes, semana: item.semana,
               tipo: 'credito',
-              descricao: `⏳ Pendente – Dobras semanais ${fmtDataBR(item.semana)}`,
+              descricao: `⏳ Pendente – Dobras semanais ${fmtDataBR(item.semana)} – Turnos: ${turnosPend.join(' · ')}`,
               valor: R(item.totalPendente), pago: false,
               dataPagamento: undefined,
               valorBruto: R(item.totalPendente), valorTransporte: 0,
               desconto: 0, totalFinal: R(item.totalPendente), saldoFinal: 0,
-              obs: `Turnos pendentes: ${(item.diasDetalhe || []).filter((d: any) => !d.pago).map((d: any) => `${d.data?.substring(8)}/${d.turno === 'Dia' ? 'D' : 'N'}`).join(' · ')}`,
+              obs: `Turnos pendentes: ${turnosPend.join(' · ')}`,
               updatedAt: '', unitId: item.unitId,
               formaPagamento: undefined, logPagamentos: [],
               raw: item,
@@ -297,6 +326,10 @@ export const Extrato: React.FC = () => {
             periodoInicio: item.periodoInicio || undefined,
             periodoFim:    item.periodoFim    || undefined,
             diasPagos:     Array.isArray(item.diasPagos) ? item.diasPagos : [],
+            // Conta-corrente: rastreabilidade e integridade
+            pagamentoId:   isGranular ? (item.pagamentoId || undefined) : undefined,
+            confiabilidade: isGranular ? (item.confiabilidade as any) : undefined,
+            transacaoBancariaId: undefined, // reservado fase 3 MVP
             raw: item,
           });
         }
