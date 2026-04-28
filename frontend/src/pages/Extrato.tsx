@@ -162,12 +162,12 @@ export const Extrato: React.FC = () => {
         const dF = await rF.json();
         const rawFolha: any[] = Array.isArray(dF) ? dF : [];
 
-        // ─ Separar granulares (tipo='freelancer-dia') dos legados
-        const granulares = rawFolha.filter((i: any) => i.tipo === 'freelancer-dia' && i.data && !isEstornado(i));
         // migrado pode ser booleano true ou string 'True' (DynamoDB serialization quirk)
-        const isMigrado  = (i: any) => i.migrado   === true || i.migrado   === 'True' || i.migrado   === 'true';
+        const isMigrado   = (i: any) => i.migrado   === true || i.migrado   === 'True' || i.migrado   === 'true';
         // estornado: registro vazio/cancelado criado ao tentar desfazer — deve ser ignorado
         const isEstornado = (i: any) => i.estornado === true || i.estornado === 'True' || i.estornado === 'true';
+        // ─ Separar granulares (tipo='freelancer-dia') dos legados
+        const granulares  = rawFolha.filter((i: any) => i.tipo === 'freelancer-dia' && i.data && !isEstornado(i));
         const legadoFolha = rawFolha.filter((i: any) => i.tipo !== 'freelancer-dia' && !isMigrado(i) && !isEstornado(i));
 
         // ─ Agrupar granulares por lote de pagamento:
