@@ -1179,32 +1179,40 @@ exports.handler = async (event) => {
         // ── NOVO MODELO: array de dias ──────────────────────────────────────
         if (Array.isArray(dias) && dias.length > 0) {
           const saved = [];
+          const isFazendoPagamento = pago !== false;
+
+          // Gerar pagamentoId único para amarrar todos os turnos deste lote.
+          // Se for desfazer (pago=false), não gera lote — cada turno é revertido individualmente.
+          // Campo transacaoBancariaId reservado para futura conciliação bancária (MVP fase 3).
+          const pagamentoId = isFazendoPagamento
+            ? (body.pagamentoId || `pgto-${colaboradorId}-${now.replace(/[:.]/g, '').slice(0,17)}`)
+            : null;
+
           for (const d of dias) {
-            const { data, turno, valor } = d;
+            const { data, turno, valor, tipoCodigo } = d;
             if (!data || !turno) continue;
             const dayId = `folha-${colaboradorId}-${data}-${turno}`;
             const item = {
               id: dayId,
               tipo: 'freelancer-dia',
+              tipoCodigo: tipoCodigo || (turno === 'Dia' ? 'freelancer-dia' : 'freelancer-noite'),
               colaboradorId, data, turno, mes,
               semana: semana || null,
               unitId: normalizedUnitId,
               valor: parseFloat(valor) || 0,
-              pago: pago !== false,
-              dataPagamento: dtPgto,
-              formaPagamento: formaPagamento || 'PIX',
+              pago: isFazendoPagamento,
+              dataPagamento: isFazendoPagamento ? dtPgto : null,
+              formaPagamento: isFazendoPagamento ? (formaPagamento || 'PIX') : null,
+              pagamentoId: pagamentoId,           // amarra todos os turnos deste ato de pagamento
+              transacaoBancariaId: null,           // reservado para conciliação bancária (fase 3 MVP)
+              confiabilidade: 'real',              // gerado pelo sistema — não recalculado
               obs: obs || '',
               updatedAt: now,
             };
-            if (pago === false) {
-              // Desfazer: marcar como não pago
-              item.pago = false;
-              item.dataPagamento = null;
-            }
             await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
             saved.push(dayId);
           }
-          return response(200, { success: true, ids: saved, count: saved.length });
+          return response(200, { success: true, ids: saved, count: saved.length, pagamentoId });
         }
 
         // ── LEGADO: registro semanal agrupado (CLT ou desfazer pagamento antigo) ──

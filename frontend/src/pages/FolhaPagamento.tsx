@@ -1619,7 +1619,8 @@ export default function FolhaPagamento() {
                   const totalDebito  = debitoItems.reduce((s, it) => s + it.valor, 0);
                   // Abatimento do adiantamento especial reduz o valor efetivamente pago
                   const vlAbate      = abaterEspecial ? (parseFloat(valorAbatimento) || 0) : 0;
-                  const totalFinal   = Math.max(0, totalCredito - totalDebito - vlAbate);
+                  // totalFinal usado na obs e para referência de conferência
+                  const _totalFinal  = Math.max(0, totalCredito - totalDebito - vlAbate); void _totalFinal;
 
                   const inclTransporte = checkItems.find(it => it.key === 'transporte')?.checked ?? false;
                   const inclDobras     = checkItems.find(it => it.key === 'dobras')?.checked ?? false;
@@ -1630,17 +1631,17 @@ export default function FolhaPagamento() {
 
                   // ─ NOVO MODELO: 1 POST por dia/turno selecionado (dobras) ──────────────────
                   // Monta array de dias a partir dos diasPagos pendentes (somente os de dobras)
-                  const diasParaPagar: {data: string; turno: string; valor: number}[] = [];
+                  const diasParaPagar: {data: string; turno: string; valor: number; tipoCodigo: string}[] = [];
                   if (inclDobras && fr.diasPagos) {
                     for (const dp of fr.diasPagos) {
                       const turno = dp.turno || 'Dia';
                       // DiaNoite já vem expandido em registros separados Dia/Noite
                       // mas pode ainda vir agrupado — expandir
                       if (turno === 'DiaNoite' || turno === 'DN') {
-                        diasParaPagar.push({ data: dp.data, turno: 'Dia',   valor: R(fr.valorDia)   || dp.valor/2 });
-                        diasParaPagar.push({ data: dp.data, turno: 'Noite', valor: R(fr.valorNoite) || dp.valor/2 });
+                        diasParaPagar.push({ data: dp.data, turno: 'Dia',   valor: R(fr.valorDia)   || dp.valor/2, tipoCodigo: 'freelancer-dia' });
+                        diasParaPagar.push({ data: dp.data, turno: 'Noite', valor: R(fr.valorNoite) || dp.valor/2, tipoCodigo: 'freelancer-noite' });
                       } else {
-                        diasParaPagar.push({ data: dp.data, turno, valor: dp.valor });
+                        diasParaPagar.push({ data: dp.data, turno, valor: dp.valor, tipoCodigo: turno === 'Dia' ? 'freelancer-dia' : 'freelancer-noite' });
                       }
                     }
                   }
@@ -1649,23 +1650,15 @@ export default function FolhaPagamento() {
                     ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
                     : `R$${fmt(fr.valorDobra)}/dobra`;
 
-                  // Envia todos os dias de uma vez (backend itera e salva um por um)
+                  // Envia todos os turnos de uma vez (backend itera e salva 1 registro por turno)
+                  // Transporte é enviado como lote separado (logo abaixo) com o mesmo pagamentoId
                   const payload = {
                     colaboradorId: fr.id, mes: mesAno,
                     semana: fech.dataFechamento, unitId,
                     pago: true,
                     dataPagamento: dataLocalFreelancer,
                     formaPagamento: formaFreelancer,
-                    // NOVO: array de dias/turnos
                     dias: diasParaPagar,
-                    // Transporte como registro separado (continua no modelo legado por simplicidade)
-                    valorTransporte:     inclTransporte ? fr.transporteSaldo : 0,
-                    transporteCalculado: fr.totalTransporte || 0,
-                    transporteAdiantado: fr.transporteAdiantado || 0,
-                    caixinha:            caixinhaChecked,
-                    desconto:            totalDebito + vlAbate,
-                    abatimentoEspecial:  vlAbate,
-                    totalFinal,
                     obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
@@ -1674,6 +1667,33 @@ export default function FolhaPagamento() {
                     body: JSON.stringify(payload),
                   });
                   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                  const respData = await resp.json();
+                  // pagamentoId retornado pelo backend — amarra todos os turnos deste lote
+                  const pagamentoIdGerado: string = respData.pagamentoId || '';
+
+                  // Registrar transporte como lançamento separado, mesmo pagamentoId do lote
+                  if (inclTransporte && fr.transporteSaldo > 0) {
+                    const payloadTransp = {
+                      colaboradorId: fr.id, mes: mesAno,
+                      semana: fech.dataFechamento, unitId,
+                      pago: true,
+                      dataPagamento: dataLocalFreelancer,
+                      formaPagamento: formaFreelancer,
+                      pagamentoId: pagamentoIdGerado,
+                      dias: [{
+                        data: fech.dataFechamento,
+                        turno: 'Transporte',
+                        valor: fr.transporteSaldo,
+                        tipoCodigo: 'transporte-freelancer',
+                      }],
+                      obs: `Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length || 0} dias - R$${fmt(fr.transporteSaldo)}`,
+                    };
+                    await fetch(`${apiUrl}/folha-pagamento`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                      body: JSON.stringify(payloadTransp),
+                    });
+                  }
 
                   // Lançar abatimento de adiantamento especial automaticamente
                   if (abaterEspecial && vlAbate > 0) {
