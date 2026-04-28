@@ -338,6 +338,8 @@ export default function FolhaPagamento() {
   const [historicoColabId, setHistoricoColabId] = useState<string | null>(null);
   const [historicoItems, setHistoricoItems] = useState<any[]>([]);
   const [detalheFreelancer, setDetalheFreelancer] = useState<{fr: any; semana: string; escalas: any[]; saidaItems?: any[]} | null>(null);
+  // Edição/exclusão inline de saída no Detalhamento Freelancer
+  const [saidaInlineEdit, setSaidaInlineEdit] = useState<any | null>(null);
   // Modal confirmar pagamento freelancer (com data editável)
   const [modalFreelancerPgto, setModalFreelancerPgto] = useState<{fr: any; fech: FechamentoSemanalFreelancer} | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pago' | 'pendente'>('todos');
@@ -1484,19 +1486,31 @@ export default function FolhaPagamento() {
             )}
           </div>
 
-          {/* Banner de adiantamento de transporte — só aparece quando há adiantamento no mês */}
-          {fr.transporteAdiantadoMes > 0 && (
-            <div style={{ backgroundColor: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: '6px', padding: '8px 14px', marginBottom: '12px', fontSize: '12px' }}>
-              <div style={{ fontWeight: 'bold', color: '#e65100', marginBottom: '4px' }}>🚗 Adiantamento de Transporte — Resumo do Mês</div>
-              <div style={{ color: '#6d4c41', lineHeight: '1.8' }}>
-                <div>📥 Adiantado no mês: <strong>R${fmt(fr.transporteAdiantadoMes)}</strong></div>
-                <div>✅ Já consumido em semanas anteriores: <strong>R${fmt(fr.transporteSemanasAnteriores || 0)}</strong></div>
-                <div>💰 Disponível para esta semana: <strong style={{color: fr.transporteAdiantado > 0 ? '#388e3c' : '#c62828'}}>R${fmt(fr.transporteAdiantado)}</strong></div>
-                <div>🚗 Transporte desta semana: <strong>R${fmt(fr.diasTrabalhados * R(fr.valorTransporte))}</strong></div>
-                {fr.transporteSaldo === 0
-                  ? <div style={{color:'#388e3c', fontWeight:'bold'}}>✔ Totalmente coberto pelo adiantamento — saldo a pagar: R$0,00</div>
-                  : <div style={{color:'#c62828', fontWeight:'bold'}}>⚠ Saldo a pagar nesta semana: R${fmt(fr.transporteSaldo)}</div>
+          {/* Conta Transporte — saldo separado, não entra na conta da semana */}
+          {(fr.transporteAdiantadoMes > 0 || fr.totalTransporte > 0) && (
+            <div style={{ backgroundColor: '#e8f5e9', border: '1px solid #a5d6a7', borderLeft: '4px solid #388e3c', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <div style={{ fontWeight: 'bold', color: '#2e7d32', fontSize: '13px' }}>🚗 Conta Transporte (saldo separado)</div>
+                <span style={{ fontSize: '10px', color: '#666', fontStyle: 'italic' }}>não impacta o total da semana</span>
+              </div>
+              <div style={{ color: '#1b5e20', lineHeight: '1.7', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 14px' }}>
+                <div>📥 Adiantado no mês: <strong>{fmtMoeda(fr.transporteAdiantadoMes)}</strong></div>
+                <div>✅ Consumido sem. anter.: <strong>{fmtMoeda(fr.transporteSemanasAnteriores || 0)}</strong></div>
+                <div>💰 Disponível p/ esta sem.: <strong style={{color: fr.transporteAdiantado > 0 ? '#388e3c' : '#c62828'}}>{fmtMoeda(fr.transporteAdiantado)}</strong></div>
+                <div>🚗 Transp. desta semana: <strong>{fmtMoeda(fr.diasTrabalhados * R(fr.valorTransporte))}</strong></div>
+              </div>
+              <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid #c8e6c9', fontWeight: 'bold' }}>
+                {fr.transporteSaldo === 0 && fr.transporteAdiantado >= fr.diasTrabalhados * R(fr.valorTransporte)
+                  ? <span style={{color:'#388e3c'}}>✔ Totalmente coberto pelo adiantamento — nada a pagar nesta sem.</span>
+                  : fr.transporteSaldo > 0
+                  ? <span style={{color:'#c62828'}}>⚠ A pagar nesta sem.: {fmtMoeda(fr.transporteSaldo)} (somado ao total da semana)</span>
+                  : <span style={{color:'#666'}}>Sem movimentação de transporte nesta sem.</span>
                 }
+                {fr.transporteAdiantadoMes > 0 && fr.transporteAdiantado > (fr.diasTrabalhados * R(fr.valorTransporte)) && (
+                  <div style={{color:'#388e3c', fontSize:'11px', marginTop:'2px'}}>
+                    💡 Sobra de adto. transp. não consumida: {fmtMoeda(fr.transporteAdiantado - fr.diasTrabalhados * R(fr.valorTransporte))} (não carrega para o mês seguinte)
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1782,6 +1796,24 @@ export default function FolhaPagamento() {
   })();
 
   /* ── Modal detalhe Freelancer ────────────────────────────── */
+  /* Classificação contábil das saídas em 3 contas separadas:
+     - SEMANA: A receber, Consumo Interno, Caixinha, A pagar (crédito avulso). Compensa com dobras da semana.
+     - TRANSPORTE: Adiantamento Transporte vs. transporte gerado pelos dias trabalhados. Não impacta semana.
+     - ESPECIAL: Adiantamento Especial (saldo aberto), Desconto Adto Especial (parcelas). Não impacta semana.
+  */
+  const CONTA_TRANSPORTE_TIPOS = new Set(['Adiantamento Transporte', 'Desconto Transporte']);
+  const CONTA_ESPECIAL_TIPOS   = new Set(['Adiantamento Especial', 'Desconto Adiantamento Especial']);
+  const tipoSaida = (s: any) => (s.tipo || s.origem || s.referencia || '').trim();
+  const contaDaSaida = (s: any): 'transporte' | 'especial' | 'semana' => {
+    const t = tipoSaida(s);
+    if (CONTA_TRANSPORTE_TIPOS.has(t)) return 'transporte';
+    if (CONTA_ESPECIAL_TIPOS.has(t))   return 'especial';
+    return 'semana';
+  };
+  // Débito (-) ou Crédito (+) do ponto de vista do colaborador
+  const TIPOS_DEBITO_FR = new Set(['A receber', 'Consumo Interno', 'Desconto', 'Desconto Transporte', 'Desconto Adiantamento Especial', 'Sangria']);
+  const sinalDaSaida = (s: any): 'debito' | 'credito' => TIPOS_DEBITO_FR.has(tipoSaida(s)) ? 'debito' : 'credito';
+
   const ModalDetalheFreelancer = ({ data, onClose }: { data: { fr: any; semana: string; escalas: any[]; saidaItems?: any[] }; onClose: () => void }) => {
     const { fr, semana, escalas: escs, saidaItems } = data;
     const vDia   = R(fr.valorDia)   || 0;
@@ -1830,12 +1862,56 @@ export default function FolhaPagamento() {
     const totalValor  = linhas.reduce((s, l) => s + l.valor,  0);
     const totalPago   = linhas.filter(l =>  l.jaPago).reduce((s, l) => s + l.valor, 0);
     const totalPendente = totalValor - totalPago;
-    // Transporte: apenas dias PENDENTES (não pagos) - evitar cobrar transporte já incluso em pagamento anterior
+
+    /* ── CONTAS SEPARADAS ────────────────────────────────────
+       Cada saída da semana cai em UMA das 3 contas. Nada é "misturado". */
+    const todasSaidas = (saidaItems || []);
+    const saidasSemanaAcc = todasSaidas.filter(s => contaDaSaida(s) === 'semana');
+    const saidasEspecialAcc = todasSaidas.filter(s => contaDaSaida(s) === 'especial');
+
+    // Conta SEMANA: dobras pendentes − débitos da semana + créditos avulsos da semana
+    const debitosSemana  = saidasSemanaAcc.filter(s => sinalDaSaida(s) === 'debito').reduce((sum, s) => sum + R(s.valor), 0);
+    const creditosSemana = saidasSemanaAcc.filter(s => sinalDaSaida(s) === 'credito').reduce((sum, s) => sum + R(s.valor), 0);
+    const saldoSemana = parseFloat((totalPendente + creditosSemana - debitosSemana).toFixed(2));
+
+    // Conta TRANSPORTE: dias trabalhados pendentes × valorTransporte vs. adiantamento disponível
+    // Reusa os campos já calculados em fr (cobre todo o mês, inclusive semanas anteriores)
     const linhasPendentes = linhas.filter(l => !l.jaPago);
-    const transp = R(fr.valorTransporte) * linhasPendentes.length;
+    const transporteGeradoSemana = parseFloat((R(fr.valorTransporte) * linhasPendentes.length).toFixed(2));
+    const transporteAdiantadoMes = R(fr.transporteAdiantadoMes);
+    const transporteJaConsumido  = R(fr.transporteSemanasAnteriores);
+    const transporteAdiantadoDisponivel = parseFloat(Math.max(0, transporteAdiantadoMes - transporteJaConsumido).toFixed(2));
+    // Saldo de transporte após a semana: positivo = colab a receber, negativo = empresa pagou a mais
+    const transporteAposSemana = parseFloat((transporteGeradoSemana - transporteAdiantadoDisponivel).toFixed(2));
+    const saldoTransporte = transporteAposSemana > 0 ? transporteAposSemana : 0; // só paga se positivo
+    const sobraAdtoTransporte = transporteAposSemana < 0 ? Math.abs(transporteAposSemana) : 0;
+
+    // Conta ESPECIAL: saldo em aberto + débitos lançados na semana (parcelas)
+    const especialDebitos = saidasEspecialAcc.filter(s => sinalDaSaida(s) === 'debito').reduce((sum, s) => sum + R(s.valor), 0);
+    const especialCreditos = saidasEspecialAcc.filter(s => sinalDaSaida(s) === 'credito').reduce((sum, s) => sum + R(s.valor), 0);
+    const saldoEspecialAberto = R(fr.saldoEspecialAberto);
+
+    // TOTAL A PAGAR = saldo da semana + saldo de transporte (positivo)
+    const totalAPagar = parseFloat((saldoSemana + saldoTransporte).toFixed(2));
+    const semanaNegativa = saldoSemana < 0;
+
+    // Helpers de UI
+    const Card = ({ titulo, cor, fundo, children }: { titulo: string; cor: string; fundo: string; children: any }) => (
+      <div style={{ flex: 1, minWidth: '200px', backgroundColor: fundo, borderRadius: '8px', padding: '10px 12px', borderLeft: `4px solid ${cor}` }}>
+        <div style={{ fontSize: '11px', color: cor, fontWeight: 'bold', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{titulo}</div>
+        <div style={{ fontSize: '12px', color: '#333', lineHeight: '1.6' }}>{children}</div>
+      </div>
+    );
+    const Linha = ({ label, valor, sinal, destaque }: { label: string; valor: number; sinal?: '+' | '-' | ''; destaque?: boolean }) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: destaque ? 'bold' : 'normal', borderTop: destaque ? '1px solid #ccc' : 'none', paddingTop: destaque ? '4px' : '0', marginTop: destaque ? '4px' : '0' }}>
+        <span>{label}</span>
+        <span style={{ fontFamily: 'monospace' }}>{sinal === '-' ? '−' : sinal === '+' ? '+' : ''}{fmtMoeda(valor)}</span>
+      </div>
+    );
+
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-        <div style={{ ...s.card, maxWidth: '500px', width: '94%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ ...s.card, maxWidth: '780px', width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h3 style={{ margin: 0, color: '#c2185b' }}>🎯 Detalhamento Freelancer</h3>
             <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
@@ -1847,6 +1923,29 @@ export default function FolhaPagamento() {
               : usaTurno
               ? <> · ☀️ R$ {fmt(vDia)}/dia · 🌙 R$ {fmt(vNoite)}/noite</>
               : <> · R$ {fmt(valorDobra)}/dobra</>}
+            {R(fr.valorTransporte) > 0 && <> · 🚗 R$ {fmt(R(fr.valorTransporte))}/dia trab.</>}
+          </div>
+
+          {/* === 3 CONTAS SEPARADAS === */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <Card titulo="💼 Conta da Semana" cor="#1565c0" fundo="#e3f2fd">
+              <Linha label="Dobras pendentes" valor={totalPendente} sinal="+" />
+              {creditosSemana > 0 && <Linha label="Créditos avulsos" valor={creditosSemana} sinal="+" />}
+              {debitosSemana > 0 && <Linha label="Descontos" valor={debitosSemana} sinal="-" />}
+              <Linha label={semanaNegativa ? '⚠️ Saldo (devedor)' : 'Saldo da semana'} valor={Math.abs(saldoSemana)} sinal={semanaNegativa ? '-' : '+'} destaque />
+            </Card>
+            <Card titulo="🚗 Conta Transporte" cor="#388e3c" fundo="#e8f5e9">
+              {transporteAdiantadoMes > 0 && <Linha label="Adto. transporte (mês)" valor={transporteAdiantadoMes} sinal="+" />}
+              {transporteJaConsumido > 0 && <Linha label="Já consumido (sem. anter.)" valor={transporteJaConsumido} sinal="-" />}
+              <Linha label={`Transp. desta sem. (${linhasPendentes.length} dias)`} valor={transporteGeradoSemana} sinal="-" />
+              <Linha label={saldoTransporte > 0 ? '💡 A pagar nesta sem.' : sobraAdtoTransporte > 0 ? '✅ Sobra de adto.' : 'Saldo'} valor={Math.max(saldoTransporte, sobraAdtoTransporte)} sinal={saldoTransporte > 0 ? '+' : ''} destaque />
+            </Card>
+            <Card titulo="💰 Adto. Especial" cor="#7b1fa2" fundo="#f3e5f5">
+              <Linha label="Saldo aberto (acumul.)" valor={saldoEspecialAberto} sinal={saldoEspecialAberto > 0 ? '-' : ''} />
+              {especialCreditos > 0 && <Linha label="Novo adto. nesta sem." valor={especialCreditos} sinal="+" />}
+              {especialDebitos > 0 && <Linha label="Parcela abatida" valor={especialDebitos} sinal="+" />}
+              <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic', marginTop: '4px' }}>ℹ️ Conta separada — não entra no total da semana</div>
+            </Card>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '12px' }}>
@@ -1898,54 +1997,95 @@ export default function FolhaPagamento() {
                   <td />
                 </tr>
               )}
-              {transp > 0 && (
-                <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
-                  <td colSpan={4} style={{ padding: '6px 8px' }}>🚗 Transporte ({linhas.filter(l=>!l.jaPago).length} dias × R$ {fmt(R(fr.valorTransporte))})</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#90caf9' }}>+{fmtMoeda(transp)}</td>
-                  <td />
-                </tr>
-              )}
-              <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold', fontSize: '14px' }}>
-                <td colSpan={4} style={{ padding: '8px' }}>TOTAL A PAGAR {totalPago > 0 ? '(saldo pendente)' : ''}</td>
-                <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(totalPendente + transp)}</td>
+              <tr style={{ backgroundColor: semanaNegativa ? '#c62828' : '#0d47a1', color: 'white', fontWeight: 'bold', fontSize: '14px' }}>
+                <td colSpan={4} style={{ padding: '8px' }}>
+                  {semanaNegativa
+                    ? '⚠️ COLAB. EM DÉBITO (saldo a abater)'
+                    : `TOTAL A PAGAR ${totalPago > 0 || saldoTransporte > 0 ? '(saldo final)' : ''}`}
+                </td>
+                <td style={{ padding: '8px', textAlign: 'right', color: semanaNegativa ? '#ffcdd2' : '#a5d6a7' }}>
+                  {semanaNegativa ? '−' : ''}{fmtMoeda(Math.abs(totalAPagar))}
+                </td>
                 <td />
               </tr>
+              {semanaNegativa && (
+                <tr style={{ backgroundColor: '#fff3e0', color: '#e65100', fontSize: '11px', fontStyle: 'italic' }}>
+                  <td colSpan={6} style={{ padding: '6px 8px' }}>
+                    💡 Débitos da semana superam as dobras. Por padrão vira <strong>pendênte</strong> para a próxima semana — você pode editar o status caso a caso.
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
 
-          {/* Saídas lançadas para o colaborador na semana */}
-          {saidaItems && saidaItems.length > 0 && (
+          {/* Saídas lançadas para o colaborador na semana — com edição/exclusão inline */}
+          {todasSaidas.length > 0 && (
             <div style={{ marginTop: '12px', backgroundColor: '#fff3e0', borderRadius: '6px', padding: '10px', fontSize: '12px' }}>
-              <strong style={{ color: '#e65100' }}>📋 Saídas da Semana:</strong>
+              <strong style={{ color: '#e65100' }}>📋 Saídas da Semana ({todasSaidas.length}):</strong>
               <table style={{ width: '100%', marginTop: '6px', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#e65100', color: 'white' }}>
+                    <th style={{ padding: '4px 6px', textAlign: 'left' }}>Conta</th>
                     <th style={{ padding: '4px 6px', textAlign: 'left' }}>Tipo</th>
                     <th style={{ padding: '4px 6px', textAlign: 'left' }}>Descrição</th>
                     <th style={{ padding: '4px 6px', textAlign: 'right' }}>Valor</th>
                     <th style={{ padding: '4px 6px', textAlign: 'center' }}>Data</th>
+                    <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {saidaItems.map((s2: any, idx: number) => (
-                    <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff8f0' : 'white', borderBottom: '1px solid #ffe0b2' }}>
-                      <td style={{ padding: '4px 6px' }}>
-                        <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
-                          backgroundColor: s2.tipo === 'A receber' ? '#e8f5e9' : s2.tipo === 'Adiantamento Transporte' ? '#fff3e0' : '#ffebee',
-                          color: s2.tipo === 'A receber' ? '#2e7d32' : s2.tipo === 'Adiantamento Transporte' ? '#e65100' : '#c62828' }}>
-                          {s2.tipo}
-                        </span>
-                      </td>
-                      <td style={{ padding: '4px 6px', color: '#555' }}>{s2.descricao || '-'}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold',
-                        color: s2.tipo === 'A receber' ? '#c62828' : '#e65100' }}>
-                        {s2.tipo === 'A receber' ? '-' : '+'}{fmtMoeda(R(s2.valor))}
-                      </td>
-                      <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>{s2.dataPagamento || s2.data || '-'}</td>
-                    </tr>
-                  ))}
+                  {todasSaidas.map((s2: any, idx: number) => {
+                    const conta = contaDaSaida(s2);
+                    const sinal = sinalDaSaida(s2);
+                    const tipo  = tipoSaida(s2);
+                    const contaCfg = conta === 'transporte' ? { lbl: '🚗 Transp.',  bg: '#e8f5e9', fg: '#2e7d32' }
+                                  : conta === 'especial'   ? { lbl: '💰 Especial', bg: '#f3e5f5', fg: '#7b1fa2' }
+                                  :                          { lbl: '💼 Semana',   bg: '#e3f2fd', fg: '#1565c0' };
+                    return (
+                      <tr key={s2.id || idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff8f0' : 'white', borderBottom: '1px solid #ffe0b2' }}>
+                        <td style={{ padding: '4px 6px' }}>
+                          <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', backgroundColor: contaCfg.bg, color: contaCfg.fg }}>{contaCfg.lbl}</span>
+                        </td>
+                        <td style={{ padding: '4px 6px' }}>
+                          <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                            backgroundColor: sinal === 'debito' ? '#ffebee' : '#fff3e0',
+                            color: sinal === 'debito' ? '#c62828' : '#e65100' }}>
+                            {tipo}
+                          </span>
+                        </td>
+                        <td style={{ padding: '4px 6px', color: '#555' }}>{s2.descricao || '-'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 'bold',
+                          color: sinal === 'debito' ? '#c62828' : '#2e7d32' }}>
+                          {sinal === 'debito' ? '−' : '+'}{fmtMoeda(R(s2.valor))}
+                        </td>
+                        <td style={{ padding: '4px 6px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: '11px' }}>{s2.dataPagamento || s2.data || '-'}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => setSaidaInlineEdit({ ...s2, _conta: conta })}
+                              style={{ ...s.btn('#f57c00'), padding: '2px 6px', fontSize: '10px' }}
+                              title="Editar (mudar tipo, valor, status)">✏️</button>
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm(`Excluir lançamento "${tipo} — ${s2.descricao || ''}" no valor de ${fmtMoeda(R(s2.valor))}?\n\nEssa ação não pode ser desfeita.`)) return;
+                                try {
+                                  const res = await fetch(`${apiUrl}/saidas/${s2.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
+                                  if (res.ok) { alert('✅ Lançamento excluído.'); onClose(); carregarDados(); }
+                                  else { alert('Erro ao excluir.'); }
+                                } catch { alert('Erro de rede ao excluir.'); }
+                              }}
+                              style={{ ...s.btn('#c62828'), padding: '2px 6px', fontSize: '10px' }}
+                              title="Excluir lançamento">🗑️</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+              <div style={{ marginTop: '6px', fontSize: '10px', color: '#5d4037', fontStyle: 'italic' }}>
+                💡 <strong>Conta</strong>: indica em qual saldo o lançamento entra. Transporte e Adto. Especial têm saldos próprios e não impactam o total da semana.
+              </div>
             </div>
           )}
 
@@ -2013,6 +2153,108 @@ export default function FolhaPagamento() {
 
           <div style={{ marginTop: '12px', textAlign: 'right' }}>
             <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── Mini-modal: edição inline de Saída (a partir do Detalhamento) ── */
+  const ModalSaidaInline = () => {
+    if (!saidaInlineEdit) return null;
+    const TIPOS_TODOS = [
+      // Créditos (pago AO colaborador)
+      'A pagar', 'Adiantamento Salário', 'Adiantamento Transporte', 'Adiantamento Especial', 'Caixinha',
+      // Débitos (descontado DO colaborador)
+      'A receber', 'Consumo Interno', 'Desconto', 'Desconto Transporte', 'Desconto Adiantamento Especial', 'Sangria',
+    ];
+    const isDebito = TIPOS_DEBITO_FR.has(saidaInlineEdit.tipo);
+    const conta = contaDaSaida(saidaInlineEdit);
+    const handleSave = async () => {
+      try {
+        const payload = {
+          ...saidaInlineEdit,
+          tipo:       saidaInlineEdit.tipo,
+          origem:     saidaInlineEdit.tipo,
+          referencia: saidaInlineEdit.tipo,
+          valor:      parseFloat(String(saidaInlineEdit.valor)) || 0,
+          descricao:  saidaInlineEdit.descricao || '',
+          dataPagamento: saidaInlineEdit.dataPagamento || saidaInlineEdit.data,
+        };
+        const res = await fetch(`${apiUrl}/saidas/${saidaInlineEdit.id}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          alert('✅ Lançamento atualizado.');
+          setSaidaInlineEdit(null);
+          setDetalheFreelancer(null); // fecha o detalhe para forçar reabertura com dados frescos
+          carregarDados();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          alert('Erro ao atualizar: ' + (err.error || res.status));
+        }
+      } catch { alert('Erro de rede ao atualizar.'); }
+    };
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setSaidaInlineEdit(null)}>
+        <div style={{ ...s.card, maxWidth: '460px', width: '94%' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <h3 style={{ margin: 0, color: '#f57c00' }}>✏️ Editar Lançamento</h3>
+            <button onClick={() => setSaidaInlineEdit(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            <div>
+              <label style={s.label}>Categoria / Tipo *</label>
+              <select
+                value={saidaInlineEdit.tipo}
+                onChange={e => setSaidaInlineEdit({ ...saidaInlineEdit, tipo: e.target.value })}
+                style={s.select}>
+                <optgroup label="➕ Crédito (pago AO colaborador)">
+                  {TIPOS_TODOS.filter(t => !TIPOS_DEBITO_FR.has(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                </optgroup>
+                <optgroup label="➖ Débito (desconto DO colaborador)">
+                  {TIPOS_TODOS.filter(t => TIPOS_DEBITO_FR.has(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                </optgroup>
+              </select>
+              <div style={{ marginTop: '4px', fontSize: '11px', fontWeight: 'bold',
+                color: isDebito ? '#c62828' : '#2e7d32' }}>
+                {isDebito ? '➖ Débito — será descontado do colaborador' : '➕ Crédito — será pago ao colaborador'}
+                <span style={{ marginLeft: '8px', color: '#666', fontWeight: 'normal' }}>
+                  · Conta: {conta === 'transporte' ? '🚗 Transporte' : conta === 'especial' ? '💰 Adto. Especial' : '💼 Semana'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label style={s.label}>Descrição</label>
+              <input type="text" value={saidaInlineEdit.descricao || ''}
+                onChange={e => setSaidaInlineEdit({ ...saidaInlineEdit, descricao: e.target.value })}
+                style={s.input} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={s.label}>Valor (R$) *</label>
+                <input type="number" step="0.01" min="0" value={saidaInlineEdit.valor}
+                  onChange={e => setSaidaInlineEdit({ ...saidaInlineEdit, valor: e.target.value })}
+                  style={s.input} />
+              </div>
+              <div>
+                <label style={s.label}>Data</label>
+                <input type="date" value={saidaInlineEdit.dataPagamento || saidaInlineEdit.data || ''}
+                  onChange={e => setSaidaInlineEdit({ ...saidaInlineEdit, dataPagamento: e.target.value, data: e.target.value })}
+                  style={s.input} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button onClick={() => setSaidaInlineEdit(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+            <button onClick={handleSave} style={s.btn('#43a047')}>💾 Salvar</button>
           </div>
         </div>
       </div>
@@ -2236,6 +2478,7 @@ export default function FolhaPagamento() {
       {modalConfirmarPgtoFreelancerJSX}
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
+      <ModalSaidaInline />
       {historicoColabId && (
         <ModalHistorico
           items={historicoItems}

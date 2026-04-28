@@ -497,6 +497,41 @@ export const Extrato: React.FC = () => {
     });
   };
 
+  /* Excluir saída (somente origem='saida') */
+  const excluirSaida = async (item: ExtratoItem) => {
+    if (item.origem !== 'saida') {
+      alert('Apenas lançamentos de Saída podem ser excluídos por aqui. Para folha, use a tela Folha de Pagamento.');
+      return;
+    }
+    if (!window.confirm(`Excluir lançamento "${item.tipoSaida || ''} — ${item.descricao}" no valor de ${fmtMoeda(item.valor)}?\n\nEssa ação não pode ser desfeita.`)) return;
+    try {
+      const tk = localStorage.getItem('auth_token');
+      const res = await fetch(`${apiUrl}/saidas/${item.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tk}` } });
+      if (res.ok) {
+        alert('✅ Lançamento excluído.');
+        setItems(prev => prev.filter(it => it.id !== item.id));
+      } else {
+        alert('Erro ao excluir lançamento.');
+      }
+    } catch { alert('Erro de rede ao excluir.'); }
+  };
+
+  /* Classificação contábil em 3 contas separadas */
+  const TIPOS_TRANSPORTE_EXT = new Set(['Adiantamento Transporte', 'Desconto Transporte']);
+  const TIPOS_ESPECIAL_EXT   = new Set(['Adiantamento Especial', 'Desconto Adiantamento Especial']);
+  // Créditos avulsos a RECEBER (não adiantamento já pago) — aumentam o líquido
+  const TIPOS_CREDITO_RECEBER_EXT = new Set(['A pagar', 'Caixinha']);
+  const contaDoItem = (it: ExtratoItem): 'transporte' | 'especial' | 'semana' => {
+    if (it.origem !== 'saida') return 'semana';
+    if (TIPOS_TRANSPORTE_EXT.has(it.tipoSaida || '')) return 'transporte';
+    if (TIPOS_ESPECIAL_EXT.has(it.tipoSaida || ''))   return 'especial';
+    return 'semana';
+  };
+  const isCreditoAReceber = (it: ExtratoItem) =>
+    it.origem === 'saida' && it.tipo === 'credito' && TIPOS_CREDITO_RECEBER_EXT.has(it.tipoSaida || '');
+  const isAdiantamentoPago = (it: ExtratoItem) =>
+    it.origem === 'saida' && it.tipo === 'credito' && !TIPOS_CREDITO_RECEBER_EXT.has(it.tipoSaida || '');
+
   /* ── Filtered items ─────────────────────────────────────────────────────── */
   const filteredItems = useMemo(() => items.filter(item => {
     if (filtroColaborador && !item.nomeColaborador?.toLowerCase().includes(filtroColaborador.toLowerCase())) return false;
@@ -1020,10 +1055,28 @@ export const Extrato: React.FC = () => {
       return dB.localeCompare(dA);
     });
     const nome        = colabItems[0]?.nomeColaborador || colabId;
-    const folhaTotal  = colabItems.filter(i => i.origem === 'folha').reduce((s, i) => s + i.valor, 0);
-    const saidaCred   = colabItems.filter(i => i.origem === 'saida' && i.tipo === 'credito').reduce((s, i) => s + i.valor, 0);
-    const saidaDeb    = colabItems.filter(i => i.origem === 'saida' && i.tipo === 'debito').reduce((s, i) => s + i.valor, 0);
-    const pendentes   = colabItems.filter(i => !i.pago);
+
+    // Conta SEMANA: folha (crédito) + créditos a receber − débitos da semana − adiantamentos já pagos
+    const folhaTotal       = colabItems.filter(i => i.origem === 'folha').reduce((s, i) => s + i.valor, 0);
+    const semanaItens      = colabItems.filter(i => contaDoItem(i) === 'semana');
+    const transporteItens  = colabItems.filter(i => contaDoItem(i) === 'transporte');
+    const especialItens    = colabItems.filter(i => contaDoItem(i) === 'especial');
+
+    const creditosAReceber = semanaItens.filter(isCreditoAReceber).reduce((s, i) => s + i.valor, 0);
+    const adiantamentosPagos = semanaItens.filter(isAdiantamentoPago).reduce((s, i) => s + i.valor, 0);
+    const descontosSemana    = semanaItens.filter(i => i.origem === 'saida' && i.tipo === 'debito').reduce((s, i) => s + i.valor, 0);
+
+    // Conta TRANSPORTE: adiantamentos transp. − descontos transp. (saldo separado)
+    const transporteAdiantado  = transporteItens.filter(i => i.tipo === 'credito').reduce((s, i) => s + i.valor, 0);
+    const transporteDescontado = transporteItens.filter(i => i.tipo === 'debito').reduce((s, i) => s + i.valor, 0);
+
+    // Conta ESPECIAL: adiantamentos esp. − abatimentos (saldo separado)
+    const especialAdiantado = especialItens.filter(i => i.tipo === 'credito').reduce((s, i) => s + i.valor, 0);
+    const especialAbatido   = especialItens.filter(i => i.tipo === 'debito').reduce((s, i) => s + i.valor, 0);
+
+    // Líquido a receber = Folha + Créditos a receber − Descontos da semana − Adiant. já pagos
+    const liquidoAReceber = folhaTotal + creditosAReceber - descontosSemana - adiantamentosPagos;
+    const pendentes       = colabItems.filter(i => !i.pago);
 
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -1036,21 +1089,55 @@ export const Extrato: React.FC = () => {
             <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
           </div>
 
-          {/* Summary chips */}
+          {/* Card destaque: Líquido a Receber */}
+          <div style={{ marginBottom: '12px', padding: '14px 16px', borderRadius: '10px',
+            background: liquidoAReceber >= 0 ? 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)' : 'linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%)',
+            borderLeft: `5px solid ${liquidoAReceber >= 0 ? '#1565c0' : '#c62828'}` }}>
+            <div style={{ fontSize: '11px', color: liquidoAReceber >= 0 ? '#1565c0' : '#c62828', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              {liquidoAReceber >= 0 ? '💰 Líquido a Receber (Conta da Semana)' : '⚠️ Saldo devedor (a abater)'}
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: liquidoAReceber >= 0 ? '#0d47a1' : '#b71c1c', marginTop: '2px' }}>
+              {liquidoAReceber < 0 ? '−' : ''}{fmtMoeda(Math.abs(liquidoAReceber))}
+            </div>
+            <div style={{ fontSize: '11px', color: '#555', marginTop: '4px' }}>
+              = Folha {fmtMoeda(folhaTotal)} {creditosAReceber > 0 ? `+ Créd. a receber ${fmtMoeda(creditosAReceber)}` : ''} {descontosSemana > 0 ? `− Descontos ${fmtMoeda(descontosSemana)}` : ''} {adiantamentosPagos > 0 ? `− Adiant. já pagos ${fmtMoeda(adiantamentosPagos)}` : ''}
+            </div>
+          </div>
+
+          {/* Summary chips: 3 contas separadas */}
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
-            {[
-              { label: 'Folha / Dobras',       val: fmtMoeda(folhaTotal),                          bg: '#e8f5e9', color: '#2e7d32' },
-              { label: 'Adiantamentos',         val: fmtMoeda(saidaCred),                           bg: '#fff3e0', color: '#e65100' },
-              { label: 'Descontos / A receber', val: fmtMoeda(saidaDeb),                            bg: '#fce4ec', color: '#c62828' },
-              // Líquido = Folha bruta - Descontos - Adiantamentos já pagos
-              { label: 'Líquido estimado',      val: fmtMoeda(folhaTotal - saidaDeb - saidaCred),   bg: '#e3f2fd', color: '#1565c0' },
-              ...(pendentes.length > 0 ? [{ label: `⏳ Pendentes (${pendentes.length})`, val: fmtMoeda(pendentes.reduce((s,i)=>s+i.valor,0)), bg: '#fff9c4', color: '#f57f17' }] : []),
-            ].map(c => (
-              <div key={c.label} style={{ padding: '8px 12px', backgroundColor: c.bg, borderRadius: '8px', minWidth: '120px' }}>
-                <div style={{ fontSize: '10px', color: c.color, fontWeight: 'bold' }}>{c.label}</div>
-                <div style={{ fontSize: '15px', fontWeight: 'bold', color: c.color }}>{c.val}</div>
+            <div style={{ flex: 1, minWidth: '180px', padding: '10px 12px', backgroundColor: '#e3f2fd', borderRadius: '8px', borderLeft: '3px solid #1565c0' }}>
+              <div style={{ fontSize: '10px', color: '#1565c0', fontWeight: 'bold' }}>💼 CONTA DA SEMANA</div>
+              <div style={{ fontSize: '11px', color: '#333', lineHeight: '1.5', marginTop: '4px' }}>
+                Folha: <strong>{fmtMoeda(folhaTotal)}</strong><br/>
+                {creditosAReceber > 0 && <>Créd. a receber: <strong style={{color:'#2e7d32'}}>+{fmtMoeda(creditosAReceber)}</strong><br/></>}
+                {descontosSemana > 0 && <>Descontos: <strong style={{color:'#c62828'}}>−{fmtMoeda(descontosSemana)}</strong><br/></>}
+                {adiantamentosPagos > 0 && <>Adiant. já pagos: <strong style={{color:'#e65100'}}>−{fmtMoeda(adiantamentosPagos)}</strong><br/></>}
               </div>
-            ))}
+            </div>
+            <div style={{ flex: 1, minWidth: '180px', padding: '10px 12px', backgroundColor: '#e8f5e9', borderRadius: '8px', borderLeft: '3px solid #388e3c' }}>
+              <div style={{ fontSize: '10px', color: '#388e3c', fontWeight: 'bold' }}>🚗 CONTA TRANSPORTE</div>
+              <div style={{ fontSize: '11px', color: '#333', lineHeight: '1.5', marginTop: '4px' }}>
+                Adiantado: <strong>{fmtMoeda(transporteAdiantado)}</strong><br/>
+                Descontado: <strong>{fmtMoeda(transporteDescontado)}</strong><br/>
+                <span style={{ color: '#666', fontStyle: 'italic', fontSize: '10px' }}>Saldo próprio — não entra na semana</span>
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: '180px', padding: '10px 12px', backgroundColor: '#f3e5f5', borderRadius: '8px', borderLeft: '3px solid #7b1fa2' }}>
+              <div style={{ fontSize: '10px', color: '#7b1fa2', fontWeight: 'bold' }}>💰 ADTO. ESPECIAL</div>
+              <div style={{ fontSize: '11px', color: '#333', lineHeight: '1.5', marginTop: '4px' }}>
+                Adiantado: <strong>{fmtMoeda(especialAdiantado)}</strong><br/>
+                Abatido: <strong>{fmtMoeda(especialAbatido)}</strong><br/>
+                Saldo aberto: <strong style={{color:'#7b1fa2'}}>{fmtMoeda(Math.max(0, especialAdiantado - especialAbatido))}</strong>
+              </div>
+            </div>
+            {pendentes.length > 0 && (
+              <div style={{ flex: 1, minWidth: '160px', padding: '10px 12px', backgroundColor: '#fff9c4', borderRadius: '8px', borderLeft: '3px solid #f9a825' }}>
+                <div style={{ fontSize: '10px', color: '#f57f17', fontWeight: 'bold' }}>⏳ PENDENTES ({pendentes.length})</div>
+                <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#f57f17', marginTop: '4px' }}>{fmtMoeda(pendentes.reduce((s,i)=>s+i.valor,0))}</div>
+                <div style={{ fontSize: '10px', color: '#666', fontStyle: 'italic' }}>aguardando pagamento</div>
+              </div>
+            )}
           </div>
 
           {/* Pending alert */}
@@ -1069,6 +1156,7 @@ export const Extrato: React.FC = () => {
                 <thead>
                   <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
                     <th style={{ padding: '6px 8px', textAlign: 'left' }}>Origem</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'left' }}>Conta</th>
                     <th style={{ padding: '6px 8px', textAlign: 'left' }}>Data</th>
                     <th style={{ padding: '6px 8px', textAlign: 'left' }}>Tipo / Descrição</th>
                     <th style={{ padding: '6px 8px', textAlign: 'right' }}>Valor</th>
@@ -1077,7 +1165,14 @@ export const Extrato: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {colabItems.map((item, i) => (
+                  {colabItems.map((item, i) => {
+                    const conta = contaDoItem(item);
+                    const contaCfg = conta === 'transporte' ? { lbl: '🚗', tip: 'Transporte', bg: '#e8f5e9', fg: '#2e7d32' }
+                                  : conta === 'especial'   ? { lbl: '💰', tip: 'Adto. Especial', bg: '#f3e5f5', fg: '#7b1fa2' }
+                                  :                          { lbl: '💼', tip: 'Semana', bg: '#e3f2fd', fg: '#1565c0' };
+                    // Para folha: limpar obs duplicada (turnos já vêm na descrição principal)
+                    const showObs = item.origem === 'saida' && item.obs && item.obs !== item.descricao;
+                    return (
                     <tr key={item.id} style={{
                       backgroundColor: !item.pago ? '#fffde7' : i % 2 === 0 ? '#f9f9f9' : 'white',
                       borderBottom: '1px solid #eee',
@@ -1090,11 +1185,16 @@ export const Extrato: React.FC = () => {
                           {item.origem === 'folha' ? '💰 Folha' : '📤 Saída'}
                         </span>
                       </td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <span title={contaCfg.tip} style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', backgroundColor: contaCfg.bg, color: contaCfg.fg }}>
+                          {contaCfg.lbl} {contaCfg.tip}
+                        </span>
+                      </td>
                       <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
                         {item.dataPagamento ? fmtDataBR(item.dataPagamento) : (item.mes || '—')}
                         {item.semana && <div style={{ color: '#999', fontSize: '10px' }}>sem. {fmtDataBR(item.semana)}</div>}
                       </td>
-                      <td style={{ padding: '6px 8px', maxWidth: '220px' }}>
+                      <td style={{ padding: '6px 8px', maxWidth: '240px' }}>
                         <div style={{ fontSize: '11px', color: '#333' }}>
                           {item.tipoSaida && <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold',
                             backgroundColor: TIPOS_DEBITO.includes(item.tipoSaida) ? '#fce4ec' : '#fff3e0',
@@ -1102,7 +1202,7 @@ export const Extrato: React.FC = () => {
                             marginRight: '4px' }}>{item.tipoSaida}</span>}
                           {item.descricao}
                         </div>
-                        {item.obs && <div style={{ color: '#888', fontSize: '10px', fontStyle: 'italic' }}>📝 {item.obs}</div>}
+                        {showObs && <div style={{ color: '#888', fontSize: '10px', fontStyle: 'italic' }}>📝 {item.obs}</div>}
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold',
                         color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
@@ -1120,24 +1220,36 @@ export const Extrato: React.FC = () => {
                           <button onClick={() => setDetalheItem(item)}
                             style={{ ...s.btn('#1976d2'), padding: '3px 7px', fontSize: '11px' }} title="Ver detalhes">📋</button>
                           {item.origem === 'saida' && (
-                            <button onClick={() => { onClose(); abrirEdicao(item); }}
-                              style={{ ...s.btn('#f57c00'), padding: '3px 7px', fontSize: '11px' }} title="Editar lançamento">✏️</button>
+                            <>
+                              <button onClick={() => { onClose(); abrirEdicao(item); }}
+                                style={{ ...s.btn('#f57c00'), padding: '3px 7px', fontSize: '11px' }} title="Editar lançamento">✏️</button>
+                              <button onClick={() => excluirSaida(item)}
+                                style={{ ...s.btn('#c62828'), padding: '3px 7px', fontSize: '11px' }} title="Excluir lançamento">🗑️</button>
+                            </>
                           )}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
                 <tfoot>
                   <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                    <td colSpan={3} style={{ padding: '8px' }}>TOTAL DO MÊS</td>
-                    <td style={{ padding: '8px', textAlign: 'right', color: '#a5d6a7', fontSize: '13px' }}>
-                      {fmtMoeda(folhaTotal - saidaDeb - saidaCred)}
+                    <td colSpan={4} style={{ padding: '8px' }}>LÍQUIDO A RECEBER (Conta da Semana)</td>
+                    <td style={{ padding: '8px', textAlign: 'right', color: liquidoAReceber >= 0 ? '#a5d6a7' : '#ffcdd2', fontSize: '13px' }}>
+                      {liquidoAReceber < 0 ? '−' : ''}{fmtMoeda(Math.abs(liquidoAReceber))}
                     </td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
               </table>
+              <div style={{ marginTop: '8px', padding: '8px 10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '10px', color: '#555', lineHeight: '1.6' }}>
+                <strong>📖 Glossário:</strong> {' '}
+                <strong>Folha</strong> = pagamento das dobras semanais. {' '}
+                <strong>Saída</strong> = lançamento avulso (consumo, adiantamento, etc.). {' '}
+                <strong>💼 Conta da Semana</strong> = compensa direto na liquidação semanal. {' '}
+                <strong>🚗 Transporte</strong> e <strong>💰 Adto. Especial</strong> = saldos próprios, não impactam a semana. {' '}
+                <strong>+</strong> = a casa deve ao colaborador / <strong>−</strong> = colaborador deve à casa.
+              </div>
             </div>
           )}
           <div style={{ marginTop: '14px', textAlign: 'right' }}>
