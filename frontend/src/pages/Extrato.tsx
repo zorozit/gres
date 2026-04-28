@@ -99,6 +99,7 @@ export const Extrato: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [items, setItems] = useState<ExtratoItem[]>([]);
+  const [itemsExcluidos, setItemsExcluidos] = useState<any[]>([]);
 
   // Modals
   const [detalheItem, setDetalheItem]   = useState<ExtratoItem | null>(null);
@@ -107,6 +108,9 @@ export const Extrato: React.FC = () => {
   // Modal de ajuste manual — cria uma saída de crédito/débito avulsa vinculada ao colaborador
   const [modalAjuste, setModalAjuste]   = useState<ExtratoItem | null>(null);
   const [ajusteForm, setAjusteForm]     = useState({ tipo: 'credito' as 'credito'|'debito', valor: '', descricao: '', data: new Date().toISOString().split('T')[0], obs: '' });
+  // Exclusão lógica com audit trail
+  const [modalExcluir, setModalExcluir] = useState<ExtratoItem | null>(null);
+  const [excluirMotivo, setExcluirMotivo] = useState('');
   const [colaboradorSelecionado, setColaboradorSelecionado] = useState<string | null>(null);
 
   // Filters
@@ -116,7 +120,7 @@ export const Extrato: React.FC = () => {
   const [filtroStatus,      setFiltroStatus]      = useState<'todos'|'pago'|'pendente'>('todos');
   const [filtroOrigem,      setFiltroOrigem]      = useState<'todos'|'folha'|'saida'>('todos');
 
-  const [viewMode, setViewMode] = useState<'resumo'|'detalhado'>('resumo');
+  const [viewMode, setViewMode] = useState<'resumo'|'detalhado'|'excluidos'>('resumo');
 
   const token = () => localStorage.getItem('auth_token');
 
@@ -156,6 +160,7 @@ export const Extrato: React.FC = () => {
       if (rC?.ok) { const d = await rC.json(); colabs = Array.isArray(d) ? d : []; }
 
       const allItems: ExtratoItem[] = [];
+      const excluidosList: any[] = [];
 
       // ── Folha ──────────────────────────────────────────────────────────────
       if (rF?.ok) {
@@ -360,6 +365,9 @@ export const Extrato: React.FC = () => {
 
           // pago field: explicit false (or string 'false') = pendente; default (true or missing) = pago
           const isPago = saida.pago !== false && saida.pago !== 'false';
+          // Excluídos logicamente — não aparecem no extrato normal (aparecem na aba Excluídos)
+          const isExcluido = saida.excluido === true || saida.excluido === 'true' || saida.excluido === 'True';
+          if (isExcluido) { excluidosList.push(saida); continue; }
 
           // If processing older saidas, only include truly pending ones
           if (incluirPendentesAntigos && isPago) continue;
@@ -404,6 +412,7 @@ export const Extrato: React.FC = () => {
       });
 
       setItems(allItems);
+      setItemsExcluidos(excluidosList);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -681,6 +690,10 @@ export const Extrato: React.FC = () => {
             <button onClick={() => { onClose(); abrirEdicao(item); }}
               style={s.btn('#f57c00')}>✏️ Editar</button>
           )}
+          {item.origem === 'saida' && (
+            <button onClick={() => { onClose(); setExcluirMotivo(''); setModalExcluir(item); }}
+              style={s.btn('#b71c1c')}>🗑️ Excluir</button>
+          )}
           <button onClick={() => { onClose(); setAjusteForm({ tipo: 'credito', valor: '', descricao: '', data: new Date().toISOString().split('T')[0], obs: '' }); setModalAjuste(item); }}
             style={s.btn('#1565c0')}>⚖️ Ajuste Manual</button>
           <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
@@ -695,6 +708,72 @@ export const Extrato: React.FC = () => {
      Caso de uso: "chopp IPA de R$50 foi pago mas não descontei → marcar como
      Pendente e ajustar dataPagamento para o próximo mês"
   ══════════════════════════════════════════════════════════════════════════ */
+  /* ═══ Exclusão lógica com audit trail ═══ */
+  const confirmarExclusao = async () => {
+    if (!modalExcluir) return;
+    if (!excluirMotivo.trim()) { alert('Informe o motivo da exclusão'); return; }
+    setSalvando(true);
+    try {
+      const agora = new Date().toISOString();
+      const usuario = 'admin'; // TODO: puxar do contexto de auth
+      const body = {
+        excluido: true,
+        excluidoPor: usuario,
+        excluidoEm: agora,
+        motivoExclusao: excluirMotivo.trim(),
+        updatedAt: agora,
+      };
+      const res = await fetch(`${apiUrl}/saidas/${modalExcluir.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setModalExcluir(null);
+      setExcluirMotivo('');
+      await carregarDados();
+    } catch (e: any) {
+      alert('Erro ao excluir: ' + e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  /* ═══ Modal: Confirmar Exclusão ═══ */
+  const ModalExcluir = () => {
+    if (!modalExcluir) return null;
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10002, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setModalExcluir(null)}>
+        <div style={{ ...s.card, maxWidth: '440px', width: '96%' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <h3 style={{ margin: 0, color: '#b71c1c' }}>🗑️ Excluir Lançamento</h3>
+            <button onClick={() => setModalExcluir(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ backgroundColor: '#ffebee', borderRadius: '6px', padding: '10px 12px', marginBottom: '14px', fontSize: '13px' }}>
+            <strong>{modalExcluir.nomeColaborador}</strong><br/>
+            {modalExcluir.descricao} &bull; <strong style={{color:'#c62828'}}>R$ {(modalExcluir.valor||0).toFixed(2)}</strong>
+          </div>
+          <p style={{ fontSize: '12px', color: '#555', margin: '0 0 10px' }}>
+            O lançamento será <strong>ocultado</strong> do extrato mas mantido no banco com registro de quem excluiu e quando. Visível na aba “Excluídos”.
+          </p>
+          <div style={{ marginBottom: '14px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Motivo da exclusão <span style={{color:'red'}}>*</span></label>
+            <input type="text" value={excluirMotivo}
+              onChange={e => setExcluirMotivo(e.target.value)}
+              placeholder="Ex: Lançamento duplicado, valor incorreto..."
+              style={{ display: 'block', width: '100%', marginTop: '4px', padding: '8px 10px', border: '1px solid #ef9a9a', borderRadius: '6px', fontSize: '13px' }} />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button onClick={() => setModalExcluir(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+            <button onClick={confirmarExclusao} disabled={salvando || !excluirMotivo.trim()}
+              style={s.btn('#b71c1c')}>{salvando ? 'Excluindo...' : '🗑️ Confirmar Exclusão'}</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ═══ Saída: salvar ajuste manual ═══ */
   const salvarAjusteManual = async () => {
     if (!modalAjuste) return;
@@ -1080,6 +1159,7 @@ export const Extrato: React.FC = () => {
       {detalheItem && <ModalDetalhe item={detalheItem} onClose={() => setDetalheItem(null)} />}
       {editItem     && <ModalEdicaoSaida />}
       {modalAjuste  && <ModalAjusteManual />}
+      {modalExcluir && <ModalExcluir />}
       {colaboradorSelecionado && (
         <ModalColaborador colabId={colaboradorSelecionado} onClose={() => setColaboradorSelecionado(null)} />
       )}
@@ -1173,8 +1253,9 @@ export const Extrato: React.FC = () => {
           {([
             { key: 'resumo',    label: '📊 Resumo por Colaborador' },
             { key: 'detalhado', label: '📄 Lançamentos Detalhados' },
+            { key: 'excluidos', label: `🗑️ Excluídos${itemsExcluidos.length > 0 ? ` (${itemsExcluidos.length})` : ''}` },
           ] as const).map(t => (
-            <button key={t.key} onClick={() => setViewMode(t.key)} style={s.tab(viewMode === t.key)}>{t.label}</button>
+            <button key={t.key} onClick={() => setViewMode(t.key as any)} style={s.tab(viewMode === (t.key as any))}>{t.label}</button>
           ))}
         </div>
 
@@ -1365,6 +1446,45 @@ export const Extrato: React.FC = () => {
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* ── Aba: Excluídos ──────────────────────────────────── */}
+        {viewMode === 'excluidos' && (
+          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', overflowX: 'auto' }}>
+            {itemsExcluidos.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                <div style={{ fontSize: '40px', marginBottom: '12px' }}>🗑️</div>
+                <p>Nenhum lançamento excluído neste mês.</p>
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#b71c1c', color: 'white' }}>
+                    <th style={s.th}>Colaborador</th>
+                    <th style={s.th}>Data</th>
+                    <th style={s.th}>Tipo / Descrição</th>
+                    <th style={s.thR}>Valor</th>
+                    <th style={s.th}>Excluído por</th>
+                    <th style={s.th}>Excluído em</th>
+                    <th style={s.th}>Motivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {itemsExcluidos.map((s2: any) => (
+                    <tr key={s2.id} style={{ backgroundColor: '#fce4ec', opacity: 0.8 }}>
+                      <td style={s.td}>{s2.colaborador || s2.favorecido || s2.colaboradorId}</td>
+                      <td style={s.tdC}>{(s2.dataPagamento || s2.data || '').substring(0, 10)}</td>
+                      <td style={s.td}><span style={{ color: '#b71c1c' }}>{s2.tipo || s2.origem || '?'}</span><br/><span style={{ fontSize: '11px', color: '#666' }}>{s2.descricao || ''}</span></td>
+                      <td style={{ ...s.tdR, color: '#b71c1c', fontWeight: 'bold' }}>R$ {parseFloat(s2.valor||'0').toFixed(2)}</td>
+                      <td style={s.tdC}>{s2.excluidoPor || '—'}</td>
+                      <td style={s.tdC}>{s2.excluidoEm ? s2.excluidoEm.substring(0, 16).replace('T',' ') : '—'}</td>
+                      <td style={s.td}><span style={{ fontSize: '11px', color: '#555' }}>{s2.motivoExclusao || '—'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
             )}
           </div>

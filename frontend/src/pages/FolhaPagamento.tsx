@@ -512,7 +512,7 @@ export default function FolhaPagamento() {
     if (freelancers.length > 0) {
       calcularFechamentosFreelancer();
     }
-  }, [freelancers, escalas, mesAno, saidasPendentesAnt]);
+  }, [freelancers, escalas, mesAno, saidasPendentesAnt, folhasDB, saidasPeriodo]);
 
   /* ── Cálculo CLT ─────────────────────────────────────────── */
   const calcularTodasFolhas = (): FolhaMensal[] => {
@@ -1642,10 +1642,20 @@ export default function FolhaPagamento() {
             />
           </div>
 
+          {/* Aviso saldo negativo: restaurante tem crédito */}
+          {totalSelecionado < 0 && (
+            <div style={{ backgroundColor: '#fff3e0', border: '1px solid #ff9800', borderRadius: '6px', padding: '10px 14px', marginBottom: '10px', fontSize: '12px', color: '#e65100' }}>
+              ⚠️ <strong>Saldo negativo: R$ {fmtMoeda(Math.abs(totalSelecionado))}</strong> a favor do restaurante.<br/>
+              Os descontos excedem o valor a pagar neste fechamento. Você pode:<br/>
+              • Registrar o fechamento assim (saldo devedor fica pendente para o próximo período)<br/>
+              • Desmarcar descontos que serão abatidos depois
+            </div>
+          )}
+
           {/* Buttons */}
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
-              disabled={salvando || totalSelecionado < 0}
+              disabled={salvando}
               onClick={async () => {
                 setModalFreelancerPgto(null);
                 setSalvando(true);
