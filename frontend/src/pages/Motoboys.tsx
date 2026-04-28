@@ -315,15 +315,19 @@ export const Motoboys: React.FC = () => {
 
   // Modal de pagamento motoboy
   interface ModalPgtoMoto {
-    semana: { inicio: string; fim: string; label: string };
+    // semana é opcional: quando paga avulso, não precisa
+    semana?: { inicio: string; fim: string; label: string };
     motoboy: Motoboy;
-    linhas: any[]; // linhas do controle nesta semana
+    linhas: any[]; // linhas do controle (qualquer período)
+    titulo?: string; // "Semana XX-YY" ou "Pagamento avulso" ou "Dia X"
   }
   const [modalPgtoMoto, setModalPgtoMoto] = useState<ModalPgtoMoto | null>(null);
   const [pgtoForma, setPgtoForma] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
   const [pgtoData, setPgtoData] = useState(new Date().toISOString().split('T')[0]);
   const [pgtoDiasSel, setPgtoDiasSel] = useState<Record<string, boolean>>({});
   const [salvandoModal, setSalvandoModal] = useState(false);
+  // Seleção de dias avulsos (independente de semana) — checkbox na tabela
+  const [diasSelAvulso, setDiasSelAvulso] = useState<Record<string, boolean>>({});
 
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
@@ -490,15 +494,18 @@ export const Motoboys: React.FC = () => {
     setSalvandoModal(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const { semana, motoboy } = modalPgtoMoto;
+      const { semana, motoboy, titulo } = modalPgtoMoto;
       const diasSelecionados = modalPgtoMoto.linhas.filter(l => pgtoDiasSel[l.data]);
       if (diasSelecionados.length === 0) { alert('Selecione ao menos um dia.'); setSalvandoModal(false); return; }
       const totalFinal = parseFloat(diasSelecionados.reduce((s: number, l: any) => s + R(l.vlVariavel), 0).toFixed(2));
       const diasPagos = diasSelecionados.map((l: any) => ({ data: l.data, valor: R(l.vlVariavel) }));
+      // Quando não tem semana definida (avulso): usa o domingo da semana de cada dia como chave (ou só a data do primeiro)
+      const semanaChave = semana?.fim || diasSelecionados[diasSelecionados.length-1].data;
+      const labelDescr = semana ? `Semana ${semana.label}` : (titulo || 'Pagamento avulso');
       const payload = {
         colaboradorId: ctrlMotoboyId,
         mes: ctrlMesAno,
-        semana: semana.fim,
+        semana: semanaChave,
         unitId,
         pago: true,
         dataPagamento: pgtoData,
@@ -506,7 +513,7 @@ export const Motoboys: React.FC = () => {
         totalBruto: totalFinal,
         totalLiquido: totalFinal,
         formaPagamento: pgtoForma,
-        obs: `Semana ${semana.label} — Motoboy ${motoboy.nome} — ${diasSelecionados.length} dia(s) — ${pgtoForma}`,
+        obs: `${labelDescr} — Motoboy ${motoboy.nome} — ${diasSelecionados.length} dia(s) — ${pgtoForma}`,
         logPagamentos: [{ id: Date.now().toString(), data: pgtoData, valor: totalFinal, forma: pgtoForma, tipo: 'Motoboy' }],
       };
       const r = await fetch(`${apiUrl}/folha-pagamento`, {
@@ -516,9 +523,37 @@ export const Motoboys: React.FC = () => {
       });
       if (!r.ok) throw new Error(await r.text());
       setModalPgtoMoto(null);
+      setDiasSelAvulso({}); // limpa seleção
       await fetchPagamentosSemana();
     } catch (e) { console.error(e); alert('Erro ao salvar pagamento: ' + e); }
     finally { setSalvandoModal(false); }
+  };
+
+  // Abre modal com dias avulsos já selecionados (independente de semana)
+  const abrirModalPgtoAvulso = () => {
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    if (!motoboy) return;
+    const linhas = controleComAcumulado.filter(l => diasSelAvulso[l.data] && R(l.vlVariavel) > 0);
+    if (linhas.length === 0) { alert('Selecione ao menos um dia com valor > 0.'); return; }
+    const sel: Record<string, boolean> = {};
+    for (const l of linhas) sel[l.data] = true;
+    setPgtoDiasSel(sel);
+    setPgtoForma('PIX');
+    setPgtoData(new Date().toISOString().split('T')[0]);
+    const datas = linhas.map(l => l.data).sort();
+    const titulo = linhas.length === 1 ? `Dia ${datas[0].split('-').reverse().join('/')}` : `${linhas.length} dias selecionados (${datas[0].split('-').reverse().join('/')} a ${datas[datas.length-1].split('-').reverse().join('/')})`;
+    setModalPgtoMoto({ motoboy, linhas, titulo });
+  };
+
+  // Atalho: paga UM dia específico
+  const abrirModalPgtoUmDia = (linha: any) => {
+    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
+    if (!motoboy) return;
+    if (R(linha.vlVariavel) === 0) { alert('Este dia não tem valor a pagar.'); return; }
+    setPgtoDiasSel({ [linha.data]: true });
+    setPgtoForma('PIX');
+    setPgtoData(new Date().toISOString().split('T')[0]);
+    setModalPgtoMoto({ motoboy, linhas: [linha], titulo: `Dia ${linha.data.split('-').reverse().join('/')}` });
   };
 
   const marcarPagamentoSemana = async (semanaFim: string, pago: boolean, dataPgto?: string) => {
@@ -895,7 +930,7 @@ export const Motoboys: React.FC = () => {
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
             <div>
               <div style={{ fontSize:'16px', fontWeight:700, color:'#1565c0' }}>💳 Confirmar Pagamento Motoboy</div>
-              <div style={{ fontSize:'12px', color:'#888', marginTop:'2px' }}>Semana {semana.label} — {motoboy.nome}</div>
+              <div style={{ fontSize:'12px', color:'#888', marginTop:'2px' }}>{semana ? `Semana ${semana.label}` : (modalPgtoMoto?.titulo || 'Pagamento avulso')} — {motoboy.nome}</div>
             </div>
             <button onClick={() => setModalPgtoMoto(null)} style={{ background:'none', border:'none', fontSize:'20px', cursor:'pointer', color:'#999' }}>✕</button>
           </div>
@@ -1177,6 +1212,16 @@ export const Motoboys: React.FC = () => {
               </div>
             )}
 
+            {/* Dica de uso — 3 formas de pagar */}
+            {ctrlMotoboyId && (
+              <div style={{ backgroundColor: '#fff8e1', borderLeft: '4px solid #ffa726', borderRadius: '6px', padding: '8px 12px', marginBottom: '14px', fontSize: '11px', color: '#5d4037', display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
+                <span><strong>💡 3 formas de pagar:</strong></span>
+                <span>💳 <strong>Pagar Dia</strong> (atalho na linha) — paga 1 dia específico</span>
+                <span>☑️ <strong>Selecionar dias</strong> + botão azul flutuante — paga vários dias avulsos</span>
+                <span>📅 <strong>Pagar Semana</strong> (no cabeçalho da semana) — paga semana inteira</span>
+              </div>
+            )}
+
             {!ctrlMotoboyId ? (
               <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Selecione um motoboy para ver o controle diário.</p>
             ) : loadingCtrl ? (
@@ -1219,6 +1264,37 @@ export const Motoboys: React.FC = () => {
                   );
                 })()}
 
+                {/* Barra flutuante de ação — dias selecionados (avulsos, qualquer semana) */}
+                {(() => {
+                  const linhasSel = controleComAcumulado.filter(l => diasSelAvulso[l.data] && R(l.vlVariavel) > 0);
+                  if (linhasSel.length === 0) return null;
+                  const totalSel = linhasSel.reduce((s, l) => s + R(l.vlVariavel), 0);
+                  const datas = linhasSel.map(l => l.data).sort();
+                  return (
+                    <div style={{ position:'sticky', top:'12px', zIndex:10, marginBottom:'12px',
+                      background:'linear-gradient(90deg, #1976d2, #1565c0)', color:'white', borderRadius:'8px', padding:'10px 16px',
+                      display:'flex', alignItems:'center', gap:'14px', flexWrap:'wrap', boxShadow:'0 4px 12px rgba(25,118,210,0.3)' }}>
+                      <span style={{ fontSize:'14px', fontWeight:'bold' }}>
+                        ☑️ {linhasSel.length} dia(s) selecionado(s)
+                      </span>
+                      <span style={{ fontSize:'12px', opacity:0.9 }}>
+                        {datas[0].split('-').reverse().join('/')}{datas.length > 1 ? ` … ${datas[datas.length-1].split('-').reverse().join('/')}` : ''}
+                      </span>
+                      <span style={{ fontSize:'18px', fontWeight:'bold', marginLeft:'auto' }}>
+                        Total: R$ {fmt(totalSel)}
+                      </span>
+                      <button onClick={abrirModalPgtoAvulso}
+                        style={{ padding:'8px 16px', backgroundColor:'#43a047', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontWeight:'bold', fontSize:'13px' }}>
+                        💳 Pagar selecionados
+                      </button>
+                      <button onClick={() => setDiasSelAvulso({})}
+                        style={{ padding:'8px 12px', backgroundColor:'rgba(255,255,255,0.2)', color:'white', border:'1px solid rgba(255,255,255,0.4)', borderRadius:'6px', cursor:'pointer', fontSize:'12px' }}>
+                        ✕ Limpar
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Tabela diária — agrupada por semana */}
                 {(() => {
                   const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
@@ -1232,12 +1308,13 @@ export const Motoboys: React.FC = () => {
                   );
 
                   const headers = [
+                    '☑️', // checkbox de seleção por dia
                     'Data', 'DS', 'Sal.+Per.',
                     'Ent.Dia', 'Caix.Dia',
                     ...(showChegada ? ['Ch.Dia'] : []),
                     'Ent.Noite', 'Caix.Noite',
                     ...(showChegada ? ['Ch.Noite'] : []),
-                    'Caixa Total', 'Vl.Variável', 'Pgto', 'Status', 'Var.Acum.',
+                    'Caixa Total', 'Vl.Variável', 'Pgto', 'Status', 'Var.Acum.', 'Ação',
                     ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
                   ];
 
@@ -1290,6 +1367,16 @@ export const Motoboys: React.FC = () => {
 
                                 return (
                                   <tr key={l.data} style={{ backgroundColor: rowBg }}>
+                                    {/* Checkbox de seleção (só disponível se tem valor e não pago) */}
+                                    <td style={{ ...s.td, textAlign: 'center' }}>
+                                      {temDados && !diaPago && R(l.vlVariavel) > 0 ? (
+                                        <input type="checkbox"
+                                          checked={!!diasSelAvulso[l.data]}
+                                          onChange={e => setDiasSelAvulso(prev => ({ ...prev, [l.data]: e.target.checked }))}
+                                          style={{ width:'16px', height:'16px', cursor:'pointer', accentColor:'#1976d2' }}
+                                        />
+                                      ) : <span style={{ color:'#ccc' }}>—</span>}
+                                    </td>
                                     <td style={{ ...s.td, fontWeight: 'bold' }}>
                                       {l.data.split('-').reverse().join('/')}
                                       {temDados && <span style={{ marginLeft: '4px', color: '#2e7d32', fontSize: '10px' }}>●</span>}
@@ -1361,6 +1448,19 @@ export const Motoboys: React.FC = () => {
                                       {R(l.variavel) !== 0 ? fmt(R(l.variavel)) : <span style={{ color: '#ccc' }}>-</span>}
                                     </td>
 
+                                    {/* Botão pagar este dia (atalho) */}
+                                    <td style={{ ...s.td, textAlign: 'center' }}>
+                                      {temDados && !diaPago && R(l.vlVariavel) > 0 ? (
+                                        <button
+                                          onClick={() => abrirModalPgtoUmDia(l)}
+                                          title="Pagar este dia (sem precisar fechar a semana)"
+                                          style={{ padding:'2px 8px', fontSize:'10px', fontWeight:'bold', border:'none', borderRadius:'4px', backgroundColor:'#43a047', color:'white', cursor:'pointer' }}
+                                        >💳 Pagar</button>
+                                      ) : diaPago ? (
+                                        <span style={{ color:'#aaa', fontSize:'10px' }}>já pago</span>
+                                      ) : <span style={{ color:'#ccc' }}>—</span>}
+                                    </td>
+
                                     {mostrarSaidas && (
                                       <>
                                         <td style={s.td}>{l.saidasDia?.map(s2 => `${s2.descricao || s2.tipo}(R$${fmt(R(s2.valor))})`).join(', ') || ''}</td>
@@ -1373,7 +1473,7 @@ export const Motoboys: React.FC = () => {
 
                               {/* Subtotal da semana */}
                               <tr style={{ backgroundColor: semPaga ? '#c8e6c9' : '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
-                                <td style={{ padding: '5px 6px' }} colSpan={3}>Subtotal {sem.label}</td>
+                                <td style={{ padding: '5px 6px' }} colSpan={4}>Subtotal {sem.label}</td>
                                 <td style={{ padding: '5px 6px' }}>{subEntDia}</td>
                                 <td style={{ padding: '5px 6px' }}>{fmt(subCaixDia)}</td>
                                 {showChegada && <td style={{ padding: '5px 6px', color: '#e65100' }}>{fmt(subChDia)}</td>}
@@ -1388,7 +1488,9 @@ export const Motoboys: React.FC = () => {
                                     ? <span style={{ color: '#1b5e20' }}>✅ Pago</span>
                                     : <span style={{ color: '#e65100' }}>⏳ Aberto</span>}
                                 </td>
-                                <td style={{ padding: '5px 6px' }} colSpan={mostrarSaidas ? 3 : 1} />
+                                <td style={{ padding: '5px 6px' }} />{/* Var.Acum. */}
+                                <td style={{ padding: '5px 6px' }} />{/* Ação */}
+                                <td style={{ padding: '5px 6px' }} colSpan={mostrarSaidas ? 2 : 0} />
                               </tr>
                             </React.Fragment>
                           );
@@ -1396,7 +1498,7 @@ export const Motoboys: React.FC = () => {
                       </tbody>
                       <tfoot>
                         <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL GERAL</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={4}>TOTAL GERAL</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
                           {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
@@ -1408,6 +1510,7 @@ export const Motoboys: React.FC = () => {
                           <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }} />
                           <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} />{/* Ação */}
                           {mostrarSaidas && <td colSpan={2} />}
                         </tr>
                       </tfoot>
