@@ -856,25 +856,18 @@ export default function FolhaPagamento() {
           saidasTransporteMes.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
 
-        // 2. Quanto do adiantamento já foi "consumido" em semanas anteriores desta iteração
-        //    (semanas que terminam ANTES de isoInicio e que já foram calculadas neste loop)
-        //    Nota: folhasDB contém pagamentos salvos; mas para o cálculo em tempo real,
-        //    usamos o transporteAdiantadoMes diretamente contra totalTransporte acumulado
-        //    das semanas anteriores no mês.
-        // Calculamos o transporte total das semanas que antecedem esta semana no mês:
-        const [anoFr, mesFr] = mesAno.split('-').map(Number);
-        const semanasAnteriores = semanasFechamento(anoFr, mesFr).filter(
-          s => fmtDataISO(s.fim) < isoInicio
+        // 2. Dias únicos já pagos ANTES desta semana (via granulares no banco)
+        //    Usar folhasDB (granulares reais) em vez de escalas — evita sobrestimar
+        //    dias quando o adiantamento foi feito antes do início da semana
+        const granularesPagosAnteriores = folhasDB.filter((reg: any) =>
+          reg.colaboradorId === f.id &&
+          reg.tipo === 'freelancer-dia' &&
+          reg.pago === true &&
+          reg.data && reg.data < isoInicio  // dias ANTES desta semana
         );
-        const transporteSemanasAnteriores = semanasAnteriores.reduce((acc, s) => {
-          const escsAntes = escalas.filter(e =>
-            e.colaboradorId === f.id &&
-            e.data >= fmtDataISO(s.inicio) && e.data <= fmtDataISO(s.fim) &&
-            (statusPresencaEscala(e) === 'presente' || statusPresencaEscala(e) === 'presente_parcial') &&
-            e.turno !== 'Folga'
-          );
-          return acc + R(f.valorTransporte) * escsAntes.length;
-        }, 0);
+        // Dias únicos = set de datas (DiaNoite em 1 dia = 1 dia de transporte)
+        const diasUnicosAnteriores = new Set<string>(granularesPagosAnteriores.map((r: any) => r.data));
+        const transporteSemanasAnteriores = diasUnicosAnteriores.size * R(f.valorTransporte);
 
         // 3. Saldo do adiantamento ainda disponível para esta semana
         const adiantamentoDisponivel = parseFloat(Math.max(0, transporteAdiantadoMes - transporteSemanasAnteriores).toFixed(2));
@@ -1354,23 +1347,29 @@ export default function FolhaPagamento() {
     // ── Buscar saídas FRESCAS do banco antes de montar o checklist ──
     // Garante que descontos lançados após o último carregarDados() apareçam
     const { fr, fech } = modalFreelancerPgto;
-    const isoIni = fr.periodoInicio || fech.dataInicioBase;
-    const isoFim = fr.periodoFim   || fech.dataFechamentoBase;
+    // isoIni/isoFim dos dias pendentes — usado apenas para referência de contexto
+    // O buildChecklist usa rangeIni/rangeFim (semana inteira) para buscar consumos
+    void (fr.periodoInicio || fech.dataInicioBase);
+    void (fr.periodoFim   || fech.dataFechamentoBase);
 
     const buildChecklist = (saidasFrescas: any[]) => {
       const TIPOS_DESCONTO = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
       const TIPOS_CAIXINHA = ['Caixinha'];
       const saidaData = (s: any) => s.dataPagamento || s.data || '';
+      // Usar sempre os limites da semana inteira para buscar consumos/caixinha
+      // (não apenas os dias pendentes), pois consumos podem cair em dias já pagos da semana
+      const rangeIni = fech.dataInicioBase;  // início real da semana
+      const rangeFim = fech.dataFechamentoBase; // fim real da semana
 
       const saidasDescFr = saidasFrescas.filter((s: any) =>
         s.colaboradorId === fr.id &&
         TIPOS_DESCONTO.includes(s.tipo || s.origem || s.referencia || '') &&
-        saidaData(s) >= isoIni && saidaData(s) <= isoFim
+        saidaData(s) >= rangeIni && saidaData(s) <= rangeFim
       );
       const saidasCaixFr = saidasFrescas.filter((s: any) =>
         s.colaboradorId === fr.id &&
         TIPOS_CAIXINHA.includes(s.tipo || s.origem || s.referencia || '') &&
-        saidaData(s) >= isoIni && saidaData(s) <= isoFim
+        saidaData(s) >= rangeIni && saidaData(s) <= rangeFim
       );
 
       const descDetalhe = saidasDescFr.map((s: any) => ({ descricao: s.descricao || s.tipo || 'Desconto', valor: R(s.valor), data: saidaData(s) }));
