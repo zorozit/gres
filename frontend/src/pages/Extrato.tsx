@@ -104,6 +104,9 @@ export const Extrato: React.FC = () => {
   const [detalheItem, setDetalheItem]   = useState<ExtratoItem | null>(null);
   const [editItem, setEditItem]         = useState<ExtratoItem | null>(null);
   const [editForm, setEditForm]         = useState<any>({});
+  // Modal de ajuste manual — cria uma saída de crédito/débito avulsa vinculada ao colaborador
+  const [modalAjuste, setModalAjuste]   = useState<ExtratoItem | null>(null);
+  const [ajusteForm, setAjusteForm]     = useState({ tipo: 'credito' as 'credito'|'debito', valor: '', descricao: '', data: new Date().toISOString().split('T')[0], obs: '' });
   const [colaboradorSelecionado, setColaboradorSelecionado] = useState<string | null>(null);
 
   // Filters
@@ -310,6 +313,12 @@ export const Extrato: React.FC = () => {
               raw: item,
             });
           }
+
+          // Suprimir itens com valor=0 que são granulares individuais não agrupados corretamente
+          // (ocorre quando um lote migrado é exibido junto com o legado que também o representa)
+          if (isGranular && val === 0 && item.pago === true && !item.pagoParcial) continue;
+          // Suprimir legados com valor=0 e pago=False (registros vazios que escorregaram pelo filtro)
+          if (!isGranular && val === 0 && item.pago !== true && !item.semana?.startsWith('202')) continue;
 
           allItems.push({
             id: item.id || `folha_${item.colaboradorId}_${item.mes}_${item.semana || ''}`,
@@ -672,6 +681,8 @@ export const Extrato: React.FC = () => {
             <button onClick={() => { onClose(); abrirEdicao(item); }}
               style={s.btn('#f57c00')}>✏️ Editar</button>
           )}
+          <button onClick={() => { onClose(); setAjusteForm({ tipo: 'credito', valor: '', descricao: '', data: new Date().toISOString().split('T')[0], obs: '' }); setModalAjuste(item); }}
+            style={s.btn('#1565c0')}>⚖️ Ajuste Manual</button>
           <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
         </div>
       </div>
@@ -684,6 +695,121 @@ export const Extrato: React.FC = () => {
      Caso de uso: "chopp IPA de R$50 foi pago mas não descontei → marcar como
      Pendente e ajustar dataPagamento para o próximo mês"
   ══════════════════════════════════════════════════════════════════════════ */
+  /* ═══ Saída: salvar ajuste manual ═══ */
+  const salvarAjusteManual = async () => {
+    if (!modalAjuste) return;
+    const val = parseFloat(ajusteForm.valor);
+    if (!val || val <= 0) { alert('Informe um valor válido'); return; }
+    if (!ajusteForm.descricao.trim()) { alert('Informe uma descrição'); return; }
+    setSalvando(true);
+    try {
+      const tipo = ajusteForm.tipo === 'credito' ? 'A pagar' : 'Consumo Interno';
+      const body = {
+        colaboradorId: modalAjuste.colaboradorId,
+        unitId:        modalAjuste.unitId || unitId,
+        data:          ajusteForm.data,
+        tipo,
+        origem:        tipo,
+        referencia:    tipo,
+        valor:         val,
+        descricao:     ajusteForm.descricao.trim(),
+        observacao:    ajusteForm.obs.trim() || `Ajuste manual via Extrato — ${ajusteForm.tipo === 'credito' ? 'crédito' : 'débito'} de R$${val.toFixed(2)}`,
+        pago:          false,
+      };
+      const res = await fetch(`${apiUrl}/saidas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setModalAjuste(null);
+      setAjusteForm({ tipo: 'credito', valor: '', descricao: '', data: new Date().toISOString().split('T')[0], obs: '' });
+      await carregarDados();
+    } catch (e: any) {
+      alert('Erro ao salvar ajuste: ' + e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  /* ═══ Modal: Ajuste Manual ═══ */
+  const ModalAjusteManual = () => {
+    if (!modalAjuste) return null;
+    const isCred = ajusteForm.tipo === 'credito';
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setModalAjuste(null)}>
+        <div style={{ ...s.card, maxWidth: '480px', width: '96%', maxHeight: '92vh', overflowY: 'auto' }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0, color: '#1565c0' }}>⚖️ Ajuste Manual</h3>
+            <button onClick={() => setModalAjuste(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ backgroundColor: '#e3f2fd', borderRadius: '6px', padding: '8px 12px', marginBottom: '14px', fontSize: '13px', color: '#1565c0' }}>
+            <strong>{modalAjuste.nomeColaborador}</strong> · {mesAno}
+          </div>
+          {/* Tipo */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Tipo de ajuste</label>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+              {(['credito','debito'] as const).map(t => (
+                <button key={t} onClick={() => setAjusteForm(f => ({...f, tipo: t}))}
+                  style={{ flex: 1, padding: '8px', borderRadius: '6px', border: `2px solid ${ajusteForm.tipo===t ? (t==='credito'?'#2e7d32':'#c62828') : '#ddd'}`, background: ajusteForm.tipo===t ? (t==='credito'?'#e8f5e9':'#fce4ec') : 'white', fontWeight: 600, cursor: 'pointer', color: t==='credito'?'#2e7d32':'#c62828' }}>
+                  {t === 'credito' ? '➕ Crédito (a pagar ao colaborador)' : '➖ Débito (desconto do colaborador)'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Valor */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Valor (R$)</label>
+            <input type="number" step="0.01" min="0.01" value={ajusteForm.valor}
+              onChange={e => setAjusteForm(f => ({...f, valor: e.target.value}))}
+              placeholder="0,00"
+              style={{ display: 'block', width: '100%', marginTop: '4px', padding: '8px 10px', border: `1px solid ${isCred?'#a5d6a7':'#ef9a9a'}`, borderRadius: '6px', fontSize: '14px', fontWeight: 600, color: isCred?'#2e7d32':'#c62828' }} />
+          </div>
+          {/* Descrição */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Descrição <span style={{color:'red'}}>*</span></label>
+            <input type="text" value={ajusteForm.descricao}
+              onChange={e => setAjusteForm(f => ({...f, descricao: e.target.value}))}
+              placeholder="Ex: Correção desconto indevido em 27/04"
+              style={{ display: 'block', width: '100%', marginTop: '4px', padding: '8px 10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px' }} />
+          </div>
+          {/* Data */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Data de referência</label>
+            <input type="date" value={ajusteForm.data}
+              onChange={e => setAjusteForm(f => ({...f, data: e.target.value}))}
+              style={{ display: 'block', width: '100%', marginTop: '4px', padding: '8px 10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px' }} />
+          </div>
+          {/* Obs */}
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>Observação (opcional)</label>
+            <textarea value={ajusteForm.obs} rows={2}
+              onChange={e => setAjusteForm(f => ({...f, obs: e.target.value}))}
+              placeholder="Motivo do ajuste, referência ao lançamento original..."
+              style={{ display: 'block', width: '100%', marginTop: '4px', padding: '8px 10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '12px', resize: 'vertical' }} />
+          </div>
+          {/* Preview */}
+          {ajusteForm.valor && parseFloat(ajusteForm.valor) > 0 && (
+            <div style={{ backgroundColor: isCred?'#e8f5e9':'#fce4ec', borderRadius: '6px', padding: '10px 12px', marginBottom: '14px', fontSize: '13px' }}>
+              <strong>Preview:</strong> {isCred ? '➕ Crédito' : '➖ Débito'} de{' '}
+              <strong style={{color: isCred?'#2e7d32':'#c62828'}}>R$ {parseFloat(ajusteForm.valor||'0').toFixed(2)}</strong>{' '}
+              para <strong>{modalAjuste.nomeColaborador}</strong> em {ajusteForm.data}<br/>
+              <span style={{fontSize:'11px',color:'#666'}}>Aparecerá automaticamente no próximo modal de pagamento</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button onClick={() => setModalAjuste(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+            <button onClick={salvarAjusteManual} disabled={salvando}
+              style={s.btn(isCred?'#2e7d32':'#c62828')}>{salvando ? 'Salvando...' : '✔ Confirmar Ajuste'}</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const ModalEdicaoSaida = () => {
     if (!editItem) return null;
     const isPendente = editForm.pago === false || editForm.pago === 'false';
@@ -953,6 +1079,7 @@ export const Extrato: React.FC = () => {
       {/* Modals */}
       {detalheItem && <ModalDetalhe item={detalheItem} onClose={() => setDetalheItem(null)} />}
       {editItem     && <ModalEdicaoSaida />}
+      {modalAjuste  && <ModalAjusteManual />}
       {colaboradorSelecionado && (
         <ModalColaborador colabId={colaboradorSelecionado} onClose={() => setColaboradorSelecionado(null)} />
       )}
