@@ -191,7 +191,8 @@ interface FechamentoSemanalFreelancer {
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 
 const R = (v: any) => parseFloat(v) || 0;
-const isMigradoReg = (r: any) => r.migrado === true || r.migrado === 'True' || r.migrado === 'true';
+const isMigradoReg  = (r: any) => r.migrado   === true || r.migrado   === 'True' || r.migrado   === 'true';
+const isEstornadoReg = (r: any) => r.estornado === true || r.estornado === 'True' || r.estornado === 'true';
 const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 
@@ -641,7 +642,8 @@ export default function FolhaPagamento() {
 
     for (const reg of folhasDB) {
       if (!reg.colaboradorId || !reg.pago) continue;
-      if (isMigradoReg(reg)) continue;  // ignorar registros legados migrados
+      if (isMigradoReg(reg))   continue;  // ignorar registros legados migrados
+      if (isEstornadoReg(reg)) continue;  // ignorar registros vazios/cancelados (estornado=true)
       const cid = reg.colaboradorId;
       if (!diasJaPagosPorColab[cid]) diasJaPagosPorColab[cid] = new Set();
       if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Map();
@@ -3091,6 +3093,7 @@ export default function FolhaPagamento() {
                               const frFolhaSalva = folhasDB.find((f: any) =>
                                 f.colaboradorId === fr.id && f.mes === mesAno && f.semana === fech.dataFechamento
                                 && !isMigradoReg(f)
+                                && !isEstornadoReg(f)
                               );
                               // Data e forma do pagamento mais recente desta semana
                               const diasNovoModelo = folhasDB.filter((f: any) =>
