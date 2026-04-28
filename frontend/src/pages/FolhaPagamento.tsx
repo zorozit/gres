@@ -942,6 +942,8 @@ export default function FolhaPagamento() {
           acordo: (f as any).acordo || null,
           dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
           valorTransporte, totalTransporte,
+          transporteAdiantadoMes,     // total do adiantamento no mês (para o banner do modal)
+          transporteSemanasAnteriores, // já consumido em semanas anteriores (para o banner)
           transporteAdiantado, transporteSaldo,
           total, totalLiquido, saidasDesconto, saidasDetalhe,
           totalBrutoPeriodo, totalDobrasExib, // para exibição mostrando o período completo
@@ -1376,9 +1378,26 @@ export default function FolhaPagamento() {
         ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite`
         : `R$${fmt(fr.valorDobra)}/dobra`;
 
+      // Transporte: mostrar sempre que há dias trabalhados com valorTransporte > 0
+      // Mesmo quando saldo = R$0 (coberto por adiantamento), exibir breakdown informativo
+      const totalTransporteSemana = parseFloat((fr.diasTrabalhados * R(fr.valorTransporte)).toFixed(2));
+      const transpAdtoCoberto     = parseFloat(Math.min(fr.transporteAdiantado, totalTransporteSemana).toFixed(2));
+      const transpLabelDetalhado  = totalTransporteSemana > 0
+        ? (fr.transporteAdiantado > 0
+            ? `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransporteSemana)}${transpAdtoCoberto > 0 ? ` — coberto pelo adto (R$${fmt(transpAdtoCoberto)}) — saldo: R$${fmt(fr.transporteSaldo)}` : ''}`
+            : `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransporteSemana)}`)
+        : '';
+
       const items: CheckItem[] = [
         { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
-        ...(fr.transporteSaldo > 0 ? [{ key: 'transporte', label: `🚗 Transporte (${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))}${fr.transporteAdiantado > 0 ? ` − R$${fmt(fr.transporteAdiantado)} adiant. no mês` : ''} = saldo R$${fmt(fr.transporteSaldo)})`, valor: fr.transporteSaldo, tipo: 'credito' as const, checked: true }] : []),
+        // Transporte: item ativo só quando há saldo real a pagar; sempre visível como info quando coberto por adto
+        ...(totalTransporteSemana > 0 ? [{
+          key: 'transporte',
+          label: transpLabelDetalhado,
+          valor: fr.transporteSaldo,  // 0 quando coberto pelo adiantamento
+          tipo: 'credito' as const,
+          checked: fr.transporteSaldo > 0,  // pré-marcado só se há saldo real
+        }] : []),
         ...caixDetalhe.map((d, i) => ({
           key: `caix_${i}`,
           label: `🪙 ${d.descricao} (${d.data})`,
@@ -1463,6 +1482,23 @@ export default function FolhaPagamento() {
               </div>
             )}
           </div>
+
+          {/* Banner de adiantamento de transporte — só aparece quando há adiantamento no mês */}
+          {fr.transporteAdiantadoMes > 0 && (
+            <div style={{ backgroundColor: '#fff3e0', border: '1px solid #ffe0b2', borderRadius: '6px', padding: '8px 14px', marginBottom: '12px', fontSize: '12px' }}>
+              <div style={{ fontWeight: 'bold', color: '#e65100', marginBottom: '4px' }}>🚗 Adiantamento de Transporte — Resumo do Mês</div>
+              <div style={{ color: '#6d4c41', lineHeight: '1.8' }}>
+                <div>📥 Adiantado no mês: <strong>R${fmt(fr.transporteAdiantadoMes)}</strong></div>
+                <div>✅ Já consumido em semanas anteriores: <strong>R${fmt(fr.transporteSemanasAnteriores || 0)}</strong></div>
+                <div>💰 Disponível para esta semana: <strong style={{color: fr.transporteAdiantado > 0 ? '#388e3c' : '#c62828'}}>R${fmt(fr.transporteAdiantado)}</strong></div>
+                <div>🚗 Transporte desta semana: <strong>R${fmt(fr.diasTrabalhados * R(fr.valorTransporte))}</strong></div>
+                {fr.transporteSaldo === 0
+                  ? <div style={{color:'#388e3c', fontWeight:'bold'}}>✔ Totalmente coberto pelo adiantamento — saldo a pagar: R$0,00</div>
+                  : <div style={{color:'#c62828', fontWeight:'bold'}}>⚠ Saldo a pagar nesta semana: R${fmt(fr.transporteSaldo)}</div>
+                }
+              </div>
+            </div>
+          )}
 
           {/* Checklist de itens */}
           <div style={{ marginBottom: '14px' }}>
