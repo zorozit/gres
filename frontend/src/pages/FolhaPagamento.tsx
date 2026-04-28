@@ -54,8 +54,14 @@ interface Motoboy extends Colaborador {
   comissao?: number;
   /** Freelancer: valor fixo por dia trabalhado */
   valorChegada?: number;
+  /** Freelancer: valor fixo por turno Dia trabalhado */
+  valorChegadaDia?: number;
+  /** Freelancer: valor fixo por turno Noite trabalhado */
+  valorChegadaNoite?: number;
   /** Freelancer: valor por entrega realizada */
   valorEntrega?: number;
+  /** Opção A: id do colaborador correspondente (sempre = id quando motoboy = colaborador) */
+  colaboradorId?: string;
 }
 
 // Freelancers are colaboradores with tipoContrato='Freelancer'
@@ -392,9 +398,8 @@ export default function FolhaPagamento() {
       const histLongoDate = new Date(parseInt(String(ano)), parseInt(String(mes)) - 25, 1);
       const histLongoIni = `${histLongoDate.getFullYear()}-${String(histLongoDate.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [rC, rM, rF, rE, rS, rSPend, rSHist] = await Promise.all([
+      const [rC, rF, rE, rS, rSPend, rSHist] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
-        fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
         fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
@@ -412,22 +417,32 @@ export default function FolhaPagamento() {
       // Freelancers are colaboradores with tipoContrato='Freelancer'
       setFreelancers(todosColabs.filter(c => c.tipoContrato === 'Freelancer'));
 
-      const dM = await rM.json();
-      // Enriquecer motoboys com dados de colaboradores (valorDia/Noite/Transporte vêm de /colaboradores)
+      // ── OPÇÃO A: Motoboys derivados de colaboradores com isMotoboy=true ──
+      // Fonte única de verdade: gres-prod-colaboradores. Não lê mais gres-prod-motoboys.
       const colabsMapFolha: Record<string, any> = {};
       for (const c of todosColabs) {
         if ((c as any).cpf) colabsMapFolha[(c as any).cpf] = c;
         colabsMapFolha[c.id] = c;
       }
-      const motos: Motoboy[] = (Array.isArray(dM) ? dM : []).filter((m: Motoboy) => m.ativo !== false).map((m: any) => {
-        const colab = (m.cpf && colabsMapFolha[m.cpf]) || colabsMapFolha[m.id] || m;
-        return {
-          ...m,
-          valorChegadaDia:   R(colab.valorDia)        || R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
-          valorChegadaNoite: R(colab.valorNoite)      || R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
-          valorEntrega:      R(colab.valorTransporte) || R(m.valorEntrega)       || 0,
-        };
-      });
+      const motos: Motoboy[] = todosColabs
+        .filter(c => (c as any).isMotoboy === true || ((c as any).cargo || '').toLowerCase() === 'motoboy')
+        .map((c: any) => ({
+          id: c.id,
+          colaboradorId: c.id,
+          nome: c.nome,
+          cpf: c.cpf,
+          tipoContrato: c.tipoContrato,
+          ativo: c.ativo !== false,
+          unitId: c.unitId,
+          isMotoboy: true,
+          // Compat com Motoboy interface
+          valorDia: R(c.valorDia) || 0,
+          valorNoite: R(c.valorNoite) || 0,
+          valorChegadaDia:   R(c.valorDia)         || 0,
+          valorChegadaNoite: R(c.valorNoite)       || 0,
+          valorEntrega:      R(c.valorEntrega) || R(c.valorTransporte) || 0,
+          chavePix: c.chavePix,
+        } as Motoboy));
       setMotoboys(motos);
 
       if (rE?.ok) {

@@ -331,53 +331,34 @@ export const Motoboys: React.FC = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('auth_token');
-      // Buscar motoboys e colaboradores em paralelo
-      const [rM, rC] = await Promise.all([
-        fetch(unitId ? `${apiUrl}/motoboys?unitId=${unitId}` : `${apiUrl}/motoboys`,
-          { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`,
-          { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
-      ]);
-      const dM = await rM.json();
-      const motosRaw: any[] = Array.isArray(dM) ? dM : [];
+      // OPÇÃO A: motoboys = colaboradores com isMotoboy=true (fonte única)
+      const rC = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      const dC = await rC.json();
+      const colabs: any[] = Array.isArray(dC) ? dC : [];
 
-      // Colaboradores — fonte de verdade para campos de pagamento (valorDia/Noite/Transporte)
-      let colabsMap: Record<string, any> = {};
-      if (rC?.ok) {
-        const dC = await rC.json();
-        const colabs: any[] = Array.isArray(dC) ? dC : [];
-        for (const c of colabs) {
-          if (c.cpf) colabsMap[c.cpf] = c;
-          colabsMap[c.id] = c;
-        }
-      }
-
-      // Mapear cada motoboy, enriquecendo com dados de colaboradores
-      const motosDB: Motoboy[] = motosRaw.map((m: any) => {
-        // Encontrar colaborador correspondente por CPF (mais confiável) ou ID
-        const colab = (m.cpf && colabsMap[m.cpf]) || colabsMap[m.id] || m;
-        return {
-          id: m.id,
-          colaboradorId: colab.id || m.colaboradorId || m.id,
-          nome: m.nome,
-          cpf: m.cpf || '',
-          telefone: m.telefone || m.celular || '',
-          placa: m.placa || '',
-          dataAdmissao: m.dataAdmissao || colab.dataAdmissao || '',
-          dataDemissao: m.dataDemissao || colab.dataDemissao || '',
-          comissao: R(m.comissao) || 0,
-          chavePix: m.chavePix || colab.chavePix || '',
-          unitId: m.unitId || '',
-          vinculo: m.vinculo === 'CLT' ? 'CLT' : 'Freelancer',
-          salario: R(m.salario) || 0,
-          periculosidade: R(m.periculosidade) || 0,
-          // Campos de pagamento: colaboradores é a fonte de verdade
-          valorChegadaDia:   R(colab.valorDia)        || R(m.valorChegadaDia)   || R(m.valorDia)   || 0,
-          valorChegadaNoite: R(colab.valorNoite)      || R(m.valorChegadaNoite) || R(m.valorNoite) || 0,
-          valorEntrega:      R(colab.valorTransporte) || R(m.valorEntrega)       || 0,
-          ativo: m.ativo !== false,
-        };
-      });
+      const motosDB: Motoboy[] = colabs
+        .filter((c: any) => c.ativo !== false && (c.isMotoboy === true || (c.cargo || '').toLowerCase() === 'motoboy'))
+        .map((c: any) => ({
+          id: c.id,
+          colaboradorId: c.id,
+          nome: c.nome,
+          cpf: c.cpf || '',
+          telefone: c.telefone || c.celular || '',
+          placa: c.placa || '',
+          dataAdmissao: c.dataAdmissao || '',
+          dataDemissao: c.dataDemissao || '',
+          comissao: R(c.comissao) || 0,
+          chavePix: c.chavePix || '',
+          unitId: c.unitId || unitId || '',
+          vinculo: c.tipoContrato === 'CLT' ? 'CLT' : 'Freelancer',
+          salario: R(c.salario) || 0,
+          periculosidade: R(c.periculosidade) || 0,
+          valorChegadaDia:   R(c.valorDia)        || 0,
+          valorChegadaNoite: R(c.valorNoite)      || 0,
+          valorEntrega:      R(c.valorEntrega) || R(c.valorTransporte) || 0,
+          ativo: c.ativo !== false,
+        }));
 
       setMotoboys(motosDB);
     } catch (e) { console.error(e); }
@@ -758,9 +739,14 @@ export const Motoboys: React.FC = () => {
     cargo: 'Motoboy',
     funcao: 'Motoboy',
     area: 'Delivery',
-    // Mapeamento correto para os campos da API /colaboradores
+    // OPÇÃO A: tudo na tabela colaboradores. Inclui campos de motoboy (placa, comissao, vinculo).
+    isMotoboy: true,
+    placa: formData.placa,
+    vinculo: formData.vinculo,
+    comissao: formData.comissao ?? 0,
     valorDia: formData.vinculo === 'Freelancer' ? (formData.valorChegadaDia ?? 0) : 0,
     valorNoite: formData.vinculo === 'Freelancer' ? (formData.valorChegadaNoite ?? 0) : 0,
+    valorEntrega: formData.vinculo === 'Freelancer' ? (formData.valorEntrega ?? 0) : 0,
     valorTransporte: formData.vinculo === 'Freelancer' ? (formData.valorEntrega ?? 0) : 0,
   });
 
@@ -772,24 +758,22 @@ export const Motoboys: React.FC = () => {
       const isEdit = !!editandoId;
       const colabPayload = buildColabPayload();
 
-      // Fonte de verdade: /colaboradores
-      // Buscar por CPF para garantir o ID correto independente de como foi criado
+      // OPÇÃO A: única fonte = /colaboradores
+      // Buscar por CPF para garantir o ID correto
       let colabId = editandoId || '';
       try {
         const rc = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } });
         if (rc.ok) {
           const dc = await rc.json();
           const colabs: any[] = Array.isArray(dc) ? dc : [];
-          // Tentar por CPF primeiro (mais confiável), depois por ID
           const match = colabs.find((c: any) => formData.cpf && c.cpf === formData.cpf)
                      || colabs.find((c: any) => c.id === editandoId);
           if (match) colabId = match.id;
         }
       } catch {}
 
-      // 1. Salvar em /colaboradores (fonte de verdade para valorDia/Noite/Transporte)
-      //    PUT se existe, POST se ainda não tem colaborador (novo cadastro)
       if (colabId) {
+        // Atualizar colaborador existente
         const rColab = await fetch(`${apiUrl}/colaboradores/${colabId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -797,57 +781,16 @@ export const Motoboys: React.FC = () => {
         });
         if (!rColab.ok) console.warn('Falha ao atualizar colaborador:', await rColab.text());
       } else if (!isEdit) {
-        // Novo motoboy: criar colaborador primeiro
+        // Novo motoboy: criar colaborador
         const rColab = await fetch(`${apiUrl}/colaboradores`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify(colabPayload),
         });
-        if (rColab.ok) {
-          const dColab = await rColab.json();
-          colabId = dColab.id || colabId;
+        if (!rColab.ok) {
+          alert('Erro ao criar motoboy: ' + await rColab.text());
+          return;
         }
-      }
-
-      // 2. Salvar dados operacionais em /motoboys (vinculo, placa, datas)
-      const motoboyPayload = {
-        nome: formData.nome,
-        cpf: formData.cpf,
-        telefone: formData.telefone,
-        chavePix: formData.chavePix,
-        vinculo: formData.vinculo,
-        placa: formData.placa,
-        dataAdmissao: formData.dataAdmissao,
-        dataDemissao: formData.dataDemissao,
-        comissao: formData.comissao ?? 0,
-        salario: formData.salario ?? 0,
-        periculosidade: formData.periculosidade ?? 0,
-        ativo: formData.ativo,
-        unitId,
-      };
-
-      // Tentar salvar em /motoboys (pode não existir ainda se o motoboy veio só de /colaboradores)
-      if (isEdit) {
-        const rM = await fetch(`${apiUrl}/motoboys/${editandoId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(motoboyPayload),
-        });
-        if (!rM.ok && rM.status === 404) {
-          // Criar em /motoboys se não existia
-          await fetch(`${apiUrl}/motoboys`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ ...motoboyPayload, id: editandoId }),
-          });
-        }
-      } else {
-        // Novo cadastro
-        await fetch(`${apiUrl}/motoboys`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(motoboyPayload),
-        });
       }
 
       alert(isEdit ? '✅ Motoboy atualizado!' : '✅ Motoboy cadastrado!');
@@ -860,16 +803,22 @@ export const Motoboys: React.FC = () => {
   const handleDeletar = async (id: string, nome: string) => {
     if (!window.confirm(`Excluir ${nome}?`)) return;
     const token = localStorage.getItem('auth_token');
-    const r = await fetch(`${apiUrl}/motoboys/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    // OPÇÃO A: marca colaborador como inativo (não deleta)
+    const r = await fetch(`${apiUrl}/colaboradores/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ativo: false, isMotoboy: true }),
+    });
     if (r.ok) { alert('Excluído!'); fetchMotoboys(); } else alert('Erro ao excluir');
   };
 
   const handleToggleAtivo = async (m: Motoboy) => {
     const token = localStorage.getItem('auth_token');
-    const r = await fetch(`${apiUrl}/motoboys/${m.id}`, {
+    // OPÇÃO A: toggle no colaborador
+    const r = await fetch(`${apiUrl}/colaboradores/${m.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ...m, ativo: !m.ativo }),
+      body: JSON.stringify({ ativo: !m.ativo, isMotoboy: true }),
     });
     if (r.ok) fetchMotoboys(); else alert('Erro ao atualizar status');
   };
