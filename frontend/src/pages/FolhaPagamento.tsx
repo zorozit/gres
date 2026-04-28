@@ -3542,8 +3542,8 @@ export default function FolhaPagamento() {
                                     <button
                                       disabled={salvando}
                                       onClick={async () => {
-                                        if (!frIsPago) {
-                                          // Open confirmation modal with editable date
+                                        // Se ainda tem dias pendentes (mesmo que outros já estejam pagos): abre modal de pagamento
+                                        if (!frIsPago || pagoParcial) {
                                           setModalFreelancerPgto({ fr, fech });
                                           return;
                                         }
@@ -3588,9 +3588,10 @@ export default function FolhaPagamento() {
                                         } catch (err) { alert('Erro ao desfazer pagamento: ' + err); }
                                         finally { setSalvando(false); }
                                       }}
-                                      style={{ ...s.btn(frIsPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}
+                                      style={{ ...s.btn(pagoParcial ? '#43a047' : frIsPago ? '#e53935' : '#43a047'), padding: '3px 8px', fontSize: '11px' }}
+                                      title={pagoParcial ? 'Pagar dias pendentes desta semana' : frIsPago ? 'Desfazer o pagamento da semana' : 'Pagar esta semana'}
                                     >
-                                      {frIsPago ? '↩ Desfazer' : '✅ Pagar'}
+                                      {pagoParcial ? '✅ Pagar pend.' : frIsPago ? '↩ Desfazer' : '✅ Pagar'}
                                     </button>
                                     {fr.chavePix && (
                                       <button onClick={() => navigator.clipboard.writeText(fr.chavePix!)}
