@@ -124,6 +124,15 @@ export const Modules: React.FC = () => {
       superAdminRequired: true,
     },
     {
+      id: 'permissoes',
+      icon: '🛡️',
+      title: 'Config. de Permissões',
+      description: 'Defina quais módulos cada perfil pode acessar',
+      path: '/modulos/permissoes',
+      color: '#e53935',
+      superAdminRequired: true,
+    },
+    {
       id: 'usuarios',
       icon: '🔐',
       title: 'Gestão de Usuários',
@@ -132,15 +141,6 @@ export const Modules: React.FC = () => {
       color: '#c44569',
       superAdminRequired: true,
     },
-    {
-      id: 'usuarios-edicao',
-      icon: '✏️',
-      title: 'Edição de Usuários',
-      description: 'Editar usuários e vincular a unidades',
-      path: '/modulos/usuarios-edicao',
-      color: '#8e44ad',
-      superAdminRequired: true,
-    }
   ];
 
   // Filter modules based on role

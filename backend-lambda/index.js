@@ -1913,6 +1913,44 @@ exports.handler = async (event) => {
       }
     }
 
+    // ─── GET /perfis-permissoes — carrega config salva ou retorna default ───
+    if (rawPath === '/perfis-permissoes' && httpMethod === 'GET') {
+      try {
+        const result = await dynamodb.get({
+          TableName: 'gres-prod-usuarios',
+          Key: { id: 'config-perfis-permissoes' }
+        }).promise();
+        if (result.Item && result.Item.permissoes) {
+          return response(200, { permissoes: result.Item.permissoes, updatedAt: result.Item.updatedAt });
+        }
+        // Retorna default vazio — frontend usa seus próprios defaults
+        return response(200, { permissoes: null, updatedAt: null });
+      } catch (err) {
+        return response(500, { error: 'Erro ao carregar permissões: ' + err.message });
+      }
+    }
+
+    // ─── PUT /perfis-permissoes — salva config de permissões por perfil ───
+    if (rawPath === '/perfis-permissoes' && httpMethod === 'PUT') {
+      const { permissoes } = body;
+      if (!permissoes || typeof permissoes !== 'object') {
+        return response(400, { error: 'Campo permissoes é obrigatório e deve ser um objeto' });
+      }
+      try {
+        await dynamodb.put({
+          TableName: 'gres-prod-usuarios',
+          Item: {
+            id: 'config-perfis-permissoes',
+            permissoes,
+            updatedAt: new Date().toISOString()
+          }
+        }).promise();
+        return response(200, { success: true, updatedAt: new Date().toISOString() });
+      } catch (err) {
+        return response(500, { error: 'Erro ao salvar permissões: ' + err.message });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 

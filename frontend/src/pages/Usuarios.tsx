@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
 
+// Perfis para badge visual
+const PERFIS_SISTEMA = [
+  { key: 'admin',    label: 'Administrador', icon: '👑', color: '#7b1fa2', bg: '#f3e5f5', aliases: ['admin', 'Administrador', 'ADMIN'] },
+  { key: 'gerente',  label: 'Gerente',       icon: '🏅', color: '#1565c0', bg: '#e3f2fd', aliases: ['gerente', 'Gerente', 'GERENTE', 'Manager'] },
+  { key: 'operador', label: 'Operador',       icon: '👤', color: '#2e7d32', bg: '#e8f5e9', aliases: ['operador', 'Operador', 'OPERADOR'] },
+];
+
 interface Usuario {
   id: string;
   nome: string;
@@ -16,126 +23,11 @@ interface Usuario {
   senha?: string;
 }
 
-// ─── Definição centralizada de módulos e permissões por perfil ───────────────
-const TODOS_MODULOS = [
-  {
-    id: 'dashboard',
-    icon: '📊',
-    title: 'Dashboard Operacional',
-    description: 'Métricas e indicadores em tempo real',
-    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
-  },
-  {
-    id: 'caixa',
-    icon: '💰',
-    title: 'Controle de Caixa',
-    description: 'Aberturas, recebimentos e fechamentos',
-    perfis: [], // todos
-  },
-  {
-    id: 'escalas',
-    icon: '📅',
-    title: 'Gestão de Escalas',
-    description: 'Turnos e presenças de colaboradores',
-    perfis: [],
-  },
-  {
-    id: 'saidas',
-    icon: '💸',
-    title: 'Registro de Saídas',
-    description: 'Despesas e saídas operacionais',
-    perfis: [],
-  },
-  {
-    id: 'motoboys',
-    icon: '🏍️',
-    title: 'Gestão de Motoboys',
-    description: 'Entregas e comissões',
-    perfis: [],
-  },
-  {
-    id: 'colaboradores',
-    icon: '👥',
-    title: 'Gestão de Colaboradores',
-    description: 'Dados e históricos de funcionários',
-    perfis: [],
-  },
-  {
-    id: 'folha-pagamento',
-    icon: '💳',
-    title: 'Folha de Pagamento',
-    description: 'Cálculo e gestão de pagamentos',
-    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
-  },
-  {
-    id: 'extrato',
-    icon: '📋',
-    title: 'Extrato de Pagamentos',
-    description: 'Histórico analítico de pagamentos',
-    perfis: ['admin', 'gerente', 'Administrador', 'Gerente', 'ADMIN', 'GERENTE'],
-  },
-  {
-    id: 'unidades',
-    icon: '🏢',
-    title: 'Cadastro de Unidades',
-    description: 'Unidades de restaurante',
-    perfis: ['admin', 'Administrador', 'ADMIN'],
-  },
-  {
-    id: 'usuarios',
-    icon: '🔐',
-    title: 'Gestão de Usuários',
-    description: 'Controle de acesso e permissões',
-    perfis: ['admin', 'Administrador', 'ADMIN'],
-  },
-  {
-    id: 'usuarios-edicao',
-    icon: '✏️',
-    title: 'Edição de Usuários',
-    description: 'Editar usuários e vincular unidades',
-    perfis: ['admin', 'Administrador', 'ADMIN'],
-  },
-];
-
-const PERFIS_SISTEMA = [
-  {
-    key: 'admin',
-    label: 'Administrador',
-    icon: '👑',
-    color: '#7b1fa2',
-    bg: '#f3e5f5',
-    aliases: ['admin', 'Administrador', 'ADMIN'],
-  },
-  {
-    key: 'gerente',
-    label: 'Gerente',
-    icon: '🏅',
-    color: '#1565c0',
-    bg: '#e3f2fd',
-    aliases: ['gerente', 'Gerente', 'GERENTE', 'Manager'],
-  },
-  {
-    key: 'operador',
-    label: 'Operador',
-    icon: '👤',
-    color: '#2e7d32',
-    bg: '#e8f5e9',
-    aliases: ['operador', 'Operador', 'OPERADOR'],
-  },
-];
-
-function perfilPodeAcessar(perfilKey: string, modulo: typeof TODOS_MODULOS[0]): boolean {
-  if (modulo.perfis.length === 0) return true; // sem restrição = todos
-  const perfil = PERFIS_SISTEMA.find(p => p.key === perfilKey);
-  if (!perfil) return false;
-  return perfil.aliases.some(a => modulo.perfis.includes(a));
-}
-
 // ─── Componente principal ────────────────────────────────────────────────────
 export const Usuarios: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
-  const [aba, setAba] = useState<'usuarios' | 'novo' | 'permissoes'>('usuarios');
+  const [aba, setAba] = useState<'usuarios' | 'novo'>('usuarios');
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuarioEditando, setUsuarioEditando] = useState<Usuario | null>(null);
   const [novoUsuario, setNovoUsuario] = useState({
@@ -155,7 +47,6 @@ export const Usuarios: React.FC = () => {
   const [confirmaNovaSenha, setConfirmaNovaSenha] = useState('');
   const [loading, setLoading] = useState(true);
   const [unidades, setUnidades] = useState<any[]>([]);
-  const [perfilDetalhe, setPerfilDetalhe] = useState<string | null>(null);
 
   useEffect(() => {
     carregarUsuarios();
@@ -366,18 +257,6 @@ export const Usuarios: React.FC = () => {
     formGroup: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
     label: { fontSize: '13px', fontWeight: 600, color: '#444' },
     input: { padding: '9px 12px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px', outline: 'none' } as React.CSSProperties,
-    // permissions
-    permGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: '20px' },
-    permCard: (_bg: string, color: string): React.CSSProperties => ({
-      background: '#fff', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,.08)',
-      borderTop: `4px solid ${color}`, cursor: 'pointer', transition: 'transform .15s, box-shadow .15s',
-    }),
-    moduleBadge: (ok: boolean): React.CSSProperties => ({
-      display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px',
-      borderRadius: '6px', fontSize: '13px', marginBottom: '6px',
-      background: ok ? '#e8f5e9' : '#fafafa', color: ok ? '#2e7d32' : '#bbb',
-      border: `1px solid ${ok ? '#c8e6c9' : '#eee'}`,
-    }),
     // modal
     overlay: { position: 'fixed' as const, inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
     modal: { background: '#fff', borderRadius: '12px', padding: '28px', width: '90%', maxWidth: '540px', maxHeight: '88vh', overflowY: 'auto' as const },
@@ -522,153 +401,8 @@ export const Usuarios: React.FC = () => {
     </div>
   );
 
-  // ─── Aba Permissões por Perfil ──────────────────────────────────────────
-  const renderPermissoes = () => (
-    <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: 0, fontSize: '18px', color: '#333' }}>🔑 Permissões por Perfil</h2>
-        <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#888' }}>
-          Veja quais módulos cada perfil pode acessar no sistema.
-        </p>
-      </div>
 
-      {/* ─── Cards dos perfis ─────────────────────────────────────── */}
-      <div style={s.permGrid}>
-        {PERFIS_SISTEMA.map(perfil => {
-          const modulosAcesso = TODOS_MODULOS.filter(m => perfilPodeAcessar(perfil.key, m));
-          const total = TODOS_MODULOS.length;
-          const acessos = modulosAcesso.length;
-          const pct = Math.round((acessos / total) * 100);
-          const isOpen = perfilDetalhe === perfil.key;
-
-          return (
-            <div
-              key={perfil.key}
-              style={{ ...s.permCard(perfil.bg, perfil.color) }}
-              onClick={() => setPerfilDetalhe(isOpen ? null : perfil.key)}
-            >
-              {/* cabeçalho do card */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '28px' }}>{perfil.icon}</span>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '16px', color: perfil.color }}>{perfil.label}</div>
-                    <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{acessos} de {total} módulos</div>
-                  </div>
-                </div>
-                <span style={{ fontSize: '18px', color: '#aaa' }}>{isOpen ? '▲' : '▼'}</span>
-              </div>
-
-              {/* barra de progresso */}
-              <div style={{ height: '6px', background: '#eee', borderRadius: '3px', marginBottom: '14px' }}>
-                <div style={{ height: '6px', borderRadius: '3px', background: perfil.color, width: `${pct}%`, transition: 'width .3s' }} />
-              </div>
-
-              {/* estatísticas rápidas */}
-              <div style={{ display: 'flex', gap: '10px', marginBottom: isOpen ? '16px' : 0 }}>
-                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: perfil.bg, borderRadius: '8px' }}>
-                  <div style={{ fontWeight: 700, fontSize: '18px', color: perfil.color }}>{acessos}</div>
-                  <div style={{ fontSize: '11px', color: '#666' }}>Com acesso</div>
-                </div>
-                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: '#fafafa', borderRadius: '8px' }}>
-                  <div style={{ fontWeight: 700, fontSize: '18px', color: '#bbb' }}>{total - acessos}</div>
-                  <div style={{ fontSize: '11px', color: '#666' }}>Sem acesso</div>
-                </div>
-                <div style={{ flex: 1, textAlign: 'center', padding: '8px', background: '#fafafa', borderRadius: '8px' }}>
-                  <div style={{ fontWeight: 700, fontSize: '18px', color: '#555' }}>{pct}%</div>
-                  <div style={{ fontSize: '11px', color: '#666' }}>Cobertura</div>
-                </div>
-              </div>
-
-              {/* lista expandida de módulos */}
-              {isOpen && (
-                <div style={{ marginTop: '4px' }}>
-                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.5px' }}>Módulos</div>
-                  {TODOS_MODULOS.map(m => {
-                    const ok = perfilPodeAcessar(perfil.key, m);
-                    return (
-                      <div key={m.id} style={s.moduleBadge(ok)}>
-                        <span style={{ fontSize: '16px' }}>{m.icon}</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: ok ? 600 : 400, fontSize: '13px' }}>{m.title}</div>
-                          <div style={{ fontSize: '11px', opacity: 0.7 }}>{m.description}</div>
-                        </div>
-                        <span style={{ fontSize: '15px' }}>{ok ? '✅' : '🔒'}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ─── Tabela resumo de acesso por usuário ──────────────────── */}
-      <div style={{ marginTop: '36px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,.08)' }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#333' }}>👥 Acesso por Usuário Cadastrado</h3>
-        {usuarios.length === 0 ? (
-          <p style={{ color: '#888', fontSize: '13px' }}>Nenhum usuário cadastrado</p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Usuário</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Perfil</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontWeight: 700 }}>Status</th>
-                  {TODOS_MODULOS.map(m => (
-                    <th key={m.id} style={{ padding: '8px 6px', textAlign: 'center', background: '#f5f5f5', borderBottom: '2px solid #e0e0e0', fontSize: '18px', minWidth: '36px' }} title={m.title}>
-                      {m.icon}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {usuarios.map((u, idx) => {
-                  const pi = getPerfilInfo(u.perfil);
-                  // Find which system perfil key matches this user
-                  const perfilKey = PERFIS_SISTEMA.find(p => p.aliases.some(a => a.toLowerCase() === u.perfil.toLowerCase()))?.key || 'operador';
-                  return (
-                    <tr key={u.id} style={{ background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee', fontWeight: 600 }}>{u.nome}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }}>
-                        <span style={{ padding: '2px 8px', borderRadius: '10px', background: pi.bg, color: pi.color, fontSize: '12px', fontWeight: 600 }}>
-                          {pi.icon} {pi.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #eee' }}>
-                        <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 600, background: u.ativo ? '#e8f5e9' : '#ffebee', color: u.ativo ? '#2e7d32' : '#c62828' }}>
-                          {u.ativo ? 'Ativo' : 'Inativo'}
-                        </span>
-                      </td>
-                      {TODOS_MODULOS.map(m => {
-                        const ok = perfilPodeAcessar(perfilKey, m);
-                        return (
-                          <td key={m.id} style={{ padding: '10px 6px', textAlign: 'center', borderBottom: '1px solid #eee', fontSize: '16px' }} title={ok ? `${u.nome} pode acessar ${m.title}` : `${u.nome} não tem acesso a ${m.title}`}>
-                            {ok ? '✅' : '—'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div style={{ marginTop: '12px', fontSize: '12px', color: '#aaa', display: 'flex', gap: '16px' }}>
-          <span>✅ Tem acesso</span>
-          <span>— Sem acesso</span>
-          {TODOS_MODULOS.map(m => (
-            <span key={m.id}>{m.icon} {m.title}</span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-
-  // ─── Modal edição ─────────────────────────────────────────────────────
+    // ─── Modal edição ─────────────────────────────────────────────────────
   const renderModalEdicao = () => {
     if (!usuarioEditando) return null;
     const unitIds: string[] = Array.isArray(usuarioEditando.unitIds)
@@ -764,14 +498,12 @@ export const Usuarios: React.FC = () => {
       <div style={s.tabBar}>
         <button style={s.tab(aba === 'usuarios')} onClick={() => setAba('usuarios')}>👥 Usuários</button>
         <button style={s.tab(aba === 'novo')} onClick={() => setAba('novo')}>➕ Novo</button>
-        <button style={s.tab(aba === 'permissoes')} onClick={() => setAba('permissoes')}>🔑 Permissões por Perfil</button>
       </div>
 
       {/* conteúdo */}
       <div style={s.body}>
         {aba === 'usuarios' && renderUsuarios()}
         {aba === 'novo' && renderNovoUsuario()}
-        {aba === 'permissoes' && renderPermissoes()}
       </div>
 
       {renderModalEdicao()}

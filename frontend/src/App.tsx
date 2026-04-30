@@ -12,7 +12,7 @@ import { Unidades } from './pages/Unidades';
 import { Usuarios } from './pages/Usuarios';
 import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
-import { UsuariosEdicao } from './pages/UsuariosEdicao';
+import { PermissoesConfig } from './pages/PermissoesConfig';
 import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
@@ -106,10 +106,10 @@ function App() {
               }
             />
             <Route
-              path="/modulos/usuarios-edicao"
+              path="/modulos/permissoes"
               element={
                 <ProtectedRoute>
-                  <UsuariosEdicao />
+                  <PermissoesConfig />
                 </ProtectedRoute>
               }
             />
