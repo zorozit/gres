@@ -229,8 +229,8 @@ export const Usuarios: React.FC = () => {
 
   // ─── helper: badge de perfil ─────────────────────────────────────────────
   const getPerfilInfo = (perfil: string) => {
-    const p = PERFIS_SISTEMA.find(ps => ps.aliases.some(a => a.toLowerCase() === perfil.toLowerCase()));
-    return p || { label: perfil, icon: '👤', color: '#555', bg: '#eee' };
+    const p = PERFIS_SISTEMA.find(ps => ps.aliases.some(a => a.toLowerCase() === (perfil || '').toLowerCase()));
+    return p || { label: perfil || 'Desconhecido', icon: '👤', color: '#555', bg: '#eee' };
   };
 
   // ─── Styles ──────────────────────────────────────────────────────────────
