@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { usePermissoes } from '../contexts/PermissoesContext';
 import { Footer } from '../components/Footer';
 
 // ─── Definição canônica dos módulos do sistema ───────────────────────────────
@@ -31,63 +32,18 @@ const PERFIS = [
     desc: 'Acesso completo — gestão total da plataforma' },
 ];
 
-// ─── Permissões padrão por perfil ────────────────────────────────────────────
-// true = acesso liberado, false = bloqueado
+// Tudo bloqueado por padrão — admin configura explicitamente, sem fallbacks
 const DEFAULT_PERMISSOES: Record<string, Record<string, boolean>> = {
-  operador: {
-    dashboard: false,
-    caixa: true,
-    escalas: true,
-    saidas: false,
-    motoboys: false,
-    colaboradores: false,
-    'folha-pagamento': false,
-    extrato: false,
-    'adiantamentos-saldos': false,
-    'fechamento-dinheiro': false,
-    'importacoes-contabeis': false,
-    unidades: false,
-    usuarios: false,
-    permissoes: false,
-  },
-  gerente: {
-    dashboard: true,
-    caixa: true,
-    escalas: true,
-    saidas: true,
-    motoboys: true,
-    colaboradores: true,
-    'folha-pagamento': true,
-    extrato: true,
-    'adiantamentos-saldos': true,
-    'fechamento-dinheiro': true,
-    'importacoes-contabeis': false,
-    unidades: false,
-    usuarios: false,
-    permissoes: false,
-  },
-  admin: {
-    dashboard: true,
-    caixa: true,
-    escalas: true,
-    saidas: true,
-    motoboys: true,
-    colaboradores: true,
-    'folha-pagamento': true,
-    extrato: true,
-    'adiantamentos-saldos': true,
-    'fechamento-dinheiro': true,
-    'importacoes-contabeis': true,
-    unidades: true,
-    usuarios: true,
-    permissoes: true,
-  },
+  operador: Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
+  gerente:  Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
+  admin:    Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
 };
 
 // ─── Componente principal ────────────────────────────────────────────────────
 export const PermissoesConfig: React.FC = () => {
   const navigate = useNavigate();
   const { email, logout } = useAuth();
+  const { recarregar: recarregarContexto } = usePermissoes();
   const [permissoes, setPermissoes] = useState<Record<string, Record<string, boolean>>>(DEFAULT_PERMISSOES);
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -107,14 +63,19 @@ export const PermissoesConfig: React.FC = () => {
       if (r.ok) {
         const data = await r.json();
         if (data.permissoes) {
-          // Merge com defaults para garantir que novos módulos apareçam
-          const merged: Record<string, Record<string, boolean>> = {};
+          // Sem merge com defaults: o que está salvo é a única fonte de verdade.
+          // Garante apenas que novos módulos adicionados após o último save aparecem como false.
+          const normalizado: Record<string, Record<string, boolean>> = {};
           for (const perfil of PERFIS) {
-            merged[perfil.key] = { ...DEFAULT_PERMISSOES[perfil.key], ...data.permissoes[perfil.key] };
+            const salvo = data.permissoes[perfil.key] || {};
+            normalizado[perfil.key] = Object.fromEntries(
+              TODOS_MODULOS.map(m => [m.id, salvo[m.id] === true])
+            );
           }
-          setPermissoes(merged);
+          setPermissoes(normalizado);
           setUpdatedAt(data.updatedAt);
         }
+        // Se data.permissoes é null (nunca salvo), mantém DEFAULT_PERMISSOES (tudo false)
       }
     } catch (err) {
       console.error('Erro ao carregar permissões:', err);
@@ -147,6 +108,7 @@ export const PermissoesConfig: React.FC = () => {
         const data = await r.json();
         setUpdatedAt(data.updatedAt);
         setDirty(false);
+        await recarregarContexto(); // atualiza o contexto global para efeito imediato
         alert('✅ Permissões salvas com sucesso!');
       } else {
         alert('Erro ao salvar permissões');
@@ -160,7 +122,7 @@ export const PermissoesConfig: React.FC = () => {
 
   // ─── Resetar para defaults ──────────────────────────────────────────────
   const resetarDefaults = () => {
-    if (!window.confirm('Restaurar todas as permissões para os valores padrão?')) return;
+    if (!window.confirm('Bloquear todos os acessos de todos os perfis? Isso removerá todas as permissões configuradas.')) return;
     setPermissoes(DEFAULT_PERMISSOES);
     setDirty(true);
   };
