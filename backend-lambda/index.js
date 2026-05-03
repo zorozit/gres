@@ -260,6 +260,7 @@ exports.handler = async (event) => {
             id: user.id,
             perfil: user.perfil || 'operador', 
             unitId: user.unitId || 'default',
+            unitIds: user.unitIds || (user.unitId ? [user.unitId] : []),
             nome: user.nome
           }
         });

@@ -49,7 +49,7 @@ export const Modules: React.FC = () => {
       description: 'Controle despesas e saídas operacionais',
       path: '/modulos/saidas',
       color: '#43e97b',
-      adminRequired: false,
+      adminRequired: true,
     },
     {
       id: 'motoboys',
@@ -58,7 +58,7 @@ export const Modules: React.FC = () => {
       description: 'Administre entregas e comissões',
       path: '/modulos/motoboys',
       color: '#fa709a',
-      adminRequired: false,
+      adminRequired: true,
     },
     {
       id: 'colaboradores',
@@ -67,7 +67,7 @@ export const Modules: React.FC = () => {
       description: 'Gerencie dados e históricos de funcionários',
       path: '/modulos/colaboradores',
       color: '#30cfd0',
-      adminRequired: false,
+      adminRequired: true,
     },
     {
       id: 'folha-pagamento',

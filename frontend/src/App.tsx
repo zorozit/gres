@@ -21,6 +21,10 @@ import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
 import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
+// Perfis com acesso a módulos administrativos/financeiros
+const ADMIN_GERENTE = ['admin', 'administrador', 'gerente', 'manager'];
+const ADMIN_ONLY    = ['admin', 'administrador'];
+
 function App() {
   return (
     <Router>
@@ -33,14 +37,18 @@ function App() {
               path="/dashboard"
               element={<Navigate to="/modulos/dashboard" replace />}
             />
+
+            {/* Dashboard — admin/gerente */}
             <Route
               path="/modulos/dashboard"
               element={
-                <ProtectedRoute adminOnly={true}>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <Dashboard />
                 </ProtectedRoute>
               }
             />
+
+            {/* Tela de módulos — todos */}
             <Route
               path="/modulos"
               element={
@@ -49,6 +57,8 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Caixa — todos */}
             <Route
               path="/modulos/caixa"
               element={
@@ -57,6 +67,8 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Escalas — todos */}
             <Route
               path="/modulos/escalas"
               element={
@@ -65,86 +77,108 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Saídas — admin/gerente */}
             <Route
               path="/modulos/saidas"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <Saidas />
                 </ProtectedRoute>
               }
             />
+
+            {/* Unidades — admin */}
             <Route
               path="/modulos/unidades"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                   <Unidades />
                 </ProtectedRoute>
               }
             />
+
+            {/* Usuários — admin */}
             <Route
               path="/modulos/usuarios"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                   <Usuarios />
                 </ProtectedRoute>
               }
             />
+
+            {/* Colaboradores — admin/gerente */}
             <Route
               path="/modulos/colaboradores"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <Colaboradores />
                 </ProtectedRoute>
               }
             />
+
+            {/* Motoboys — admin/gerente */}
             <Route
               path="/modulos/motoboys"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <Motoboys />
                 </ProtectedRoute>
               }
             />
+
+            {/* Permissões — admin */}
             <Route
               path="/modulos/permissoes"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                   <PermissoesConfig />
                 </ProtectedRoute>
               }
             />
+
+            {/* Folha de pagamento — admin/gerente */}
             <Route
               path="/modulos/folha-pagamento"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <FolhaPagamento />
                 </ProtectedRoute>
               }
             />
+
+            {/* Extrato — admin/gerente */}
             <Route
               path="/modulos/extrato"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <Extrato />
                 </ProtectedRoute>
               }
             />
+
+            {/* Empréstimos e saldos — admin/gerente */}
             <Route
               path="/modulos/adiantamentos-saldos"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={ADMIN_GERENTE}>
                   <AdiantamentosSaldos />
                 </ProtectedRoute>
               }
             />
+
+            {/* Importações contábeis — admin */}
             <Route
               path="/modulos/importacoes-contabeis"
               element={
-                <ProtectedRoute adminOnly={true}>
+                <ProtectedRoute allowedRoles={ADMIN_ONLY}>
                   <ImportacoesContabeis />
                 </ProtectedRoute>
               }
             />
+
+            {/* Fechamento dinheiro — todos */}
             <Route
               path="/modulos/fechamento-dinheiro"
               element={
@@ -153,6 +187,7 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>
         </UnitProvider>

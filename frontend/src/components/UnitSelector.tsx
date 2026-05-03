@@ -5,7 +5,9 @@ import '../styles/UnitSelector.css';
 
 export const UnitSelector: React.FC = () => {
   const { activeUnit, setActiveUnit, userUnits, setUserUnits, isLoadingUnits, setIsLoadingUnits } = useUnit();
-  const { token } = useAuth();
+  const { token, userUnitIds, user } = useAuth();
+  const userRole = (user as any)?.perfil || localStorage.getItem('user_role') || '';
+  const isAdmin = ['admin', 'Admin', 'Administrador', 'ADMIN'].includes(userRole);
 
   // Carregar unidades do usuário
   useEffect(() => {
@@ -22,12 +24,27 @@ export const UnitSelector: React.FC = () => {
         });
 
         if (response.ok) {
-          const units = await response.json();
+          const allUnits = await response.json();
+
+          // Admin vê todas; outros apenas as unidades vinculadas ao seu cadastro
+          let units = allUnits;
+          if (!isAdmin && userUnitIds && userUnitIds.length > 0) {
+            units = allUnits.filter((u: any) => {
+              const cnpj = (u.id || u.cnpj || '').replace(/\D/g, '').substring(0, 14);
+              return userUnitIds.includes(cnpj);
+            });
+          }
+
           setUserUnits(units);
 
           // Se não há unidade ativa e há unidades disponíveis, selecionar a primeira
           if (!activeUnit && units.length > 0) {
             setActiveUnit(units[0]);
+          }
+          // Se a unidade ativa não está nas unidades permitidas, resetar para a primeira
+          if (activeUnit && units.length > 0) {
+            const ativa = units.find((u: any) => u.id === activeUnit.id);
+            if (!ativa) setActiveUnit(units[0]);
           }
         }
       } catch (error) {
@@ -38,7 +55,8 @@ export const UnitSelector: React.FC = () => {
     };
 
     loadUnits();
-  }, [token, setUserUnits, setActiveUnit, setIsLoadingUnits, activeUnit]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const handleUnitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const unitId = e.target.value;

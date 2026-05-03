@@ -9,6 +9,7 @@ interface AuthContextType {
   error: string | null;
   email?: string;
   token?: string;
+  userUnitIds?: string[];  // unidades que o usuário tem acesso
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -60,11 +61,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error(data.error || 'Falha na autenticação');
       }
 
-      // Normaliza unitId: extrai apenas os 14 dígitos do CNPJ
       const rawUnitId = data.user.unitId || '';
       const unitIdClean = rawUnitId.replace(/\D/g, '').substring(0, 14);
+      // unitIds: array de CNPJs das unidades do usuário
+      const rawUnitIds: string[] = data.user.unitIds || (rawUnitId ? [rawUnitId] : []);
+      const unitIdsClean = rawUnitIds.map((u: string) => u.replace(/\D/g, '').substring(0, 14)).filter(Boolean);
 
-      const userData = { email, perfil: data.user.perfil, unitId: unitIdClean, id: data.user.id };
+      const userData = { email, perfil: data.user.perfil, unitId: unitIdClean, unitIds: unitIdsClean, id: data.user.id };
       setUser(userData);
       setIsAuthenticated(true);
       // Persiste todas as chaves usadas pelo app
@@ -74,8 +77,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('user_role', data.user.perfil);
       localStorage.setItem('user_unit', unitIdClean);
       localStorage.setItem('unit_id', unitIdClean);       // usado em Saidas e outros
+      localStorage.setItem('user_unit_ids', JSON.stringify(unitIdsClean)); // array de unidades
       localStorage.setItem('user_id', data.user.id || '');
-      console.log('Login bem-sucedido! unitId (CNPJ):', unitIdClean, '| userId:', data.user.id);
+      console.log('Login bem-sucedido! unitId (CNPJ):', unitIdClean, '| unitIds:', unitIdsClean, '| userId:', data.user.id);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
       setError(errorMsg);
@@ -96,10 +100,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('user_role');
     localStorage.removeItem('user_unit');
     localStorage.removeItem('unit_id');
+    localStorage.removeItem('user_unit_ids');
     localStorage.removeItem('user_id');
   };
 
   const token = localStorage.getItem('token') || undefined;
+  const userUnitIds: string[] = (() => {
+    try { return JSON.parse(localStorage.getItem('user_unit_ids') || '[]'); }
+    catch { return []; }
+  })();
 
   // loading = true enquanto sessão não verificada OU durante o submit do login
   const loading = !sessionChecked || loginLoading;
@@ -113,7 +122,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading,
       error,
       email: user?.email,
-      token
+      token,
+      userUnitIds
     }}>
       {children}
     </AuthContext.Provider>
