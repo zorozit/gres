@@ -701,24 +701,12 @@ export default function FolhaPagamento() {
     const saldosEfetivos = saldosOverride ?? saldosEspeciais;
     let semanas: { inicio: Date; fim: Date }[];
     if (periodoCustomAtivo) {
-      // Gerar semanas de todos os meses tocados pelo período e filtrar as que se sobrepõem ao range
-      const mesesAlvo = mesesNoRange(periodoIni, periodoFim);
-      const todas: { inicio: Date; fim: Date }[] = [];
-      for (const mm of mesesAlvo) {
-        const [yy, mmN] = mm.split('-').map(Number);
-        todas.push(...semanasFechamento(yy, mmN));
-      }
-      // Deduplicar (caso uma semana de fechamento apareça em dois meses)
-      const seen = new Set<string>();
-      const dedup: { inicio: Date; fim: Date }[] = [];
-      for (const s of todas) {
-        const k = `${fmtDataISO(s.inicio)}|${fmtDataISO(s.fim)}`;
-        if (!seen.has(k)) { seen.add(k); dedup.push(s); }
-      }
-      // Manter apenas semanas que tocam o período [periodoIni, periodoFim]
-      const ini = new Date(periodoIni + 'T00:00:00');
-      const fim = new Date(periodoFim + 'T00:00:00');
-      semanas = dedup.filter(s => s.fim >= ini && s.inicio <= fim);
+      // Período custom: gera UMA única "semana" cobrindo EXATAMENTE o range selecionado.
+      // (resolve o caso de ranges que cruzam meses ou não se alinham com semanas civis)
+      semanas = [{
+        inicio: new Date(periodoIni + 'T00:00:00'),
+        fim:    new Date(periodoFim + 'T00:00:00'),
+      }];
     } else {
       const [ano, mes] = mesAno.split('-').map(Number);
       semanas = semanasFechamento(ano, mes);
@@ -774,16 +762,11 @@ export default function FolhaPagamento() {
     const fechamentos: FechamentoSemanalFreelancer[] = semanas.map(({ inicio, fim }) => {
       const isoInicioBase = fmtDataISO(inicio);
       const isoFimBase = fmtDataISO(fim);
-      // Permitir customização do período por semana
-      const efBase = editFechamento[isoFimBase] || {};
-      let isoInicio = efBase.dataIniCustom || isoInicioBase;
-      let isoFim    = efBase.dataFimCustom || isoFimBase;
-      // Quando período global está ativo, clipar a semana ao range selecionado
-      // (ex: semana 27/04–03/05 com range 28/04–03/05 vira 28/04–03/05)
-      if (periodoCustomAtivo) {
-        if (isoInicio < periodoIni) isoInicio = periodoIni;
-        if (isoFim    > periodoFim) isoFim    = periodoFim;
-      }
+      // Período CUSTOM GLOBAL: range é a única fonte de verdade, ignora editFechamento
+      // Período MENSAL: respeita ajustes manuais salvos no editFechamento
+      const efBase = periodoCustomAtivo ? {} : (editFechamento[isoFimBase] || {});
+      let isoInicio = (efBase as any).dataIniCustom || isoInicioBase;
+      let isoFim    = (efBase as any).dataFimCustom || isoFimBase;
       // Label dinâmico reflete o período real
       const [iniD, iniM] = isoInicio.split('-').slice(1).map(Number);
       const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
@@ -1069,7 +1052,7 @@ export default function FolhaPagamento() {
       return {
         semanaLabel: periodoCustomAtivo
           ? labelPeriodo
-          : (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} - ${fmtDataBR(fim)}`,
+          : ((efBase as any).dataIniCustom || (efBase as any).dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} - ${fmtDataBR(fim)}`,
         dataFechamento: isoFim, // usa o fim efetivo como chave de pagamento
         dataFechamentoBase: isoFimBase, // chave original (sempre da semana, para editFechamento)
         dataInicioBase: isoInicio, // início efetivo (já clipado se período global ativo)
@@ -3465,9 +3448,13 @@ export default function FolhaPagamento() {
                 {/* Fechamento por semana */}
                 {fechamentosFreelancer.map((fech) => {
                   const key = fech.dataFechamentoBase;
-                  const ef = editFechamento[key] || { combustivel: '0', extra: '0', desconto: '0', obs: '' };
+                  const efRaw = editFechamento[key] || { combustivel: '0', extra: '0', desconto: '0', obs: '' };
+                  // Período CUSTOM GLOBAL: oculta os ajustes manuais por semana (irrelevantes)
+                  const ef: any = periodoCustomAtivo
+                    ? { ...efRaw, dataIniCustom: '', dataFimCustom: '' }
+                    : efRaw;
                   const updateEf = (campo: string, val: string) => setEditFechamento(prev => ({
-                    ...prev, [key]: { ...ef, [campo]: val }
+                    ...prev, [key]: { ...(prev[key] || efRaw), [campo]: val }
                   }));
                   const periodoCustomizado = !!(ef.dataIniCustom || ef.dataFimCustom);
                   return (
@@ -3479,26 +3466,33 @@ export default function FolhaPagamento() {
                             📅 Semana {fech.semanaLabel}
                             {periodoCustomizado && <span style={{ fontSize: '11px', marginLeft: '8px', backgroundColor: '#f3e5f5', color: '#7b1fa2', padding: '1px 6px', borderRadius: '8px' }}>período ajustado</span>}
                           </h4>
-                          {/* Ajuste de período */}
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '12px', color: '#888' }}>Período:</span>
-                            <input type="date" value={ef.dataIniCustom || fech.dataInicioBase}
-                              onChange={e => updateEf('dataIniCustom', e.target.value)}
-                              style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
-                            <span style={{ fontSize: '12px', color: '#888' }}>até</span>
-                            <input type="date" value={ef.dataFimCustom || (fech as any).dataFimEfetivo || fech.dataFechamentoBase}
-                              onChange={e => updateEf('dataFimCustom', e.target.value)}
-                              style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
-                            {periodoCustomizado && (
-                              <button onClick={() => setEditFechamento(prev => ({
-                                ...prev, [key]: { ...ef, dataIniCustom: '', dataFimCustom: '' }
-                              }))}
-                                style={{ padding: '2px 8px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#f3e5f5', color: '#7b1fa2', cursor: 'pointer' }}
-                                title="Restaurar período original">
-                                ↩ restaurar
-                              </button>
-                            )}
-                          </div>
+                          {/* Ajuste de período (oculto quando período global está ativo) */}
+                          {!periodoCustomAtivo && (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '12px', color: '#888' }}>Período:</span>
+                              <input type="date" value={ef.dataIniCustom || fech.dataInicioBase}
+                                onChange={e => updateEf('dataIniCustom', e.target.value)}
+                                style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
+                              <span style={{ fontSize: '12px', color: '#888' }}>até</span>
+                              <input type="date" value={ef.dataFimCustom || (fech as any).dataFimEfetivo || fech.dataFechamentoBase}
+                                onChange={e => updateEf('dataFimCustom', e.target.value)}
+                                style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
+                              {periodoCustomizado && (
+                                <button onClick={() => setEditFechamento(prev => ({
+                                  ...prev, [key]: { ...ef, dataIniCustom: '', dataFimCustom: '' }
+                                }))}
+                                  style={{ padding: '2px 8px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#f3e5f5', color: '#7b1fa2', cursor: 'pointer' }}
+                                  title="Restaurar período original">
+                                  ↩ restaurar
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {periodoCustomAtivo && (
+                            <div style={{ fontSize: '12px', color: '#7b1fa2', fontStyle: 'italic' }}>
+                              Período: <strong>{periodoIni}</strong> até <strong>{periodoFim}</strong> (definido no filtro global)
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '13px', color: '#666' }}>Combustível:</span>
