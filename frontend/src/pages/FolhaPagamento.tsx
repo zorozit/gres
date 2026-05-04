@@ -324,6 +324,10 @@ export default function FolhaPagamento() {
 
   const hoje = new Date();
   const [mesAno, setMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
+  // Filtro global de período custom (sobrepõe mesAno quando preenchido)
+  const [periodoIni, setPeriodoIni] = useState<string>('');
+  const [periodoFim, setPeriodoFim] = useState<string>('');
+  const periodoCustomAtivo = !!(periodoIni && periodoFim);
   const [loading, setLoading] = useState(false);
   const [aba, setAba] = useState<'clt' | 'freelancers' | 'dobras'>('clt');
 
@@ -362,7 +366,7 @@ export default function FolhaPagamento() {
   const [dobrasFiltroIni, setDobrasFiltroIni] = useState<string>('');
   const [dobrasFiltroFim, setDobrasFiltroFim] = useState<string>('');
 
-  useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno]);
+  useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno, periodoIni, periodoFim]);
 
   const abrirHistorico = async (colaboradorId: string) => {
     try {
@@ -383,31 +387,65 @@ export default function FolhaPagamento() {
   const responsavelEmail = authEmail || (user as any)?.email || localStorage.getItem('user_email') || 'sistema';
   const responsavelId    = localStorage.getItem('user_id') || '';
 
+  // Lista de meses (YYYY-MM) entre dois ISO dates, inclusivo
+  const mesesNoRange = (iniIso: string, fimIso: string): string[] => {
+    const [ai, mi] = iniIso.split('-').map(Number);
+    const [af, mf] = fimIso.split('-').map(Number);
+    const out: string[] = [];
+    let y = ai, m = mi;
+    while (y < af || (y === af && m <= mf)) {
+      out.push(`${y}-${String(m).padStart(2, '0')}`);
+      m++;
+      if (m > 12) { m = 1; y++; }
+    }
+    return out;
+  };
+
   const carregarDados = async () => {
     setLoading(true);
     try {
+      // Determinar período de carregamento
+      // - Modo mensal: cobre o mês inteiro de mesAno
+      // - Modo período custom: cobre todos os meses tocados pelo range (1 ou 2+)
       const [ano, mes] = mesAno.split('-').map(Number);
-      const dataInicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
-      const dataFim = new Date(ano, mes, 0).toISOString().split('T')[0];
+      const mesalMesAnoInicio = `${ano}-${String(mes).padStart(2,'0')}-01`;
+      const mesalMesAnoFim    = new Date(ano, mes, 0).toISOString().split('T')[0];
+      const dataInicio = periodoCustomAtivo ? periodoIni : mesalMesAnoInicio;
+      const dataFim    = periodoCustomAtivo ? periodoFim : mesalMesAnoFim;
 
-      // Previous 3 months to catch pending saídas
-      const prevDate = new Date(ano, mes - 4, 1);
+      // Meses tocados pelo período (para fetch de folha/escalas/controle-motoboy)
+      const mesesAlvo = periodoCustomAtivo
+        ? mesesNoRange(periodoIni, periodoFim)
+        : [mesAno];
+
+      // Previous 3 months to catch pending saídas (a partir do início efetivo)
+      const [aIni, mIni] = dataInicio.split('-').map(Number);
+      const prevDate = new Date(aIni, mIni - 4, 1);
       const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-01`;
 
       // Histórico longo para cálculo de saldo de adiantamento especial (24 meses)
-      const histLongoDate = new Date(parseInt(String(ano)), parseInt(String(mes)) - 25, 1);
+      const histLongoDate = new Date(aIni, mIni - 25, 1);
       const histLongoIni = `${histLongoDate.getFullYear()}-${String(histLongoDate.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [rC, rF, rE, rS, rSPend, rSHist] = await Promise.all([
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
-        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
-        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+      const auth = { headers: { Authorization: `Bearer ${token()}` } };
+      // Fetches de folha/escalas/controle-motoboy precisam ser por mês (backend filtra por &mes=)
+      const folhaFetches = mesesAlvo.map(mm =>
+        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
+      );
+      const escalaFetches = mesesAlvo.map(mm =>
+        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
+      );
+      const [rC, foRs, esRs, rS, rSPend, rSHist] = await Promise.all([
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
+        Promise.all(folhaFetches),
+        Promise.all(escalaFetches),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(() => null),
         // Pending saídas from previous 3 months
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(() => null),
         // Histórico longo para saldo de adiantamento especial
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, { headers: { Authorization: `Bearer ${token()}` } }).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, auth).catch(() => null),
       ]);
+
 
       const dC = await rC.json();
       const todosColabs: Colaborador[] = (Array.isArray(dC) ? dC : []).filter((c: Colaborador) => c.ativo !== false);
@@ -445,32 +483,47 @@ export default function FolhaPagamento() {
         } as Motoboy));
       setMotoboys(motos);
 
-      if (rE?.ok) {
-        const dE = await rE.json();
-        setEscalas(Array.isArray(dE) ? dE : []);
+      // Mesclar escalas de todos os meses tocados pelo período
+      {
+        const escalasAcc: any[] = [];
+        for (const r of esRs) {
+          if (!r?.ok) continue;
+          try {
+            const dE = await r.json();
+            if (Array.isArray(dE)) escalasAcc.push(...dE);
+          } catch { /* ignore */ }
+        }
+        setEscalas(escalasAcc);
       }
 
+      // controle-motoboy: precisa buscar por motoboy + cada mês do range
       const ctrlMap: Record<string, ControleDia[]> = {};
       await Promise.all(motos.map(async m => {
         try {
-          const r = await fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mesAno}&unitId=${unitId}`, {
-            headers: { Authorization: `Bearer ${token()}` },
-          });
-          const d = await r.json();
-          if (Array.isArray(d)) {
-            // Indexar pelo ID do motoboy E pelo CPF (para cruzar com colaborador)
-            ctrlMap[m.id] = d;
-            if (m.cpf) ctrlMap[m.cpf] = d;
-          }
+          const partes = await Promise.all(mesesAlvo.map(mm =>
+            fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
+              .then(r => r.ok ? r.json() : [])
+              .catch(() => [])
+          ));
+          const d: ControleDia[] = partes.flat() as ControleDia[];
+          // Indexar pelo ID do motoboy E pelo CPF (para cruzar com colaborador)
+          ctrlMap[m.id] = d as ControleDia[];
+          if (m.cpf) ctrlMap[m.cpf] = d as ControleDia[];
         } catch { ctrlMap[m.id] = []; }
       }));
       setControlesMap(ctrlMap);
 
-      if (rF?.ok) {
-        const dF = await rF.json();
-        setFolhasDB(Array.isArray(dF) ? dF : []);
-      } else {
-        setFolhasDB([]);
+      // Mesclar folhas-pagamento de todos os meses tocados
+      {
+        const folhasAcc: any[] = [];
+        for (const r of foRs) {
+          if (!r?.ok) continue;
+          try {
+            const dF = await r.json();
+            if (Array.isArray(dF)) folhasAcc.push(...dF);
+          } catch { /* ignore */ }
+        }
+        setFolhasDB(folhasAcc);
       }
 
       // Carregar saídas do período
@@ -529,7 +582,7 @@ export default function FolhaPagamento() {
     if (freelancers.length > 0) {
       calcularFechamentosFreelancer();
     }
-  }, [freelancers, escalas, mesAno, saidasPendentesAnt, folhasDB, saidasPeriodo]);
+  }, [freelancers, escalas, mesAno, periodoIni, periodoFim, saidasPendentesAnt, folhasDB, saidasPeriodo]);
 
   /* ── Cálculo CLT ─────────────────────────────────────────── */
   const calcularTodasFolhas = (): FolhaMensal[] => {
@@ -646,8 +699,30 @@ export default function FolhaPagamento() {
   /* ── Cálculo Freelancers ─────────────────────────────────── */
   const calcularFechamentosFreelancer = (saldosOverride?: Record<string, number>) => {
     const saldosEfetivos = saldosOverride ?? saldosEspeciais;
-    const [ano, mes] = mesAno.split('-').map(Number);
-    const semanas = semanasFechamento(ano, mes);
+    let semanas: { inicio: Date; fim: Date }[];
+    if (periodoCustomAtivo) {
+      // Gerar semanas de todos os meses tocados pelo período e filtrar as que se sobrepõem ao range
+      const mesesAlvo = mesesNoRange(periodoIni, periodoFim);
+      const todas: { inicio: Date; fim: Date }[] = [];
+      for (const mm of mesesAlvo) {
+        const [yy, mmN] = mm.split('-').map(Number);
+        todas.push(...semanasFechamento(yy, mmN));
+      }
+      // Deduplicar (caso uma semana de fechamento apareça em dois meses)
+      const seen = new Set<string>();
+      const dedup: { inicio: Date; fim: Date }[] = [];
+      for (const s of todas) {
+        const k = `${fmtDataISO(s.inicio)}|${fmtDataISO(s.fim)}`;
+        if (!seen.has(k)) { seen.add(k); dedup.push(s); }
+      }
+      // Manter apenas semanas que tocam o período [periodoIni, periodoFim]
+      const ini = new Date(periodoIni + 'T00:00:00');
+      const fim = new Date(periodoFim + 'T00:00:00');
+      semanas = dedup.filter(s => s.fim >= ini && s.inicio <= fim);
+    } else {
+      const [ano, mes] = mesAno.split('-').map(Number);
+      semanas = semanasFechamento(ano, mes);
+    }
 
     // Dias já pagos neste mês - NOVO MODELO: 1 registro por dia/turno (tipo='freelancer-dia')
     // Formato id: folha-{colabId}-{YYYY-MM-DD}-{Dia|Noite}
@@ -2549,7 +2624,28 @@ export default function FolhaPagamento() {
         <div style={{ ...s.card, marginBottom: '16px', display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
             <label style={s.label}>Mês / Ano</label>
-            <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
+            <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)}
+              disabled={periodoCustomAtivo}
+              style={{ ...s.input, width: '150px', opacity: periodoCustomAtivo ? 0.5 : 1 }} />
+          </div>
+          <div style={{ borderLeft: '1px solid #e0e0e0', paddingLeft: '14px' }}>
+            <label style={{ ...s.label, color: periodoCustomAtivo ? '#7b1fa2' : '#666' }}>
+              Período customizado {periodoCustomAtivo && <span style={{ fontSize: '10px', backgroundColor: '#f3e5f5', color: '#7b1fa2', padding: '1px 6px', borderRadius: '8px', marginLeft: '6px' }}>ativo</span>}
+            </label>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <input type="date" value={periodoIni} onChange={e => setPeriodoIni(e.target.value)}
+                style={{ ...s.input, width: '140px', borderColor: periodoCustomAtivo ? '#ab47bc' : undefined }} />
+              <span style={{ fontSize: '12px', color: '#888' }}>até</span>
+              <input type="date" value={periodoFim} onChange={e => setPeriodoFim(e.target.value)}
+                style={{ ...s.input, width: '140px', borderColor: periodoCustomAtivo ? '#ab47bc' : undefined }} />
+              {periodoCustomAtivo && (
+                <button
+                  onClick={() => { setPeriodoIni(''); setPeriodoFim(''); }}
+                  style={{ padding: '6px 10px', fontSize: '11px', border: '1px solid #ab47bc', backgroundColor: '#fff', color: '#7b1fa2', borderRadius: '4px', cursor: 'pointer' }}
+                  title="Limpar período e voltar ao filtro mensal"
+                >✕ limpar</button>
+              )}
+            </div>
           </div>
           <button onClick={carregarDados} style={s.btn('#1976d2')}>🔄 Atualizar</button>
           <button onClick={exportarXLSX} disabled={folhasFiltradas.length === 0 && fechamentosFreelancer.length === 0} style={s.btn('#7b1fa2')}>
@@ -2558,6 +2654,11 @@ export default function FolhaPagamento() {
           <button onClick={() => navigate('/modulos/extrato')} style={s.btn('#00838f')}>
             📋 Extrato
           </button>
+          {periodoCustomAtivo && (
+            <div style={{ width: '100%', padding: '8px 12px', backgroundColor: '#fff3e0', borderRadius: '6px', borderLeft: '3px solid #fb8c00', fontSize: '12px', color: '#5d4037' }}>
+              ⚠️ <strong>Período customizado ativo</strong> ({periodoIni} a {periodoFim}) — aplicado às abas <strong>Freelancers</strong> e <strong>Dobras CLT</strong>. A aba <strong>Colaboradores CLT</strong> continua mensal (regime de adiantamento dia 20 + diferença dia 05).
+            </div>
+          )}
         </div>
 
         {/* Cards resumo */}
@@ -2763,12 +2864,19 @@ export default function FolhaPagamento() {
 
         {/* ── ABA DOBRAS SEMANAIS ─────────────────────────────── */}
         {aba === 'dobras' && (() => {
-          const [anoM, mesM] = mesAno.split('-').map(Number);
+          // Range base: período custom (se ativo) ou mês selecionado
+          let primDia: Date, ultDia: Date;
+          if (periodoCustomAtivo) {
+            primDia = new Date(periodoIni + 'T00:00:00');
+            ultDia  = new Date(periodoFim + 'T00:00:00');
+          } else {
+            const [anoM, mesM] = mesAno.split('-').map(Number);
+            primDia = new Date(anoM, mesM - 1, 1);
+            ultDia  = new Date(anoM, mesM, 0);
+          }
 
           interface SemanaInfo { label: string; inicio: string; fim: string; proxSeg: string; }
           const semanas: SemanaInfo[] = [];
-          const primDia = new Date(anoM, mesM - 1, 1);
-          const ultDia = new Date(anoM, mesM, 0);
           let cur = new Date(primDia);
           // Start from Monday of first week
           const dow0 = cur.getDay();
@@ -2828,9 +2936,12 @@ export default function FolhaPagamento() {
           const areasP = [...new Set(pessoas.map(p => p.area || 'Sem Área'))].sort();
 
           // Aplicar filtro de período nas semanas
+          // - Quando período global está ativo, ele tem prioridade sobre os filtros locais da aba
+          const filtroIniEf = periodoCustomAtivo ? periodoIni : dobrasFiltroIni;
+          const filtroFimEf = periodoCustomAtivo ? periodoFim : dobrasFiltroFim;
           const semanasFiltradas = semanas.filter(sem => {
-            if (dobrasFiltroIni && sem.fim < dobrasFiltroIni) return false;
-            if (dobrasFiltroFim && sem.inicio > dobrasFiltroFim) return false;
+            if (filtroIniEf && sem.fim < filtroIniEf) return false;
+            if (filtroFimEf && sem.inicio > filtroFimEf) return false;
             return true;
           });
 
@@ -2840,28 +2951,35 @@ export default function FolhaPagamento() {
                 📅 <strong>Dobras Semanais CLT</strong> — controle semanal de turnos extras (exceto Motoboys, que possuem módulo próprio). Valores editáveis. Marque como Pago para registrar data e log.
               </div>
 
-              {/* Filtro de período */}
-              <div style={{ ...s.card, marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap', padding: '12px 16px' }}>
-                <div>
-                  <label style={{ ...s.label, fontSize: '11px' }}>Período — de</label>
-                  <input type="date" value={dobrasFiltroIni}
-                    onChange={e => setDobrasFiltroIni(e.target.value)}
-                    style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+              {/* Filtro de período (oculto quando período global está ativo) */}
+              {!periodoCustomAtivo && (
+                <div style={{ ...s.card, marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap', padding: '12px 16px' }}>
+                  <div>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Período — de</label>
+                    <input type="date" value={dobrasFiltroIni}
+                      onChange={e => setDobrasFiltroIni(e.target.value)}
+                      style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+                  </div>
+                  <div>
+                    <label style={{ ...s.label, fontSize: '11px' }}>até</label>
+                    <input type="date" value={dobrasFiltroFim}
+                      onChange={e => setDobrasFiltroFim(e.target.value)}
+                      style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+                  </div>
+                  <button onClick={() => { setDobrasFiltroIni(''); setDobrasFiltroFim(''); }}
+                    style={{ ...s.btn('#78909c'), padding: '5px 12px', fontSize: '12px' }}>
+                    ✕ Limpar
+                  </button>
+                  <span style={{ fontSize: '11px', color: '#888', alignSelf: 'center' }}>
+                    {semanasFiltradas.length} de {semanas.length} semanas
+                  </span>
                 </div>
-                <div>
-                  <label style={{ ...s.label, fontSize: '11px' }}>até</label>
-                  <input type="date" value={dobrasFiltroFim}
-                    onChange={e => setDobrasFiltroFim(e.target.value)}
-                    style={{ ...s.input, width: '140px', fontSize: '12px', padding: '5px 8px' }} />
+              )}
+              {periodoCustomAtivo && (
+                <div style={{ marginBottom: '12px', padding: '8px 14px', backgroundColor: '#f3e5f5', borderLeft: '3px solid #ab47bc', borderRadius: '4px', fontSize: '12px', color: '#6a1b9a' }}>
+                  Período global ativo: <strong>{periodoIni} a {periodoFim}</strong> — {semanasFiltradas.length} de {semanas.length} semanas dentro do range.
                 </div>
-                <button onClick={() => { setDobrasFiltroIni(''); setDobrasFiltroFim(''); }}
-                  style={{ ...s.btn('#78909c'), padding: '5px 12px', fontSize: '12px' }}>
-                  ✕ Limpar
-                </button>
-                <span style={{ fontSize: '11px', color: '#888', alignSelf: 'center' }}>
-                  {semanasFiltradas.length} de {semanas.length} semanas
-                </span>
-              </div>
+              )}
 
               {loading ? (
                 <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
