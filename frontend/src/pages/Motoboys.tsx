@@ -328,27 +328,6 @@ export const Motoboys: React.FC = () => {
 
   // Modo de visualização do controle — padrão sempre Manual
   const [modoVisualizacao, setModoVisualizacao] = useState<'integrado' | 'manual'>('manual');
-  const [mostrarSaidas, setMostrarSaidas] = useState(false);
-
-  // Status de pagamento semanal (folha-pagamento)
-  const [pagamentosSemana, setPagamentosSemana] = useState<any[]>([]);
-  const [salvandoPgtoSemana, setSalvandoPgtoSemana] = useState<string | null>(null);
-
-  // Modal de pagamento motoboy
-  interface ModalPgtoMoto {
-    // semana é opcional: quando paga avulso, não precisa
-    semana?: { inicio: string; fim: string; label: string };
-    motoboy: Motoboy;
-    linhas: any[]; // linhas do controle (qualquer período)
-    titulo?: string; // "Semana XX-YY" ou "Pagamento avulso" ou "Dia X"
-  }
-  const [modalPgtoMoto, setModalPgtoMoto] = useState<ModalPgtoMoto | null>(null);
-  const [pgtoForma, setPgtoForma] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
-  const [pgtoData, setPgtoData] = useState(new Date().toISOString().split('T')[0]);
-  const [pgtoDiasSel, setPgtoDiasSel] = useState<Record<string, boolean>>({});
-  const [salvandoModal, setSalvandoModal] = useState(false);
-  // Seleção de dias avulsos (independente de semana) — checkbox na tabela
-  const [diasSelAvulso, setDiasSelAvulso] = useState<Record<string, boolean>>({});
 
   useEffect(() => { fetchMotoboys(); }, [unitId]);
 
@@ -524,155 +503,6 @@ export const Motoboys: React.FC = () => {
     finally { setLoadingCtrl(false); }
   }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas, escalasControle, periodoCustomAtivo, periodoIni, periodoFim]);
 
-  /* ── Pagamentos semanais (folha-pagamento) ───────────────── */
-  const fetchPagamentosSemana = useCallback(async () => {
-    if (!ctrlMotoboyId || !ctrlMesAno || !unitId) return;
-    try {
-      const token = localStorage.getItem('auth_token');
-      const headers = { Authorization: `Bearer ${token}` };
-      let mesesAlvo: string[];
-      if (periodoCustomAtivo) {
-        const [ai, mi] = periodoIni.split('-').map(Number);
-        const [af, mf] = periodoFim.split('-').map(Number);
-        mesesAlvo = [];
-        let y = ai, m = mi;
-        while (y < af || (y === af && m <= mf)) {
-          mesesAlvo.push(`${y}-${String(m).padStart(2, '0')}`);
-          m++;
-          if (m > 12) { m = 1; y++; }
-        }
-      } else {
-        mesesAlvo = [ctrlMesAno];
-      }
-      const partes = await Promise.all(mesesAlvo.map(mm =>
-        fetch(`${apiUrl}/folha-pagamento?colaboradorId=${ctrlMotoboyId}&mes=${mm}&unitId=${unitId}`, { headers })
-          .then(r => r.ok ? r.json() : [])
-          .catch(() => [])
-      ));
-      setPagamentosSemana(partes.flat() as any[]);
-    } catch (e) { console.error(e); }
-  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, periodoCustomAtivo, periodoIni, periodoFim]);
-
-  const abrirModalPgto = (sem: { inicio: string; fim: string; label: string }) => {
-    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-    if (!motoboy) return;
-    const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim && R(l.vlVariavel) > 0);
-    // Pre-selecionar todos os dias com variável > 0 e não pagos
-    const pgSemana = pagamentosSemana.find(p => p.semana === sem.fim || p.dataFechamento === sem.fim);
-    const diasJaPagosSet = new Set<string>(
-      (pgSemana?.diasPagos || []).map((d: any) => d.data || d)
-    );
-    const sel: Record<string, boolean> = {};
-    for (const l of linhasSem) {
-      sel[l.data] = !diasJaPagosSet.has(l.data);
-    }
-    setPgtoDiasSel(sel);
-    setPgtoForma('PIX');
-    setPgtoData(new Date().toISOString().split('T')[0]);
-    setModalPgtoMoto({ semana: sem, motoboy, linhas: linhasSem });
-  };
-
-  const confirmarPagamentoModal = async () => {
-    if (!modalPgtoMoto || !ctrlMotoboyId) return;
-    setSalvandoModal(true);
-    try {
-      const token = localStorage.getItem('auth_token');
-      const { semana, motoboy, titulo } = modalPgtoMoto;
-      const diasSelecionados = modalPgtoMoto.linhas.filter(l => pgtoDiasSel[l.data]);
-      if (diasSelecionados.length === 0) { alert('Selecione ao menos um dia.'); setSalvandoModal(false); return; }
-      const totalFinal = parseFloat(diasSelecionados.reduce((s: number, l: any) => s + R(l.vlVariavel), 0).toFixed(2));
-      const diasPagos = diasSelecionados.map((l: any) => ({ data: l.data, valor: R(l.vlVariavel) }));
-      // Quando não tem semana definida (avulso): usa o domingo da semana de cada dia como chave (ou só a data do primeiro)
-      const semanaChave = semana?.fim || diasSelecionados[diasSelecionados.length-1].data;
-      const labelDescr = semana ? `Semana ${semana.label}` : (titulo || 'Pagamento avulso');
-      const payload = {
-        colaboradorId: ctrlMotoboyId,
-        mes: ctrlMesAno,
-        semana: semanaChave,
-        unitId,
-        pago: true,
-        dataPagamento: pgtoData,
-        diasPagos,
-        totalBruto: totalFinal,
-        totalLiquido: totalFinal,
-        formaPagamento: pgtoForma,
-        obs: `${labelDescr} — Motoboy ${motoboy.nome} — ${diasSelecionados.length} dia(s) — ${pgtoForma}`,
-        logPagamentos: [{ id: Date.now().toString(), data: pgtoData, valor: totalFinal, forma: pgtoForma, tipo: 'Motoboy' }],
-      };
-      const r = await fetch(`${apiUrl}/folha-pagamento`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      setModalPgtoMoto(null);
-      setDiasSelAvulso({}); // limpa seleção
-      await fetchPagamentosSemana();
-    } catch (e) { console.error(e); alert('Erro ao salvar pagamento: ' + e); }
-    finally { setSalvandoModal(false); }
-  };
-
-  // Abre modal com dias avulsos já selecionados (independente de semana)
-  const abrirModalPgtoAvulso = () => {
-    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-    if (!motoboy) return;
-    const linhas = controleComAcumulado.filter(l => diasSelAvulso[l.data] && R(l.vlVariavel) > 0);
-    if (linhas.length === 0) { alert('Selecione ao menos um dia com valor > 0.'); return; }
-    const sel: Record<string, boolean> = {};
-    for (const l of linhas) sel[l.data] = true;
-    setPgtoDiasSel(sel);
-    setPgtoForma('PIX');
-    setPgtoData(new Date().toISOString().split('T')[0]);
-    const datas = linhas.map(l => l.data).sort();
-    const titulo = linhas.length === 1 ? `Dia ${datas[0].split('-').reverse().join('/')}` : `${linhas.length} dias selecionados (${datas[0].split('-').reverse().join('/')} a ${datas[datas.length-1].split('-').reverse().join('/')})`;
-    setModalPgtoMoto({ motoboy, linhas, titulo });
-  };
-
-  // Atalho: paga UM dia específico
-  const abrirModalPgtoUmDia = (linha: any) => {
-    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-    if (!motoboy) return;
-    if (R(linha.vlVariavel) === 0) { alert('Este dia não tem valor a pagar.'); return; }
-    setPgtoDiasSel({ [linha.data]: true });
-    setPgtoForma('PIX');
-    setPgtoData(new Date().toISOString().split('T')[0]);
-    setModalPgtoMoto({ motoboy, linhas: [linha], titulo: `Dia ${linha.data.split('-').reverse().join('/')}` });
-  };
-
-  const marcarPagamentoSemana = async (semanaFim: string, pago: boolean, dataPgto?: string) => {
-    if (!ctrlMotoboyId) return;
-    setSalvandoPgtoSemana(semanaFim);
-    try {
-      const token = localStorage.getItem('auth_token');
-      // Calcula o total da semana a partir das linhas do controle
-      const semanas = semanasParaExibicao();
-      const sem = semanas.find(s => s.fim === semanaFim);
-      if (!sem) return;
-      const linhasSemana = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
-      const totalSemana = parseFloat(linhasSemana.reduce((s, l) => s + R(l.vlVariavel), 0).toFixed(2));
-      const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-      const payload = {
-        colaboradorId: ctrlMotoboyId,
-        mes: ctrlMesAno,
-        semana: semanaFim,
-        unitId,
-        pago,
-        dataPagamento: pago ? (dataPgto || new Date().toISOString().split('T')[0]) : null,
-        totalBruto: totalSemana,
-        totalLiquido: totalSemana,
-        obs: `Semana ${sem.label} — Controle Motoboy ${motoboy?.nome || ''}`,
-      };
-      const r = await fetch(`${apiUrl}/folha-pagamento`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      await fetchPagamentosSemana();
-    } catch (e) { console.error(e); alert('Erro ao salvar pagamento'); }
-    finally { setSalvandoPgtoSemana(null); }
-  };
-
   // Carregar saídas ao mudar mês/período
   useEffect(() => {
     if (aba === 'controle') fetchSaidas(ctrlMesAno);
@@ -683,10 +513,6 @@ export const Motoboys: React.FC = () => {
     if (aba === 'controle' && ctrlMotoboyId && !loadingSaidas) fetchControle();
   }, [ctrlMotoboyId, ctrlMesAno, periodoIni, periodoFim, aba, loadingSaidas]);
 
-  // Carregar status de pagamentos semanais
-  useEffect(() => {
-    if (aba === 'controle' && ctrlMotoboyId) fetchPagamentosSemana();
-  }, [ctrlMotoboyId, ctrlMesAno, periodoIni, periodoFim, aba, fetchPagamentosSemana]);
 
   // Recalcular variavel acumulado
   const controleComAcumulado = useMemo(() => {
@@ -866,17 +692,6 @@ export const Motoboys: React.FC = () => {
     };
   }, [controleComAcumulado, ctrlMotoboyId, motoboys]);
 
-  /* ── Saídas do motoboy selecionado no período ─────────── */
-  const saidasDoMotoboy = useMemo(() => {
-    if (!ctrlMotoboyId) return [];
-    const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-    const colabId = motoboy?.colaboradorId;
-    const idSet = new Set([ctrlMotoboyId, colabId].filter(Boolean) as string[]);
-    return saidas
-      .filter(s => idSet.has(s.colaboradorId))
-      .sort((a, b) => a.data.localeCompare(b.data));
-  }, [saidas, ctrlMotoboyId, motoboys]);
-
   /* ── CRUD motoboys ───────────────────────────────────── */
 
   /**
@@ -1033,141 +848,10 @@ export const Motoboys: React.FC = () => {
     },
   };
 
-  /* ── Modal Pagamento Motoboy ──────────────────────────── */
-  const R2 = (v: any) => parseFloat(v) || 0;
-  const fmt2 = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const ModalPagamentoMotoboy = modalPgtoMoto ? (() => {
-    const { semana, motoboy, linhas } = modalPgtoMoto;
-    const diasSelecionados = linhas.filter(l => pgtoDiasSel[l.data]);
-    const totalSel = parseFloat(diasSelecionados.reduce((s: number, l: any) => s + R2(l.vlVariavel), 0).toFixed(2));
-    const totalSemana = parseFloat(linhas.reduce((s: number, l: any) => s + R2(l.vlVariavel), 0).toFixed(2));
-    const btnForma = (f: 'PIX' | 'Dinheiro' | 'Misto', label: string) => (
-      <button type="button" onClick={() => setPgtoForma(f)}
-        style={{ flex: 1, padding: '8px 4px', border: `2px solid ${pgtoForma===f?'#1565c0':'#ddd'}`,
-          borderRadius: '6px', background: pgtoForma===f?'#e3f2fd':'#fafafa',
-          fontWeight: pgtoForma===f?700:400, cursor: 'pointer', fontSize: '12px',
-          color: pgtoForma===f?'#0d47a1':'#555' }}>{label}</button>
-    );
-    return (
-      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}
-        onClick={() => setModalPgtoMoto(null)}>
-        <div style={{ background:'#fff', borderRadius:'12px', padding:'24px', width:'94%', maxWidth:'500px', maxHeight:'90vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,.25)' }}
-          onClick={e => e.stopPropagation()}>
-
-          {/* Header */}
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
-            <div>
-              <div style={{ fontSize:'16px', fontWeight:700, color:'#1565c0' }}>💳 Confirmar Pagamento Motoboy</div>
-              <div style={{ fontSize:'12px', color:'#888', marginTop:'2px' }}>{semana ? `Semana ${semana.label}` : (modalPgtoMoto?.titulo || 'Pagamento avulso')} — {motoboy.nome}</div>
-            </div>
-            <button onClick={() => setModalPgtoMoto(null)} style={{ background:'none', border:'none', fontSize:'20px', cursor:'pointer', color:'#999' }}>✕</button>
-          </div>
-
-          {/* Seleção de dias */}
-          <div style={{ marginBottom:'16px' }}>
-            <div style={{ fontSize:'13px', fontWeight:700, color:'#333', marginBottom:'8px' }}>
-              Selecione os dias a pagar:
-              <button type="button" onClick={() => {
-                const all = linhas.reduce((acc: Record<string,boolean>, l: any) => ({...acc, [l.data]: true}), {});
-                setPgtoDiasSel(all);
-              }} style={{ marginLeft:'10px', padding:'2px 8px', fontSize:'11px', border:'1px solid #1565c0', color:'#1565c0', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Todos</button>
-              <button type="button" onClick={() => setPgtoDiasSel({})} style={{ marginLeft:'4px', padding:'2px 8px', fontSize:'11px', border:'1px solid #ccc', color:'#888', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Nenhum</button>
-            </div>
-            <div style={{ border:'1px solid #e0e0e0', borderRadius:'8px', overflow:'hidden' }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
-                <thead>
-                  <tr style={{ background:'#f5f5f5' }}>
-                    <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:600, color:'#555' }}></th>
-                    <th style={{ padding:'6px 8px', textAlign:'left', fontWeight:600, color:'#555' }}>Data</th>
-                    <th style={{ padding:'6px 8px', textAlign:'center', fontWeight:600, color:'#f57f17' }}>D☀️</th>
-                    <th style={{ padding:'6px 8px', textAlign:'center', fontWeight:600, color:'#3949ab' }}>N🌙</th>
-                    <th style={{ padding:'6px 8px', textAlign:'right', fontWeight:600, color:'#2e7d32' }}>Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linhas.map((l: any, i: number) => {
-                    const sel = !!pgtoDiasSel[l.data];
-                    const dow = new Date(l.data + 'T12:00:00').getDay();
-                    const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-                    const fmtDt = (iso: string) => { const [,m,d] = iso.split('-'); return `${d}/${m} ${DIAS[dow]}`; };
-                    return (
-                      <tr key={l.data} style={{ background: sel?(i%2===0?'#e3f2fd':'#e8f4fd'):(i%2===0?'#fafafa':'#fff'), cursor:'pointer' }}
-                        onClick={() => setPgtoDiasSel(prev => ({...prev, [l.data]: !prev[l.data] }))}>
-                        <td style={{ padding:'6px 8px', textAlign:'center' }}>
-                          <input type="checkbox" checked={sel} readOnly
-                            style={{ width:'14px', height:'14px', accentColor:'#1565c0', cursor:'pointer' }} />
-                        </td>
-                        <td style={{ padding:'6px 8px', fontWeight: sel?700:400, color: sel?'#0d47a1':'#555' }}>{fmtDt(l.data)}</td>
-                        <td style={{ padding:'6px 8px', textAlign:'center', color:'#f57f17', fontWeight:600 }}>{R2(l.entDia)||'—'}</td>
-                        <td style={{ padding:'6px 8px', textAlign:'center', color:'#3949ab', fontWeight:600 }}>{R2(l.entNoite)||'—'}</td>
-                        <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:700, color: sel?'#2e7d32':'#aaa' }}>R$ {fmt2(R2(l.vlVariavel))}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background:'#e8f5e9', fontWeight:700, fontSize:'13px' }}>
-                    <td colSpan={4} style={{ padding:'8px 10px', color:'#1b5e20' }}>
-                      {diasSelecionados.length} de {linhas.length} dias selecionados
-                      {diasSelecionados.length < linhas.length && <span style={{ fontSize:'11px', fontWeight:400, color:'#888', marginLeft:'6px' }}>(total semana: R$ {fmt2(totalSemana)})</span>}
-                    </td>
-                    <td style={{ padding:'8px 10px', textAlign:'right', color:'#1b5e20', fontSize:'15px' }}>R$ {fmt2(totalSel)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-
-          {/* Forma de pagamento */}
-          <div style={{ marginBottom:'14px' }}>
-            <div style={{ fontSize:'12px', fontWeight:700, color:'#555', marginBottom:'6px' }}>Forma de pagamento</div>
-            <div style={{ display:'flex', gap:'6px' }}>
-              {btnForma('PIX','📱 PIX')}
-              {btnForma('Dinheiro','💵 Dinheiro')}
-              {btnForma('Misto','🔄 Misto')}
-            </div>
-          </div>
-
-          {/* Data */}
-          <div style={{ marginBottom:'18px' }}>
-            <div style={{ fontSize:'12px', fontWeight:700, color:'#555', marginBottom:'4px' }}>Data do pagamento</div>
-            <input type="date" value={pgtoData} onChange={e => setPgtoData(e.target.value)}
-              style={{ width:'100%', padding:'8px 10px', border:'1px solid #ccc', borderRadius:'6px', fontSize:'13px', boxSizing:'border-box' as const }} />
-          </div>
-
-          {/* Chave PIX */}
-          {motoboy.chavePix && (
-            <div style={{ marginBottom:'14px', background:'#f3f4f6', borderRadius:'8px', padding:'10px 14px', fontSize:'12px' }}>
-              <span style={{ color:'#555' }}>Chave PIX: </span>
-              <strong style={{ color:'#1565c0' }}>{motoboy.chavePix}</strong>
-              <button type="button" onClick={() => navigator.clipboard.writeText(motoboy.chavePix!)}
-                style={{ marginLeft:'10px', padding:'2px 8px', fontSize:'11px', border:'1px solid #1565c0', color:'#1565c0', background:'transparent', borderRadius:'4px', cursor:'pointer' }}>Copiar</button>
-            </div>
-          )}
-
-          {/* Resumo e botões */}
-          <div style={{ background: totalSel>0?'#e8f5e9':'#f5f5f5', borderRadius:'8px', padding:'12px 16px', marginBottom:'16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontSize:'13px', color:'#555' }}>Total a pagar:</span>
-            <span style={{ fontSize:'20px', fontWeight:700, color: totalSel>0?'#1b5e20':'#aaa' }}>R$ {fmt2(totalSel)}</span>
-          </div>
-          <div style={{ display:'flex', gap:'10px' }}>
-            <button onClick={confirmarPagamentoModal} disabled={salvandoModal||diasSelecionados.length===0||totalSel<=0}
-              style={{ flex:1, padding:'10px', background: diasSelecionados.length>0&&totalSel>0?'#2e7d32':'#aaa',
-                color:'#fff', border:'none', borderRadius:'8px', fontWeight:700, fontSize:'14px', cursor: diasSelecionados.length>0?'pointer':'not-allowed' }}>
-              {salvandoModal ? '⏳ Salvando...' : `✅ Confirmar R$ ${fmt2(totalSel)}`}
-            </button>
-            <button onClick={() => setModalPgtoMoto(null)}
-              style={{ padding:'10px 20px', background:'#f5f5f5', border:'1px solid #ccc', borderRadius:'8px', cursor:'pointer', fontSize:'13px', color:'#555' }}>Cancelar</button>
-          </div>
-        </div>
-      </div>
-    );
-  })() : null;
 
   /* ── Render ──────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
-      {ModalPagamentoMotoboy}
       <Header title="🏍️ Gestão de Motoboys" showBack={true} />
       <div style={{ flex: 1, padding: '20px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
 
@@ -1346,10 +1030,6 @@ export const Motoboys: React.FC = () => {
                 {salvandoCtrl ? '⏳ Salvando...' : '💾 Salvar'}
               </button>
               <button onClick={exportarControleXLSX} disabled={!ctrlMotoboyId || controle.length === 0} style={s.btn('#7b1fa2')}>📥 XLSX</button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', marginLeft: '4px' }}>
-                <input type="checkbox" checked={mostrarSaidas} onChange={e => setMostrarSaidas(e.target.checked)} />
-                Ver saídas
-              </label>
             </div>
 
             {/* Banner de modo integrado */}
@@ -1363,11 +1043,8 @@ export const Motoboys: React.FC = () => {
 
             {/* Dica de uso — 3 formas de pagar */}
             {ctrlMotoboyId && (
-              <div style={{ backgroundColor: '#fff8e1', borderLeft: '4px solid #ffa726', borderRadius: '6px', padding: '8px 12px', marginBottom: '14px', fontSize: '11px', color: '#5d4037', display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
-                <span><strong>💡 3 formas de pagar:</strong></span>
-                <span>💳 <strong>Pagar Dia</strong> (atalho na linha) — paga 1 dia específico</span>
-                <span>☑️ <strong>Selecionar dias</strong> + botão azul flutuante — paga vários dias avulsos</span>
-                <span>📅 <strong>Pagar Semana</strong> (no cabeçalho da semana) — paga semana inteira</span>
+              <div style={{ backgroundColor: '#e8f5e9', borderLeft: '4px solid #43a047', borderRadius: '6px', padding: '8px 12px', marginBottom: '14px', fontSize: '11px', color: '#1b5e20' }}>
+                <strong>ℹ️ Registro operacional.</strong> Esta tela registra os dias trabalhados (entregas, chegadas, caixinha). Os <strong>pagamentos</strong> são feitos no módulo <strong>💰 Folha de Pagamento</strong>.
               </div>
             )}
 
@@ -1381,14 +1058,15 @@ export const Motoboys: React.FC = () => {
                 {(() => {
                   const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
                   const isFreelancer = motoboy?.vinculo === 'Freelancer';
-                  const saldo = resumoCtrl.totalVariavel - resumoCtrl.totalPgto;
+                  // Total = chegada + variavel(entregas) + caixinha
+                  const totalGeral = resumoCtrl.totalChegada + resumoCtrl.totalEntregas + resumoCtrl.totalCaixinha;
                   const cardsBase = [
                     { label: 'Dias trabalhados', val: String(resumoCtrl.diasTrab), cor: '#1976d2' },
-                    { label: 'Total viagens', val: String(resumoCtrl.totalViagens), cor: '#0288d1' },
+                    { label: 'Total entregas', val: String(resumoCtrl.totalViagens), cor: '#0288d1' },
+                    { label: 'Chegada', val: `R$ ${fmt(resumoCtrl.totalChegada)}`, cor: '#e65100' },
+                    { label: 'Vl. Variável', val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#43a047' },
                     { label: 'Caixinha', val: `R$ ${fmt(resumoCtrl.totalCaixinha)}`, cor: '#00838f' },
-                    { label: 'Total variável', val: `R$ ${fmt(resumoCtrl.totalVariavel)}`, cor: '#43a047' },
-                    { label: 'Total pago', val: `R$ ${fmt(resumoCtrl.totalPgto)}`, cor: '#fb8c00' },
-                    { label: 'Saldo variável', val: `R$ ${fmt(saldo)}`, cor: saldo >= 0 ? '#2e7d32' : '#c62828' },
+                    { label: 'Total', val: `R$ ${fmt(totalGeral)}`, cor: '#2e7d32' },
                   ];
                   // Para freelancer: sempre mostra cards de chegada/entrega (mesmo que 0), para ficar visível
                   const cardsFreelancer = isFreelancer ? [
@@ -1413,58 +1091,44 @@ export const Motoboys: React.FC = () => {
                   );
                 })()}
 
-                {/* Barra flutuante de ação — dias selecionados (avulsos, qualquer semana) */}
-                {(() => {
-                  const linhasSel = controleComAcumulado.filter(l => diasSelAvulso[l.data] && R(l.vlVariavel) > 0);
-                  if (linhasSel.length === 0) return null;
-                  const totalSel = linhasSel.reduce((s, l) => s + R(l.vlVariavel), 0);
-                  const datas = linhasSel.map(l => l.data).sort();
-                  return (
-                    <div style={{ position:'sticky', top:'12px', zIndex:10, marginBottom:'12px',
-                      background:'linear-gradient(90deg, #1976d2, #1565c0)', color:'white', borderRadius:'8px', padding:'10px 16px',
-                      display:'flex', alignItems:'center', gap:'14px', flexWrap:'wrap', boxShadow:'0 4px 12px rgba(25,118,210,0.3)' }}>
-                      <span style={{ fontSize:'14px', fontWeight:'bold' }}>
-                        ☑️ {linhasSel.length} dia(s) selecionado(s)
-                      </span>
-                      <span style={{ fontSize:'12px', opacity:0.9 }}>
-                        {datas[0].split('-').reverse().join('/')}{datas.length > 1 ? ` … ${datas[datas.length-1].split('-').reverse().join('/')}` : ''}
-                      </span>
-                      <span style={{ fontSize:'18px', fontWeight:'bold', marginLeft:'auto' }}>
-                        Total: R$ {fmt(totalSel)}
-                      </span>
-                      <button onClick={abrirModalPgtoAvulso}
-                        style={{ padding:'8px 16px', backgroundColor:'#43a047', color:'white', border:'none', borderRadius:'6px', cursor:'pointer', fontWeight:'bold', fontSize:'13px' }}>
-                        💳 Pagar selecionados
-                      </button>
-                      <button onClick={() => setDiasSelAvulso({})}
-                        style={{ padding:'8px 12px', backgroundColor:'rgba(255,255,255,0.2)', color:'white', border:'1px solid rgba(255,255,255,0.4)', borderRadius:'6px', cursor:'pointer', fontSize:'12px' }}>
-                        ✕ Limpar
-                      </button>
-                    </div>
-                  );
-                })()}
-
                 {/* Tabela diária — agrupada por semana */}
                 {(() => {
                   const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
                   const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
                   const showChegada = isFreelancerCtrl;
                   const semanas = semanasParaExibicao();
+                  const vChegadaDia   = R(motoboyCtrl?.valorChegadaDia   ?? motoboyCtrl?.valorChegada);
+                  const vChegadaNoite = R(motoboyCtrl?.valorChegadaNoite ?? motoboyCtrl?.valorChegada);
+                  const vEntrega      = R(motoboyCtrl?.valorEntrega);
 
-                  // Detecta quais dias já foram pagos (pgto > 0 ou semana marcada paga)
-                  const semanasPagas = new Set(
-                    pagamentosSemana.filter((p: any) => p.pago === true).map((p: any) => p.semana || p.dataFechamento)
-                  );
+                  // Toggle de presença (Ch.Dia / Ch.Noite) para auto-preencher chegada
+                  const toggleChegada = (idx: number, turno: 'Dia' | 'Noite') => {
+                    setControle(prev => {
+                      const next = [...prev];
+                      const linha: any = next[idx];
+                      if (turno === 'Dia') {
+                        const ja = R(linha.chegadaDia) > 0;
+                        linha.chegadaDia = ja ? 0 : vChegadaDia;
+                      } else {
+                        const ja = R(linha.chegadaNoite) > 0;
+                        linha.chegadaNoite = ja ? 0 : vChegadaNoite;
+                      }
+                      const totalEntregas = R(linha.entDia) + R(linha.entNoite);
+                      const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+                      linha.vlVariavel = parseFloat(
+                        (R(linha.chegadaDia) + R(linha.chegadaNoite) + (vEntrega * totalEntregas) + totalCaixinha).toFixed(2)
+                      );
+                      return next;
+                    });
+                  };
 
                   const headers = [
-                    '☑️', // checkbox de seleção por dia
                     'Data', 'DS', 'Sal.+Per.',
                     'Ent.Dia', 'Caix.Dia',
-                    ...(showChegada ? ['Ch.Dia'] : []),
+                    ...(showChegada ? ['✓ Ch.Dia'] : []),
                     'Ent.Noite', 'Caix.Noite',
-                    ...(showChegada ? ['Ch.Noite'] : []),
-                    'Caixa Total', 'Vl.Variável', 'Pgto', 'Status', 'Var.Acum.', 'Ação',
-                    ...(mostrarSaidas ? ['Saídas Dia', 'Saídas Noite'] : [])
+                    ...(showChegada ? ['✓ Ch.Noite'] : []),
+                    'Chegada', 'Vl.Variável', 'Caixinha', 'Total',
                   ];
 
                   return (
@@ -1480,27 +1144,23 @@ export const Motoboys: React.FC = () => {
                           const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
                           if (linhasSem.length === 0) return null;
 
-                          const semPaga = semanasPagas.has(sem.fim);
-                          const subEntDia   = linhasSem.reduce((s, l) => s + R(l.entDia), 0);
-                          const subCaixDia  = linhasSem.reduce((s, l) => s + R(l.caixinhaDia), 0);
-                          const subChDia    = linhasSem.reduce((s, l) => s + R(l.chegadaDia), 0);
-                          const subEntNoite = linhasSem.reduce((s, l) => s + R(l.entNoite), 0);
-                          const subCaixNoite= linhasSem.reduce((s, l) => s + R(l.caixinhaNoite), 0);
-                          const subChNoite  = linhasSem.reduce((s, l) => s + R(l.chegadaNoite), 0);
-                          const subCaixTotal= subCaixDia + subCaixNoite;
-                          const subVar      = linhasSem.reduce((s, l) => s + R(l.vlVariavel), 0);
-                          const subPgto     = linhasSem.reduce((s, l) => s + R(l.pgto), 0);
+                          const subEntDia    = linhasSem.reduce((s, l) => s + R(l.entDia), 0);
+                          const subCaixDia   = linhasSem.reduce((s, l) => s + R(l.caixinhaDia), 0);
+                          const subChDia     = linhasSem.reduce((s, l) => s + R(l.chegadaDia), 0);
+                          const subEntNoite  = linhasSem.reduce((s, l) => s + R(l.entNoite), 0);
+                          const subCaixNoite = linhasSem.reduce((s, l) => s + R(l.caixinhaNoite), 0);
+                          const subChNoite   = linhasSem.reduce((s, l) => s + R(l.chegadaNoite), 0);
+                          const subChegada   = subChDia + subChNoite;
+                          const subCaixTotal = subCaixDia + subCaixNoite;
+                          const subVarEnt    = (subEntDia + subEntNoite) * vEntrega;
+                          const subTotal     = subChegada + subVarEnt + subCaixTotal;
 
                           return (
                             <React.Fragment key={sem.fim}>
                               {/* Cabeçalho da semana */}
-                              <tr style={{ backgroundColor: semPaga ? '#e8f5e9' : '#e3f2fd' }}>
-                                <td colSpan={headers.length} style={{ padding: '5px 8px', fontWeight: 'bold', fontSize: '12px', color: semPaga ? '#2e7d32' : '#1565c0', borderTop: '2px solid #90caf9' }}>
-                                  📅 {sem.label} &nbsp;
-                                  {semPaga
-                                    ? <span style={{ backgroundColor: '#c8e6c9', color: '#1b5e20', padding: '1px 8px', borderRadius: '10px', fontSize: '11px' }}>✅ Pago</span>
-                                    : <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '1px 8px', borderRadius: '10px', fontSize: '11px' }}>⏳ Em aberto</span>
-                                  }
+                              <tr style={{ backgroundColor: '#e3f2fd' }}>
+                                <td colSpan={headers.length} style={{ padding: '5px 8px', fontWeight: 'bold', fontSize: '12px', color: '#1565c0', borderTop: '2px solid #90caf9' }}>
+                                  📅 {sem.label}
                                 </td>
                               </tr>
 
@@ -1509,23 +1169,15 @@ export const Motoboys: React.FC = () => {
                                 const idx = controleComAcumulado.findIndex(c => c.data === l.data);
                                 const dow = l.diaSemana ?? diaSemana(l.data);
                                 const folga = dow === 0 || dow === 1;
-                                const temDados = R(l.vlVariavel) > 0 || R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.caixinhaDia) > 0 || R(l.caixinhaNoite) > 0;
-                                const diaPago = R(l.pgto) > 0 || semPaga;
+                                const temDados = R(l.entDia) > 0 || R(l.entNoite) > 0 || R(l.chegadaDia) > 0 || R(l.chegadaNoite) > 0 || R(l.caixinhaDia) > 0 || R(l.caixinhaNoite) > 0;
+                                const chegadaTotal = R(l.chegadaDia) + R(l.chegadaNoite);
+                                const varEntDia    = (R(l.entDia) + R(l.entNoite)) * vEntrega;
                                 const caixaTotalDia = R(l.caixinhaDia) + R(l.caixinhaNoite);
-                                const rowBg = diaPago ? '#f1f8e9' : folga ? '#f5f5f5' : temDados ? '#fafff8' : idx % 2 === 0 ? '#fdfdfd' : 'white';
+                                const totalDia = chegadaTotal + varEntDia + caixaTotalDia;
+                                const rowBg = folga ? '#f5f5f5' : temDados ? '#fafff8' : idx % 2 === 0 ? '#fdfdfd' : 'white';
 
                                 return (
                                   <tr key={l.data} style={{ backgroundColor: rowBg }}>
-                                    {/* Checkbox de seleção (só disponível se tem valor e não pago) */}
-                                    <td style={{ ...s.td, textAlign: 'center' }}>
-                                      {temDados && !diaPago && R(l.vlVariavel) > 0 ? (
-                                        <input type="checkbox"
-                                          checked={!!diasSelAvulso[l.data]}
-                                          onChange={e => setDiasSelAvulso(prev => ({ ...prev, [l.data]: e.target.checked }))}
-                                          style={{ width:'16px', height:'16px', cursor:'pointer', accentColor:'#1976d2' }}
-                                        />
-                                      ) : <span style={{ color:'#ccc' }}>—</span>}
-                                    </td>
                                     <td style={{ ...s.td, fontWeight: 'bold' }}>
                                       {l.data.split('-').reverse().join('/')}
                                       {temDados && <span style={{ marginLeft: '4px', color: '#2e7d32', fontSize: '10px' }}>●</span>}
@@ -1535,7 +1187,6 @@ export const Motoboys: React.FC = () => {
                                     </td>
                                     <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
 
-                                    {/* Campos editáveis modo manual */}
                                     {(['entDia', 'caixinhaDia'] as const).map(campo => (
                                       <td key={campo} style={s.td}>
                                         <input type="number" step="0.01" min="0" style={s.numInput}
@@ -1545,11 +1196,16 @@ export const Motoboys: React.FC = () => {
                                       </td>
                                     ))}
                                     {showChegada && (
-                                      <td key="chegadaDia" style={s.td}>
-                                        <input type="number" step="0.01" min="0" style={s.numInput}
-                                          value={R(l.chegadaDia) || ''}
-                                          onChange={e => handleCampoControle(idx, 'chegadaDia', e.target.value)}
-                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      <td key="chegadaDia" style={{ ...s.td, textAlign: 'center' as const }}>
+                                        <input type="checkbox"
+                                          checked={R(l.chegadaDia) > 0}
+                                          onChange={() => toggleChegada(idx, 'Dia')}
+                                          disabled={vChegadaDia <= 0}
+                                          title={vChegadaDia > 0 ? `Auto-preenche R$ ${fmt(vChegadaDia)}` : 'Valor de chegada não configurado no cadastro'}
+                                          style={{ width:'16px', height:'16px', cursor: vChegadaDia > 0 ? 'pointer' : 'not-allowed', accentColor:'#e65100' }} />
+                                        {R(l.chegadaDia) > 0 && (
+                                          <div style={{ fontSize:'10px', color:'#e65100', fontWeight:600 }}>{fmt(R(l.chegadaDia))}</div>
+                                        )}
                                       </td>
                                     )}
                                     {(['entNoite', 'caixinhaNoite'] as const).map(campo => (
@@ -1561,85 +1217,52 @@ export const Motoboys: React.FC = () => {
                                       </td>
                                     ))}
                                     {showChegada && (
-                                      <td key="chegadaNoite" style={s.td}>
-                                        <input type="number" step="0.01" min="0" style={s.numInput}
-                                          value={R(l.chegadaNoite) || ''}
-                                          onChange={e => handleCampoControle(idx, 'chegadaNoite', e.target.value)}
-                                          onFocus={e => e.target.select()} placeholder="0" />
+                                      <td key="chegadaNoite" style={{ ...s.td, textAlign: 'center' as const }}>
+                                        <input type="checkbox"
+                                          checked={R(l.chegadaNoite) > 0}
+                                          onChange={() => toggleChegada(idx, 'Noite')}
+                                          disabled={vChegadaNoite <= 0}
+                                          title={vChegadaNoite > 0 ? `Auto-preenche R$ ${fmt(vChegadaNoite)}` : 'Valor de chegada não configurado no cadastro'}
+                                          style={{ width:'16px', height:'16px', cursor: vChegadaNoite > 0 ? 'pointer' : 'not-allowed', accentColor:'#7b1fa2' }} />
+                                        {R(l.chegadaNoite) > 0 && (
+                                          <div style={{ fontSize:'10px', color:'#7b1fa2', fontWeight:600 }}>{fmt(R(l.chegadaNoite))}</div>
+                                        )}
                                       </td>
                                     )}
 
-                                    {/* Caixa Total (dia + noite) — só leitura */}
-                                    <td style={{ ...s.td, textAlign: 'center' as const, fontWeight: 'bold', color: '#00838f' }}>
+                                    {/* Chegada total */}
+                                    <td style={{ ...s.td, textAlign: 'right' as const, fontWeight: 'bold', color: '#e65100' }}>
+                                      {chegadaTotal > 0 ? fmt(chegadaTotal) : <span style={{ color: '#ccc' }}>-</span>}
+                                    </td>
+                                    {/* Vl. Variável = entregas × valorEntrega */}
+                                    <td style={{ ...s.td, textAlign: 'right' as const, fontWeight: 'bold', color: '#43a047' }}>
+                                      {varEntDia > 0 ? fmt(varEntDia) : <span style={{ color: '#ccc' }}>-</span>}
+                                    </td>
+                                    {/* Caixinha total */}
+                                    <td style={{ ...s.td, textAlign: 'right' as const, fontWeight: 'bold', color: '#00838f' }}>
                                       {caixaTotalDia > 0 ? fmt(caixaTotalDia) : <span style={{ color: '#ccc' }}>-</span>}
                                     </td>
-
-                                    {(['vlVariavel', 'pgto'] as const).map(campo => (
-                                      <td key={campo} style={s.td}>
-                                        <input type="number" step="0.01" min="0" style={s.numInput}
-                                          value={(l as any)[campo] || ''}
-                                          onChange={e => handleCampoControle(idx, campo, e.target.value)}
-                                          onFocus={e => e.target.select()} placeholder="0" />
-                                      </td>
-                                    ))}
-
-                                    {/* Status do dia */}
-                                    <td style={{ ...s.td, textAlign: 'center' as const, whiteSpace: 'nowrap' as const }}>
-                                      {diaPago
-                                        ? <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '1px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>✅ Pago</span>
-                                        : temDados
-                                          ? <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '1px 7px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>⏳ Aberto</span>
-                                          : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>
-                                      }
+                                    {/* Total do dia */}
+                                    <td style={{ ...s.td, textAlign: 'right' as const, fontWeight: 'bold', color: '#2e7d32', backgroundColor: totalDia > 0 ? '#e8f5e9' : undefined }}>
+                                      {totalDia > 0 ? fmt(totalDia) : <span style={{ color: '#ccc' }}>-</span>}
                                     </td>
-
-                                    <td style={{ ...s.td, textAlign: 'right' as const, color: R(l.variavel) < 0 ? '#c62828' : '#2e7d32', fontWeight: 'bold' }}>
-                                      {R(l.variavel) !== 0 ? fmt(R(l.variavel)) : <span style={{ color: '#ccc' }}>-</span>}
-                                    </td>
-
-                                    {/* Botão pagar este dia (atalho) */}
-                                    <td style={{ ...s.td, textAlign: 'center' }}>
-                                      {temDados && !diaPago && R(l.vlVariavel) > 0 ? (
-                                        <button
-                                          onClick={() => abrirModalPgtoUmDia(l)}
-                                          title="Pagar este dia (sem precisar fechar a semana)"
-                                          style={{ padding:'2px 8px', fontSize:'10px', fontWeight:'bold', border:'none', borderRadius:'4px', backgroundColor:'#43a047', color:'white', cursor:'pointer' }}
-                                        >💳 Pagar</button>
-                                      ) : diaPago ? (
-                                        <span style={{ color:'#aaa', fontSize:'10px' }}>já pago</span>
-                                      ) : <span style={{ color:'#ccc' }}>—</span>}
-                                    </td>
-
-                                    {mostrarSaidas && (
-                                      <>
-                                        <td style={s.td}>{l.saidasDia?.map(s2 => `${s2.descricao || s2.tipo}(R$${fmt(R(s2.valor))})`).join(', ') || ''}</td>
-                                        <td style={s.td}>{l.saidasNoite?.map(s2 => `${s2.descricao || s2.tipo}(R$${fmt(R(s2.valor))})`).join(', ') || ''}</td>
-                                      </>
-                                    )}
                                   </tr>
                                 );
                               })}
 
                               {/* Subtotal da semana */}
-                              <tr style={{ backgroundColor: semPaga ? '#c8e6c9' : '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
-                                <td style={{ padding: '5px 6px' }} colSpan={4}>Subtotal {sem.label}</td>
+                              <tr style={{ backgroundColor: '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
+                                <td style={{ padding: '5px 6px' }} colSpan={3}>Subtotal {sem.label}</td>
                                 <td style={{ padding: '5px 6px' }}>{subEntDia}</td>
                                 <td style={{ padding: '5px 6px' }}>{fmt(subCaixDia)}</td>
                                 {showChegada && <td style={{ padding: '5px 6px', color: '#e65100' }}>{fmt(subChDia)}</td>}
                                 <td style={{ padding: '5px 6px' }}>{subEntNoite}</td>
                                 <td style={{ padding: '5px 6px' }}>{fmt(subCaixNoite)}</td>
                                 {showChegada && <td style={{ padding: '5px 6px', color: '#7b1fa2' }}>{fmt(subChNoite)}</td>}
-                                <td style={{ padding: '5px 6px', color: '#00838f' }}>{fmt(subCaixTotal)}</td>
-                                <td style={{ padding: '5px 6px', color: '#2e7d32' }}>R$ {fmt(subVar)}</td>
-                                <td style={{ padding: '5px 6px', color: '#fb8c00' }}>{subPgto > 0 ? `R$ ${fmt(subPgto)}` : '—'}</td>
-                                <td style={{ padding: '5px 6px' }}>
-                                  {semPaga
-                                    ? <span style={{ color: '#1b5e20' }}>✅ Pago</span>
-                                    : <span style={{ color: '#e65100' }}>⏳ Aberto</span>}
-                                </td>
-                                <td style={{ padding: '5px 6px' }} />{/* Var.Acum. */}
-                                <td style={{ padding: '5px 6px' }} />{/* Ação */}
-                                <td style={{ padding: '5px 6px' }} colSpan={mostrarSaidas ? 2 : 0} />
+                                <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#e65100' }}>{fmt(subChegada)}</td>
+                                <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#43a047' }}>{fmt(subVarEnt)}</td>
+                                <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#00838f' }}>{fmt(subCaixTotal)}</td>
+                                <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#1b5e20' }}>R$ {fmt(subTotal)}</td>
                               </tr>
                             </React.Fragment>
                           );
@@ -1647,20 +1270,17 @@ export const Motoboys: React.FC = () => {
                       </tbody>
                       <tfoot>
                         <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={4}>TOTAL GERAL</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL GERAL</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
                           {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entNoite), 0)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaNoite), 0))}</td>
                           {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaNoite)}</td>}
-                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#80deea' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0))}</td>
-                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(resumoCtrl.totalVariavel)}</td>
-                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalPgto)}</td>
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} />
-                          <td style={{ padding: '8px 6px', fontSize: '12px', color: '#a5d6a7' }}>{fmt(controleComAcumulado[controleComAcumulado.length - 1]?.variavel || 0)}</td>
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} />{/* Ação */}
-                          {mostrarSaidas && <td colSpan={2} />}
+                          <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' as const, color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegada)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' as const, color: '#a5d6a7' }}>{fmt(resumoCtrl.totalEntregas)}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' as const, color: '#80deea' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0))}</td>
+                          <td style={{ padding: '8px 6px', fontSize: '13px', textAlign: 'right' as const, color: '#fff' }}>R$ {fmt(resumoCtrl.totalChegada + resumoCtrl.totalEntregas + resumoCtrl.totalCaixinha)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -1668,152 +1288,6 @@ export const Motoboys: React.FC = () => {
                   );
                 })()}
 
-
-
-                {/* ── Resumo semanal com status de pagamento ──────── */}
-                {controleComAcumulado.length > 0 && (() => {
-                  const semanas = semanasParaExibicao();
-                  const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
-                  return (
-                    <div style={{ marginTop: '20px', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
-                      <div style={{ backgroundColor: '#37474f', color: 'white', padding: '8px 12px', fontSize: '13px', fontWeight: 'bold' }}>
-                        📅 Resumo Semanal — {motoboy?.nome}
-                      </div>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f5f5f5' }}>
-                            {['Semana', 'Vl. Variável', 'Total Pago', 'Saldo', 'Status', 'Ação'].map(h => (
-                              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Semana' ? 'left' : 'right', fontWeight: 'bold', color: '#555', borderBottom: '1px solid #e0e0e0', whiteSpace: 'nowrap' as const }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {semanas.map((sem, idx) => {
-                            const linhasSem = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
-                            const totalVar = parseFloat(linhasSem.reduce((s, l) => s + R(l.vlVariavel), 0).toFixed(2));
-                            const totalPgtoSem = parseFloat(linhasSem.reduce((s, l) => s + R(l.pgto), 0).toFixed(2));
-                            if (totalVar === 0 && totalPgtoSem === 0) return null;
-                            const pgDB = pagamentosSemana.find((p: any) => p.semana === sem.fim || p.dataFechamento === sem.fim);
-                            const pago = pgDB?.pago === true;
-                            const dataPgto = pgDB?.dataPagamento;
-                            const saldo = parseFloat((totalVar - totalPgtoSem).toFixed(2));
-                            const salvando = salvandoPgtoSemana === sem.fim;
-                            return (
-                              <tr key={sem.fim} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white', borderBottom: '1px solid #f0f0f0' }}>
-                                <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#333' }}>{sem.label}</td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right', color: '#2e7d32', fontWeight: 'bold' }}>R$ {fmt(totalVar)}</td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right', color: '#fb8c00' }}>
-                                  {totalPgtoSem > 0 ? `R$ ${fmt(totalPgtoSem)}` : <span style={{ color: '#ccc' }}>—</span>}
-                                </td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right', color: saldo > 0 ? '#c62828' : '#2e7d32', fontWeight: 'bold' }}>
-                                  R$ {fmt(saldo)}
-                                </td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                  {(() => {
-                                    const diasPagos: any[] = pgDB?.diasPagos || [];
-                                    const totalDias = linhasSem.filter((l: any) => R(l.vlVariavel) > 0).length;
-                                    const diasPagosCt = diasPagos.length;
-                                    const parcial = pago && diasPagosCt > 0 && diasPagosCt < totalDias;
-                                    return pago ? (
-                                      <div>
-                                        <span style={{ backgroundColor: parcial?'#fff8e1':'#e8f5e9', color: parcial?'#e65100':'#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
-                                          {parcial ? `⚠️ Parcial (${diasPagosCt}/${totalDias} dias)` : `✅ Pago ${dataPgto ? `em ${dataPgto.split('-').reverse().join('/')}` : ''}`}
-                                        </span>
-                                        {pgDB?.formaPagamento && <div style={{ fontSize:'10px', color:'#888', marginTop:'2px' }}>{pgDB.formaPagamento}</div>}
-                                      </div>
-                                    ) : (
-                                      <span style={{ backgroundColor: '#fff3e0', color: '#e65100', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' }}>
-                                        ⏳ Pendente
-                                      </span>
-                                    );
-                                  })()}
-                                </td>
-                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                                  <div style={{ display:'flex', gap:'4px', justifyContent:'flex-end' }}>
-                                    <button
-                                      style={{ padding: '3px 10px', fontSize: '11px', backgroundColor: pago?'#fff3e0':'#1976d2', color: pago?'#e65100':'white', border: pago?'1px solid #e65100':'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                                      disabled={salvando}
-                                      onClick={() => abrirModalPgto(sem)}
-                                    >💳 {pago ? 'Pagar mais' : '✅ Pagar'}</button>
-                                    {pago && (
-                                      <button
-                                        style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}
-                                        disabled={salvando}
-                                        onClick={() => { if (window.confirm('Desfazer pagamento desta semana?')) marcarPagamentoSemana(sem.fim, false); }}
-                                      >↩</button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })()}
-
-                {/* Painel de saídas detalhado */}
-                {mostrarSaidas && saidasDoMotoboy.length > 0 && (
-                  <div style={{ marginTop: '20px' }}>
-                    <h3 style={{ color: '#1565c0', marginBottom: '10px', fontSize: '14px' }}>
-                      📋 Saídas lançadas – {motoboys.find(m => m.id === ctrlMotoboyId)?.nome} – {ctrlMesAno}
-                    </h3>
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                        <thead>
-                          <tr>
-                            {['Data', 'Turno', 'Viagens', 'Caixinha', 'Valor (Pgto)', 'Tipo', 'Dt. Pgto', 'Descrição'].map(h => (
-                              <th key={h} style={{ ...s.th, backgroundColor: '#37474f' }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {saidasDoMotoboy.map(s => (
-                            <tr key={s.id}
-                              style={{ backgroundColor: normalizeTurno(s.turno) === 'noite' ? '#f3e5f5' : normalizeTurno(s.turno) === 'dia' ? '#e3f2fd' : '#fafafa' }}>
-                              <td style={{ ...s as any, padding: '6px', borderBottom: '1px solid #eee' }}>{(s.data || '').split('-').reverse().join('/')}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>
-                                <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                                  backgroundColor: normalizeTurno(s.turno) === 'noite' ? '#ce93d8' : normalizeTurno(s.turno) === 'dia' ? '#90caf9' : '#e0e0e0',
-                                  color: '#333' }}>
-                                  {s.turno || '-'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'center', fontSize: '12px', fontWeight: 'bold', color: '#0288d1' }}>{s.viagens || '-'}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'right', fontSize: '12px', color: '#00838f' }}>{s.caixinha ? `R$ ${R(s.caixinha).toFixed(2)}` : '-'}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#fb8c00' }}>{s.valor ? `R$ ${R(s.valor).toFixed(2)}` : '-'}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>{s.tipo || '-'}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px' }}>{s.dataPagamento ? (s.dataPagamento as string).split('-').reverse().join('/') : '-'}</td>
-                              <td style={{ padding: '6px', borderBottom: '1px solid #eee', fontSize: '12px', color: '#555' }}>{s.descricao || '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr style={{ backgroundColor: '#37474f', color: 'white', fontWeight: 'bold' }}>
-                            <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={2}>TOTAL</td>
-                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'center' }}>
-                              {saidasDoMotoboy.reduce((sum, s) => sum + R(s.viagens), 0)} viag
-                            </td>
-                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' }}>
-                              R$ {saidasDoMotoboy.reduce((sum, s) => sum + R(s.caixinha), 0).toFixed(2)}
-                            </td>
-                            <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' }}>
-                              R$ {saidasDoMotoboy.reduce((sum, s) => sum + R(s.valor), 0).toFixed(2)}
-                            </td>
-                            <td colSpan={3} />
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ marginTop: '12px', display: 'flex', gap: '10px' }}>
-                  <button onClick={salvarControle} disabled={salvandoCtrl} style={s.btn('#43a047')}>
-                    {salvandoCtrl ? '⏳ Salvando...' : '💾 Salvar Controle'}
-                  </button>
-                </div>
               </>
             )}
           </div>
