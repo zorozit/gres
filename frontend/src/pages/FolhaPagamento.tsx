@@ -1067,10 +1067,13 @@ export default function FolhaPagamento() {
       const totalCaixinhaSemana = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
 
       return {
-        semanaLabel: (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} - ${fmtDataBR(fim)}`,
-        dataFechamento: isoFim, // usa o fim customizado como chave de pagamento
-        dataFechamentoBase: isoFimBase, // chave original (para editFechamento)
-        dataInicioBase: isoInicioBase, // início original (para o input de data)
+        semanaLabel: periodoCustomAtivo
+          ? labelPeriodo
+          : (efBase.dataIniCustom || efBase.dataFimCustom) ? `${labelPeriodo} ✏️` : `${fmtDataBR(inicio)} - ${fmtDataBR(fim)}`,
+        dataFechamento: isoFim, // usa o fim efetivo como chave de pagamento
+        dataFechamentoBase: isoFimBase, // chave original (sempre da semana, para editFechamento)
+        dataInicioBase: isoInicio, // início efetivo (já clipado se período global ativo)
+        dataFimEfetivo: isoFim,    // fim efetivo (já clipado se período global ativo)
         freelancers: frList,
         totalSemana,
         totalCaixinha: totalCaixinhaSemana,           // caixinha total a pagar na semana
@@ -1454,10 +1457,10 @@ export default function FolhaPagamento() {
       const TIPOS_DESCONTO = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
       const TIPOS_CAIXINHA = ['Caixinha'];
       const saidaData = (s: any) => s.dataPagamento || s.data || '';
-      // Usar sempre os limites da semana inteira para buscar consumos/caixinha
-      // (não apenas os dias pendentes), pois consumos podem cair em dias já pagos da semana
-      const rangeIni = fech.dataInicioBase;  // início real da semana
-      const rangeFim = fech.dataFechamentoBase; // fim real da semana
+      // Usar os limites EFETIVOS (já clipados ao período custom global, se ativo)
+      // para buscar consumos/caixinha. Sem período custom = semana inteira.
+      const rangeIni = fech.dataInicioBase;  // início efetivo (clipado se período global)
+      const rangeFim = (fech as any).dataFimEfetivo || fech.dataFechamentoBase; // fim efetivo
 
       const saidasDescFr = saidasFrescas.filter((s: any) =>
         s.colaboradorId === fr.id &&
@@ -3483,7 +3486,7 @@ export default function FolhaPagamento() {
                               onChange={e => updateEf('dataIniCustom', e.target.value)}
                               style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
                             <span style={{ fontSize: '12px', color: '#888' }}>até</span>
-                            <input type="date" value={ef.dataFimCustom || fech.dataFechamentoBase}
+                            <input type="date" value={ef.dataFimCustom || (fech as any).dataFimEfetivo || fech.dataFechamentoBase}
                               onChange={e => updateEf('dataFimCustom', e.target.value)}
                               style={{ padding: '3px 6px', border: `1px solid ${periodoCustomizado ? '#ab47bc' : '#ccc'}`, borderRadius: '4px', fontSize: '12px' }} />
                             {periodoCustomizado && (
