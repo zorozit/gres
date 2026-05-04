@@ -293,6 +293,27 @@ export const Motoboys: React.FC = () => {
   // Controle diário
   const hoje = new Date();
   const [ctrlMesAno, setCtrlMesAno] = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
+  // Filtro de período custom (sobrepõe ctrlMesAno quando preenchido)
+  const [periodoIni, setPeriodoIni] = useState<string>('');
+  const [periodoFim, setPeriodoFim] = useState<string>('');
+  const periodoCustomAtivo = !!(periodoIni && periodoFim);
+
+  // Helper: retorna semanas para visualização
+  // - Período custom ativo: UMA única "semana" = exatamente o range
+  // - Senão: semanas civis do mês (segunda a domingo)
+  const semanasParaExibicao = (): { inicio: string; fim: string; label: string }[] => {
+    if (periodoCustomAtivo) {
+      const [iY, iM, iD] = periodoIni.split('-').map(Number);
+      const [fY, fM, fD] = periodoFim.split('-').map(Number);
+      void iY; void fY;
+      return [{
+        inicio: periodoIni,
+        fim: periodoFim,
+        label: `${String(iD).padStart(2,'0')}/${String(iM).padStart(2,'0')} – ${String(fD).padStart(2,'0')}/${String(fM).padStart(2,'0')}`,
+      }];
+    }
+    return semanasMes(ctrlMesAno);
+  };
   const [ctrlMotoboyId, setCtrlMotoboyId] = useState('');
   const [controle, setControle] = useState<ControleDia[]>([]);
   const [loadingCtrl, setLoadingCtrl] = useState(false);
@@ -375,25 +396,47 @@ export const Motoboys: React.FC = () => {
     setLoadingSaidas(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const [ano, mes] = mesAno.split('-').map(Number);
-      const inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
-      const fim = new Date(ano, mes, 0).toISOString().split('T')[0];
-      // Busca saídas e escalas em paralelo para ter presença confirmada
-      const [rS, rE] = await Promise.all([
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
-          { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`,
-          { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
+      // Range efetivo: período custom (se ativo) ou mês inteiro
+      let inicio: string, fim: string, mesesAlvo: string[];
+      if (periodoCustomAtivo) {
+        inicio = periodoIni;
+        fim    = periodoFim;
+        const [ai, mi] = inicio.split('-').map(Number);
+        const [af, mf] = fim.split('-').map(Number);
+        mesesAlvo = [];
+        let y = ai, m = mi;
+        while (y < af || (y === af && m <= mf)) {
+          mesesAlvo.push(`${y}-${String(m).padStart(2, '0')}`);
+          m++;
+          if (m > 12) { m = 1; y++; }
+        }
+      } else {
+        const [ano, mes] = mesAno.split('-').map(Number);
+        inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
+        fim = new Date(ano, mes, 0).toISOString().split('T')[0];
+        mesesAlvo = [mesAno];
+      }
+      const headers = { Authorization: `Bearer ${token}` };
+      const [rS, ...rEs] = await Promise.all([
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`, { headers }),
+        ...mesesAlvo.map(mm =>
+          fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, { headers }).catch(() => null as any)
+        ),
       ]);
       const dS = await rS.json();
       setSaidas(Array.isArray(dS) ? dS : []);
-      if (rE?.ok) {
-        const dE = await rE.json();
-        setEscalasControle(Array.isArray(dE) ? dE : []);
+      const escalasAcc: any[] = [];
+      for (const r of rEs) {
+        if (!r?.ok) continue;
+        try {
+          const dE = await r.json();
+          if (Array.isArray(dE)) escalasAcc.push(...dE);
+        } catch { /* ignore */ }
       }
+      setEscalasControle(escalasAcc);
     } catch (e) { console.error(e); setSaidas([]); }
     finally { setLoadingSaidas(false); }
-  }, [apiUrl, unitId]);
+  }, [apiUrl, unitId, periodoCustomAtivo, periodoIni, periodoFim]);
 
   /* ── Controle diário ─────────────────────────────────── */
 
@@ -402,17 +445,44 @@ export const Motoboys: React.FC = () => {
     setLoadingCtrl(true);
     try {
       const token = localStorage.getItem('auth_token');
-      const r = await fetch(`${apiUrl}/controle-motoboy?motoboyId=${ctrlMotoboyId}&mes=${ctrlMesAno}&unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const d = await r.json();
+      const headers = { Authorization: `Bearer ${token}` };
 
       const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
       const salBase = R(motoboy?.salario);
       const peri = R(motoboy?.periculosidade) / 100;
       const salDia = salBase > 0 ? parseFloat(((salBase * (1 + peri)) / 30).toFixed(2)) : 0;
-      const [ano, mes] = ctrlMesAno.split('-').map(Number);
-      const dias = diasDoMes(ano, mes);
+
+      // Determinar lista de dias e meses tocados
+      let dias: string[];
+      let mesesAlvo: string[];
+      if (periodoCustomAtivo) {
+        // Período custom: gera apenas os dias dentro do range
+        dias = [];
+        const [ai, mi, di] = periodoIni.split('-').map(Number);
+        const dStart = new Date(ai, mi - 1, di);
+        const [af, mf, df] = periodoFim.split('-').map(Number);
+        const dEnd = new Date(af, mf - 1, df);
+        const cur = new Date(dStart);
+        const mesesSet = new Set<string>();
+        while (cur <= dEnd) {
+          dias.push(cur.toISOString().split('T')[0]);
+          mesesSet.add(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`);
+          cur.setDate(cur.getDate() + 1);
+        }
+        mesesAlvo = Array.from(mesesSet);
+      } else {
+        const [ano, mes] = ctrlMesAno.split('-').map(Number);
+        dias = diasDoMes(ano, mes);
+        mesesAlvo = [ctrlMesAno];
+      }
+
+      // Buscar controle de todos os meses tocados e mesclar
+      const partes = await Promise.all(mesesAlvo.map(mm =>
+        fetch(`${apiUrl}/controle-motoboy?motoboyId=${ctrlMotoboyId}&mes=${mm}&unitId=${unitId}`, { headers })
+          .then(r => r.ok ? r.json() : [])
+          .catch(() => [])
+      ));
+      const d: any[] = partes.flat().filter((x: any) => x && x.data);
 
       let linhasBase: ControleDia[];
       let temDadosSalvos = false;
@@ -452,23 +522,36 @@ export const Motoboys: React.FC = () => {
       setControle(linhasIntegradas);
     } catch (e) { console.error(e); setControle([]); }
     finally { setLoadingCtrl(false); }
-  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas, escalasControle]);
+  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, motoboys, saidas, escalasControle, periodoCustomAtivo, periodoIni, periodoFim]);
 
   /* ── Pagamentos semanais (folha-pagamento) ───────────────── */
   const fetchPagamentosSemana = useCallback(async () => {
     if (!ctrlMotoboyId || !ctrlMesAno || !unitId) return;
     try {
       const token = localStorage.getItem('auth_token');
-      const r = await fetch(
-        `${apiUrl}/folha-pagamento?colaboradorId=${ctrlMotoboyId}&mes=${ctrlMesAno}&unitId=${unitId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (r.ok) {
-        const d = await r.json();
-        setPagamentosSemana(Array.isArray(d) ? d : []);
+      const headers = { Authorization: `Bearer ${token}` };
+      let mesesAlvo: string[];
+      if (periodoCustomAtivo) {
+        const [ai, mi] = periodoIni.split('-').map(Number);
+        const [af, mf] = periodoFim.split('-').map(Number);
+        mesesAlvo = [];
+        let y = ai, m = mi;
+        while (y < af || (y === af && m <= mf)) {
+          mesesAlvo.push(`${y}-${String(m).padStart(2, '0')}`);
+          m++;
+          if (m > 12) { m = 1; y++; }
+        }
+      } else {
+        mesesAlvo = [ctrlMesAno];
       }
+      const partes = await Promise.all(mesesAlvo.map(mm =>
+        fetch(`${apiUrl}/folha-pagamento?colaboradorId=${ctrlMotoboyId}&mes=${mm}&unitId=${unitId}`, { headers })
+          .then(r => r.ok ? r.json() : [])
+          .catch(() => [])
+      ));
+      setPagamentosSemana(partes.flat() as any[]);
     } catch (e) { console.error(e); }
-  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl]);
+  }, [ctrlMotoboyId, ctrlMesAno, unitId, apiUrl, periodoCustomAtivo, periodoIni, periodoFim]);
 
   const abrirModalPgto = (sem: { inicio: string; fim: string; label: string }) => {
     const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
@@ -562,7 +645,7 @@ export const Motoboys: React.FC = () => {
     try {
       const token = localStorage.getItem('auth_token');
       // Calcula o total da semana a partir das linhas do controle
-      const semanas = semanasMes(ctrlMesAno);
+      const semanas = semanasParaExibicao();
       const sem = semanas.find(s => s.fim === semanaFim);
       if (!sem) return;
       const linhasSemana = controleComAcumulado.filter(l => l.data >= sem.inicio && l.data <= sem.fim);
@@ -590,20 +673,20 @@ export const Motoboys: React.FC = () => {
     finally { setSalvandoPgtoSemana(null); }
   };
 
-  // Carregar saídas ao mudar mês
+  // Carregar saídas ao mudar mês/período
   useEffect(() => {
     if (aba === 'controle') fetchSaidas(ctrlMesAno);
-  }, [ctrlMesAno, aba, fetchSaidas]);
+  }, [ctrlMesAno, periodoIni, periodoFim, aba, fetchSaidas]);
 
-  // Carregar controle quando motoboy ou saídas mudam
+  // Carregar controle quando motoboy, saídas ou período mudam
   useEffect(() => {
     if (aba === 'controle' && ctrlMotoboyId && !loadingSaidas) fetchControle();
-  }, [ctrlMotoboyId, ctrlMesAno, aba, loadingSaidas]);
+  }, [ctrlMotoboyId, ctrlMesAno, periodoIni, periodoFim, aba, loadingSaidas]);
 
   // Carregar status de pagamentos semanais
   useEffect(() => {
     if (aba === 'controle' && ctrlMotoboyId) fetchPagamentosSemana();
-  }, [ctrlMotoboyId, ctrlMesAno, aba, fetchPagamentosSemana]);
+  }, [ctrlMotoboyId, ctrlMesAno, periodoIni, periodoFim, aba, fetchPagamentosSemana]);
 
   // Recalcular variavel acumulado
   const controleComAcumulado = useMemo(() => {
@@ -624,6 +707,10 @@ export const Motoboys: React.FC = () => {
 
   const salvarControle = async () => {
     if (!ctrlMotoboyId) return;
+    if (periodoCustomAtivo) {
+      alert('⚠️ O modo período customizado é apenas para visualização e pagamento. Para lançar/editar dados, limpe o período e use o filtro mensal.');
+      return;
+    }
     setSalvandoCtrl(true);
     try {
       const token = localStorage.getItem('auth_token');
@@ -1178,7 +1265,28 @@ export const Motoboys: React.FC = () => {
               </div>
               <div>
                 <label style={s.label}>Mês</label>
-                <input type="month" value={ctrlMesAno} onChange={e => setCtrlMesAno(e.target.value)} style={{ ...s.input, width: '150px' }} />
+                <input type="month" value={ctrlMesAno} onChange={e => setCtrlMesAno(e.target.value)}
+                  disabled={periodoCustomAtivo}
+                  style={{ ...s.input, width: '150px', opacity: periodoCustomAtivo ? 0.5 : 1 }} />
+              </div>
+              <div style={{ borderLeft: '1px solid #e0e0e0', paddingLeft: '12px' }}>
+                <label style={{ ...s.label, color: periodoCustomAtivo ? '#7b1fa2' : '#666' }}>
+                  Período customizado {periodoCustomAtivo && <span style={{ fontSize: '10px', backgroundColor: '#f3e5f5', color: '#7b1fa2', padding: '1px 6px', borderRadius: '8px', marginLeft: '4px' }}>ativo</span>}
+                </label>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <input type="date" value={periodoIni} onChange={e => setPeriodoIni(e.target.value)}
+                    style={{ ...s.input, width: '135px', borderColor: periodoCustomAtivo ? '#ab47bc' : undefined }} />
+                  <span style={{ fontSize: '12px', color: '#888' }}>até</span>
+                  <input type="date" value={periodoFim} onChange={e => setPeriodoFim(e.target.value)}
+                    style={{ ...s.input, width: '135px', borderColor: periodoCustomAtivo ? '#ab47bc' : undefined }} />
+                  {periodoCustomAtivo && (
+                    <button
+                      onClick={() => { setPeriodoIni(''); setPeriodoFim(''); }}
+                      style={{ padding: '6px 10px', fontSize: '11px', border: '1px solid #ab47bc', backgroundColor: '#fff', color: '#7b1fa2', borderRadius: '4px', cursor: 'pointer' }}
+                      title="Limpar período e voltar ao filtro mensal"
+                    >✕ limpar</button>
+                  )}
+                </div>
               </div>
               <div>
                 <label style={s.label}>Modo</label>
@@ -1300,7 +1408,7 @@ export const Motoboys: React.FC = () => {
                   const motoboyCtrl = motoboys.find(m => m.id === ctrlMotoboyId);
                   const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
                   const showChegada = isFreelancerCtrl;
-                  const semanas = semanasMes(ctrlMesAno);
+                  const semanas = semanasParaExibicao();
 
                   // Detecta quais dias já foram pagos (pgto > 0 ou semana marcada paga)
                   const semanasPagas = new Set(
@@ -1523,7 +1631,7 @@ export const Motoboys: React.FC = () => {
 
                 {/* ── Resumo semanal com status de pagamento ──────── */}
                 {controleComAcumulado.length > 0 && (() => {
-                  const semanas = semanasMes(ctrlMesAno);
+                  const semanas = semanasParaExibicao();
                   const motoboy = motoboys.find(m => m.id === ctrlMotoboyId);
                   return (
                     <div style={{ marginTop: '20px', border: '1px solid #e0e0e0', borderRadius: '8px', overflow: 'hidden' }}>
