@@ -700,20 +700,61 @@ export const Motoboys: React.FC = () => {
   const handleCampoControle = (idx: number, campo: keyof ControleDia, valor: string) => {
     setControle(prev => {
       const next = [...prev];
-      (next[idx] as any)[campo] = valor === '' ? 0 : parseFloat(valor) || 0;
+      const numVal = valor === '' ? 0 : parseFloat(valor) || 0;
+      (next[idx] as any)[campo] = numVal;
+
+      // Auto-preencher chegadaDia/chegadaNoite quando usuário adiciona entregas manualmente
+      // (caso o dia não tenha escala/saída registrada)
+      const motoboyAt = motoboys.find(m => m.id === ctrlMotoboyId);
+      const isFreelancerAt = motoboyAt?.vinculo === 'Freelancer';
+      if (isFreelancerAt && motoboyAt) {
+        const linha: any = next[idx];
+        const vChegadaDia   = R(motoboyAt.valorChegadaDia   ?? motoboyAt.valorChegada);
+        const vChegadaNoite = R(motoboyAt.valorChegadaNoite ?? motoboyAt.valorChegada);
+        const valorEntrega  = R(motoboyAt.valorEntrega);
+
+        if (campo === 'entDia') {
+          linha.chegadaDia = numVal > 0 && vChegadaDia > 0 ? vChegadaDia : 0;
+        } else if (campo === 'entNoite') {
+          linha.chegadaNoite = numVal > 0 && vChegadaNoite > 0 ? vChegadaNoite : 0;
+        }
+
+        // Recalcular vlVariavel da linha (chegadas + entregas + caixinha)
+        const totalEntregas = R(linha.entDia) + R(linha.entNoite);
+        const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+        linha.vlVariavel = parseFloat(
+          (R(linha.chegadaDia) + R(linha.chegadaNoite) + (valorEntrega * totalEntregas) + totalCaixinha).toFixed(2)
+        );
+      }
       return next;
     });
   };
 
   const salvarControle = async () => {
     if (!ctrlMotoboyId) return;
-    if (periodoCustomAtivo) {
-      alert('⚠️ O modo período customizado é apenas para visualização e pagamento. Para lançar/editar dados, limpe o período e use o filtro mensal.');
-      return;
-    }
     setSalvandoCtrl(true);
     try {
       const token = localStorage.getItem('auth_token');
+      // Quando período custom está ativo, agrupar linhas por mês (YYYY-MM extraído de l.data)
+      // e fazer uma chamada por mês. Backend usa l.data como chave única.
+      if (periodoCustomAtivo) {
+        const porMes = new Map<string, any[]>();
+        for (const l of controleComAcumulado) {
+          const mm = (l.data || '').substring(0, 7);
+          if (!mm) continue;
+          if (!porMes.has(mm)) porMes.set(mm, []);
+          porMes.get(mm)!.push(l);
+        }
+        for (const [mm, linhas] of porMes) {
+          await fetch(`${apiUrl}/controle-motoboy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ motoboyId: ctrlMotoboyId, mes: mm, unitId, linhas }),
+          });
+        }
+        alert('✅ Controle salvo com sucesso!');
+        return;
+      }
       const payload = { motoboyId: ctrlMotoboyId, mes: ctrlMesAno, unitId, linhas: controleComAcumulado };
       const r = await fetch(`${apiUrl}/controle-motoboy`, {
         method: 'POST',
