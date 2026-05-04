@@ -776,8 +776,14 @@ export default function FolhaPagamento() {
       const isoFimBase = fmtDataISO(fim);
       // Permitir customização do período por semana
       const efBase = editFechamento[isoFimBase] || {};
-      const isoInicio = efBase.dataIniCustom || isoInicioBase;
-      const isoFim    = efBase.dataFimCustom || isoFimBase;
+      let isoInicio = efBase.dataIniCustom || isoInicioBase;
+      let isoFim    = efBase.dataFimCustom || isoFimBase;
+      // Quando período global está ativo, clipar a semana ao range selecionado
+      // (ex: semana 27/04–03/05 com range 28/04–03/05 vira 28/04–03/05)
+      if (periodoCustomAtivo) {
+        if (isoInicio < periodoIni) isoInicio = periodoIni;
+        if (isoFim    > periodoFim) isoFim    = periodoFim;
+      }
       // Label dinâmico reflete o período real
       const [iniD, iniM] = isoInicio.split('-').slice(1).map(Number);
       const [fimD, fimM] = isoFim.split('-').slice(1).map(Number);
@@ -2881,18 +2887,29 @@ export default function FolhaPagamento() {
           // Start from Monday of first week
           const dow0 = cur.getDay();
           if (dow0 !== 1) cur.setDate(cur.getDate() + (dow0 === 0 ? -6 : 1 - dow0));
+          // Limites do range para clipping (período custom global)
+          const rangeIniIso = periodoCustomAtivo ? periodoIni : '';
+          const rangeFimIso = periodoCustomAtivo ? periodoFim : '';
           while (cur <= ultDia) {
             const seg = new Date(cur);
             const dom = new Date(cur); dom.setDate(dom.getDate() + 6);
             const fimReal = dom > ultDia ? new Date(ultDia) : new Date(dom);
-            const inicioStr = seg.toISOString().split('T')[0];
-            const fimStr = fimReal.toISOString().split('T')[0];
+            let inicioStr = seg.toISOString().split('T')[0];
+            let fimStr = fimReal.toISOString().split('T')[0];
+            // Clipping ao range custom: a semana exibida não ultrapassa o período selecionado
+            if (rangeIniIso && inicioStr < rangeIniIso) inicioStr = rangeIniIso;
+            if (rangeFimIso && fimStr    > rangeFimIso) fimStr    = rangeFimIso;
+            // Atualizar label para refletir período clipado
+            const [iY, iM, iD] = inicioStr.split('-').map(Number);
+            const [fY, fM, fD] = fimStr.split('-').map(Number);
+            void iY; void fY;
+            const labelClipado = `${String(iD).padStart(2,'0')}/${String(iM).padStart(2,'0')} - ${String(fD).padStart(2,'0')}/${String(fM).padStart(2,'0')}`;
             // proxSeg after fim
             const ps = new Date(fimReal);
             const pdow = ps.getDay();
             ps.setDate(ps.getDate() + (pdow === 1 ? 0 : pdow === 0 ? 1 : 8 - pdow));
             semanas.push({
-              label: `${seg.getDate().toString().padStart(2,'0')}/${(seg.getMonth()+1).toString().padStart(2,'0')} - ${fimReal.getDate().toString().padStart(2,'0')}/${(fimReal.getMonth()+1).toString().padStart(2,'0')}`,
+              label: labelClipado,
               inicio: inicioStr,
               fim: fimStr,
               proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
