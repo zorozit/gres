@@ -21,6 +21,7 @@ const TODOS_MODULOS = [
   { id: 'usuarios',              icon: '🔐', title: 'Gestão de Usuários' },
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões' },
   { id: 'auditoria',             icon: '🔒', title: 'Auditoria' },
+  { id: 'feriados',              icon: '🎉', title: 'Feriados' },
 ];
 
 // ─── Perfis do sistema ───────────────────────────────────────────────────────

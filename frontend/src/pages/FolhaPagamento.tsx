@@ -596,10 +596,10 @@ export default function FolhaPagamento() {
   // Freelancers state (derived from colaboradores)
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
 
-  // Recalcular folhas CLT
+  // Recalcular folhas CLT (incluir 'escalas' como dependência para detectar feriados trabalhados)
   useEffect(() => {
     setFolhasLocais(calcularTodasFolhas());
-  }, [colaboradores, motoboys, controlesMap, folhasDB, mesAno, saidasPeriodo]);
+  }, [colaboradores, motoboys, controlesMap, folhasDB, mesAno, saidasPeriodo, escalas]);
 
   // Recalcular fechamentos freelancer
   useEffect(() => {
@@ -2642,8 +2642,35 @@ export default function FolhaPagamento() {
 
   const ModalConfirmarPagamentoCLT = () => {
     if (!modalPagamento) return null;
-    // Adiantamento: valor líquido do adto (Cod 16). Variável/Dia 5: pgtosDia05 (líquido fechamento)
-    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? modalPagamento.adtoLiquido : modalPagamento.pgtosDia05;
+    // Adiantamento: valor líquido do adto (Cod 16). Variável/Dia 5: líquido sugerido com overrides + descontos
+    const f = modalPagamento;
+    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? f.adtoLiquido : (() => {
+      // Recalcular líquido Dia 5 com overrides + descontos selecionados
+      const inssOv = parseFloat(overrides.inss || String(f.inss));
+      const contrOv = parseFloat(overrides.contrAssist || String(f.contrAssistencial));
+      const salBaseOv = parseFloat(overrides.salBase || String(f.salarioBase));
+      const periOv = parseFloat(overrides.periculosidade || String(f.periculosidade));
+      // Saídas do colaborador no mês
+      const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
+      const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      // Saldo transporte
+      const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      const escalasCol = escalas.filter((e: any) => e.colaboradorId === f.colaboradorId && (e.data || '').startsWith(mesAno));
+      const presentes = escalasCol.filter((e: any) => e.presenca === 'presente' || e.presencaNoite === 'presente').length;
+      const transpDevido = (R((f.raw as any)?.valorTransporte) || 0) * presentes;
+      const saldoTransporte = adtoTransp - transpDevido;
+      const descSelecionados =
+        (descontosIncluidos.consumo ? consumo : 0) +
+        (descontosIncluidos.aReceber ? aReceber : 0) +
+        (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
+        (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
+      return parseFloat(Math.max(0,
+        salBaseOv * 0.60 + periOv + (f.feriadosValor || 0) + (f.variavelDe20a31 || 0)
+        - inssOv - contrOv - descSelecionados
+      ).toFixed(2));
+    })();
     const diff = totalPgtoLinhas - valorReferencia;
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}

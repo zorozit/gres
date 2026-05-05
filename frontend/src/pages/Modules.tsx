@@ -22,6 +22,7 @@ const ALL_MODULES = [
   { id: 'usuarios',              icon: '🔐', title: 'Gestão de Usuários',        description: 'Controle de acesso e permissões',                                                 path: '/modulos/usuarios',              color: '#c44569' },
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões',     description: 'Defina quais módulos cada perfil pode acessar',                                   path: '/modulos/permissoes',            color: '#e53935' },
   { id: 'auditoria',             icon: '🔒', title: 'Auditoria',                  description: 'Histórico completo de alterações — quem mudou, quando, antes/depois',         path: '/modulos/auditoria',             color: '#37474f' },
+  { id: 'feriados',              icon: '🎉', title: 'Feriados',                   description: 'Configurar feriados (afeta cálculo da folha — cód.1311)',                          path: '/modulos/feriados',              color: '#fb8c00' },
 ];
 
 export const Modules: React.FC = () => {

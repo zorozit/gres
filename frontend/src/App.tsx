@@ -15,6 +15,7 @@ import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { PermissoesConfig } from './pages/PermissoesConfig';
 import Auditoria from './pages/Auditoria';
+import Feriados from './pages/Feriados';
 import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
@@ -82,6 +83,9 @@ function App() {
 
             <Route path="/modulos/auditoria"
               element={<ProtectedRoute moduloId="auditoria"><Auditoria /></ProtectedRoute>} />
+
+            <Route path="/modulos/feriados"
+              element={<ProtectedRoute moduloId="feriados"><Feriados /></ProtectedRoute>} />
 
             <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>
