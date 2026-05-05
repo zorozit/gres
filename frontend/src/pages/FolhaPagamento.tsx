@@ -926,10 +926,21 @@ export default function FolhaPagamento() {
 
         // valorDobra para exibição
         const valorDobra = usaTurno ? (vDia + vNoite) : vDobra;
-        // Motoboy Freelancer: valorTransporte = valor/entrega (já incluso no total)
-        //                     não tem transporte de deslocamento separado
-        const valorTransporte = isMotoboy ? 0 : R(f.valorTransporte);
-        const totalTransporte = isMotoboy ? 0 : parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
+        // Transporte (deslocamento diário): valorTransporte cadastrado × dias trabalhados
+        // Para motoboy freelancer: o `valorEntrega` não entra aqui (já conta no `total` via chegada+entregas)
+        // Mas exibimos as entregas em campo separado pra conferência com o módulo de motoboys.
+        const valorTransporte = R(f.valorTransporte);
+        const totalTransporte = parseFloat((valorTransporte * diasTrabalhados).toFixed(2));
+        // Total de entregas do motoboy (apenas exibição/conferência, não entra no líquido)
+        let totalEntregasMotoboy = 0;
+        if (isMotoboy) {
+          const linhasMot = ctrlLinhas.filter(l => l.data >= isoInicio && l.data <= isoFim);
+          for (const linha of linhasMot) {
+            if (diasJaPagos.has(linha.data)) continue;
+            totalEntregasMotoboy += (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
+          }
+          totalEntregasMotoboy = parseFloat(totalEntregasMotoboy.toFixed(2));
+        }
 
         // Helper: data efetiva da saída (dataPagamento ou data de lançamento)
         const saidaData = (s: any) => s.dataPagamento || s.data || '';
@@ -1039,6 +1050,8 @@ export default function FolhaPagamento() {
           acordo: (f as any).acordo || null,
           dobras, valorDobra, valorDia: vDia, valorNoite: vNoite,
           valorTransporte, totalTransporte,
+          totalEntregasMotoboy,       // motoboy: entregas × valorEntrega (só exibição)
+          isMotoboy,                  // flag para a coluna de transporte saber
           transporteAdiantadoMes,     // total do adiantamento no mês (para o banner do modal)
           transporteSemanasAnteriores, // já consumido em semanas anteriores (para o banner)
           transporteAdiantado, transporteSaldo,
@@ -3628,23 +3641,42 @@ export default function FolhaPagamento() {
                                   )}
                                 </td>
                                 <td style={{ ...s.td, textAlign: 'right', fontSize: '11px' }}>
-                                  {fr.totalTransporte > 0 ? (
-                                    <div>
-                                      <div style={{ color: '#1565c0' }} title="Transporte calculado (dias trabalhados × valor/dia)">
-                                        📦 {fmtMoeda(fr.totalTransporte)}
+                                  {(() => {
+                                    const isMot = (fr as any).isMotoboy;
+                                    const totEnt = (fr as any).totalEntregasMotoboy || 0;
+                                    const totalExibido = fr.totalTransporte + (isMot ? totEnt : 0);
+                                    if (totalExibido <= 0) return '-';
+                                    return (
+                                      <div>
+                                        <div style={{ color: '#1565c0', fontWeight: 'bold' }}
+                                             title={isMot && totEnt > 0
+                                               ? `Transporte (${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))}) + Entregas: R$${fmt(totEnt)}`
+                                               : 'Transporte calculado (dias trabalhados × valor/dia)'}>
+                                          📦 {fmtMoeda(totalExibido)}
+                                        </div>
+                                        {isMot && totEnt > 0 && (
+                                          <div style={{ color: '#0288d1', fontSize: '10px' }} title="Valor das entregas (já conta no Total Bruto)">
+                                            ⚡ entregas: {fmtMoeda(totEnt)}
+                                          </div>
+                                        )}
+                                        {fr.totalTransporte > 0 && (
+                                          <div style={{ color: '#666', fontSize: '10px' }} title="Transporte por dia">
+                                            🚗 transp.: {fmtMoeda(fr.totalTransporte)}
+                                          </div>
+                                        )}
+                                        {fr.transporteAdiantado > 0 && (
+                                          <div style={{ color: '#e65100', fontSize: '10px' }} title="Já pago via Adiantamento Transporte em Saídas">
+                                            ✔ {fmtMoeda(fr.transporteAdiantado)} pago
+                                          </div>
+                                        )}
+                                        {fr.transporteAdiantado > 0 && (
+                                          <div style={{ color: fr.transporteSaldo > 0 ? '#2e7d32' : '#999', fontWeight: 'bold', fontSize: '10px' }}>
+                                            → {fr.transporteSaldo > 0 ? `saldo ${fmtMoeda(fr.transporteSaldo)}` : 'quitado'}
+                                          </div>
+                                        )}
                                       </div>
-                                      {fr.transporteAdiantado > 0 && (
-                                        <div style={{ color: '#e65100', fontSize: '10px' }} title="Já pago via Adiantamento Transporte em Saídas">
-                                          ✔ {fmtMoeda(fr.transporteAdiantado)} pago
-                                        </div>
-                                      )}
-                                      {fr.transporteAdiantado > 0 && (
-                                        <div style={{ color: fr.transporteSaldo > 0 ? '#2e7d32' : '#999', fontWeight: 'bold', fontSize: '10px' }}>
-                                          → {fr.transporteSaldo > 0 ? `saldo ${fmtMoeda(fr.transporteSaldo)}` : 'quitado'}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : '-'}
+                                    );
+                                  })()}
                                 </td>
                                 {/* 🪙 Caixinha - crédito a pagar ao colaborador */}
                                 <td style={{ ...s.td, textAlign: 'right', color: (fr as any).caixinhaTotal > 0 ? '#f57f17' : '#aaa', fontSize: '12px' }}>
