@@ -3,6 +3,14 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import {
+  HistoricoColaborador,
+  HistoricoPagamentos,
+  HistoricoEscalas,
+  HistoricoSaidas,
+  HistoricoMotoboy,
+  type AbaModal,
+} from '../components/HistoricoColaborador';
 
 /* ─── Interfaces ──────────────────────────────────────────────────────────── */
 interface AcordoTurno {
@@ -60,6 +68,11 @@ interface Colaborador {
   podeTrabalharNoite: boolean;
   dataCadastro: string;
   ativo: boolean;
+  // Horário de trabalho (CLT)
+  horarioEntrada?: string;
+  horarioSaida?: string;
+  // Periculosidade (CLT motoboy ou cargos com risco)
+  periculosidade?: number;
   // Novos campos para tipos de acordo freelancer
   isMotoboy?: boolean;
   tipoAcordo?: 'motoboy' | 'valor_turno' | 'valor_dia_noite';
@@ -128,6 +141,9 @@ const ESTADO_INICIAL: Partial<Colaborador> = {
   valorTransporte: 0,
   valeAlimentacao: false,
   salario: 0,
+  periculosidade: 0,
+  horarioEntrada: '',
+  horarioSaida: '',
   diasDisponiveis: ['segunda','terça','quarta','quinta','sexta'],
   podeTrabalharDia: true,
   podeTrabalharNoite: false,
@@ -534,6 +550,43 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
             />
           </div>
         )}
+        {/* Periculosidade (CLT, opcional) */}
+        {!isFreelancer && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Periculosidade (%)</label>
+            <input
+              type="text" inputMode="decimal" placeholder="0"
+              defaultValue={String((data as any).periculosidade ?? 0)}
+              style={styles.input}
+              onFocus={e => e.target.select()}
+              onBlur={e => onChange({ periculosidade: parseFloat(e.target.value.replace(',', '.')) || 0 } as any)}
+            />
+            <small style={{ color:'#888', fontSize:'11px' }}>Ex: 30 (motoboy). Aplicado sobre salário base.</small>
+          </div>
+        )}
+        {/* Horário de trabalho (CLT) */}
+        {!isFreelancer && (
+          <>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Horário entrada</label>
+              <input
+                type="time"
+                defaultValue={(data as any).horarioEntrada || ''}
+                style={styles.input}
+                onBlur={e => onChange({ horarioEntrada: e.target.value } as any)}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Horário saída</label>
+              <input
+                type="time"
+                defaultValue={(data as any).horarioSaida || ''}
+                style={styles.input}
+                onBlur={e => onChange({ horarioSaida: e.target.value } as any)}
+              />
+            </div>
+          </>
+        )}
         {/* Acordo Freelancer — formulário dinâmico; key força remontagem ao trocar colaborador ou tipo de acordo */}
         {isFreelancer && (
           <AcordoFreelancerForm key={`${(data as any).id || 'novo'}-${data.tipoAcordo || 'default'}`} data={data} onChange={onChange} />
@@ -784,10 +837,16 @@ const CardColaborador = ({ colab, onEditar, onDesligar, onReativar }: CardColabo
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Colaboradores() {
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
+  const { user, email: authEmail } = useAuth() as any;
   const userUnitId = (user as any)?.unitId || '';
   const unitId = activeUnit?.id || userUnitId || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
+
+  // Auditoria: campos enviados em todos os POST/PUT para que o backend possa logar quem fez a ação
+  const responsavelId    = (user as any)?.id || localStorage.getItem('user_id') || '';
+  const responsavelNome  = (user as any)?.nome || (user as any)?.name || (user as any)?.displayName || authEmail || 'desconhecido';
+  const responsavelEmail = authEmail || (user as any)?.email || localStorage.getItem('user_email') || '';
+  const auditoria = () => ({ responsavelId, responsavelNome, responsavelEmail });
 
   /* ── State ─────────────────────────────────────────────────── */
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
@@ -801,6 +860,9 @@ export default function Colaboradores() {
 
   // Colaborador editing
   const [colaboradorEditando, setColaboradorEditando] = useState<Colaborador | null>(null);
+  const [abaModal, setAbaModal] = useState<AbaModal>('cadastro');
+  // Reset aba ao abrir/trocar colaborador
+  useEffect(() => { if (colaboradorEditando) setAbaModal('cadastro'); }, [colaboradorEditando?.id]);
 
   // Filters
   const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
@@ -882,7 +944,7 @@ export default function Colaboradores() {
       ? (novoColab.funcao || novoColab.cargo || 'Freelancer')
       : cargoDe(novoColab);
 
-    const payload: Partial<Colaborador> = {
+    const payload: any = {
       ...novoColab,
       unitId,
       cargo,
@@ -895,6 +957,7 @@ export default function Colaboradores() {
       cpf: isFreelancer && !(novoColab.cpf || '').replace(/\D/g,'').length
         ? '00000000000'
         : novoColab.cpf,
+      ...auditoria(),
     };
 
     setSalvando(true);
@@ -923,13 +986,14 @@ export default function Colaboradores() {
     const cargo = isFreelancer
       ? (colaboradorEditando.funcao || colaboradorEditando.cargo || 'Freelancer')
       : cargoDe(colaboradorEditando);
-    const payload = {
+    const payload: any = {
       ...colaboradorEditando,
       cargo,
       tipo: cargo,
       funcao: colaboradorEditando.funcao || '',
       area:   colaboradorEditando.area   || '',
       telefone: colaboradorEditando.celular || colaboradorEditando.telefone || '',
+      ...auditoria(),
     };
     setSalvando(true);
     try {
@@ -969,7 +1033,7 @@ export default function Colaboradores() {
       await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...colab, ativo: false, dataDemissao }),
+        body: JSON.stringify({ ...colab, ativo: false, dataDemissao, ...auditoria(), observacaoAlteracao: `Desligamento manual em ${dataDemissao}` }),
       });
       mostrarMsg('✅ Colaborador desligado.');
       setColaboradorEditando(null);
@@ -985,7 +1049,7 @@ export default function Colaboradores() {
       await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...colab, ativo: true, dataDemissao: '' }),
+        body: JSON.stringify({ ...colab, ativo: true, dataDemissao: '', ...auditoria(), observacaoAlteracao: 'Reativacao manual' }),
       });
       mostrarMsg('✅ Colaborador reativado.');
       setColaboradorEditando(null);
@@ -1409,7 +1473,7 @@ export default function Colaboradores() {
           <div style={S.modalContent}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'16px' }}>
               <div>
-                <h2 style={{ margin: 0 }}>✏️ Editar Colaborador</h2>
+                <h2 style={{ margin: 0 }}>✏️ Editar Colaborador — {colaboradorEditando.nome}</h2>
                 <span style={{
                   display: 'inline-block', marginTop: '4px',
                   padding: '3px 12px', borderRadius: '20px', fontWeight: 'bold', fontSize: '12px',
@@ -1422,22 +1486,71 @@ export default function Colaboradores() {
               <button onClick={() => setColaboradorEditando(null)} style={{ background:'none', border:'none', fontSize:'22px', cursor:'pointer', color:'#666' }}>✕</button>
             </div>
 
-            <CamposBasicos
-              data={colaboradorEditando}
-              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
-            <CamposEndereco
-              data={colaboradorEditando}
-              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
-            <CamposContratacao
-              data={colaboradorEditando}
-              onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)}
-              funcoesOpcoes={funcoesOpcoes}
-              funcoes={funcoes} />
-            {/* Jornada only for CLT */}
-            {colaboradorEditando.tipoContrato !== 'Freelancer' && (
-              <CamposJornada
+            {/* Tabs do modal de edição */}
+            <div style={{ display:'flex', borderBottom:'2px solid #e0e0e0', marginBottom:'14px', flexWrap:'wrap', gap:'4px' }}>
+              {([
+                { id:'cadastro',   label:'✏️ Cadastro' },
+                { id:'historico',  label:'📜 Histórico' },
+                { id:'pagamentos', label:'💰 Pagamentos' },
+                { id:'escalas',    label:'📅 Escalas' },
+                { id:'saidas',     label:'💸 Saídas' },
+                ...((colaboradorEditando.isMotoboy || (colaboradorEditando.cargo || '').toLowerCase()==='motoboy') ? [{ id:'motoboy', label:'🛥️ Motoboy' }] : []),
+              ] as { id: AbaModal; label: string }[]).map(t => (
+                <button key={t.id} onClick={() => setAbaModal(t.id)}
+                  style={{
+                    padding:'8px 14px',
+                    border:'none',
+                    borderBottom: abaModal === t.id ? '3px solid #1565c0' : '3px solid transparent',
+                    background:'transparent',
+                    cursor:'pointer',
+                    fontSize:'13px',
+                    fontWeight: abaModal === t.id ? 700 : 500,
+                    color: abaModal === t.id ? '#1565c0' : '#666',
+                    marginBottom:'-2px',
+                  }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {abaModal === 'cadastro' && <>
+              <CamposBasicos
                 data={colaboradorEditando}
                 onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+              <CamposEndereco
+                data={colaboradorEditando}
+                onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+              <CamposContratacao
+                data={colaboradorEditando}
+                onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)}
+                funcoesOpcoes={funcoesOpcoes}
+                funcoes={funcoes} />
+              {/* Jornada only for CLT */}
+              {colaboradorEditando.tipoContrato !== 'Freelancer' && (
+                <CamposJornada
+                  data={colaboradorEditando}
+                  onChange={p => setColaboradorEditando(prev => prev ? { ...prev, ...p } : prev)} />
+              )}
+            </>}
+
+            {abaModal === 'historico' && (
+              <HistoricoColaborador colaboradorId={colaboradorEditando.id} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'pagamentos' && (
+              <HistoricoPagamentos colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'escalas' && (
+              <HistoricoEscalas colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'saidas' && (
+              <HistoricoSaidas colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'motoboy' && (
+              <HistoricoMotoboy colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
             )}
 
             <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap:'wrap' }}>

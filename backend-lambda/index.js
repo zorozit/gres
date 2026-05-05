@@ -81,6 +81,56 @@ function diffEscala(antes, depois) {
   return Object.keys(diffs).length > 0 ? diffs : null;
 }
 
+/**
+ * Registra log de alteracao de colaborador em gres-prod-colaboradores-log.
+ * Sempre best-effort. Auditoria/ordem judicial: timestamp, usuario, antes, depois.
+ */
+async function logColaboradorAlteracao({ colaboradorId, evento, valoresAntes, valoresDepois, usuarioId, usuarioNome, usuarioEmail, unitId, userAgent, observacao }) {
+  try {
+    const ts = new Date().toISOString();
+    const item = {
+      id: `log-col-${colaboradorId}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      colaboradorId,
+      timestamp: ts,
+      evento: evento || 'alterado',         // criado | alterado | desativado | reativado | deletado
+      valoresAntes: valoresAntes || null,
+      valoresDepois: valoresDepois || null,
+      usuarioId: usuarioId || 'desconhecido',
+      usuarioNome: usuarioNome || 'desconhecido',
+      usuarioEmail: usuarioEmail || '',
+      unitId: unitId || '',
+      userAgent: userAgent || '',
+      observacao: observacao || '',
+    };
+    await dynamodb.put({ TableName: 'gres-prod-colaboradores-log', Item: item }).promise();
+  } catch (e) {
+    console.warn('logColaboradorAlteracao falhou (best-effort):', e.message);
+  }
+}
+
+/** Diff helper para colaboradores: retorna apenas campos relevantes que mudaram */
+function diffColaborador(antes, depois) {
+  const campos = [
+    'nome', 'cpf', 'celular', 'telefone', 'email',
+    'tipoContrato', 'cargo', 'tipo', 'funcao', 'area',
+    'salario', 'periculosidade', 'valorDia', 'valorNoite',
+    'valorTransporte', 'valorChegadaDia', 'valorChegadaNoite', 'valorEntrega',
+    'chavePix', 'dataAdmissao', 'dataDemissao',
+    'unitId', 'ativo', 'horarioEntrada', 'horarioSaida',
+    'isMotoboy', 'tipoAcordo', 'valeAlimentacao',
+    'podeTrabalharDia', 'podeTrabalharNoite',
+  ];
+  const diffs = {};
+  for (const c of campos) {
+    const a = antes?.[c] ?? null;
+    const d = depois?.[c] ?? null;
+    // Comparacao laxa para arrays/objetos, estrita para primitivos
+    const eq = JSON.stringify(a) === JSON.stringify(d);
+    if (!eq) diffs[c] = { antes: a, depois: d };
+  }
+  return Object.keys(diffs).length > 0 ? diffs : null;
+}
+
 // ─────────────────────────────────────────────────────────
 // Helpers de integridade do DynamoDB
 // Garantem referências cruzadas entre entidades para
@@ -451,12 +501,15 @@ exports.handler = async (event) => {
         nome, email, telefone, celular, cpf,
         tipoContrato, cargo, tipo, funcao, area,
         valorDia, valorNoite, valorTransporte, valeAlimentacao,
-        salario, chavePix, dataAdmissao, dataNascimento,
+        salario, periculosidade, chavePix, dataAdmissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
         diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
         unitId, ativo,
         isMotoboy, tipoAcordo, acordo,
-        valorChegadaDia, valorChegadaNoite, valorEntrega
+        valorChegadaDia, valorChegadaNoite, valorEntrega,
+        horarioEntrada, horarioSaida,
+        // Auditoria - obrigatoria a partir desta versao
+        responsavelId, responsavelNome, responsavelEmail,
       } = body;
 
       const celularFinal = celular || telefone || '';
@@ -522,12 +575,33 @@ exports.handler = async (event) => {
           valorChegadaDia:  parseFloat(valorChegadaDia) || 0,
           valorChegadaNoite:parseFloat(valorChegadaNoite) || 0,
           valorEntrega:     parseFloat(valorEntrega) || 0,
+          // Periculosidade (CLT motoboy)
+          periculosidade:   parseFloat(periculosidade) || 0,
+          // Horário de trabalho
+          horarioEntrada:   horarioEntrada || '',
+          horarioSaida:     horarioSaida || '',
+          // Auditoria
+          criadoPor:        responsavelId || '',
+          criadoPorNome:    responsavelNome || '',
         };
 
         await dynamodb.put({
           TableName: 'gres-prod-colaboradores',
           Item: item
         }).promise();
+
+        // Log de criação (auditoria)
+        await logColaboradorAlteracao({
+          colaboradorId: item.id,
+          evento: 'criado',
+          valoresAntes: null,
+          valoresDepois: item,
+          usuarioId: responsavelId,
+          usuarioNome: responsavelNome,
+          usuarioEmail: responsavelEmail,
+          unitId: unitIdClean,
+          userAgent: (event.headers && (event.headers['user-agent'] || event.headers['User-Agent'])) || '',
+        });
 
         return response(201, { success: true, id: item.id });
       } catch (error) {
@@ -545,12 +619,16 @@ exports.handler = async (event) => {
         nome, email, telefone, celular, cpf,
         tipoContrato, cargo, tipo, funcao, area,
         valorDia, valorNoite, valorTransporte, valeAlimentacao,
-        salario, chavePix, dataAdmissao, dataDemissao, dataNascimento,
+        salario, periculosidade, chavePix, dataAdmissao, dataDemissao, dataNascimento,
         endereco, numero, complemento, cidade, estado, cep,
         diasDisponiveis, podeTrabalharDia, podeTrabalharNoite,
+        unitId,
         ativo,
         isMotoboy, tipoAcordo, acordo,
-        valorChegadaDia, valorChegadaNoite, valorEntrega
+        valorChegadaDia, valorChegadaNoite, valorEntrega,
+        horarioEntrada, horarioSaida,
+        // Auditoria
+        responsavelId, responsavelNome, responsavelEmail, observacaoAlteracao,
       } = body;
 
       const celularFinal = celular || telefone || '';
@@ -607,6 +685,13 @@ exports.handler = async (event) => {
           valorChegadaDia:  valorChegadaDia !== undefined ? (parseFloat(valorChegadaDia) || 0) : (original.Item.valorChegadaDia || 0),
           valorChegadaNoite:valorChegadaNoite !== undefined ? (parseFloat(valorChegadaNoite) || 0) : (original.Item.valorChegadaNoite || 0),
           valorEntrega:     valorEntrega !== undefined ? (parseFloat(valorEntrega) || 0) : (original.Item.valorEntrega || 0),
+          // Periculosidade
+          periculosidade:   periculosidade !== undefined ? (parseFloat(periculosidade) || 0) : (original.Item.periculosidade || 0),
+          // Horário de trabalho
+          horarioEntrada:   horarioEntrada !== undefined ? horarioEntrada : (original.Item.horarioEntrada || ''),
+          horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
+          // Permite mudança de unidade (transferência)
+          unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };
 
         await dynamodb.put({
@@ -614,7 +699,32 @@ exports.handler = async (event) => {
           Item: updated
         }).promise();
 
-        return response(200, { success: true, id: colaboradorId, item: updated });
+        // Detectar diff e logar (auditoria)
+        const diffs = diffColaborador(original.Item, updated);
+        if (diffs) {
+          // Detectar evento específico
+          let evento = 'alterado';
+          if (diffs.ativo) evento = updated.ativo ? 'reativado' : 'desativado';
+          else if (diffs.unitId) evento = 'transferido';
+          else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte) evento = 'remuneracao_alterada';
+          else if (diffs.cargo || diffs.tipo || diffs.funcao || diffs.area) evento = 'cargo_alterado';
+          else if (diffs.tipoContrato) evento = 'contrato_alterado';
+
+          await logColaboradorAlteracao({
+            colaboradorId,
+            evento,
+            valoresAntes: original.Item,
+            valoresDepois: updated,
+            usuarioId: responsavelId,
+            usuarioNome: responsavelNome,
+            usuarioEmail: responsavelEmail,
+            unitId: updated.unitId,
+            userAgent: (event.headers && (event.headers['user-agent'] || event.headers['User-Agent'])) || '',
+            observacao: observacaoAlteracao || '',
+          });
+        }
+
+        return response(200, { success: true, id: colaboradorId, item: updated, diffs });
       } catch (error) {
         console.error('DynamoDB error:', error);
         return response(500, { error: 'Erro ao atualizar colaborador: ' + error.message });
@@ -1219,6 +1329,61 @@ exports.handler = async (event) => {
         return response(200, items);
       } catch (err) {
         return response(500, { error: 'Erro ao buscar logs de escala' });
+      }
+    }
+
+    // GET /colaboradores-log/:colaboradorId — historico de um colaborador
+    if (rawPath.match(/\/colaboradores-log\/.+/) && httpMethod === 'GET') {
+      const colId = rawPath.split('/').pop();
+      if (!colId) return response(400, { error: 'colaboradorId obrigatorio' });
+      try {
+        // Tenta query pelo índice; fallback para scan filtrado
+        let items = [];
+        try {
+          const r = await dynamodb.query({
+            TableName: 'gres-prod-colaboradores-log',
+            IndexName: 'colaboradorId-timestamp-index',
+            KeyConditionExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colId },
+            ScanIndexForward: false, // mais recente primeiro
+          }).promise();
+          items = r.Items || [];
+        } catch (idxErr) {
+          // Índice ainda não criado: scan + filter
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-colaboradores-log',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colId },
+          }).promise();
+          items = r.Items || [];
+          items.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        }
+        return response(200, items);
+      } catch (err) {
+        console.error('GET colaboradores-log/:id error:', err);
+        return response(500, { error: 'Erro ao buscar historico do colaborador: ' + err.message });
+      }
+    }
+
+    // GET /colaboradores-log?unitId=&dataIni=&dataFim= — logs por unidade/período
+    if (rawPath === '/colaboradores-log' && httpMethod === 'GET') {
+      try {
+        const r = await dynamodb.scan({ TableName: 'gres-prod-colaboradores-log' }).promise();
+        let items = r.Items || [];
+        if (queryParams.dataIni && queryParams.dataFim) {
+          items = items.filter(i => i.timestamp >= queryParams.dataIni && i.timestamp <= queryParams.dataFim + 'T23:59:59');
+        }
+        if (queryParams.colaboradorId) {
+          items = items.filter(i => i.colaboradorId === queryParams.colaboradorId);
+        }
+        if (queryParams.unitId) {
+          const cnpjFiltro = toCnpj(queryParams.unitId);
+          items = items.filter(i => !i.unitId || toCnpj(i.unitId) === cnpjFiltro);
+        }
+        items.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao buscar logs de colaboradores: ' + err.message });
       }
     }
 
