@@ -656,11 +656,13 @@ export default function FolhaPagamento() {
         variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
-        // ZERO fallback: flags pagoAdiantamento e pagoVariavel sao independentes.
-        // pago=true antigo NUNCA implica pagoAdiantamento=true (Eric exigiu).
+        // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
+        // como adiantamento. Mantem-se como adto pago para nao perder histórico.
+        // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
         pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento === true,
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento,
+        pagoAdiantamento: salva?.pagoAdiantamento === true
+          || (salva?.pago === true && salva?.pagoAdiantamento === undefined && salva?.pagoVariavel === undefined),
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || (salva?.pago === true && salva?.pagoAdiantamento === undefined ? salva?.dataPagamento : undefined),
         pagoVariavel: salva?.pagoVariavel === true,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
         logPagamentos: salva?.logPagamentos || [],
@@ -760,11 +762,13 @@ export default function FolhaPagamento() {
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
-        // ZERO fallback: flags pagoAdiantamento e pagoVariavel sao independentes.
-        // pago=true antigo NUNCA implica pagoAdiantamento=true (Eric exigiu).
+        // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
+        // como adiantamento. Mantem-se como adto pago para nao perder histórico.
+        // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
         pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento === true,
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento,
+        pagoAdiantamento: salva?.pagoAdiantamento === true
+          || (salva?.pago === true && salva?.pagoAdiantamento === undefined && salva?.pagoVariavel === undefined),
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || (salva?.pago === true && salva?.pagoAdiantamento === undefined ? salva?.dataPagamento : undefined),
         pagoVariavel: salva?.pagoVariavel === true,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
         logPagamentos: salva?.logPagamentos || [],
@@ -2626,7 +2630,8 @@ export default function FolhaPagamento() {
 
   const ModalConfirmarPagamentoCLT = () => {
     if (!modalPagamento) return null;
-    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? modalPagamento.adtoLiquido : modalPagamento.totalVariavel;
+    // Adiantamento: valor líquido do adto (Cod 16). Variável/Dia 5: pgtosDia05 (líquido fechamento)
+    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? modalPagamento.adtoLiquido : modalPagamento.pgtosDia05;
     const diff = totalPgtoLinhas - valorReferencia;
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -2799,11 +2804,11 @@ export default function FolhaPagamento() {
           <div style={{ marginBottom: '14px' }}>
             <label style={s.label}>Tipo de pagamento *</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              {(['Adiantamento', 'Variável'] as const).filter(t => t !== 'Variável' || modalPagamento.totalVariavel > 0).map(t => (
+              {(['Adiantamento', 'Variável'] as const).map(t => (
                 <button key={t} onClick={() => setModalPgtoTipo(t)}
                   style={{ ...s.btn(modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e'), padding: '6px 16px', fontSize: '13px',
                     outline: modalPgtoTipo === t ? '2px solid #1b5e20' : 'none' }}>
-                  {t === 'Adiantamento' ? '🏦 Adiantamento (Ctr. contabilidade)' : '📦 Variável (entregas/dobras)'}
+                  {t === 'Adiantamento' ? '🏦 Dia 20 (Adiantamento)' : '💰 Dia 5 (Fechamento mes)'}
                 </button>
               ))}
             </div>
