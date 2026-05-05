@@ -108,6 +108,46 @@ async function logColaboradorAlteracao({ colaboradorId, evento, valoresAntes, va
   }
 }
 
+/**
+ * Helper GENERICO de auditoria. Tabela = `gres-prod-${entidade}-log`.
+ * Aceita qualquer entidade. Captura responsavel + userAgent + diff.
+ * Best-effort: nunca quebra a operação principal se logar falhar.
+ */
+async function logAlteracaoGenerica({ tabela, entidadeId, evento, valoresAntes, valoresDepois, usuarioId, usuarioNome, usuarioEmail, unitId, userAgent, observacao }) {
+  if (!tabela || !entidadeId) return;
+  try {
+    const ts = new Date().toISOString();
+    const item = {
+      id: `log-${tabela}-${entidadeId}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      entidadeId,
+      tabela,
+      timestamp: ts,
+      evento: evento || 'alterado',
+      valoresAntes: valoresAntes || null,
+      valoresDepois: valoresDepois || null,
+      usuarioId: usuarioId || 'desconhecido',
+      usuarioNome: usuarioNome || 'desconhecido',
+      usuarioEmail: usuarioEmail || '',
+      unitId: unitId || '',
+      userAgent: userAgent || '',
+      observacao: observacao || '',
+    };
+    await dynamodb.put({ TableName: `gres-prod-${tabela}-log`, Item: item }).promise();
+  } catch (e) {
+    console.warn(`logAlteracaoGenerica(${tabela}) falhou (best-effort):`, e.message);
+  }
+}
+
+/** Extrai metadados de auditoria de um body de request (sem expor PII) */
+function extrairAuditoria(body, event) {
+  return {
+    usuarioId: body?.responsavelId || body?.usuarioId || '',
+    usuarioNome: body?.responsavelNome || body?.usuarioNome || '',
+    usuarioEmail: body?.responsavelEmail || body?.usuarioEmail || '',
+    userAgent: (event?.headers && (event.headers['user-agent'] || event.headers['User-Agent'])) || '',
+  };
+}
+
 /** Diff helper para colaboradores: retorna apenas campos relevantes que mudaram */
 function diffColaborador(antes, depois) {
   const campos = [
@@ -1365,6 +1405,47 @@ exports.handler = async (event) => {
       }
     }
 
+    // GET /auditoria?tabela=&unitId=&dataIni=&dataFim=&entidadeId=&usuarioId=
+    // Endpoint generico que consulta as tabelas de log: colaboradores, folha-pagamento, saidas, controle-motoboy, escalas
+    if (rawPath === '/auditoria' && httpMethod === 'GET') {
+      try {
+        const tabela = queryParams.tabela || 'colaboradores';
+        const TABELAS_VALIDAS = ['colaboradores', 'folha-pagamento', 'saidas', 'controle-motoboy', 'escalas'];
+        if (!TABELAS_VALIDAS.includes(tabela)) {
+          return response(400, { error: `tabela invalida. Use uma de: ${TABELAS_VALIDAS.join(', ')}` });
+        }
+        const tableName = `gres-prod-${tabela}-log`;
+        const r = await dynamodb.scan({ TableName: tableName }).promise();
+        let items = r.Items || [];
+
+        // Filtros
+        if (queryParams.dataIni && queryParams.dataFim) {
+          items = items.filter(i => i.timestamp >= queryParams.dataIni && i.timestamp <= queryParams.dataFim + 'T23:59:59');
+        }
+        const entId = queryParams.entidadeId || queryParams.colaboradorId || queryParams.escalaId;
+        if (entId) {
+          items = items.filter(i => i.entidadeId === entId || i.colaboradorId === entId || i.escalaId === entId);
+        }
+        if (queryParams.usuarioId) {
+          items = items.filter(i => i.usuarioId === queryParams.usuarioId);
+        }
+        if (queryParams.unitId) {
+          const cnpjFiltro = toCnpj(queryParams.unitId);
+          items = items.filter(i => !i.unitId || toCnpj(i.unitId) === cnpjFiltro);
+        }
+        if (queryParams.evento) {
+          items = items.filter(i => i.evento === queryParams.evento);
+        }
+        items.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        // Paginação simples
+        const limit = parseInt(queryParams.limit) || 500;
+        return response(200, { items: items.slice(0, limit), total: items.length, tabela });
+      } catch (err) {
+        console.error('auditoria error:', err);
+        return response(500, { error: 'Erro ao buscar auditoria: ' + err.message });
+      }
+    }
+
     // GET /colaboradores-log?unitId=&dataIni=&dataFim= — logs por unidade/período
     if (rawPath === '/colaboradores-log' && httpMethod === 'GET') {
       try {
@@ -1425,6 +1506,17 @@ exports.handler = async (event) => {
             }
           }).promise();
         }
+        // Auditoria: log de save (1 entrada por POST, não por linha)
+        const audCtrl = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'controle-motoboy',
+          entidadeId: `${motoboyId}_${mes}`,
+          evento: 'alterado',
+          valoresAntes: null, // gravação em batch — omitir antes (custoso reler 30+ itens)
+          valoresDepois: { motoboyId, mes, totalLinhas: linhas.length, datas: linhas.map(l => l.data).slice(0, 50) },
+          ...audCtrl,
+          unitId: unitId,
+        });
         return response(200, { success: true, total: linhas.length });
       } catch (err) {
         console.error('controle-motoboy error:', err);
@@ -1503,6 +1595,17 @@ exports.handler = async (event) => {
             await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
             saved.push(dayId);
           }
+          // Auditoria: log de pagamento (1 entrada por lote, não por dia)
+          const audPag = extrairAuditoria(body, event);
+          await logAlteracaoGenerica({
+            tabela: 'folha-pagamento',
+            entidadeId: pagamentoId || `${colaboradorId}_${mes}`,
+            evento: isFazendoPagamento ? 'pago' : 'desfeito',
+            valoresAntes: null,
+            valoresDepois: { colaboradorId, mes, semana, dias, formaPagamento, dataPagamento: dtPgto, ids: saved },
+            ...audPag,
+            unitId: normalizedUnitId,
+          });
           return response(200, { success: true, ids: saved, count: saved.length, pagamentoId });
         }
 
@@ -1527,7 +1630,27 @@ exports.handler = async (event) => {
           obs: obs || '',
           updatedAt: now,
         };
+        // Buscar item original para auditoria (se existir)
+        let origItem = null;
+        try {
+          const o = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
+          origItem = o.Item || null;
+        } catch {}
+
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
+
+        // Auditoria
+        const audFol = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'folha-pagamento',
+          entidadeId: itemId,
+          evento: origItem ? (item.pago && !origItem.pago ? 'pago' : (!item.pago && origItem.pago ? 'desfeito' : 'alterado')) : 'criado',
+          valoresAntes: origItem,
+          valoresDepois: item,
+          ...audFol,
+          unitId: normalizedUnitId,
+        });
+
         return response(200, { success: true, id: itemId });
       } catch (err) {
         console.error('folha-pagamento error:', err);
@@ -1641,6 +1764,18 @@ exports.handler = async (event) => {
           TableName: 'gres-prod-saidas',
           Item: item
         }).promise();
+
+        // Auditoria: log de criação
+        const audSaida = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'saidas',
+          entidadeId: item.id,
+          evento: 'criado',
+          valoresAntes: null,
+          valoresDepois: item,
+          ...audSaida,
+          unitId: itemUnitId,
+        });
 
         return response(201, { success: true, id: item.id, item });
       } catch (error) {
@@ -1821,6 +1956,18 @@ exports.handler = async (event) => {
           Item: item
         }).promise();
 
+        // Auditoria: log de alteração
+        const audPut = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'saidas',
+          entidadeId: saidaId,
+          evento: 'alterado',
+          valoresAntes: original,
+          valoresDepois: item,
+          ...audPut,
+          unitId: item.unitId,
+        });
+
         return response(200, { success: true, id: item.id, item });
       } catch (error) {
         console.error('DynamoDB error:', error);
@@ -1837,10 +1984,28 @@ exports.handler = async (event) => {
       }
 
       try {
+        // Buscar item antes de deletar (para log)
+        const orig = await dynamodb.get({
+          TableName: 'gres-prod-saidas',
+          Key: { id: saidaId }
+        }).promise();
+
         await dynamodb.delete({
           TableName: 'gres-prod-saidas',
           Key: { id: saidaId }
         }).promise();
+
+        // Auditoria: log de delete
+        const audDel = extrairAuditoria(body || {}, event);
+        await logAlteracaoGenerica({
+          tabela: 'saidas',
+          entidadeId: saidaId,
+          evento: 'deletado',
+          valoresAntes: orig.Item || null,
+          valoresDepois: null,
+          ...audDel,
+          unitId: orig.Item?.unitId,
+        });
 
         return response(200, { success: true });
       } catch (error) {

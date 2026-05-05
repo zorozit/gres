@@ -21,6 +21,7 @@ const ALL_MODULES = [
   { id: 'unidades',              icon: '🏢', title: 'Cadastro de Unidades',      description: 'Gerencie as unidades de restaurante',                                             path: '/modulos/unidades',              color: '#ff6b9d' },
   { id: 'usuarios',              icon: '🔐', title: 'Gestão de Usuários',        description: 'Controle de acesso e permissões',                                                 path: '/modulos/usuarios',              color: '#c44569' },
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões',     description: 'Defina quais módulos cada perfil pode acessar',                                   path: '/modulos/permissoes',            color: '#e53935' },
+  { id: 'auditoria',             icon: '🔒', title: 'Auditoria',                  description: 'Histórico completo de alterações — quem mudou, quando, antes/depois',         path: '/modulos/auditoria',             color: '#37474f' },
 ];
 
 export const Modules: React.FC = () => {

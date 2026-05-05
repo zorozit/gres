@@ -14,6 +14,7 @@ import { Usuarios } from './pages/Usuarios';
 import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { PermissoesConfig } from './pages/PermissoesConfig';
+import Auditoria from './pages/Auditoria';
 import FolhaPagamento from './pages/FolhaPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
@@ -78,6 +79,9 @@ function App() {
 
             <Route path="/modulos/permissoes"
               element={<ProtectedRoute moduloId="permissoes"><PermissoesConfig /></ProtectedRoute>} />
+
+            <Route path="/modulos/auditoria"
+              element={<ProtectedRoute moduloId="auditoria"><Auditoria /></ProtectedRoute>} />
 
             <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>

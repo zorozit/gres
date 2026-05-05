@@ -272,6 +272,8 @@ export const Saidas: React.FC = () => {
           dataPagamento: dataPgto,       // data de pagamento (para filtros por período na folha)
           responsavel: email,
           responsavelId: userId,
+          responsavelNome: email || 'desconhecido',
+          responsavelEmail: email || '',
           origem: novoRegistro.tipo,
           referencia: novoRegistro.tipo,
           unitId,
@@ -300,6 +302,8 @@ export const Saidas: React.FC = () => {
         ...registroEditando,
         responsavel: registroEditando.responsavel || email,
         responsavelId: registroEditando.responsavelId || userId,
+        responsavelNome: email || 'desconhecido',
+        responsavelEmail: email || '',
         origem: registroEditando.tipo || registroEditando.origem,
         referencia: registroEditando.tipo || registroEditando.referencia,
         dataPagamento: registroEditando.dataPagamento || registroEditando.data,

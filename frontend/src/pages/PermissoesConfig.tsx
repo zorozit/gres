@@ -20,6 +20,7 @@ const TODOS_MODULOS = [
   { id: 'unidades',              icon: '🏢', title: 'Cadastro de Unidades' },
   { id: 'usuarios',              icon: '🔐', title: 'Gestão de Usuários' },
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões' },
+  { id: 'auditoria',             icon: '🔒', title: 'Auditoria' },
 ];
 
 // ─── Perfis do sistema ───────────────────────────────────────────────────────

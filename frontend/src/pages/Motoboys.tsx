@@ -269,12 +269,6 @@ function preencherControleComSaidas(
   });
 }
 
-const emptyForm: Partial<Motoboy> = {
-  nome: '', cpf: '', telefone: '', placa: '', dataAdmissao: new Date().toISOString().split('T')[0],
-  comissao: 0, chavePix: '', vinculo: 'Freelancer', salario: 0, periculosidade: 30,
-  valorChegadaDia: 0, valorChegadaNoite: 0, valorEntrega: 0, ativo: true,
-};
-
 /* ─── Component ─────────────────────────────────────────────────────────── */
 
 export const Motoboys: React.FC = () => {
@@ -283,13 +277,11 @@ export const Motoboys: React.FC = () => {
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
 
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [aba, setAba] = useState<'lista' | 'controle' | 'novo'>('lista');
-  const [formData, setFormData] = useState<Partial<Motoboy>>({ ...emptyForm, unitId });
-  const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [filtroVinculo, setFiltroVinculo] = useState<'Todos' | 'CLT' | 'Freelancer'>('Todos');
-  const [filtroAtivo, setFiltroAtivo] = useState<'Todos' | 'Ativo' | 'Inativo'>('Ativo');
-  const [busca, setBusca] = useState('');
+  const [, setLoading] = useState(false);
+  // Módulo de Motoboys agora contém apenas o Controle Diário.
+  // Lista e cadastro foram movidos para o módulo Colaboradores.
+  const aba: 'controle' = 'controle';
+
 
   // Controle diário
   const hoje = new Date();
@@ -695,139 +687,6 @@ export const Motoboys: React.FC = () => {
 
   /* ── CRUD motoboys ───────────────────────────────────── */
 
-  /**
-   * Payload para /colaboradores:
-   * - valorDia      = valorChegadaDia  (chegada turno dia)
-   * - valorNoite    = valorChegadaNoite (chegada turno noite)
-   * - valorTransporte = valorEntrega   (valor por corrida/entrega para freelancers)
-   * A API /colaboradores persiste esses campos; /motoboys NÃO persiste campos de pagamento.
-   */
-  const buildColabPayload = () => ({
-    nome: formData.nome,
-    cpf: formData.cpf,
-    celular: formData.telefone,
-    telefone: formData.telefone,
-    chavePix: formData.chavePix,
-    salario: formData.vinculo !== 'Freelancer' ? (formData.salario ?? 0) : 0,
-    periculosidade: formData.periculosidade ?? 0,
-    dataAdmissao: formData.dataAdmissao,
-    dataDemissao: formData.dataDemissao,
-    ativo: formData.ativo,
-    unitId,
-    tipoContrato: formData.vinculo === 'Freelancer' ? 'Freelancer' : 'CLT',
-    cargo: 'Motoboy',
-    funcao: 'Motoboy',
-    area: 'Delivery',
-    // OPÇÃO A: tudo na tabela colaboradores. Inclui campos de motoboy (placa, comissao, vinculo).
-    isMotoboy: true,
-    placa: formData.placa,
-    vinculo: formData.vinculo,
-    comissao: formData.comissao ?? 0,
-    valorDia: formData.vinculo === 'Freelancer' ? (formData.valorChegadaDia ?? 0) : 0,
-    valorNoite: formData.vinculo === 'Freelancer' ? (formData.valorChegadaNoite ?? 0) : 0,
-    valorEntrega: formData.vinculo === 'Freelancer' ? (formData.valorEntrega ?? 0) : 0,
-    valorTransporte: formData.vinculo === 'Freelancer' ? (formData.valorEntrega ?? 0) : 0,
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.nome || !formData.cpf || !formData.telefone) { alert('Nome, CPF e Telefone são obrigatórios.'); return; }
-    try {
-      const token = localStorage.getItem('auth_token');
-      const isEdit = !!editandoId;
-      const colabPayload = buildColabPayload();
-
-      // OPÇÃO A: única fonte = /colaboradores
-      // Buscar por CPF para garantir o ID correto
-      let colabId = editandoId || '';
-      try {
-        const rc = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (rc.ok) {
-          const dc = await rc.json();
-          const colabs: any[] = Array.isArray(dc) ? dc : [];
-          const match = colabs.find((c: any) => formData.cpf && c.cpf === formData.cpf)
-                     || colabs.find((c: any) => c.id === editandoId);
-          if (match) colabId = match.id;
-        }
-      } catch {}
-
-      if (colabId) {
-        // Atualizar colaborador existente
-        const rColab = await fetch(`${apiUrl}/colaboradores/${colabId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(colabPayload),
-        });
-        if (!rColab.ok) console.warn('Falha ao atualizar colaborador:', await rColab.text());
-      } else if (!isEdit) {
-        // Novo motoboy: criar colaborador
-        const rColab = await fetch(`${apiUrl}/colaboradores`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(colabPayload),
-        });
-        if (!rColab.ok) {
-          alert('Erro ao criar motoboy: ' + await rColab.text());
-          return;
-        }
-      }
-
-      alert(isEdit ? '✅ Motoboy atualizado!' : '✅ Motoboy cadastrado!');
-      resetForm(); setAba('lista'); fetchMotoboys();
-    } catch (e) { alert('Erro ao salvar: ' + e); }
-  };
-
-  const handleEditar = (m: Motoboy) => { setFormData({ ...m }); setEditandoId(m.id); setAba('novo'); };
-
-  const handleDeletar = async (id: string, nome: string) => {
-    if (!window.confirm(`Excluir ${nome}?`)) return;
-    const token = localStorage.getItem('auth_token');
-    // OPÇÃO A: marca colaborador como inativo (não deleta)
-    const r = await fetch(`${apiUrl}/colaboradores/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ativo: false, isMotoboy: true }),
-    });
-    if (r.ok) { alert('Excluído!'); fetchMotoboys(); } else alert('Erro ao excluir');
-  };
-
-  const handleToggleAtivo = async (m: Motoboy) => {
-    const token = localStorage.getItem('auth_token');
-    // OPÇÃO A: toggle no colaborador
-    const r = await fetch(`${apiUrl}/colaboradores/${m.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ativo: !m.ativo, isMotoboy: true }),
-    });
-    if (r.ok) fetchMotoboys(); else alert('Erro ao atualizar status');
-  };
-
-  const resetForm = () => { setFormData({ ...emptyForm, unitId }); setEditandoId(null); };
-
-  const motoboysFiltrados = motoboys.filter(m => {
-    if (filtroVinculo !== 'Todos' && m.vinculo !== filtroVinculo) return false;
-    if (filtroAtivo === 'Ativo' && !m.ativo) return false;
-    if (filtroAtivo === 'Inativo' && m.ativo) return false;
-    const q = busca.toLowerCase();
-    if (q && !m.nome.toLowerCase().includes(q) && !m.cpf.includes(q) && !(m.telefone || '').includes(q)) return false;
-    return true;
-  });
-
-  const exportarXLSX = () => {
-    const ws = XLSX.utils.json_to_sheet(motoboysFiltrados.map(m => ({
-      Nome: m.nome, CPF: m.cpf, Telefone: m.telefone, Placa: m.placa || '-',
-      Vínculo: m.vinculo, 'Salário': m.salario ?? 0, 'Periculosidade (%)': m.periculosidade ?? 0,
-      'Ch.Dia (R$)': m.valorChegadaDia ?? m.valorChegada ?? 0,
-      'Ch.Noite (R$)': m.valorChegadaNoite ?? m.valorChegada ?? 0,
-      'Valor/Entrega (R$)': m.valorEntrega ?? 0,
-      'Diária': m.salario ? ((m.salario * (1 + R(m.periculosidade) / 100)) / 30).toFixed(2) : '-',
-      'Chave PIX': m.chavePix || '-', Admissão: m.dataAdmissao || '-', Ativo: m.ativo ? 'Sim' : 'Não',
-    })));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Motoboys');
-    XLSX.writeFile(wb, `motoboys-${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
-
   /* ── Styles ──────────────────────────────────────────── */
   const s = {
     tab: (a: boolean) => ({
@@ -871,109 +730,11 @@ export const Motoboys: React.FC = () => {
           ))}
         </div>
 
-        {/* Abas */}
-        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0' }}>
-          <button style={s.tab(aba === 'lista')} onClick={() => { setAba('lista'); resetForm(); }}>📋 Lista</button>
-          <button style={s.tab(aba === 'controle')} onClick={() => setAba('controle')}>📊 Controle Diário</button>
-          <button style={s.tab(aba === 'novo')} onClick={() => setAba('novo')}>
-            {editandoId ? '✏️ Editar' : '➕ Novo'}
-          </button>
+        {/* Sem abas — modulo de Motoboys agora eh apenas Controle Diario.
+            Lista de motoboys e cadastro estao em "Colaboradores". */}
+        <div style={{ padding: '8px 12px', backgroundColor: '#e3f2fd', borderLeft: '3px solid #1565c0', borderRadius: '4px', marginBottom: '12px', fontSize: '12px', color: '#0d47a1' }}>
+          📊 <strong>Controle Diario de Motoboys</strong> — cadastro de motoboys e parametros financeiros (valor entrega, chegada, etc) ficam em <strong>Colaboradores</strong>.
         </div>
-
-        {/* ─── LISTA ─────────────────────────────────────────────── */}
-        {aba === 'lista' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px' }}>
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '14px', alignItems: 'flex-end' }}>
-              <div>
-                <label style={s.label}>Buscar</label>
-                <input type="text" placeholder="Nome, CPF, tel..." value={busca} onChange={e => setBusca(e.target.value)} style={{ ...s.input, width: '200px' }} />
-              </div>
-              <div>
-                <label style={s.label}>Vínculo</label>
-                <select value={filtroVinculo} onChange={e => setFiltroVinculo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
-                  <option value="Todos">Todos</option><option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
-                </select>
-              </div>
-              <div>
-                <label style={s.label}>Status</label>
-                <select value={filtroAtivo} onChange={e => setFiltroAtivo(e.target.value as any)} style={{ ...s.select, width: '110px' }}>
-                  <option value="Todos">Todos</option><option value="Ativo">Ativos</option><option value="Inativo">Inativos</option>
-                </select>
-              </div>
-              <button onClick={fetchMotoboys} style={s.btn('#1976d2')}>🔄</button>
-              <button onClick={exportarXLSX} style={s.btn('#43a047')}>📥 XLSX</button>
-            </div>
-
-            {loading ? <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Carregando...</p>
-              : motoboysFiltrados.length === 0 ? <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>Nenhum motoboy encontrado.</p>
-              : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      {['Nome', 'Vínculo', 'CPF', 'Telefone', 'Placa', 'Salário / Ch.Dia', 'Diária / Ch.Noite', 'Vl.Entrega', 'Periculosidade', 'PIX', 'Admissão', 'Status', 'Ações'].map(h => (
-                        <th key={h} style={s.th}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {motoboysFiltrados.map(m => {
-                      const peri = R(m.periculosidade) / 100;
-                      const salComPeri = R(m.salario) * (1 + peri);
-                      const isFreelancer = m.vinculo === 'Freelancer';
-                      // CLT: salário + diária | Freelancer: chegadaDia / chegadaNoite / valorEntrega
-                      const vCD = R(m.valorChegadaDia   ?? m.valorChegada);
-                      const vCN = R(m.valorChegadaNoite ?? m.valorChegada);
-                      const vEnt = R(m.valorEntrega);
-                      const colSalario = isFreelancer
-                        ? (vCD ? `R$ ${fmt(vCD)}/dia` : '—')
-                        : (m.salario ? `R$ ${fmt(m.salario)}` : '—');
-                      const colDiaria = isFreelancer
-                        ? (vCN ? `R$ ${fmt(vCN)}/noite` : '—')
-                        : (m.salario ? `R$ ${(salComPeri / 30).toFixed(2)}/dia` : '—');
-                      const colEntrega = isFreelancer
-                        ? (vEnt ? `R$ ${fmt(vEnt)}/ent.` : '—')
-                        : '—';
-                      return (
-                        <tr key={m.id}
-                          onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f0f7ff')}
-                          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
-                          <td style={{ ...s.td, fontWeight: 'bold' }}>{m.nome}</td>
-                          <td style={s.td}>
-                            <span style={m.vinculo === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>{m.vinculo}</span>
-                          </td>
-                          <td style={s.td}>{m.cpf}</td>
-                          <td style={s.td}>{m.telefone}</td>
-                          <td style={s.td}>{m.placa || '-'}</td>
-                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#e65100' : '#6a1b9a' }}>{colSalario}</td>
-                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#7b1fa2' : '#1976d2' }}>{colDiaria}</td>
-                          <td style={{ ...s.td, fontWeight: 'bold', color: isFreelancer ? '#0288d1' : '#777' }}>{colEntrega}</td>
-                          <td style={s.td}>{!isFreelancer && m.periculosidade != null ? `${m.periculosidade}%` : '—'}</td>
-                          <td style={s.td}>{m.chavePix || '-'}</td>
-                          <td style={s.td}>{m.dataAdmissao || '-'}</td>
-                          <td style={s.td}>
-                            <span style={m.ativo ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fce4e4', '#c62828')}>
-                              {m.ativo ? '● Ativo' : '○ Inativo'}
-                            </span>
-                          </td>
-                          <td style={{ ...s.td }}>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              <button onClick={() => { setCtrlMotoboyId(m.id); setAba('controle'); }} style={{ ...s.btn('#0288d1'), fontSize: '11px', padding: '3px 8px' }}>📊</button>
-                              <button onClick={() => handleEditar(m)} style={{ ...s.btn('#1976d2'), fontSize: '11px', padding: '3px 8px' }}>✏️</button>
-                              <button onClick={() => handleToggleAtivo(m)} style={{ ...s.btn(m.ativo ? '#fb8c00' : '#43a047'), fontSize: '11px', padding: '3px 8px' }}>{m.ativo ? '⏸' : '▶'}</button>
-                              <button onClick={() => handleDeletar(m.id, m.nome)} style={{ ...s.btn('#e53935'), fontSize: '11px', padding: '3px 8px' }}>🗑</button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <div style={{ padding: '8px 0', color: '#666', fontSize: '12px' }}>{motoboysFiltrados.length} de {motoboys.length} motoboy(s)</div>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* ─── CONTROLE DIÁRIO ────────────────────────────────────── */}
         {aba === 'controle' && (
@@ -1431,105 +1192,6 @@ export const Motoboys: React.FC = () => {
 
               </>
             )}
-          </div>
-        )}
-
-        {/* ─── FORMULÁRIO CADASTRO/EDIÇÃO ──────────────────────────── */}
-        {aba === 'novo' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px' }}>
-            <h2 style={{ marginTop: 0 }}>{editandoId ? '✏️ Editar Motoboy' : '➕ Cadastrar Motoboy'}</h2>
-            <form onSubmit={handleSubmit}>
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
-                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>👤 Dados Pessoais</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-                  <div><label style={s.label}>Nome *</label><input type="text" value={formData.nome || ''} onChange={e => setFormData({ ...formData, nome: e.target.value })} style={s.input} required /></div>
-                  <div><label style={s.label}>CPF *</label><input type="text" placeholder="000.000.000-00" value={formData.cpf || ''} onChange={e => setFormData({ ...formData, cpf: e.target.value })} style={s.input} required /></div>
-                  <div><label style={s.label}>Celular *</label><input type="tel" placeholder="(00) 00000-0000" value={formData.telefone || ''} onChange={e => setFormData({ ...formData, telefone: e.target.value })} style={s.input} required /></div>
-                  <div><label style={s.label}>Chave PIX</label><input type="text" value={formData.chavePix || ''} onChange={e => setFormData({ ...formData, chavePix: e.target.value })} style={s.input} /></div>
-                </div>
-              </fieldset>
-
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
-                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>📋 Vínculo e Salário</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
-                  <div>
-                    <label style={s.label}>Vínculo *</label>
-                    <select value={formData.vinculo || 'Freelancer'} onChange={e => setFormData({ ...formData, vinculo: e.target.value as any })} style={s.select}>
-                      <option value="CLT">CLT</option><option value="Freelancer">Freelancer</option>
-                    </select>
-                  </div>
-                  {/* CLT: salário base */}
-                  {formData.vinculo !== 'Freelancer' && (
-                    <div>
-                      <label style={s.label}>Salário Base (R$) <span style={{ color: '#6a1b9a', fontSize: '11px' }}>(CLT)</span></label>
-                      <input type="number" step="0.01" min="0" value={formData.salario ?? ''} onChange={e => setFormData({ ...formData, salario: parseFloat(e.target.value) || 0 })} style={s.input} />
-                    </div>
-                  )}
-                  {/* CLT: periculosidade */}
-                  {formData.vinculo !== 'Freelancer' && (
-                    <div>
-                      <label style={s.label}>Periculosidade (%) <span style={{ color: '#e65100', fontSize: '11px' }}>(CLT — padrão 30%)</span></label>
-                      <input type="number" step="1" min="0" max="100" placeholder="30" value={formData.periculosidade ?? ''} onChange={e => setFormData({ ...formData, periculosidade: parseFloat(e.target.value) || 0 })} style={s.input} />
-                      {formData.salario && formData.periculosidade ? (
-                        <small style={{ color: '#2e7d32' }}>
-                          Diária: R$ {(R(formData.salario) * (1 + R(formData.periculosidade) / 100) / 30).toFixed(2)}
-                        </small>
-                      ) : null}
-                    </div>
-                  )}
-                  {/* Freelancer: chegada turno Dia */}
-                  {formData.vinculo === 'Freelancer' && (
-                    <div>
-                      <label style={s.label}>Chegada Turno Dia (R$) <span style={{ color: '#e65100', fontSize: '11px' }}>(fixo p/ turno dia trabalhado)</span></label>
-                      <input type="number" step="0.01" min="0" placeholder="Ex: 100.00" value={formData.valorChegadaDia ?? ''} onChange={e => setFormData({ ...formData, valorChegadaDia: parseFloat(e.target.value) || 0 })} style={s.input} />
-                      <small style={{ color: '#888' }}>Pago por dia que trabalhou no turno Dia</small>
-                    </div>
-                  )}
-                  {/* Freelancer: chegada turno Noite */}
-                  {formData.vinculo === 'Freelancer' && (
-                    <div>
-                      <label style={s.label}>Chegada Turno Noite (R$) <span style={{ color: '#7b1fa2', fontSize: '11px' }}>(fixo p/ turno noite trabalhado)</span></label>
-                      <input type="number" step="0.01" min="0" placeholder="Ex: 100.00" value={formData.valorChegadaNoite ?? ''} onChange={e => setFormData({ ...formData, valorChegadaNoite: parseFloat(e.target.value) || 0 })} style={s.input} />
-                      <small style={{ color: '#888' }}>Pago por dia que trabalhou no turno Noite</small>
-                    </div>
-                  )}
-                  {/* Freelancer: valor por entrega */}
-                  {formData.vinculo === 'Freelancer' && (
-                    <div>
-                      <label style={s.label}>Valor por Entrega (R$) <span style={{ color: '#0288d1', fontSize: '11px' }}>(por corrida/entrega)</span></label>
-                      <input type="number" step="0.01" min="0" placeholder="Ex: 8.00" value={formData.valorEntrega ?? ''} onChange={e => setFormData({ ...formData, valorEntrega: parseFloat(e.target.value) || 0 })} style={s.input} />
-                      <small style={{ color: '#888' }}>Multiplicado pela quantidade de entregas do período</small>
-                    </div>
-                  )}
-                  {/* Comissão % — opcional para CLT */}
-                  {formData.vinculo !== 'Freelancer' && (
-                    <div><label style={s.label}>Comissão por entrega (%)</label><input type="number" step="0.01" min="0" value={formData.comissao ?? ''} onChange={e => setFormData({ ...formData, comissao: parseFloat(e.target.value) || 0 })} style={s.input} /></div>
-                  )}
-                  <div><label style={s.label}>Admissão</label><input type="date" value={formData.dataAdmissao || ''} onChange={e => setFormData({ ...formData, dataAdmissao: e.target.value })} style={s.input} /></div>
-                  {formData.vinculo === 'CLT' && (
-                    <div><label style={s.label}>Demissão</label><input type="date" value={formData.dataDemissao || ''} onChange={e => setFormData({ ...formData, dataDemissao: e.target.value })} style={s.input} /></div>
-                  )}
-                </div>
-              </fieldset>
-
-              <fieldset style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '16px', marginBottom: '14px' }}>
-                <legend style={{ fontWeight: 'bold', color: '#1976d2', padding: '0 8px' }}>🏍️ Operacional</legend>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-                  <div><label style={s.label}>Placa</label><input type="text" placeholder="ABC-1234" value={formData.placa || ''} onChange={e => setFormData({ ...formData, placa: e.target.value.toUpperCase() })} style={s.input} /></div>
-                  <div>
-                    <label style={s.label}>Status</label>
-                    <select value={formData.ativo ? 'true' : 'false'} onChange={e => setFormData({ ...formData, ativo: e.target.value === 'true' })} style={s.select}>
-                      <option value="true">Ativo</option><option value="false">Inativo</option>
-                    </select>
-                  </div>
-                </div>
-              </fieldset>
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button type="submit" style={s.btn('#43a047')}>{editandoId ? '💾 Salvar' : '✅ Cadastrar'}</button>
-                {editandoId && <button type="button" onClick={resetForm} style={s.btn('#9e9e9e')}>✕ Cancelar</button>}
-              </div>
-            </form>
           </div>
         )}
 

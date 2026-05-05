@@ -386,6 +386,9 @@ export default function FolhaPagamento() {
   const token = () => localStorage.getItem('auth_token');
   const responsavelEmail = authEmail || (user as any)?.email || localStorage.getItem('user_email') || 'sistema';
   const responsavelId    = localStorage.getItem('user_id') || '';
+  const responsavelNome  = (user as any)?.nome || (user as any)?.name || responsavelEmail;
+  // Helper: campos de auditoria a anexar em todo POST/PUT
+  const auditoriaCampos = () => ({ responsavelId, responsavelNome, responsavelEmail });
 
   // Lista de meses (YYYY-MM) entre dois ISO dates, inclusivo
   const mesesNoRange = (iniIso: string, fimIso: string): string[] => {
@@ -1126,6 +1129,7 @@ export default function FolhaPagamento() {
         pago: novoPago, dataPagamento: dataPgtoFinal,
         pagoAdiantamento: novoPago, dataPgtoAdiantamento: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
+        ...auditoriaCampos(),
       };
       await fetch(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
@@ -1154,6 +1158,7 @@ export default function FolhaPagamento() {
         pago: folha.pago,
         pagoVariavel: novoPago, dataPgtoVariavel: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
+        ...auditoriaCampos(),
       };
       await fetch(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
