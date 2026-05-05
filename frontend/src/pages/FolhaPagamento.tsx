@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
+import { isFeriado } from '../utils/feriados';
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
 
@@ -109,6 +110,10 @@ interface FolhaMensal {
   adiantamentoSalario: number;
   adiantamentoValor: number;
   diferencaSalario: number;
+  /** Feriados trabalhados no mês (cod 1311 do PDF) - dobra do dia */
+  feriadosTrab?: number;
+  /** Valor cod 1311 = feriadosTrab * salDia (já considerado em totalVencimentos) */
+  feriadosValor?: number;
   variavelAte19: number;
   variavelDe20a31: number;
   /** Variável 20-31 do mês ANTERIOR (entra no Pgto Dia 5) */
@@ -605,16 +610,27 @@ export default function FolhaPagamento() {
       if (isMotoboy) continue;
       const salBase = R(c.salario);
       const peri = R(c.periculosidade) / 100;
-      const salBruto = salBase * (1 + peri);
+      // Detectar feriados trabalhados (presença confirmada em data de feriado)
+      const escalasMes = escalas.filter(e =>
+        e.colaboradorId === c.id && (e.data || '').startsWith(mesAno)
+      );
+      const feriadosTrab = escalasMes.filter(e =>
+        isFeriado(e.data) && (e.presenca === 'presente' || e.presencaNoite === 'presente')
+      ).length;
+      // Salário por dia (igual PDF: salBase/30) - dobra de feriado = 1 dia adicional
+      const salDiaCLT = salBase / 30;
+      const feriadosValor = parseFloat((feriadosTrab * salDiaCLT).toFixed(2));
+      // Base INSS/FGTS = salário + feriados (igual PDF)
+      const salBruto = salBase * (1 + peri) + feriadosValor;
       const inss = calcINSS(salBruto);
       // Contr. Assist. agora vem do cadastro (cod 1000 da folha). Default 0.
       const contrAssist = R((c as any).contribuicaoAssistencial);
       const adiantPct = 0.40;
       // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - padrão contabilidade
       const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
-      // Diferença = 60% salBase + periculosidade (paga no dia 05)
+      // Diferença = 60% salBase + periculosidade + feriados (paga no dia 05)
       const periBruto = salBase * peri;
-      const difSal = parseFloat((salBase * (1 - adiantPct) + periBruto).toFixed(2));
+      const difSal = parseFloat((salBase * (1 - adiantPct) + periBruto + feriadosValor).toFixed(2));
       const saldoFinal = difSal - inss - contrAssist;
       // Cálculo contábil: Cód.16 = 40% do salário BASE (sem periculosidade)
       const adtoContabil = parseFloat((salBase * 0.40).toFixed(2));
@@ -636,7 +652,8 @@ export default function FolhaPagamento() {
         salarioBase: salBase, periculosidade: salBase * peri, inss, contrAssistencial: contrAssist,
         adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
         adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
-        diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
+        diferencaSalario: difSal, feriadosTrab, feriadosValor,
+        variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
         // ZERO fallback: flags pagoAdiantamento e pagoVariavel sao independentes.
@@ -657,7 +674,18 @@ export default function FolhaPagamento() {
       const controle: ControleDia[] = controlesMap[m.id] || [];
       const salBase = R(m.salario);
       const peri = R(m.periculosidade ?? 30) / 100;
-      const salBruto = salBase * (1 + peri);
+      // Detectar feriados trabalhados
+      const colabIdMot = m.colaboradorId || m.id;
+      const escalasMesM = escalas.filter(e =>
+        (e.colaboradorId === m.id || e.colaboradorId === colabIdMot)
+        && (e.data || '').startsWith(mesAno)
+      );
+      const feriadosTrabM = escalasMesM.filter(e =>
+        isFeriado(e.data) && (e.presenca === 'presente' || e.presencaNoite === 'presente')
+      ).length;
+      const salDiaMot = salBase / 30;
+      const feriadosValorM = parseFloat((feriadosTrabM * salDiaMot).toFixed(2));
+      const salBruto = salBase * (1 + peri) + feriadosValorM;
       const periculosidadeValor = salBase * peri;
       const inss = calcINSS(salBruto);
       // Contr. Assist. (Sindimoto cod 1305) agora do cadastro. Fallback 32.62 para motoboys legados.
@@ -704,7 +732,7 @@ export default function FolhaPagamento() {
       // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - igual ao PDF Cód.16
       const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
       // Diferença = 60% salBase + periculosidade total (paga no dia 05)
-      const difSal = parseFloat((salBase * 0.60 + periculosidadeValor).toFixed(2));
+      const difSal = parseFloat((salBase * 0.60 + periculosidadeValor + feriadosValorM).toFixed(2));
       const descontos = inss + contrAssist;
       const saldoFinal = parseFloat((totalVariavel + salBruto - descontos).toFixed(2));
       const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
@@ -725,6 +753,7 @@ export default function FolhaPagamento() {
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
         salarioBase: salBase, periculosidade: periculosidadeValor, inss, contrAssistencial: contrAssist,
+        feriadosTrab: feriadosTrabM, feriadosValor: feriadosValorM,
         adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
         adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
         arredondamentoPos: arredPosMoto, arredondamentoNeg: arredNegMoto,
@@ -1424,9 +1453,10 @@ export default function FolhaPagamento() {
 
         {(() => {
           // Cálculos de holerith
-          const fgtsBase = f.salarioBase + f.periculosidade;
-          const fgts = parseFloat((fgtsBase * 0.08).toFixed(2)); // 8% sobre sal+per
-          const totalVencimentos = f.salarioBase + f.periculosidade + f.totalVariavel
+          // Base FGTS/INSS = salBase + periculosidade + feriados (igual PDF)
+          const fgtsBase = f.salarioBase + f.periculosidade + (f.feriadosValor || 0);
+          const fgts = parseFloat((fgtsBase * 0.08).toFixed(2)); // 8% sobre base
+          const totalVencimentos = f.salarioBase + f.periculosidade + (f.feriadosValor || 0) + f.totalVariavel
             + (f.arredondamentoPos || 0);
           const totalDescontos = f.inss + f.contrAssistencial + f.adiantamentoValor
             + (f.arredondamentoNeg || 0);
@@ -1452,6 +1482,13 @@ export default function FolhaPagamento() {
                   {f.periculosidade > 0 && (
                     <tr><td style={{ padding: '4px 8px' }}>9</td><td style={{ padding: '4px 8px' }}>Adic. Periculosidade</td>
                       <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.periculosidade)}</td><td /></tr>
+                  )}
+                  {(f.feriadosTrab || 0) > 0 && (
+                    <tr style={{ backgroundColor: '#f3e5f5' }}>
+                      <td style={{ padding: '4px 8px' }}>1311</td>
+                      <td style={{ padding: '4px 8px' }}>Feriado ({f.feriadosTrab} dia{(f.feriadosTrab || 0) > 1 ? 's' : ''})</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6a1b9a', fontWeight: 'bold' }}>{fmtMoeda(f.feriadosValor || 0)}</td><td />
+                    </tr>
                   )}
                   {f.variavelAte19 > 0 && (
                     <tr style={{ backgroundColor: '#fafafa' }}><td style={{ padding: '4px 8px' }}>—</td><td style={{ padding: '4px 8px' }}>Variável até dia 19</td>
@@ -2636,8 +2673,8 @@ export default function FolhaPagamento() {
             const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
             const transpDevido = (R((f.raw as any)?.valorTransporte) || 0) * presentes;
             const saldoTransporte = adtoTransp - transpDevido; // se positivo: sobra; se negativo: deve
-            // Bases
-            const fgtsBase = f.salarioBase + f.periculosidade;
+            // Bases (incluem feriados trabalhados na base de cálculo)
+            const fgtsBase = f.salarioBase + f.periculosidade + (f.feriadosValor || 0);
             const fgts = parseFloat((fgtsBase * 0.08).toFixed(2));
 
             return (
