@@ -128,7 +128,12 @@ const buildLinesFromPdfPage = async (pdf: PDFDocumentProxy, pageNumber: number):
 };
 
 const detectEmsLayout = (pageTexts: string[]) => {
-  const sample = pageTexts.join('\n').toUpperCase();
+  // Normaliza acentos (ó → o, á → a) antes do match para aceitar PDFs gerados
+  // por sistemas que mantêm acentos (Domínio, Folhamatic) além do EMS.
+  const sample = pageTexts.join('\n')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
   return sample.includes('RECIBO DE PAGAMENTO') && sample.includes('CODIGO NOME CBO') && sample.includes('SALARIO BASE');
 };
 
