@@ -803,20 +803,25 @@ export default function FolhaPagamento() {
 
         const diasJaPagos = diasJaPagosPorColab[f.id] || new Set<string>();
 
+        // Caixinha vinda do controle-motoboy (lançada manualmente na grade pelo operador)
+        let caixinhaCtrlMotoboy = 0;
+        const caixinhaCtrlDetalhe: { descricao: string; valor: number; data: string }[] = [];
+
         if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
           // ── Cálculo baseado em controle-motoboy ──────────────────────────────
           const linhasSemana = ctrlLinhas.filter(l => l.data >= isoInicio && l.data <= isoFim);
 
           for (const linha of linhasSemana) {
             const jaPago = diasJaPagos.has(linha.data);
-            const temDia   = R(linha.entDia) > 0 || R(linha.chegadaDia) > 0 || R(linha.salDia) > 0;
-            const temNoite = R(linha.entNoite) > 0 || R(linha.chegadaNoite) > 0;
-            const chegD = temDia   ? vDia   : 0;
-            const chegN = temNoite ? vNoite : 0;
+            // Respeita chegadaDia/chegadaNoite salvos (operador marcou checkbox no Controle)
+            // Fallback: se há entrega mas chegada não foi marcada, usa valor do cadastro
+            const chegD = R(linha.chegadaDia)   > 0 ? R(linha.chegadaDia)   : (R(linha.entDia)   > 0 ? vDia   : 0);
+            const chegN = R(linha.chegadaNoite) > 0 ? R(linha.chegadaNoite) : (R(linha.entNoite) > 0 ? vNoite : 0);
+            const temDia   = chegD > 0 || R(linha.entDia)   > 0;
+            const temNoite = chegN > 0 || R(linha.entNoite) > 0;
             const totalEntregas = (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
-            // Usar vlVariavel já calculado pelo módulo Motoboys se os valores de chegada não resolverem
-            const vlCalculado = chegD + chegN + totalEntregas;
-            const vlLinha = parseFloat((vlCalculado > 0 ? vlCalculado : R(linha.vlVariavel)).toFixed(2));
+            const caixinhaLinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+            const vlLinha = parseFloat((chegD + chegN + totalEntregas).toFixed(2));
 
             // Turno de exibição
             const turno = (temDia && temNoite) ? 'DiaNoite' : temDia ? 'Dia' : temNoite ? 'Noite' : 'Dia';
@@ -830,9 +835,20 @@ export default function FolhaPagamento() {
               dobras += (temDia && temNoite) ? 2 : 1;
               diasTrabalhados++;
             }
+
+            // Caixinha do controle-motoboy: agrega como crédito (não paga, pra não duplicar)
+            if (caixinhaLinha > 0 && !jaPago) {
+              caixinhaCtrlMotoboy += caixinhaLinha;
+              caixinhaCtrlDetalhe.push({
+                descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
+                valor: caixinhaLinha,
+                data: linha.data,
+              });
+            }
           }
           total = parseFloat(total.toFixed(2));
           totalJaPago = parseFloat(totalJaPago.toFixed(2));
+          caixinhaCtrlMotoboy = parseFloat(caixinhaCtrlMotoboy.toFixed(2));
           diasCodigo = diasPagos.map(d => d.data.slice(8)).join(',');
         } else {
           // ── Cálculo baseado em escalas (freelancer padrão) ───────────────────
@@ -966,14 +982,19 @@ export default function FolhaPagamento() {
           saidaData(s) >= isoInicio &&
           saidaData(s) <= isoFim
         );
-        const caixinhaTotal = parseFloat(
+        const caixinhaSaidas = parseFloat(
           saidasCaixinhaFr.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
-        const caixinhaDetalhe = saidasCaixinhaFr.map((s: any) => ({
-          descricao: `🪙 Caixinha: ${s.descricao || 'Gorjeta'}`,
-          valor: R(s.valor),
-          data: saidaData(s),
-        }));
+        // Total de caixinha = saídas (Caixinha) + caixinha lançada no controle-motoboy
+        const caixinhaTotal = parseFloat((caixinhaSaidas + caixinhaCtrlMotoboy).toFixed(2));
+        const caixinhaDetalhe = [
+          ...saidasCaixinhaFr.map((s: any) => ({
+            descricao: `🪙 Caixinha: ${s.descricao || 'Gorjeta'}`,
+            valor: R(s.valor),
+            data: saidaData(s),
+          })),
+          ...caixinhaCtrlDetalhe,
+        ];
 
         // Descontos reais do colaborador: vale/empréstimo, consumo e parcelas de adiantamento especial
         // 'Caixinha' permanece como crédito e não entra nesta lista
