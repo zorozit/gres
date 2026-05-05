@@ -486,16 +486,23 @@ export default function FolhaPagamento() {
           colaboradorId: c.id,
           nome: c.nome,
           cpf: c.cpf,
+          cargo: c.cargo,
           tipoContrato: c.tipoContrato,
           ativo: c.ativo !== false,
           unitId: c.unitId,
           isMotoboy: true,
+          // CRÍTICO: copiar salário e periculosidade do cadastro (estavam zerados)
+          salario: R(c.salario) || 0,
+          periculosidade: R(c.periculosidade) || 0,
+          contribuicaoAssistencial: R(c.contribuicaoAssistencial) || 0,
           // Compat com Motoboy interface
           valorDia: R(c.valorDia) || 0,
           valorNoite: R(c.valorNoite) || 0,
-          valorChegadaDia:   R(c.valorDia)         || 0,
-          valorChegadaNoite: R(c.valorNoite)       || 0,
+          valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorDia)   || 0,
+          valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorNoite) || 0,
           valorEntrega:      R(c.valorEntrega) || R(c.valorTransporte) || 0,
+          valorTransporte:   R(c.valorTransporte) || 0,
+          vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
           chavePix: c.chavePix,
         } as Motoboy));
       setMotoboys(motos);
@@ -2565,12 +2572,17 @@ export default function FolhaPagamento() {
   // Overrides editaveis das bases (INSS, FGTS, Contr.Assist, salBase, periculosidade) - aplicados
   // ao líquido na hora do cálculo. Não salvam em cadastro.
   const [overrides, setOverrides] = useState<{ inss?: string; fgts?: string; contrAssist?: string; salBase?: string; periculosidade?: string }>({});
+  // Descontos das saídas que o operador inclui/exclui do líquido
+  const [descontosIncluidos, setDescontosIncluidos] = useState<{ consumo: boolean; aReceber: boolean; adtoEspParc: boolean; transporte: boolean }>({
+    consumo: true, aReceber: true, adtoEspParc: true, transporte: false,
+  });
 
   useEffect(() => {
     if (modalPagamento) {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
       setOverrides({});
+      setDescontosIncluidos({ consumo: true, aReceber: true, adtoEspParc: true, transporte: false });
     }
   }, [modalPagamento]);
 
@@ -2749,53 +2761,96 @@ export default function FolhaPagamento() {
                   </div>
                 </div>
 
-                {/* Sugestão de Pgto Dia 5 com overrides aplicados */}
+
+
+                {/* Saídas/descontos do mês - COM CHECKBOX para incluir/excluir do líquido */}
+                {(consumo > 0 || aReceber > 0 || adtoEspParc > 0 || saldoTransporte < -0.01) && (
+                  <div style={{ marginBottom: '6px', fontSize: '11px', color: '#5d4037', backgroundColor: '#fff8e1', padding: '8px 10px', borderRadius: '4px', borderLeft: '3px solid #f57f17' }}>
+                    <strong style={{ display: 'block', marginBottom: 4 }}>(-) Descontos do mês (marque para abater do líquido):</strong>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {consumo > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={descontosIncluidos.consumo}
+                            onChange={e => setDescontosIncluidos(p => ({ ...p, consumo: e.target.checked }))} />
+                          🍽️ Consumo Interno: <strong>{fmtMoeda(consumo)}</strong>
+                        </label>
+                      )}
+                      {aReceber > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={descontosIncluidos.aReceber}
+                            onChange={e => setDescontosIncluidos(p => ({ ...p, aReceber: e.target.checked }))} />
+                          💸 A receber: <strong>{fmtMoeda(aReceber)}</strong>
+                        </label>
+                      )}
+                      {adtoEspParc > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={descontosIncluidos.adtoEspParc}
+                            onChange={e => setDescontosIncluidos(p => ({ ...p, adtoEspParc: e.target.checked }))} />
+                          💰 Adto Especial (parc.): <strong>{fmtMoeda(adtoEspParc)}</strong>
+                        </label>
+                      )}
+                      {saldoTransporte < -0.01 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={descontosIncluidos.transporte}
+                            onChange={e => setDescontosIncluidos(p => ({ ...p, transporte: e.target.checked }))} />
+                          🚗 Transporte (falta): <strong>{fmtMoeda(Math.abs(saldoTransporte))}</strong>
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Saldos pendentes (informativo, não desconta automaticamente) */}
+                {(saldoEspecial > 0 || saldoTransporte > 0.01) && (
+                  <div style={{ fontSize: '11px', color: '#4a148c', backgroundColor: '#f3e5f5', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #6a1b9a' }}>
+                    <strong>📊 Saldos (informativo):</strong>
+                    {saldoEspecial > 0 && <span style={{ marginLeft: 8 }}>Adto Especial total em aberto: {fmtMoeda(saldoEspecial)}</span>}
+                    {saldoTransporte > 0 && <span style={{ marginLeft: 8 }}>Transporte: sobra {fmtMoeda(saldoTransporte)}</span>}
+                  </div>
+                )}
+
+                <div style={{ fontSize: '10px', color: '#888', marginTop: '6px', fontStyle: 'italic' }}>
+                  ℹ️ Bases editaveis (não alteram cadastro). Descontos marcados serão abatidos do líquido sugerido.
+                </div>
+
+                {/* Sugestão de Líquido Dia 5 — considera overrides + descontos selecionados */}
                 {(() => {
                   const inssOv = parseFloat(overrides.inss || String(f.inss));
                   const contrOv = parseFloat(overrides.contrAssist || String(f.contrAssistencial));
                   const salBaseOv = parseFloat(overrides.salBase || String(f.salarioBase));
                   const periOv = parseFloat(overrides.periculosidade || String(f.periculosidade));
-                  const sugDia5 = parseFloat((salBaseOv * 0.60 + periOv + (f.feriadosValor || 0) + (f.variavelDe20a31 || 0) - inssOv - contrOv).toFixed(2));
+                  const descSelecionados =
+                    (descontosIncluidos.consumo ? consumo : 0) +
+                    (descontosIncluidos.aReceber ? aReceber : 0) +
+                    (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
+                    (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
+                  const sugDia5 = parseFloat((
+                    salBaseOv * 0.60
+                    + periOv
+                    + (f.feriadosValor || 0)
+                    + (f.variavelDe20a31 || 0)
+                    - inssOv
+                    - contrOv
+                    - descSelecionados
+                  ).toFixed(2));
                   const houveOverride = !!overrides.inss || !!overrides.contrAssist || !!overrides.salBase || !!overrides.periculosidade;
                   return (
-                    <div style={{ padding: '6px 10px', backgroundColor: houveOverride ? '#fff3e0' : '#e8f5e9', borderRadius: '4px', borderLeft: `3px solid ${houveOverride ? '#fb8c00' : '#2e7d32'}`, fontSize: '12px', marginBottom: '8px' }}>
-                      <strong>💰 Sugestão Líquido Dia 5:</strong> {fmtMoeda(Math.max(0, sugDia5))}
-                      {houveOverride && <span style={{ marginLeft: 8, color: '#e65100', fontStyle: 'italic', fontSize: '10px' }}>(com overrides)</span>}
+                    <div style={{ padding: '8px 10px', backgroundColor: houveOverride || descSelecionados > 0 ? '#fff3e0' : '#e8f5e9', borderRadius: '4px', borderLeft: `4px solid ${houveOverride || descSelecionados > 0 ? '#fb8c00' : '#2e7d32'}`, fontSize: '13px', marginTop: '10px' }}>
+                      <strong>💰 Líquido Sugerido Dia 5: {fmtMoeda(Math.max(0, sugDia5))}</strong>
+                      <div style={{ fontSize: '10px', color: '#666', marginTop: 4 }}>
+                        = {fmtMoeda(salBaseOv * 0.60)} (60% sal) + {fmtMoeda(periOv)} (peri) + {fmtMoeda(f.feriadosValor || 0)} (feriado) + {fmtMoeda(f.variavelDe20a31 || 0)} (var) − {fmtMoeda(inssOv)} (INSS) − {fmtMoeda(contrOv)} (CtrAss){descSelecionados > 0 ? ` − ${fmtMoeda(descSelecionados)} (descontos)` : ''}
+                      </div>
                       <button
                         onClick={() => {
                           const v = Math.max(0, sugDia5).toFixed(2);
                           setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: v } : l));
                         }}
-                        style={{ marginLeft: 10, padding: '2px 8px', fontSize: '10px', border: 'none', borderRadius: '3px', backgroundColor: '#1565c0', color: 'white', cursor: 'pointer' }}>
-                        Aplicar no lançamento ↓
+                        style={{ marginTop: 6, padding: '4px 10px', fontSize: '11px', border: 'none', borderRadius: '3px', backgroundColor: '#1565c0', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>
+                        ↓ Aplicar no lançamento
                       </button>
                     </div>
                   );
                 })()}
-
-                {/* Saídas/descontos do mês */}
-                {(consumo > 0 || aReceber > 0 || adtoEspParc > 0) && (
-                  <div style={{ marginBottom: '6px', fontSize: '11px', color: '#5d4037', backgroundColor: '#fff8e1', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #f57f17' }}>
-                    <strong>(-) Descontos no mês:</strong>
-                    {consumo > 0 && <span style={{ marginLeft: 8 }}>Consumo: {fmtMoeda(consumo)}</span>}
-                    {aReceber > 0 && <span style={{ marginLeft: 8 }}>A receber: {fmtMoeda(aReceber)}</span>}
-                    {adtoEspParc > 0 && <span style={{ marginLeft: 8 }}>Adto Especial (parc.): {fmtMoeda(adtoEspParc)}</span>}
-                  </div>
-                )}
-
-                {/* Saldos pendentes */}
-                {(saldoEspecial > 0 || Math.abs(saldoTransporte) > 0.01) && (
-                  <div style={{ fontSize: '11px', color: '#4a148c', backgroundColor: '#f3e5f5', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #6a1b9a' }}>
-                    <strong>📊 Saldos:</strong>
-                    {saldoEspecial > 0 && <span style={{ marginLeft: 8 }}>Adto Especial em aberto: {fmtMoeda(saldoEspecial)}</span>}
-                    {saldoTransporte > 0 && <span style={{ marginLeft: 8 }}>Transporte: sobra {fmtMoeda(saldoTransporte)}</span>}
-                    {saldoTransporte < -0.01 && <span style={{ marginLeft: 8, color: '#c62828' }}>Transporte: falta {fmtMoeda(Math.abs(saldoTransporte))}</span>}
-                  </div>
-                )}
-
-                <div style={{ fontSize: '10px', color: '#888', marginTop: '6px', fontStyle: 'italic' }}>
-                  ℹ️ Valores acima são informativos. O Adto e Variável são lançados nos campos abaixo.
-                </div>
               </div>
             );
           })()}
