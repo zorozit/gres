@@ -73,6 +73,8 @@ interface Colaborador {
   horarioSaida?: string;
   // Periculosidade (CLT motoboy ou cargos com risco)
   periculosidade?: number;
+  // Contribuição Assistencial (cod 1000 / 1305 da folha)
+  contribuicaoAssistencial?: number;
   // Novos campos para tipos de acordo freelancer
   isMotoboy?: boolean;
   tipoAcordo?: 'motoboy' | 'valor_turno' | 'valor_dia_noite';
@@ -562,6 +564,20 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
               onBlur={e => onChange({ periculosidade: parseFloat(e.target.value.replace(',', '.')) || 0 } as any)}
             />
             <small style={{ color:'#888', fontSize:'11px' }}>Ex: 30 (motoboy). Aplicado sobre salário base.</small>
+          </div>
+        )}
+        {/* Contribuição Assistencial (CLT, opcional) */}
+        {!isFreelancer && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Contribuição Assistencial (R$)</label>
+            <input
+              type="text" inputMode="decimal" placeholder="0,00"
+              defaultValue={numParaBR((data as any).contribuicaoAssistencial ?? 0)}
+              style={styles.input}
+              onFocus={e => e.target.select()}
+              onBlur={e => onChange({ contribuicaoAssistencial: brParaNum(e.target.value) } as any)}
+            />
+            <small style={{ color:'#888', fontSize:'11px' }}>Cod 1000 / 1305 da folha. Bruna: 42,14. Motoboy (Sindimoto): 32,62.</small>
           </div>
         )}
         {/* Horário de trabalho (CLT) */}

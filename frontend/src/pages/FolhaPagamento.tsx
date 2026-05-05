@@ -607,7 +607,8 @@ export default function FolhaPagamento() {
       const peri = R(c.periculosidade) / 100;
       const salBruto = salBase * (1 + peri);
       const inss = calcINSS(salBruto);
-      const contrAssist = 0;
+      // Contr. Assist. agora vem do cadastro (cod 1000 da folha). Default 0.
+      const contrAssist = R((c as any).contribuicaoAssistencial);
       const adiantPct = 0.40;
       // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - padrão contabilidade
       const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
@@ -649,7 +650,8 @@ export default function FolhaPagamento() {
       const salBruto = salBase * (1 + peri);
       const periculosidadeValor = salBase * peri;
       const inss = calcINSS(salBruto);
-      const contrAssist = 32.62;
+      // Contr. Assist. (Sindimoto cod 1305) agora do cadastro. Fallback 32.62 para motoboys legados.
+      const contrAssist = R((m as any).contribuicaoAssistencial) || 32.62;
       const dia19 = `${mesAno}-19`;
 
       // Mês anterior (para o pagamento Dia 5)
@@ -2772,12 +2774,16 @@ export default function FolhaPagamento() {
             ) : folhasFiltradas.length === 0 ? (
               <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Nenhum colaborador CLT para este período.</div>
             ) : (() => {
-              // Mês anterior label para mostrar nos grids
+              // Filtro = competência. Grid 1 = adto desta competência (pago dia 20).
+              // Grid 2 = fechamento desta competência (pago dia 5 do MÊS SEGUINTE).
               const [aMA, mMA] = mesAno.split('-').map(Number);
-              const dMA = new Date(aMA, mMA - 2, 1);
-              const mesAntLabel = `${String(dMA.getMonth() + 1).padStart(2, '0')}/${dMA.getFullYear()}`;
+              const competenciaLabel = `${String(mMA).padStart(2, '0')}/${aMA}`;
+              // Próximo mês (quando o pgto Dia 5 é efetivamente feito)
+              const dProx = new Date(aMA, mMA, 1);
+              const proxLabel = `05/${String(dProx.getMonth() + 1).padStart(2, '0')}/${dProx.getFullYear()}`;
               const totalGrid1 = folhasFiltradas.reduce((s, f) => s + f.pgtosDia20, 0);
-              const totalGrid2 = folhasFiltradas.reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31MesAnt || 0)), 0);
+              // Grid 2 agora soma pgtosDia05 + variavel 20-31 da PRÓPRIA competência
+              const totalGrid2 = folhasFiltradas.reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31 || 0)), 0);
 
               return (
                 <>
@@ -2847,7 +2853,7 @@ export default function FolhaPagamento() {
                   {/* GRID 2 — Pagamento Dia 5 (fechamento mês anterior) */}
                   <div style={{ ...s.card, marginBottom: '20px', overflowX: 'auto', borderTop: '4px solid #0288d1' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
-                      <h3 style={{ margin: 0, color: '#0288d1', fontSize: '15px' }}>💰 Grid 2 — Pagamento Dia 5 (fechamento {mesAntLabel})</h3>
+                      <h3 style={{ margin: 0, color: '#0288d1', fontSize: '15px' }}>💰 Grid 2 — Fechamento {competenciaLabel} · Pgto em {proxLabel}</h3>
                       <div style={{ fontSize: '12px', color: '#666' }}>
                         Diferença salário (60% + periculosidade) + Variável 20-31 do mês anterior – INSS – Contr. Assist.
                       </div>
@@ -2862,7 +2868,7 @@ export default function FolhaPagamento() {
                           <th style={s.th}>Cargo</th>
                           <th style={{ ...s.th, textAlign: 'right' }}>Dif. Salário</th>
                           <th style={{ ...s.th, textAlign: 'right' }}>+ Periculosidade</th>
-                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20-31 ({mesAntLabel})</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20-31 ({competenciaLabel})</th>
                           <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>INSS</th>
                           <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
                           <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1', fontSize: '12px' }}>💰 Pgto Dia 5</th>
@@ -2872,8 +2878,9 @@ export default function FolhaPagamento() {
                       </thead>
                       <tbody>
                         {folhasFiltradas.map((f, idx) => {
-                          const varMesAnt = f.variavelDe20a31MesAnt || 0;
-                          const totalDia5 = f.pgtosDia05 + varMesAnt;
+                          // Competência selecionada → variável 20-31 desta mesma competência
+                          const varCompet = f.variavelDe20a31 || 0;
+                          const totalDia5 = f.pgtosDia05;
                           return (
                             <tr key={`g2-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
                               <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
@@ -2881,7 +2888,7 @@ export default function FolhaPagamento() {
                               <td style={s.tdR}>{fmtMoeda(f.diferencaSalario - f.periculosidade)}</td>
                               <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '-'}</td>
                               <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>
-                                {varMesAnt > 0 ? fmtMoeda(varMesAnt) : '-'}
+                                {varCompet > 0 ? fmtMoeda(varCompet) : '-'}
                               </td>
                               <td style={{ ...s.tdR, color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
                               <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '-'}</td>
@@ -2943,9 +2950,8 @@ export default function FolhaPagamento() {
                       </thead>
                       <tbody>
                         {folhasFiltradas.map((f, idx) => {
-                          const varMesAnt = f.variavelDe20a31MesAnt || 0;
                           const pgto20 = f.pgtosDia20;
-                          const pgto5 = f.pgtosDia05 + varMesAnt;
+                          const pgto5 = f.pgtosDia05;
                           const descontos = f.inss + f.contrAssistencial;
                           // Total Bruto = Sal+Per do mês + Variável total do mês corrente (caixinha já entra na variável do controle)
                           const totalBruto = f.salarioBase + f.periculosidade + f.totalVariavel;

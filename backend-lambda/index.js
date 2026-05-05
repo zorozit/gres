@@ -154,7 +154,7 @@ function diffColaborador(antes, depois) {
     'nome', 'cpf', 'celular', 'telefone', 'email',
     'tipoContrato', 'cargo', 'tipo', 'funcao', 'area',
     'salario', 'periculosidade', 'valorDia', 'valorNoite',
-    'valorTransporte', 'valorChegadaDia', 'valorChegadaNoite', 'valorEntrega',
+    'valorTransporte', 'valorChegadaDia', 'valorChegadaNoite', 'valorEntrega', 'contribuicaoAssistencial',
     'chavePix', 'dataAdmissao', 'dataDemissao',
     'unitId', 'ativo', 'horarioEntrada', 'horarioSaida',
     'isMotoboy', 'tipoAcordo', 'valeAlimentacao',
@@ -548,6 +548,7 @@ exports.handler = async (event) => {
         isMotoboy, tipoAcordo, acordo,
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
+        contribuicaoAssistencial,  // NOVO
         // Auditoria - obrigatoria a partir desta versao
         responsavelId, responsavelNome, responsavelEmail,
       } = body;
@@ -620,6 +621,8 @@ exports.handler = async (event) => {
           // Horário de trabalho
           horarioEntrada:   horarioEntrada || '',
           horarioSaida:     horarioSaida || '',
+          // Contribuição Assistencial (cod 1000 / 1305 da folha)
+          contribuicaoAssistencial: parseFloat(contribuicaoAssistencial) || 0,
           // Auditoria
           criadoPor:        responsavelId || '',
           criadoPorNome:    responsavelNome || '',
@@ -667,6 +670,7 @@ exports.handler = async (event) => {
         isMotoboy, tipoAcordo, acordo,
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
+        contribuicaoAssistencial,  // NOVO
         // Auditoria
         responsavelId, responsavelNome, responsavelEmail, observacaoAlteracao,
       } = body;
@@ -730,6 +734,8 @@ exports.handler = async (event) => {
           // Horário de trabalho
           horarioEntrada:   horarioEntrada !== undefined ? horarioEntrada : (original.Item.horarioEntrada || ''),
           horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
+          // Contribuição Assistencial (cod 1000 / 1305 da folha)
+          contribuicaoAssistencial: contribuicaoAssistencial !== undefined ? (parseFloat(contribuicaoAssistencial) || 0) : (original.Item.contribuicaoAssistencial || 0),
           // Permite mudança de unidade (transferência)
           unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };
