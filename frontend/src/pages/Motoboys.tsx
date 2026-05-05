@@ -894,6 +894,8 @@ export const Motoboys: React.FC = () => {
                   }
 
                   // Atualiza presença de uma data (cria escala se não existir)
+                  // IMPORTANTE: atualiza estado local (escalasControle) sem recarregar tudo
+                  // — caso contrário o usuário perde os dados não-salvos no controle.
                   const setPresenca = async (data: string, novaPres: string) => {
                     if (!ctrlMotoboyId || !motoboyCtrl) return;
                     const token = localStorage.getItem('auth_token');
@@ -907,10 +909,14 @@ export const Motoboys: React.FC = () => {
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({ presenca: novaPres }),
                         });
+                        // Atualiza estado local sem recarregar
+                        setEscalasControle(prev => prev.map(e =>
+                          e.id === escAtual.id ? { ...e, presenca: novaPres as any } : e
+                        ));
                       } else {
                         // Cria escala (turno padrão Dia ou Folga)
                         const turnoNovo = novaPres === 'folga' ? 'Folga' : 'Dia';
-                        await fetch(`${apiUrl}/escalas`, {
+                        const r = await fetch(`${apiUrl}/escalas`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({
@@ -921,9 +927,16 @@ export const Motoboys: React.FC = () => {
                             presenca: novaPres,
                           }),
                         });
+                        // Insere a escala no estado local
+                        const novaEsc: any = {
+                          id: r.ok ? (await r.json().then((d: any) => d.id || d.escalaId).catch(() => `tmp-${Date.now()}`)) : `tmp-${Date.now()}`,
+                          colaboradorId: targetColabId,
+                          data,
+                          turno: turnoNovo,
+                          presenca: novaPres,
+                        };
+                        setEscalasControle(prev => [...prev, novaEsc]);
                       }
-                      // Recarregar escalas
-                      await fetchSaidas(ctrlMesAno);
                     } catch (e) { console.error('Erro ao salvar presença:', e); }
                   };
 
@@ -934,7 +947,7 @@ export const Motoboys: React.FC = () => {
                     setPresenca(data, next);
                   };
 
-                  // Atualiza observação de uma data
+                  // Atualiza observação de uma data (estado local, sem recarregar tudo)
                   const setObservacao = async (data: string, obs: string) => {
                     if (!ctrlMotoboyId || !motoboyCtrl) return;
                     const token = localStorage.getItem('auth_token');
@@ -947,9 +960,11 @@ export const Motoboys: React.FC = () => {
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({ observacao: obs }),
                         });
+                        setEscalasControle(prev => prev.map(e =>
+                          e.id === escAtual.id ? { ...e, observacao: obs } : e
+                        ));
                       } else if (obs.trim()) {
-                        // Só cria escala se obs não for vazia (evita escalas vazias toa)
-                        await fetch(`${apiUrl}/escalas`, {
+                        const r = await fetch(`${apiUrl}/escalas`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({
@@ -960,8 +975,15 @@ export const Motoboys: React.FC = () => {
                             observacao: obs,
                           }),
                         });
+                        const novaEsc: any = {
+                          id: r.ok ? (await r.json().then((d: any) => d.id || d.escalaId).catch(() => `tmp-${Date.now()}`)) : `tmp-${Date.now()}`,
+                          colaboradorId: targetColabId,
+                          data,
+                          turno: 'Dia',
+                          observacao: obs,
+                        };
+                        setEscalasControle(prev => [...prev, novaEsc]);
                       }
-                      await fetchSaidas(ctrlMesAno);
                     } catch (e) { console.error('Erro ao salvar observação:', e); }
                   };
 

@@ -614,6 +614,41 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
                 onFocus={e => e.target.select()}
                 onBlur={e => onChange({ valorNoite: brParaNum(e.target.value) })} />
             </div>
+            {/* Campos específicos para Motoboy CLT (parametros de variavel diária) */}
+            {((data.cargo || '').toLowerCase() === 'motoboy' || (data as any).isMotoboy) && (
+              <>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Valor por Entrega (R$)
+                    <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>Por corrida realizada — motoboy</span>
+                  </label>
+                  <input type="text" inputMode="decimal" placeholder="0,00"
+                    defaultValue={numParaBR((data as any).valorEntrega || 0)} style={styles.input}
+                    onFocus={e => e.target.select()}
+                    onBlur={e => onChange({ valorEntrega: brParaNum(e.target.value) } as any)} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Valor Chegada Dia (R$)
+                    <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>Garantia diária turno dia</span>
+                  </label>
+                  <input type="text" inputMode="decimal" placeholder="0,00"
+                    defaultValue={numParaBR((data as any).valorChegadaDia || 0)} style={styles.input}
+                    onFocus={e => e.target.select()}
+                    onBlur={e => onChange({ valorChegadaDia: brParaNum(e.target.value) } as any)} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    Valor Chegada Noite (R$)
+                    <span style={{fontSize:'10px',color:'#888',fontWeight:'normal',display:'block'}}>Garantia diária turno noite</span>
+                  </label>
+                  <input type="text" inputMode="decimal" placeholder="0,00"
+                    defaultValue={numParaBR((data as any).valorChegadaNoite || 0)} style={styles.input}
+                    onFocus={e => e.target.select()}
+                    onBlur={e => onChange({ valorChegadaNoite: brParaNum(e.target.value) } as any)} />
+                </div>
+              </>
+            )}
           </>
         )}
         {/* Transporte */}
