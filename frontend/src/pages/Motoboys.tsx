@@ -825,7 +825,6 @@ export const Motoboys: React.FC = () => {
                   const cardsBase = [
                     { label: 'Dias trabalhados', val: String(resumoCtrl.diasTrab), cor: '#1976d2' },
                     { label: 'Total entregas', val: String(resumoCtrl.totalViagens), cor: '#0288d1' },
-                    { label: 'Chegada', val: `R$ ${fmt(resumoCtrl.totalChegada)}`, cor: '#e65100' },
                     { label: 'Vl. Variável', val: `R$ ${fmt(resumoCtrl.totalEntregas)}`, cor: '#43a047' },
                     { label: 'Caixinha', val: `R$ ${fmt(resumoCtrl.totalCaixinha)}`, cor: '#00838f' },
                     { label: 'Total', val: `R$ ${fmt(totalGeral)}`, cor: '#2e7d32' },
@@ -837,10 +836,10 @@ export const Motoboys: React.FC = () => {
                     { label: resumoCtrl.vEntrega > 0 ? `Entregas (${resumoCtrl.totalViagens}× R$${fmt(resumoCtrl.vEntrega)})` : 'Vl. Entrega (não configurado)', val: resumoCtrl.vEntrega > 0 ? `R$ ${fmt(resumoCtrl.totalEntregas)}` : '—', cor: '#0288d1' },
                     { label: 'Bruto (chegada+ent.+caix.)', val: `R$ ${fmt(resumoCtrl.totalBrutoFreelancer)}`, cor: '#2e7d32' },
                   ] : [];
-                  const cardsCLT = !isFreelancer ? [
-                    { label: 'Salário base', val: `R$ ${fmt(resumoCtrl.salBase)}`, cor: '#6a1b9a' },
-                    { label: 'Periculosidade', val: `R$ ${fmt(resumoCtrl.periculosidadeValor)}`, cor: '#e65100' },
-                  ] : [];
+                  // Cards de Salário Base e Periculosidade removidos do controle operacional.
+                  // Esses dados ficam em Folha de Pagamento (alçada superior) — tela de Motoboys
+                  // é apenas registro operacional diário.
+                  const cardsCLT: any[] = [];
                   return (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginBottom: '16px' }}>
                       {[...cardsBase, ...cardsFreelancer, ...cardsCLT].map(c => (
@@ -997,7 +996,6 @@ export const Motoboys: React.FC = () => {
 
                   const headers = [
                     'Data', 'DS',
-                    ...(isFreelancerCtrl ? [] : ['Sal.+Per.']),
                     'Presença',
                     'Ent.Dia', 'Caix.Dia',
                     ...(showChegada ? ['✓ Ch.Dia'] : []),
@@ -1061,9 +1059,7 @@ export const Motoboys: React.FC = () => {
                                     <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
                                       {DIAS_SEMANA_ABREV[dow]}
                                     </td>
-                                    {!isFreelancerCtrl && (
-                                      <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
-                                    )}
+
 
                                     {/* Presença (sincroniza com gres-prod-escalas) */}
                                     <td style={{ ...s.td, textAlign: 'center' as const, padding: '2px' }}>
@@ -1173,7 +1169,7 @@ export const Motoboys: React.FC = () => {
                               {/* Subtotal da semana */}
                               <tr style={{ backgroundColor: '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
                                 {/* Data + DS (+ Sal.+Per. se CLT) + Presença */}
-                                <td style={{ padding: '5px 6px' }} colSpan={isFreelancerCtrl ? 3 : 4}>Subtotal {sem.label}</td>
+                                <td style={{ padding: '5px 6px' }} colSpan={3}>Subtotal {sem.label}</td>
                                 <td style={{ padding: '5px 6px' }}>{subEntDia}</td>
                                 <td style={{ padding: '5px 6px' }}>{fmt(subCaixDia)}</td>
                                 {showChegada && <td style={{ padding: '5px 6px', color: '#e65100' }}>{fmt(subChDia)}</td>}
@@ -1193,7 +1189,7 @@ export const Motoboys: React.FC = () => {
                       <tfoot>
                         <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
                           {/* Data + DS (+ Sal.+Per. se CLT) + Presença */}
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={isFreelancerCtrl ? 3 : 4}>TOTAL GERAL</td>
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL GERAL</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
                           {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
