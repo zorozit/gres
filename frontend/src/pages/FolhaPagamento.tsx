@@ -621,8 +621,15 @@ export default function FolhaPagamento() {
       const adtoLiquido = Math.floor(adtoContabil); // número inteiro (liquido real)
       const arredPos = parseFloat((adtoLiquido + 1 - adtoContabil > 0 && adtoContabil % 1 !== 0 ? adtoLiquido + 1 - adtoContabil : 0).toFixed(2));
       const arredNeg = parseFloat((adtoContabil - adtoLiquido > 0 ? adtoContabil - adtoLiquido : 0).toFixed(2));
-      // CRÍTICO: filtrar por mes da competência. Sem isso, status de pgto vaza entre meses.
-      const salva = folhasDB.find(f => f.colaboradorId === c.id && f.mes === mesAno);
+      // CRÍTICO: filtra por (mes, sem semana, sem tipo='freelancer-dia').
+      // Folha CLT é mensal — ignora pagamentos de freelancer/dia/semana que vazariam aqui.
+      const salva = folhasDB.find(f =>
+        f.colaboradorId === c.id
+        && f.mes === mesAno
+        && !f.semana
+        && f.tipo !== 'freelancer-dia'
+        && f.tipo !== 'freelancer-noite'
+      );
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
@@ -632,10 +639,12 @@ export default function FolhaPagamento() {
         diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
-        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento || salva?.pago || false,
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
-        pagoVariavel: salva?.pagoVariavel || false,
+        // ZERO fallback: flags pagoAdiantamento e pagoVariavel sao independentes.
+        // pago=true antigo NUNCA implica pagoAdiantamento=true (Eric exigiu).
+        pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
+        pagoAdiantamento: salva?.pagoAdiantamento === true,
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento,
+        pagoVariavel: salva?.pagoVariavel === true,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
         logPagamentos: salva?.logPagamentos || [],
         raw: c,
@@ -704,8 +713,14 @@ export default function FolhaPagamento() {
       const adtoLiquidoMoto = Math.floor(adtoContabilMoto);
       const arredPosMoto = parseFloat((adtoLiquidoMoto + 1 - adtoContabilMoto > 0 && adtoContabilMoto % 1 !== 0 ? adtoLiquidoMoto + 1 - adtoContabilMoto : 0).toFixed(2));
       const arredNegMoto = parseFloat((adtoContabilMoto - adtoLiquidoMoto > 0 ? adtoContabilMoto - adtoLiquidoMoto : 0).toFixed(2));
-      // CRÍTICO: filtrar por mes
-      const salva = folhasDB.find(f => f.colaboradorId === m.id && f.mes === mesAno);
+      // CRÍTICO: filtra por (mes, sem semana, sem tipo='freelancer-dia/noite')
+      const salva = folhasDB.find(f =>
+        f.colaboradorId === m.id
+        && f.mes === mesAno
+        && !f.semana
+        && f.tipo !== 'freelancer-dia'
+        && f.tipo !== 'freelancer-noite'
+      );
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
@@ -716,10 +731,12 @@ export default function FolhaPagamento() {
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
-        pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento || salva?.pago || false,
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || salva?.dataPagamento,
-        pagoVariavel: salva?.pagoVariavel || false,
+        // ZERO fallback: flags pagoAdiantamento e pagoVariavel sao independentes.
+        // pago=true antigo NUNCA implica pagoAdiantamento=true (Eric exigiu).
+        pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
+        pagoAdiantamento: salva?.pagoAdiantamento === true,
+        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento,
+        pagoVariavel: salva?.pagoVariavel === true,
         dataPgtoVariavel: salva?.dataPgtoVariavel,
         logPagamentos: salva?.logPagamentos || [],
         raw: m,
@@ -1405,46 +1422,91 @@ export default function FolhaPagamento() {
           {f.cargo} · {f.tipoContrato} · {mesAno}
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <colgroup><col style={{ width: '60%' }} /><col style={{ width: '20%' }} /><col style={{ width: '20%' }} /></colgroup>
-          <thead>
-            <tr style={{ backgroundColor: '#e8f5e9' }}>
-              <th style={{ padding: '6px 8px', textAlign: 'left' }}>Descrição</th>
-              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#2e7d32' }}>Crédito</th>
-              <th style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>Débito</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              { desc: `Variável até dia 19`, cred: f.variavelAte19, deb: 0 },
-              { desc: `Adiantamento Sal. ${f.adiantamentoSalario}%`, cred: 0, deb: f.adiantamentoValor, note: 'Pgto dia 20' },
-              { desc: `Pgto dia 20`, cred: f.pgtosDia20, deb: 0, italic: true },
-              { desc: `Diferença de Salário (60%)`, cred: f.diferencaSalario, deb: 0 },
-              { desc: `Adicional Periculosidade`, cred: f.periculosidade, deb: 0 },
-              { desc: `INSS sobre Salário`, cred: 0, deb: f.inss },
-              ...(f.contrAssistencial > 0 ? [{ desc: 'Contr. Assistencial', cred: 0, deb: f.contrAssistencial }] : []),
-              { desc: `Variável 20 a 31`, cred: f.variavelDe20a31, deb: 0 },
-              { desc: `Pgto dia 05`, cred: 0, deb: f.pgtosDia05, italic: true },
-            ].map((row, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
-                <td style={{ padding: '6px 8px', fontStyle: (row as any).italic ? 'italic' : 'normal', color: (row as any).italic ? '#c62828' : 'inherit' }}>{row.desc}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', color: row.cred > 0 ? '#2e7d32' : '#bbb' }}>
-                  {row.cred > 0 ? fmtMoeda(row.cred) : '-'}
-                </td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', color: row.deb > 0 ? '#c62828' : '#bbb' }}>
-                  {row.deb > 0 ? fmtMoeda(row.deb) : '-'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-              <td style={{ padding: '8px' }}>Saldo Final</td>
-              <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(f.saldoFinal)}</td>
-              <td style={{ padding: '8px' }} />
-            </tr>
-          </tfoot>
-        </table>
+        {(() => {
+          // Cálculos de holerith
+          const fgtsBase = f.salarioBase + f.periculosidade;
+          const fgts = parseFloat((fgtsBase * 0.08).toFixed(2)); // 8% sobre sal+per
+          const totalVencimentos = f.salarioBase + f.periculosidade + f.totalVariavel
+            + (f.arredondamentoPos || 0);
+          const totalDescontos = f.inss + f.contrAssistencial + f.adiantamentoValor
+            + (f.arredondamentoNeg || 0);
+          const liquidoMes = totalVencimentos - totalDescontos;
+          return (
+            <>
+              {/* Holerith estilo PDF da contabilidade */}
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', marginBottom: '10px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#0d47a1', color: 'white' }}>
+                    <th style={{ padding: '6px 8px', textAlign: 'left', width: '50px' }}>Cód.</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'left' }}>Descrição</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'right', color: '#a5d6a7' }}>Vencimentos</th>
+                    <th style={{ padding: '6px 8px', textAlign: 'right', color: '#ef9a9a' }}>Descontos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Vencimentos */}
+                  <tr style={{ backgroundColor: '#fafafa' }}>
+                    <td style={{ padding: '4px 8px' }}>1</td><td style={{ padding: '4px 8px' }}>Salário</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.salarioBase)}</td><td />
+                  </tr>
+                  {f.periculosidade > 0 && (
+                    <tr><td style={{ padding: '4px 8px' }}>9</td><td style={{ padding: '4px 8px' }}>Adic. Periculosidade</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.periculosidade)}</td><td /></tr>
+                  )}
+                  {f.variavelAte19 > 0 && (
+                    <tr style={{ backgroundColor: '#fafafa' }}><td style={{ padding: '4px 8px' }}>—</td><td style={{ padding: '4px 8px' }}>Variável até dia 19</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.variavelAte19)}</td><td /></tr>
+                  )}
+                  {f.variavelDe20a31 > 0 && (
+                    <tr><td style={{ padding: '4px 8px' }}>—</td><td style={{ padding: '4px 8px' }}>Variável 20-31</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.variavelDe20a31)}</td><td /></tr>
+                  )}
+                  {f.arredondamentoPos > 0 && (
+                    <tr style={{ backgroundColor: '#fafafa' }}><td style={{ padding: '4px 8px' }}>16</td><td style={{ padding: '4px 8px' }}>Arredondamento Atual</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right', color: '#2e7d32' }}>{fmtMoeda(f.arredondamentoPos)}</td><td /></tr>
+                  )}
+                  {/* Descontos */}
+                  <tr style={{ backgroundColor: '#fff3e0' }}>
+                    <td style={{ padding: '4px 8px' }}>11</td><td style={{ padding: '4px 8px' }}>INSS sobre Salário</td>
+                    <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
+                  </tr>
+                  <tr><td style={{ padding: '4px 8px' }}>12</td><td style={{ padding: '4px 8px' }}>Adiantamento Anterior</td>
+                    <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.adiantamentoValor)}</td>
+                  </tr>
+                  {f.arredondamentoNeg > 0 && (
+                    <tr style={{ backgroundColor: '#fff3e0' }}><td style={{ padding: '4px 8px' }}>19</td><td style={{ padding: '4px 8px' }}>Arredondamento Anterior</td>
+                      <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.arredondamentoNeg)}</td></tr>
+                  )}
+                  {f.contrAssistencial > 0 && (
+                    <tr><td style={{ padding: '4px 8px' }}>{(f.cargo || '').toLowerCase() === 'motoboy' ? '1305' : '1000'}</td><td style={{ padding: '4px 8px' }}>Contr. Assistencial</td>
+                      <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.contrAssistencial)}</td></tr>
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                    <td colSpan={2} style={{ padding: '8px' }}>Total Vencimentos</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(totalVencimentos)}</td>
+                    <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(totalDescontos)}</td>
+                  </tr>
+                  <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold', fontSize: '13px' }}>
+                    <td colSpan={2} style={{ padding: '8px' }}>Líquido do Mês</td>
+                    <td colSpan={2} style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(liquidoMes)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+
+              {/* Bases de cálculo (igual ao PDF da contabilidade) */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', padding: '8px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '11px', marginBottom: '10px' }}>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Sal. Base</div><div>{fmtMoeda(f.salarioBase)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Sal.Contr.INSS</div><div>{fmtMoeda(fgtsBase)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Base Cálc. FGTS</div><div>{fmtMoeda(fgtsBase)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>FGTS do Mês (8%)</div><div style={{ color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(fgts)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Pgto Dia 20</div><div style={{ color: '#fb8c00', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Pgto Dia 5</div><div style={{ color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia05)}</div></div>
+              </div>
+            </>
+          );
+        })()}
 
         {f.chavePix && (
           <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '6px', fontSize: '13px' }}>
@@ -2916,6 +2978,79 @@ export default function FolhaPagamento() {
                                   style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#0288d1'), padding: '4px 12px', fontSize: '11px' }}>
                                   {f.pagoVariavel ? '↩ Desfazer' : '✅ Pagar Dia 5'}
                                 </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* GRID 4 — Variáveis (descontos e créditos do mês, separados da folha) */}
+                  <div style={{ ...s.card, marginBottom: '20px', overflowX: 'auto', borderTop: '4px solid #6a1b9a' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                      <h3 style={{ margin: 0, color: '#6a1b9a', fontSize: '15px' }}>⚡ Grid 4 — Variáveis ({mesAno})</h3>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        Dobras CLT + Adto Transporte + Saídas (Consumo Interno, A receber, Adto Especial)
+                      </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th style={s.th}>Nome</th>
+                          <th style={s.th}>Cargo</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047', fontSize: '11px' }}>Dobras CLT (pago)</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1', fontSize: '11px' }}>Adto Transporte</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828', fontSize: '11px' }}>(-) Consumo Interno</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828', fontSize: '11px' }}>(-) A receber</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#7b1fa2', fontSize: '11px' }}>(-) Adto Especial (parc.)</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#6a1b9a' }}>Líq. Variáveis</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {folhasFiltradas.map((f, idx) => {
+                          // Saídas do colaborador no período
+                          const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
+                          // Adto Transporte (crédito — valor antecipado pra ele)
+                          const adtoTransp = saidasCol
+                            .filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte')
+                            .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+                          // Consumo Interno (desconto)
+                          const consumo = saidasCol
+                            .filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno')
+                            .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+                          // A receber (desconto)
+                          const aReceber = saidasCol
+                            .filter((s: any) => (s.tipo || s.origem) === 'A receber')
+                            .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+                          // Desconto Adto Especial (parcela do mês)
+                          const descAdtoEsp = saidasCol
+                            .filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial')
+                            .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+                          // Dobras CLT pagas no mês (folhasDB com tipo 'dobra' OU semana sem freelancer-dia)
+                          const dobrasCLTPagas = folhasDB
+                            .filter((p: any) =>
+                              p.colaboradorId === f.colaboradorId
+                              && p.mes === mesAno
+                              && p.semana                       // tem semana = pgto semanal de dobra
+                              && p.pago === true
+                              && p.tipo !== 'freelancer-dia'
+                              && p.tipo !== 'freelancer-noite'
+                            )
+                            .reduce((sum: number, p: any) => sum + (R(p.totalFinal) || R(p.valorBruto) || R(p.totalLiquido) || 0), 0);
+                          // Líquido das variáveis = (créditos) - (descontos)
+                          const liqVar = dobrasCLTPagas + adtoTransp - consumo - aReceber - descAdtoEsp;
+                          return (
+                            <tr key={`g4-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
+                              <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
+                              <td style={{ ...s.tdR, color: '#2e7d32' }}>{dobrasCLTPagas > 0 ? fmtMoeda(dobrasCLTPagas) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#0288d1' }}>{adtoTransp > 0 ? fmtMoeda(adtoTransp) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#c62828' }}>{consumo > 0 ? fmtMoeda(consumo) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#c62828' }}>{aReceber > 0 ? fmtMoeda(aReceber) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#7b1fa2' }}>{descAdtoEsp > 0 ? fmtMoeda(descAdtoEsp) : '-'}</td>
+                              <td style={{ ...s.tdR, color: liqVar >= 0 ? '#2e7d32' : '#c62828', fontWeight: 'bold', fontSize: '13px' }}>
+                                {liqVar !== 0 ? fmtMoeda(liqVar) : '-'}
                               </td>
                             </tr>
                           );
