@@ -2558,11 +2558,15 @@ export default function FolhaPagamento() {
   interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
   const novaPgtoLinha = (): LinhaPgto => ({ id: Date.now().toString(), data: new Date().toISOString().split('T')[0], forma: 'PIX', valor: '', valorPix: '', valorDinheiro: '', obs: '' });
   const [pgtoLinhas, setPgtoLinhas] = useState<LinhaPgto[]>([novaPgtoLinha()]);
+  // Overrides editaveis das bases (INSS, FGTS, Contr.Assist, salBase, periculosidade) - aplicados
+  // ao líquido na hora do cálculo. Não salvam em cadastro.
+  const [overrides, setOverrides] = useState<{ inss?: string; fgts?: string; contrAssist?: string; salBase?: string; periculosidade?: string }>({});
 
   useEffect(() => {
     if (modalPagamento) {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
+      setOverrides({});
     }
   }, [modalPagamento]);
 
@@ -2690,31 +2694,79 @@ export default function FolhaPagamento() {
                   {feriados > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#f3e5f5', color: '#6a1b9a' }}>🎉 {feriados} feriados</span>}
                 </div>
 
-                {/* Bases editaveis */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
+                {/* Bases EDITÁVEIS — sobrescreve calc, sem alterar cadastro. */}
+                <div style={{ marginBottom: '4px', fontSize: '10px', color: '#888', fontStyle: 'italic' }}>
+                  ✏️ Editáveis abaixo: ajuste para bater com PDF da contabilidade. Não altera cadastro.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
+                  {/* Sal. Base */}
                   <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666' }}>Sal. Base</div>
-                    <div style={{ fontWeight: 'bold' }}>{fmtMoeda(f.salarioBase)}</div>
+                    <div style={{ color: '#666', fontSize: '10px' }}>Sal. Base</div>
+                    <input type="number" step="0.01" min="0"
+                      value={overrides.salBase ?? f.salarioBase.toFixed(2)}
+                      onChange={e => setOverrides(prev => ({ ...prev, salBase: e.target.value }))}
+                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold' }} />
                   </div>
+                  {/* Periculosidade */}
                   {f.periculosidade > 0 && (
                     <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                      <div style={{ color: '#666' }}>Periculosidade</div>
-                      <div style={{ fontWeight: 'bold', color: '#e65100' }}>{fmtMoeda(f.periculosidade)}</div>
+                      <div style={{ color: '#666', fontSize: '10px' }}>Periculosidade</div>
+                      <input type="number" step="0.01" min="0"
+                        value={overrides.periculosidade ?? f.periculosidade.toFixed(2)}
+                        onChange={e => setOverrides(prev => ({ ...prev, periculosidade: e.target.value }))}
+                        style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#e65100' }} />
                     </div>
                   )}
+                  {/* INSS */}
                   <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666' }}>INSS (calc.)</div>
-                    <div style={{ fontWeight: 'bold', color: '#c62828' }}>{fmtMoeda(f.inss)}</div>
+                    <div style={{ color: '#666', fontSize: '10px' }}>INSS (calc.)</div>
+                    <input type="number" step="0.01" min="0"
+                      value={overrides.inss ?? f.inss.toFixed(2)}
+                      onChange={e => setOverrides(prev => ({ ...prev, inss: e.target.value }))}
+                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#c62828' }} />
                   </div>
+                  {/* Contr.Assist. */}
                   <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666' }}>Contr.Assist.</div>
-                    <div style={{ fontWeight: 'bold', color: '#c62828' }}>{fmtMoeda(f.contrAssistencial)}</div>
+                    <div style={{ color: '#666', fontSize: '10px' }}>Contr.Assist.</div>
+                    <input type="number" step="0.01" min="0"
+                      value={overrides.contrAssist ?? f.contrAssistencial.toFixed(2)}
+                      onChange={e => setOverrides(prev => ({ ...prev, contrAssist: e.target.value }))}
+                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#c62828' }} />
                   </div>
-                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666' }}>FGTS Mes (8%)</div>
-                    <div style={{ fontWeight: 'bold', color: '#0288d1' }}>{fmtMoeda(fgts)}</div>
+                  {/* FGTS - somente leitura (não desconta da folha) */}
+                  <div style={{ padding: '6px', backgroundColor: '#f5f5f5', borderRadius: '4px', border: '1px dashed #ccc' }}>
+                    <div style={{ color: '#666', fontSize: '10px' }}>FGTS Mes (8%) — confer.</div>
+                    <input type="number" step="0.01" min="0"
+                      value={overrides.fgts ?? fgts.toFixed(2)}
+                      onChange={e => setOverrides(prev => ({ ...prev, fgts: e.target.value }))}
+                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#0288d1' }} />
+                    <div style={{ fontSize: '9px', color: '#888' }}>não desconta</div>
                   </div>
                 </div>
+
+                {/* Sugestão de Pgto Dia 5 com overrides aplicados */}
+                {(() => {
+                  const inssOv = parseFloat(overrides.inss || String(f.inss));
+                  const contrOv = parseFloat(overrides.contrAssist || String(f.contrAssistencial));
+                  const salBaseOv = parseFloat(overrides.salBase || String(f.salarioBase));
+                  const periOv = parseFloat(overrides.periculosidade || String(f.periculosidade));
+                  const sugDia5 = parseFloat((salBaseOv * 0.60 + periOv + (f.feriadosValor || 0) + (f.variavelDe20a31 || 0) - inssOv - contrOv).toFixed(2));
+                  const houveOverride = !!overrides.inss || !!overrides.contrAssist || !!overrides.salBase || !!overrides.periculosidade;
+                  return (
+                    <div style={{ padding: '6px 10px', backgroundColor: houveOverride ? '#fff3e0' : '#e8f5e9', borderRadius: '4px', borderLeft: `3px solid ${houveOverride ? '#fb8c00' : '#2e7d32'}`, fontSize: '12px', marginBottom: '8px' }}>
+                      <strong>💰 Sugestão Líquido Dia 5:</strong> {fmtMoeda(Math.max(0, sugDia5))}
+                      {houveOverride && <span style={{ marginLeft: 8, color: '#e65100', fontStyle: 'italic', fontSize: '10px' }}>(com overrides)</span>}
+                      <button
+                        onClick={() => {
+                          const v = Math.max(0, sugDia5).toFixed(2);
+                          setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: v } : l));
+                        }}
+                        style={{ marginLeft: 10, padding: '2px 8px', fontSize: '10px', border: 'none', borderRadius: '3px', backgroundColor: '#1565c0', color: 'white', cursor: 'pointer' }}>
+                        Aplicar no lançamento ↓
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* Saídas/descontos do mês */}
                 {(consumo > 0 || aReceber > 0 || adtoEspParc > 0) && (
