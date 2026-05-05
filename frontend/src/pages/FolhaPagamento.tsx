@@ -621,7 +621,8 @@ export default function FolhaPagamento() {
       const adtoLiquido = Math.floor(adtoContabil); // número inteiro (liquido real)
       const arredPos = parseFloat((adtoLiquido + 1 - adtoContabil > 0 && adtoContabil % 1 !== 0 ? adtoLiquido + 1 - adtoContabil : 0).toFixed(2));
       const arredNeg = parseFloat((adtoContabil - adtoLiquido > 0 ? adtoContabil - adtoLiquido : 0).toFixed(2));
-      const salva = folhasDB.find(f => f.colaboradorId === c.id);
+      // CRÍTICO: filtrar por mes da competência. Sem isso, status de pgto vaza entre meses.
+      const salva = folhasDB.find(f => f.colaboradorId === c.id && f.mes === mesAno);
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
@@ -703,7 +704,8 @@ export default function FolhaPagamento() {
       const adtoLiquidoMoto = Math.floor(adtoContabilMoto);
       const arredPosMoto = parseFloat((adtoLiquidoMoto + 1 - adtoContabilMoto > 0 && adtoContabilMoto % 1 !== 0 ? adtoLiquidoMoto + 1 - adtoContabilMoto : 0).toFixed(2));
       const arredNegMoto = parseFloat((adtoContabilMoto - adtoLiquidoMoto > 0 ? adtoContabilMoto - adtoLiquidoMoto : 0).toFixed(2));
-      const salva = folhasDB.find(f => f.colaboradorId === m.id);
+      // CRÍTICO: filtrar por mes
+      const salva = folhasDB.find(f => f.colaboradorId === m.id && f.mes === mesAno);
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,

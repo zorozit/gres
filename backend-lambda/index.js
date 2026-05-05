@@ -1558,7 +1558,10 @@ exports.handler = async (event) => {
       const { colaboradorId, mes, semana, unitId, pago, dataPagamento, saldoFinal,
               valorBruto, valorTransporte, transporteCalculado, transporteAdiantado,
               desconto, caixinha, totalFinal, obs, formaPagamento, diasPagos,
-              dias } = body;
+              dias,
+              // NOVO: campos específicos CLT
+              pagoAdiantamento, dataPgtoAdiantamento, pagoVariavel, dataPgtoVariavel,
+              logPagamentos } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
         const now = new Date().toISOString();
@@ -1617,36 +1620,49 @@ exports.handler = async (event) => {
 
         // ── LEGADO: registro semanal agrupado (CLT ou desfazer pagamento antigo) ──
         const itemId = semana ? `${colaboradorId}_${mes}_${semana}` : `${colaboradorId}_${mes}`;
+
+        // Buscar item original para mesclar (preservar pagoAdto se só vier pagoVar e vice-versa)
+        let origItemPreserve = null;
+        try {
+          const o = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
+          origItemPreserve = o.Item || null;
+        } catch {}
+
         const item = {
+          ...(origItemPreserve || {}),
           id: itemId,
           colaboradorId, mes, semana: semana || null,
           unitId: normalizedUnitId,
           pago: pago === true,
           dataPagamento: dtPgto,
-          formaPagamento: formaPagamento || 'PIX',
-          saldoFinal: parseFloat(saldoFinal) || 0,
-          valorBruto: parseFloat(valorBruto) || 0,
-          valorTransporte: parseFloat(valorTransporte) || 0,
-          transporteCalculado: parseFloat(transporteCalculado) || 0,
-          transporteAdiantado: parseFloat(transporteAdiantado) || 0,
-          desconto: parseFloat(desconto) || 0,
-          caixinha: parseFloat(caixinha) || 0,
-          totalFinal: parseFloat(totalFinal) || 0,
-          diasPagos: Array.isArray(diasPagos) ? diasPagos : [],
-          obs: obs || '',
+          formaPagamento: formaPagamento || (origItemPreserve && origItemPreserve.formaPagamento) || 'PIX',
+          saldoFinal: saldoFinal !== undefined ? (parseFloat(saldoFinal) || 0) : (origItemPreserve?.saldoFinal || 0),
+          valorBruto: valorBruto !== undefined ? (parseFloat(valorBruto) || 0) : (origItemPreserve?.valorBruto || 0),
+          valorTransporte: valorTransporte !== undefined ? (parseFloat(valorTransporte) || 0) : (origItemPreserve?.valorTransporte || 0),
+          transporteCalculado: transporteCalculado !== undefined ? (parseFloat(transporteCalculado) || 0) : (origItemPreserve?.transporteCalculado || 0),
+          transporteAdiantado: transporteAdiantado !== undefined ? (parseFloat(transporteAdiantado) || 0) : (origItemPreserve?.transporteAdiantado || 0),
+          desconto: desconto !== undefined ? (parseFloat(desconto) || 0) : (origItemPreserve?.desconto || 0),
+          caixinha: caixinha !== undefined ? (parseFloat(caixinha) || 0) : (origItemPreserve?.caixinha || 0),
+          totalFinal: totalFinal !== undefined ? (parseFloat(totalFinal) || 0) : (origItemPreserve?.totalFinal || 0),
+          diasPagos: Array.isArray(diasPagos) ? diasPagos : (origItemPreserve?.diasPagos || []),
+          // CLT - flags separadas para Pgto Dia 20 e Pgto Dia 5
+          // Quando o body envia, prevalece. Senão preserva o existente.
+          pagoAdiantamento: pagoAdiantamento !== undefined ? !!pagoAdiantamento : (origItemPreserve?.pagoAdiantamento || false),
+          dataPgtoAdiantamento: dataPgtoAdiantamento !== undefined ? dataPgtoAdiantamento : (origItemPreserve?.dataPgtoAdiantamento || null),
+          pagoVariavel: pagoVariavel !== undefined ? !!pagoVariavel : (origItemPreserve?.pagoVariavel || false),
+          dataPgtoVariavel: dataPgtoVariavel !== undefined ? dataPgtoVariavel : (origItemPreserve?.dataPgtoVariavel || null),
+          // Log de pagamentos cumulativo (acumula entradas)
+          logPagamentos: Array.isArray(logPagamentos)
+            ? [...((origItemPreserve?.logPagamentos) || []), ...logPagamentos]
+            : (origItemPreserve?.logPagamentos || []),
+          obs: obs !== undefined ? obs : (origItemPreserve?.obs || ''),
           updatedAt: now,
         };
-        // Buscar item original para auditoria (se existir)
-        let origItem = null;
-        try {
-          const o = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
-          origItem = o.Item || null;
-        } catch {}
-
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
 
-        // Auditoria
+        // Auditoria (usa origItemPreserve carregado acima)
         const audFol = extrairAuditoria(body, event);
+        const origItem = origItemPreserve;
         await logAlteracaoGenerica({
           tabela: 'folha-pagamento',
           entidadeId: itemId,
