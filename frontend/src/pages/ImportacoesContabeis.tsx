@@ -123,13 +123,22 @@ export const ImportacoesContabeis: React.FC = () => {
       const matched = normalizedColabs.find((colab) => colab.normalizedName === normalizedRecordName)
         || normalizedColabs.find((colab) => colab.normalizedName.includes(normalizedRecordName) || normalizedRecordName.includes(colab.normalizedName));
 
+      // Já importado SOMENTE se houver registro previamente importado por este módulo,
+      // identificado pela observação gravada por importarFolha/importarAdiantamento + competencia bate.
+      // Pagamentos avulsos feitos em outras telas (Folha, Motoboys) NÃO contam como já importado,
+      // pois são eventos diferentes (a importação eh do recibo contábil oficial).
+      const isObsImport = (s: string) => /Importação EMS/i.test(s || '');
       const jaImportado = result.tipoDocumento === 'adiantamento'
         ? existingSaidas.some((item) =>
             item.colaboradorId === matched?.id
             && (item.tipo || item.origem || item.referencia) === 'Adiantamento Salário'
             && (item.descricao || '').includes(result.competencia)
           )
-        : existingFolhas.some((item) => item.colaboradorId === matched?.id);
+        : existingFolhas.some((item) =>
+            item.colaboradorId === matched?.id
+            && (item.mes === result.competencia)
+            && isObsImport(item.obs || item.observacao || '')
+          );
 
       return {
         ...record,
