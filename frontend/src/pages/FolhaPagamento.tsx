@@ -3086,10 +3086,11 @@ export default function FolhaPagamento() {
                             </td>
                             <td style={{ ...s.td, textAlign: 'center' }}>
                               <button
-                                onClick={async () => {
+                                onClick={() => {
                                   if (f.pagoAdiantamento) { handleTogglePago(f); return; }
-                                  const dt = window.prompt('Data do pgto Dia 20 (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
-                                  if (dt !== null) handleTogglePago(f, dt || undefined);
+                                  // Abre modal completo com forma PIX/Dinheiro/Misto, multi-lançamento
+                                  setModalPagamento(f);
+                                  setModalPgtoTipo('Adiantamento');
                                 }}
                                 disabled={salvando}
                                 style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#fb8c00'), padding: '4px 12px', fontSize: '11px' }}>
@@ -3157,10 +3158,11 @@ export default function FolhaPagamento() {
                               </td>
                               <td style={{ ...s.td, textAlign: 'center' }}>
                                 <button
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
-                                    const dt = window.prompt('Data do pgto Dia 5 (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
-                                    if (dt !== null) handleTogglePagoVariavel(f, dt || undefined);
+                                    // Abre modal completo com painel expandível: pres/falta/folga/feriados, INSS, FGTS, etc.
+                                    setModalPagamento(f);
+                                    setModalPgtoTipo('Variável');
                                   }}
                                   disabled={salvando}
                                   style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#0288d1'), padding: '4px 12px', fontSize: '11px' }}>
