@@ -39,8 +39,9 @@ interface EscalaMotoboy {
   colaboradorId: string;
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
-  presenca?: 'presente' | 'falta' | 'falta_justificada';
-  presencaNoite?: 'presente' | 'falta' | 'falta_justificada';
+  presenca?: 'presente' | 'falta' | 'falta_justificada' | 'folga';
+  presencaNoite?: 'presente' | 'falta' | 'falta_justificada' | 'folga';
+  observacao?: string;
 }
 
 /** Saída lançada no módulo de controle financeiro */
@@ -1122,13 +1123,105 @@ export const Motoboys: React.FC = () => {
                     });
                   };
 
+                  // Mapeia escalas do motoboy por data: { '2026-05-01': escala }
+                  const escalasPorData = new Map<string, EscalaMotoboy>();
+                  const colabId = motoboyCtrl?.colaboradorId;
+                  for (const e of escalasControle) {
+                    if (e.colaboradorId === ctrlMotoboyId || (colabId && e.colaboradorId === colabId)) {
+                      escalasPorData.set(e.data, e);
+                    }
+                  }
+
+                  // Atualiza presença de uma data (cria escala se não existir)
+                  const setPresenca = async (data: string, novaPres: string) => {
+                    if (!ctrlMotoboyId || !motoboyCtrl) return;
+                    const token = localStorage.getItem('auth_token');
+                    const escAtual = escalasPorData.get(data);
+                    const targetColabId = motoboyCtrl.colaboradorId || ctrlMotoboyId;
+                    try {
+                      if (escAtual) {
+                        // PUT atualiza presença (usa turno existente)
+                        await fetch(`${apiUrl}/escalas/${escAtual.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ presenca: novaPres }),
+                        });
+                      } else {
+                        // Cria escala (turno padrão Dia ou Folga)
+                        const turnoNovo = novaPres === 'folga' ? 'Folga' : 'Dia';
+                        await fetch(`${apiUrl}/escalas`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            unitId,
+                            colaboradorId: targetColabId,
+                            data,
+                            turno: turnoNovo,
+                            presenca: novaPres,
+                          }),
+                        });
+                      }
+                      // Recarregar escalas
+                      await fetchSaidas(ctrlMesAno);
+                    } catch (e) { console.error('Erro ao salvar presença:', e); }
+                  };
+
+                  const ciclarPresenca = (data: string) => {
+                    const cur = escalasPorData.get(data)?.presenca || '';
+                    const ciclo = ['', 'presente', 'falta', 'falta_justificada', 'folga'];
+                    const next = ciclo[(ciclo.indexOf(cur) + 1) % ciclo.length];
+                    setPresenca(data, next);
+                  };
+
+                  // Atualiza observação de uma data
+                  const setObservacao = async (data: string, obs: string) => {
+                    if (!ctrlMotoboyId || !motoboyCtrl) return;
+                    const token = localStorage.getItem('auth_token');
+                    const escAtual = escalasPorData.get(data);
+                    const targetColabId = motoboyCtrl.colaboradorId || ctrlMotoboyId;
+                    try {
+                      if (escAtual) {
+                        await fetch(`${apiUrl}/escalas/${escAtual.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ observacao: obs }),
+                        });
+                      } else if (obs.trim()) {
+                        // Só cria escala se obs não for vazia (evita escalas vazias toa)
+                        await fetch(`${apiUrl}/escalas`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({
+                            unitId,
+                            colaboradorId: targetColabId,
+                            data,
+                            turno: 'Dia',
+                            observacao: obs,
+                          }),
+                        });
+                      }
+                      await fetchSaidas(ctrlMesAno);
+                    } catch (e) { console.error('Erro ao salvar observação:', e); }
+                  };
+
+                  const PRES_BADGE: Record<string, { bg: string; cor: string; icon: string; label: string }> = {
+                    '':                  { bg:'#f5f5f5', cor:'#999',     icon:'—',  label:'—' },
+                    presente:            { bg:'#e8f5e9', cor:'#2e7d32', icon:'✅', label:'Presente' },
+                    falta:               { bg:'#fce4ec', cor:'#c62828', icon:'❌', label:'Falta' },
+                    falta_justificada:   { bg:'#fff3e0', cor:'#e65100', icon:'⚠️', label:'Justif.' },
+                    folga:               { bg:'#e3f2fd', cor:'#1565c0', icon:'🛌', label:'Folga' },
+                  };
+
                   const headers = [
-                    'Data', 'DS', 'Sal.+Per.',
+                    'Data', 'DS',
+                    ...(isFreelancerCtrl ? [] : ['Sal.+Per.']),
+                    'Presença',
                     'Ent.Dia', 'Caix.Dia',
                     ...(showChegada ? ['✓ Ch.Dia'] : []),
                     'Ent.Noite', 'Caix.Noite',
                     ...(showChegada ? ['✓ Ch.Noite'] : []),
                     'Chegada', 'Vl.Variável', 'Caixinha', 'Total',
+                    '📝',
                   ];
 
                   return (
@@ -1185,7 +1278,28 @@ export const Motoboys: React.FC = () => {
                                     <td style={{ ...s.td, color: folga ? '#9e9e9e' : '#1976d2', fontWeight: 'bold' }}>
                                       {DIAS_SEMANA_ABREV[dow]}
                                     </td>
-                                    <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
+                                    {!isFreelancerCtrl && (
+                                      <td style={{ ...s.td, color: '#6a1b9a', fontWeight: 'bold' }}>{fmt(l.salDia)}</td>
+                                    )}
+
+                                    {/* Presença (sincroniza com gres-prod-escalas) */}
+                                    <td style={{ ...s.td, textAlign: 'center' as const, padding: '2px' }}>
+                                      {(() => {
+                                        const pres = escalasPorData.get(l.data)?.presenca || '';
+                                        const badge = PRES_BADGE[pres];
+                                        return (
+                                          <button onClick={() => ciclarPresenca(l.data)}
+                                            title={`${badge.label} — clique para ciclar (Presente → Falta → Justif. → Folga → —)`}
+                                            style={{
+                                              padding: '3px 8px', border: `1px solid ${badge.cor}`, borderRadius: '12px',
+                                              backgroundColor: badge.bg, color: badge.cor, fontWeight: 600, fontSize: '11px',
+                                              cursor: 'pointer', whiteSpace: 'nowrap',
+                                            }}>
+                                            {badge.icon} {badge.label !== '—' && pres ? badge.label : ''}
+                                          </button>
+                                        );
+                                      })()}
+                                    </td>
 
                                     {(['entDia', 'caixinhaDia'] as const).map(campo => (
                                       <td key={campo} style={s.td}>
@@ -1246,13 +1360,37 @@ export const Motoboys: React.FC = () => {
                                     <td style={{ ...s.td, textAlign: 'right' as const, fontWeight: 'bold', color: '#2e7d32', backgroundColor: totalDia > 0 ? '#e8f5e9' : undefined }}>
                                       {totalDia > 0 ? fmt(totalDia) : <span style={{ color: '#ccc' }}>-</span>}
                                     </td>
+
+                                    {/* Observação (ícone abre prompt) */}
+                                    <td style={{ ...s.td, textAlign: 'center' as const, padding: '2px' }}>
+                                      {(() => {
+                                        const obsAtual = escalasPorData.get(l.data)?.observacao || '';
+                                        const tem = !!obsAtual.trim();
+                                        return (
+                                          <button
+                                            onClick={() => {
+                                              const nova = window.prompt(`Observação para ${l.data.split('-').reverse().join('/')}:`, obsAtual);
+                                              if (nova !== null && nova !== obsAtual) setObservacao(l.data, nova);
+                                            }}
+                                            title={tem ? obsAtual : 'Adicionar observação'}
+                                            style={{
+                                              padding: '2px 6px', border: 'none', borderRadius: '4px',
+                                              backgroundColor: tem ? '#fff3e0' : 'transparent',
+                                              color: tem ? '#e65100' : '#bbb', cursor: 'pointer', fontSize: '14px',
+                                            }}>
+                                            {tem ? '📝' : '+'}
+                                          </button>
+                                        );
+                                      })()}
+                                    </td>
                                   </tr>
                                 );
                               })}
 
                               {/* Subtotal da semana */}
                               <tr style={{ backgroundColor: '#bbdefb', fontWeight: 'bold', fontSize: '12px' }}>
-                                <td style={{ padding: '5px 6px' }} colSpan={3}>Subtotal {sem.label}</td>
+                                {/* Data + DS (+ Sal.+Per. se CLT) + Presença */}
+                                <td style={{ padding: '5px 6px' }} colSpan={isFreelancerCtrl ? 3 : 4}>Subtotal {sem.label}</td>
                                 <td style={{ padding: '5px 6px' }}>{subEntDia}</td>
                                 <td style={{ padding: '5px 6px' }}>{fmt(subCaixDia)}</td>
                                 {showChegada && <td style={{ padding: '5px 6px', color: '#e65100' }}>{fmt(subChDia)}</td>}
@@ -1263,6 +1401,7 @@ export const Motoboys: React.FC = () => {
                                 <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#43a047' }}>{fmt(subVarEnt)}</td>
                                 <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#00838f' }}>{fmt(subCaixTotal)}</td>
                                 <td style={{ padding: '5px 6px', textAlign: 'right' as const, color: '#1b5e20' }}>R$ {fmt(subTotal)}</td>
+                                <td style={{ padding: '5px 6px' }} />{/* Obs */}
                               </tr>
                             </React.Fragment>
                           );
@@ -1270,7 +1409,8 @@ export const Motoboys: React.FC = () => {
                       </tbody>
                       <tfoot>
                         <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={3}>TOTAL GERAL</td>
+                          {/* Data + DS (+ Sal.+Per. se CLT) + Presença */}
+                          <td style={{ padding: '8px 6px', fontSize: '12px' }} colSpan={isFreelancerCtrl ? 3 : 4}>TOTAL GERAL</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{controleComAcumulado.reduce((s, l) => s + R(l.entDia), 0)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia), 0))}</td>
                           {showChegada && <td style={{ padding: '8px 6px', fontSize: '12px', color: '#ffcc80' }}>{fmt(resumoCtrl.totalChegadaDia)}</td>}
@@ -1281,6 +1421,7 @@ export const Motoboys: React.FC = () => {
                           <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' as const, color: '#a5d6a7' }}>{fmt(resumoCtrl.totalEntregas)}</td>
                           <td style={{ padding: '8px 6px', fontSize: '12px', textAlign: 'right' as const, color: '#80deea' }}>{fmt(controleComAcumulado.reduce((s, l) => s + R(l.caixinhaDia) + R(l.caixinhaNoite), 0))}</td>
                           <td style={{ padding: '8px 6px', fontSize: '13px', textAlign: 'right' as const, color: '#fff' }}>R$ {fmt(resumoCtrl.totalChegada + resumoCtrl.totalEntregas + resumoCtrl.totalCaixinha)}</td>
+                          <td style={{ padding: '8px 6px' }} />{/* Obs */}
                         </tr>
                       </tfoot>
                     </table>

@@ -37,8 +37,8 @@ interface Escala {
   colaboradorId: string;
   data: string;
   turno: 'Dia' | 'Noite' | 'DiaNoite' | 'Folga';
-  presenca?: 'presente' | 'falta' | 'falta_justificada';
-  presencaNoite?: 'presente' | 'falta' | 'falta_justificada';
+  presenca?: 'presente' | 'falta' | 'falta_justificada' | 'folga';
+  presencaNoite?: 'presente' | 'falta' | 'falta_justificada' | 'folga';
   observacao?: string;
   unitId?: string;
 }
@@ -125,6 +125,7 @@ const PRES_BADGE: Record<string, { bg: string; cor: string; icon: string }> = {
   presente:           { bg:'#e8f5e9', cor:'#2e7d32', icon:'✅' },
   falta:              { bg:'#fce4ec', cor:'#c62828', icon:'❌' },
   falta_justificada:  { bg:'#fff3e0', cor:'#e65100', icon:'⚠️' },
+  folga:              { bg:'#e3f2fd', cor:'#1565c0', icon:'🛌' },
 };
 
 // Cor da área
@@ -430,7 +431,7 @@ export const Escalas: React.FC = () => {
   },[escalasMap,apiUrl,unitId,responsavelId,responsavelNome]);
 
   const handlePresenca = useCallback(async (presKey:string, data:string, cur:string) => {
-    const ciclo = ['','presente','falta','falta_justificada'];
+    const ciclo = ['','presente','falta','falta_justificada','folga'];
     const next = ciclo[(ciclo.indexOf(cur)+1)%ciclo.length];
     setPresencaMap(prev=>({...prev,[presKey]:{...(prev[presKey]||{}),[data]:next}}));
     setSalvandoPres(true);
@@ -1093,7 +1094,7 @@ export const Escalas: React.FC = () => {
             </div>
 
             <p style={{ color:'#666', fontSize:'12px', margin:'0 0 14px 0', backgroundColor:'#e8f5e9', padding:'8px 12px', borderRadius:'6px' }}>
-              🖱️ Clique em <strong style={{color:'#f57f17'}}>D</strong> ou <strong style={{color:'#3949ab'}}>N</strong> para ciclar presença: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → —</strong>.
+              🖱️ Clique em <strong style={{color:'#f57f17'}}>D</strong> ou <strong style={{color:'#3949ab'}}>N</strong> para ciclar presença: <strong>— → ✅ Presente → ❌ Falta → ⚠️ Justificada → 🛌 Folga → —</strong>.
               Apenas dias com turno lançado podem ser pontuados. Dia e Noite são pontuados separadamente. Agora cada linha também tem <strong>Todos</strong> e <strong>Limpar</strong> para marcar ou desmarcar em massa os turnos do colaborador na semana.
             </p>
 
