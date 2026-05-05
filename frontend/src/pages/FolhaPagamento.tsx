@@ -111,6 +111,8 @@ interface FolhaMensal {
   diferencaSalario: number;
   variavelAte19: number;
   variavelDe20a31: number;
+  /** Variável 20-31 do mês ANTERIOR (entra no Pgto Dia 5) */
+  variavelDe20a31MesAnt?: number;
   totalVariavel: number;
   pgtosDia20: number;
   pgtosDia05: number;
@@ -417,9 +419,16 @@ export default function FolhaPagamento() {
       const dataFim    = periodoCustomAtivo ? periodoFim : mesalMesAnoFim;
 
       // Meses tocados pelo período (para fetch de folha/escalas/controle-motoboy)
+      // SEMPRE inclui o mês anterior também, pois o pagamento Dia 5 fecha o mês anterior
+      // (Grid 2 do CLT: Variavel 20-31 do mês anterior + dif salário + INSS)
+      const mesAnterior = (() => {
+        const [a, m] = mesAno.split('-').map(Number);
+        const d = new Date(a, m - 2, 1);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      })();
       const mesesAlvo = periodoCustomAtivo
         ? mesesNoRange(periodoIni, periodoFim)
-        : [mesAno];
+        : [mesAnterior, mesAno];
 
       // Previous 3 months to catch pending saídas (a partir do início efetivo)
       const [aIni, mIni] = dataInicio.split('-').map(Number);
@@ -618,7 +627,7 @@ export default function FolhaPagamento() {
         salarioBase: salBase, periculosidade: salBase * peri, inss, contrAssistencial: contrAssist,
         adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
         adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
-        diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, totalVariavel: 0,
+        diferencaSalario: difSal, variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
         pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
         outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
         pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
@@ -643,19 +652,34 @@ export default function FolhaPagamento() {
       const contrAssist = 32.62;
       const dia19 = `${mesAno}-19`;
 
+      // Mês anterior (para o pagamento Dia 5)
+      const [aMA, mMA] = mesAno.split('-').map(Number);
+      const dMesAnt = new Date(aMA, mMA - 2, 1);
+      const mesAnt = `${dMesAnt.getFullYear()}-${String(dMesAnt.getMonth() + 1).padStart(2, '0')}`;
+      const dia19MesAnt = `${mesAnt}-19`;
+      const ultimoDiaMesAnt = `${mesAnt}-31`; // string compare é ok pra YYYY-MM-DD
+
       // Saídas do motoboy no período - complementam o controle quando não há dados salvos
       const saidasMotoboy = saidasPeriodo.filter(s => s.colaboradorId === m.id);
       const totalPagoSaidas = saidasMotoboy.reduce((sum: number, s: any) => sum + R(s.valor), 0);
 
       let varAte19 = 0, varDe20a31 = 0;
+      // Variável 20-31 do MÊS ANTERIOR (entra no Pgto Dia 5)
+      let varDe20a31MesAnt = 0;
       if (controle.length > 0) {
         // Usar controle salvo
         for (const linha of controle) {
-          if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
-          else varDe20a31 += R(linha.vlVariavel);
+          // Linhas do mês atual: dividir entre até 19 e 20-31
+          if (linha.data >= `${mesAno}-01` && linha.data <= `${mesAno}-31`) {
+            if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
+            else varDe20a31 += R(linha.vlVariavel);
+          } else if (linha.data > dia19MesAnt && linha.data <= ultimoDiaMesAnt) {
+            // Linhas do mês anterior 20-31: entram no pgto dia 5
+            varDe20a31MesAnt += R(linha.vlVariavel);
+          }
         }
       } else if (saidasMotoboy.length > 0) {
-        // Fallback: calcular variável a partir das saídas
+        // Fallback: calcular variável a partir das saídas (só mês atual)
         for (const s of saidasMotoboy) {
           if ((s.data || '') <= dia19) varAte19 += R(s.valor);
           else varDe20a31 += R(s.valor);
@@ -663,6 +687,7 @@ export default function FolhaPagamento() {
       }
       varAte19 = parseFloat(varAte19.toFixed(2));
       varDe20a31 = parseFloat(varDe20a31.toFixed(2));
+      varDe20a31MesAnt = parseFloat(varDe20a31MesAnt.toFixed(2));
       const totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
       // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - igual ao PDF Cód.16
       const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
@@ -684,7 +709,7 @@ export default function FolhaPagamento() {
         adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
         adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
         arredondamentoPos: arredPosMoto, arredondamentoNeg: arredNegMoto,
-        variavelAte19: varAte19, variavelDe20a31: varDe20a31, totalVariavel,
+        variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
         pago: salva?.pago || false, dataPagamento: salva?.dataPagamento,
@@ -2724,7 +2749,7 @@ export default function FolhaPagamento() {
         {aba === 'clt' && (
           <>
             {/* Filtros CLT */}
-            <div style={{ ...s.card, borderRadius: '0 8px 0 0', borderBottom: 'none', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', padding: '12px 16px' }}>
+            <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', padding: '12px 16px' }}>
               <div>
                 <label style={s.label}>Tipo</label>
                 <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} style={{ ...s.select, width: '130px' }}>
@@ -2737,158 +2762,236 @@ export default function FolhaPagamento() {
                   <option value="todos">Todos</option><option value="pago">Pagos</option><option value="pendente">Pendentes</option>
                 </select>
               </div>
+              <div style={{ marginLeft: 'auto', fontSize: '11px', color: '#666' }}>
+                💡 Pgto <strong>Dia 20</strong> = adto + variável do mês corrente · Pgto <strong>Dia 5</strong> = fechamento do mês anterior
+              </div>
             </div>
 
             {loading ? (
-              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999', borderRadius: '0 8px 8px 8px' }}>Carregando dados...</div>
+              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando dados...</div>
             ) : folhasFiltradas.length === 0 ? (
-              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999', borderRadius: '0 8px 8px 8px' }}>Nenhum colaborador CLT para este período.</div>
-            ) : (
-              <div style={{ ...s.card, overflowX: 'auto', borderRadius: '0 8px 8px 8px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Nome</th>
-                      <th style={s.th}>Cargo</th>
-                      <th style={s.thC}>Tipo</th>
-                      <th style={{ ...s.th, textAlign: 'right' }}>Sal. Base</th>
-                      <th style={{ ...s.th, textAlign: 'right' }}>+ Periculosidade</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável ≤19</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#fb8c00' }}>Pgto dia 20</th>
-                      <th style={{ ...s.th, textAlign: 'right' }}>Dif. Sal.</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20-31</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>INSS</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto dia 05</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Saldo Final</th>
-                      {/* Colunas de conferência contábil (PDF da contabilidade) */}
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.16 Adto</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.19 Arr.+</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.20 Arr.-</th>
-                      <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#311b92', fontSize: '11px' }}>Líquido ADTO</th>
-                      <th style={{ ...s.thC, backgroundColor: '#1b5e20' }}>Adiantamento</th>
-                      <th style={{ ...s.thC, backgroundColor: '#e65100' }}>Variável</th>
-                      <th style={s.thC}>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {folhasFiltradas.map((f, idx) => (
-                      <tr key={f.colaboradorId}
-                        style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}
-                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
-                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#fafafa' : 'white')}>
-                        <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
-                        <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
-                        <td style={{ ...s.td, textAlign: 'center' }}>
-                          <span style={f.tipoContrato === 'CLT' ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
-                            {f.tipoContrato}
-                          </span>
-                        </td>
-                        <td style={s.tdR}>{fmtMoeda(f.salarioBase)}</td>
-                        <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '-'}</td>
-                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelAte19 > 0 ? fmtMoeda(f.variavelAte19) : '-'}</td>
-                        <td style={{ ...s.tdR, color: '#fb8c00', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</td>
-                        <td style={s.tdR}>{fmtMoeda(f.diferencaSalario)}</td>
-                        <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelDe20a31 > 0 ? fmtMoeda(f.variavelDe20a31) : '-'}</td>
-                        <td style={{ ...s.tdR, color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
-                        <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '-'}</td>
-                        <td style={{ ...s.tdR, color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia05)}</td>
-                        <td style={{ ...s.tdR, fontWeight: 'bold', color: f.saldoFinal >= 0 ? '#2e7d32' : '#c62828' }}>
-                          {fmtMoeda(f.saldoFinal)}
-                        </td>
-                        {/* Cód.16: 40% do salário base (sem periculosidade) */}
-                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{fmtMoeda(f.adtoContabil)}</td>
-                        {/* Cód.19: arredondamento positivo */}
-                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoPos > 0 ? fmtMoeda(f.arredondamentoPos) : '-'}</td>
-                        {/* Cód.20: arredondamento negativo */}
-                        <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{f.arredondamentoNeg > 0 ? fmtMoeda(f.arredondamentoNeg) : '-'}</td>
-                        {/* Líquido = inteiro (o que a contabilidade paga) */}
-                        <td style={{ ...s.tdR, color: '#311b92', fontWeight: 'bold', fontSize: '12px' }}>{fmtMoeda(f.adtoLiquido)}</td>
-                        {/* Coluna Adiantamento (fixo contábil) */}
-                        <td style={{ ...s.td, textAlign: 'center' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                            <span style={f.pagoAdiantamento ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff9c4', '#f57f17')}>
-                              {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
-                            </span>
-                            {f.pagoAdiantamento && f.dataPgtoAdiantamento && (
-                              <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoAdiantamento}</div>
-                            )}
-                            <button
-                              onClick={() => f.pagoAdiantamento ? handleTogglePago(f) : setModalPagamento(f)}
-                              disabled={salvando}
-                              title={f.pagoAdiantamento ? 'Desfazer adiantamento' : 'Registrar adiantamento'}
-                              style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#1b5e20'), padding: '2px 8px', fontSize: '10px' }}>
-                              {f.pagoAdiantamento ? '↩ Adto' : '✅ Adto'}
-                            </button>
-                          </div>
-                        </td>
-                        {/* Coluna Variável (motoboy/dobras - separado do fixo) */}
-                        <td style={{ ...s.td, textAlign: 'center' }}>
-                          {f.totalVariavel > 0 ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                              <span style={f.pagoVariavel ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
-                                {f.pagoVariavel ? '✅ Pago' : '⏳ Pendente'}
+              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Nenhum colaborador CLT para este período.</div>
+            ) : (() => {
+              // Mês anterior label para mostrar nos grids
+              const [aMA, mMA] = mesAno.split('-').map(Number);
+              const dMA = new Date(aMA, mMA - 2, 1);
+              const mesAntLabel = `${String(dMA.getMonth() + 1).padStart(2, '0')}/${dMA.getFullYear()}`;
+              const totalGrid1 = folhasFiltradas.reduce((s, f) => s + f.pgtosDia20, 0);
+              const totalGrid2 = folhasFiltradas.reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31MesAnt || 0)), 0);
+
+              return (
+                <>
+                  {/* GRID 1 — Pagamento Dia 20 (mês corrente) */}
+                  <div style={{ ...s.card, marginBottom: '20px', overflowX: 'auto', borderTop: '4px solid #fb8c00' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                      <h3 style={{ margin: 0, color: '#fb8c00', fontSize: '15px' }}>💸 Grid 1 — Pagamento Dia 20 ({mesAno})</h3>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        Adiantamento (40% sal. base) + Variável até dia 19 do mês corrente
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#fb8c00' }}>
+                        Total: {fmtMoeda(totalGrid1)}
+                      </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th style={s.th}>Nome</th>
+                          <th style={s.th}>Cargo</th>
+                          <th style={{ ...s.th, textAlign: 'right' }}>Sal. Base</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#7b1fa2' }}>Adto Sal. (40%)</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável ≤19</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#fb8c00' }}>💸 Pgto Dia 20</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#4a148c', fontSize: '10px' }}>Cód.16</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#311b92', fontSize: '10px' }}>Líq.ADTO</th>
+                          <th style={{ ...s.thC, backgroundColor: '#1b5e20' }}>Status</th>
+                          <th style={s.thC}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {folhasFiltradas.map((f, idx) => (
+                          <tr key={`g1-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
+                            <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                            <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
+                            <td style={s.tdR}>{fmtMoeda(f.salarioBase)}</td>
+                            <td style={{ ...s.tdR, color: '#7b1fa2' }}>{fmtMoeda(f.adiantamentoValor)}</td>
+                            <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{f.variavelAte19 > 0 ? fmtMoeda(f.variavelAte19) : '-'}</td>
+                            <td style={{ ...s.tdR, color: '#fb8c00', fontWeight: 'bold', fontSize: '13px' }}>{fmtMoeda(f.pgtosDia20)}</td>
+                            <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{fmtMoeda(f.adtoContabil)}</td>
+                            <td style={{ ...s.tdR, color: '#311b92', fontWeight: 'bold' }}>{fmtMoeda(f.adtoLiquido)}</td>
+                            <td style={{ ...s.td, textAlign: 'center' }}>
+                              <span style={f.pagoAdiantamento ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                                {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
                               </span>
-                              {f.pagoVariavel && f.dataPgtoVariavel && (
-                                <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoVariavel}</div>
+                              {f.pagoAdiantamento && f.dataPgtoAdiantamento && (
+                                <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoAdiantamento}</div>
                               )}
+                            </td>
+                            <td style={{ ...s.td, textAlign: 'center' }}>
                               <button
                                 onClick={async () => {
-                                  if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
-                                  const dt = window.prompt('Data do pagamento variável (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
-                                  if (dt !== null) handleTogglePagoVariavel(f, dt || undefined);
+                                  if (f.pagoAdiantamento) { handleTogglePago(f); return; }
+                                  const dt = window.prompt('Data do pgto Dia 20 (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
+                                  if (dt !== null) handleTogglePago(f, dt || undefined);
                                 }}
                                 disabled={salvando}
-                                title={f.pagoVariavel ? 'Desfazer variável' : 'Registrar variável pago'}
-                                style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#e65100'), padding: '2px 8px', fontSize: '10px' }}>
-                                {f.pagoVariavel ? '↩ Var.' : '✅ Var.'}
+                                style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#fb8c00'), padding: '4px 12px', fontSize: '11px' }}>
+                                {f.pagoAdiantamento ? '↩ Desfazer' : '✅ Pagar Dia 20'}
                               </button>
-                            </div>
-                          ) : <span style={{ color: '#ccc', fontSize: '11px' }}>-</span>}
-                        </td>
-                        <td style={{ ...s.td, textAlign: 'center' }}>
-                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                            <button onClick={() => setDetalheSelecionado(f)} style={{ ...s.btn('#1976d2'), padding: '4px 10px', fontSize: '11px' }}
-                              title="Ver detalhes">
-                              📋
-                            </button>
-                            <button onClick={() => abrirHistorico(f.colaboradorId)} style={{ ...s.btn('#6a1b9a'), padding: '4px 10px', fontSize: '11px' }}
-                              title="Histórico analítico">
-                              📊
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
-                      <td style={{ padding: '8px', fontSize: '13px' }} colSpan={3}>TOTAIS</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.salarioBase, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.periculosidade, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(totais.variavel - folhasFiltradas.reduce((s, f) => s + f.variavelDe20a31, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ffcc80' }}>{fmtMoeda(totais.pgto20)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.diferencaSalario, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.variavelDe20a31, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.inss, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.contrAssistencial, 0))}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#b3e5fc' }}>{fmtMoeda(totais.pgto05)}</td>
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7' }}>{fmtMoeda(totais.saldo)}</td>
-                      {/* totais conferencia contabil */}
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px', color: '#ce93d8' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.adtoContabil, 0))}</td>
-                      <td /><td />
-                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '12px', color: '#b39ddb', fontWeight: 'bold' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.adtoLiquido, 0))}</td>
-                      <td colSpan={3} />
-                    </tr>
-                  </tfoot>
-                </table>
-                <div style={{ marginTop: '10px', fontSize: '11px', color: '#666', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                  <span>🟠 <strong>Pgto dia 20</strong> = variável até 19 + adiantamento (40% sal. base)</span>
-                  <span>🔵 <strong>Pgto dia 05</strong> = variável 20-31 + 60% sal. base + periculosidade - INSS - contr. assist.</span>
-                  <span>🟣 <strong>Periculosidade</strong>: 30% sobre salário base - paga integralmente no dia 05</span>
-                </div>
-              </div>
-            )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* GRID 2 — Pagamento Dia 5 (fechamento mês anterior) */}
+                  <div style={{ ...s.card, marginBottom: '20px', overflowX: 'auto', borderTop: '4px solid #0288d1' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                      <h3 style={{ margin: 0, color: '#0288d1', fontSize: '15px' }}>💰 Grid 2 — Pagamento Dia 5 (fechamento {mesAntLabel})</h3>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        Diferença salário (60% + periculosidade) + Variável 20-31 do mês anterior – INSS – Contr. Assist.
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#0288d1' }}>
+                        Total: {fmtMoeda(totalGrid2)}
+                      </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th style={s.th}>Nome</th>
+                          <th style={s.th}>Cargo</th>
+                          <th style={{ ...s.th, textAlign: 'right' }}>Dif. Salário</th>
+                          <th style={{ ...s.th, textAlign: 'right' }}>+ Periculosidade</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável 20-31 ({mesAntLabel})</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>INSS</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>Contr. Assist.</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1', fontSize: '12px' }}>💰 Pgto Dia 5</th>
+                          <th style={{ ...s.thC, backgroundColor: '#0d47a1' }}>Status</th>
+                          <th style={s.thC}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {folhasFiltradas.map((f, idx) => {
+                          const varMesAnt = f.variavelDe20a31MesAnt || 0;
+                          const totalDia5 = f.pgtosDia05 + varMesAnt;
+                          return (
+                            <tr key={`g2-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
+                              <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
+                              <td style={s.tdR}>{fmtMoeda(f.diferencaSalario - f.periculosidade)}</td>
+                              <td style={{ ...s.tdR, color: '#e65100' }}>{f.periculosidade > 0 ? fmtMoeda(f.periculosidade) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>
+                                {varMesAnt > 0 ? fmtMoeda(varMesAnt) : '-'}
+                              </td>
+                              <td style={{ ...s.tdR, color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
+                              <td style={{ ...s.tdR, color: '#c62828' }}>{f.contrAssistencial > 0 ? fmtMoeda(f.contrAssistencial) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#0288d1', fontWeight: 'bold', fontSize: '13px' }}>
+                                {fmtMoeda(totalDia5)}
+                              </td>
+                              <td style={{ ...s.td, textAlign: 'center' }}>
+                                <span style={f.pagoVariavel ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                                  {f.pagoVariavel ? '✅ Pago' : '⏳ Pendente'}
+                                </span>
+                                {f.pagoVariavel && f.dataPgtoVariavel && (
+                                  <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoVariavel}</div>
+                                )}
+                              </td>
+                              <td style={{ ...s.td, textAlign: 'center' }}>
+                                <button
+                                  onClick={async () => {
+                                    if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
+                                    const dt = window.prompt('Data do pgto Dia 5 (AAAA-MM-DD):', new Date().toISOString().split('T')[0]);
+                                    if (dt !== null) handleTogglePagoVariavel(f, dt || undefined);
+                                  }}
+                                  disabled={salvando}
+                                  style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#0288d1'), padding: '4px 12px', fontSize: '11px' }}>
+                                  {f.pagoVariavel ? '↩ Desfazer' : '✅ Pagar Dia 5'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* GRID 3 — Resumo Mensal (todos pagamentos do mês) */}
+                  <div style={{ ...s.card, marginBottom: '20px', overflowX: 'auto', borderTop: '4px solid #2e7d32' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                      <h3 style={{ margin: 0, color: '#2e7d32', fontSize: '15px' }}>📊 Grid 3 — Resumo Mensal ({mesAno})</h3>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        Pgto Dia 20 + Pgto Dia 5 + Variável total + Caixinha (Controle Motoboy)
+                      </div>
+                      <button onClick={() => navigate('/modulos/extrato')} style={{ ...s.btn('#00838f'), padding: '4px 12px', fontSize: '11px' }}>
+                        📋 Ver Extrato
+                      </button>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th style={s.th}>Nome</th>
+                          <th style={s.th}>Cargo</th>
+                          <th style={{ ...s.th, textAlign: 'right' }}>Sal. + Per.</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#43a047' }}>Variável Total ({mesAno})</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#fb8c00' }}>Pgto Dia 20</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0288d1' }}>Pgto Dia 5</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#c62828' }}>(-) Descontos</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#0d47a1' }}>Total Bruto Mês</th>
+                          <th style={{ ...s.th, textAlign: 'right', backgroundColor: '#1b5e20' }}>Total Líquido Mês</th>
+                          <th style={s.thC}>Detalhes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {folhasFiltradas.map((f, idx) => {
+                          const varMesAnt = f.variavelDe20a31MesAnt || 0;
+                          const pgto20 = f.pgtosDia20;
+                          const pgto5 = f.pgtosDia05 + varMesAnt;
+                          const descontos = f.inss + f.contrAssistencial;
+                          // Total Bruto = Sal+Per do mês + Variável total do mês corrente (caixinha já entra na variável do controle)
+                          const totalBruto = f.salarioBase + f.periculosidade + f.totalVariavel;
+                          // Total Líquido = o que efetivamente sai pra ele = pgto20 + pgto5
+                          const totalLiquido = pgto20 + pgto5;
+                          return (
+                            <tr key={`g3-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
+                              <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
+                              <td style={s.tdR}>{fmtMoeda(f.salarioBase + f.periculosidade)}</td>
+                              <td style={{ ...s.tdR, color: '#2e7d32' }}>{f.totalVariavel > 0 ? fmtMoeda(f.totalVariavel) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#fb8c00' }}>{fmtMoeda(pgto20)}</td>
+                              <td style={{ ...s.tdR, color: '#0288d1' }}>{fmtMoeda(pgto5)}</td>
+                              <td style={{ ...s.tdR, color: '#c62828' }}>{descontos > 0 ? fmtMoeda(descontos) : '-'}</td>
+                              <td style={{ ...s.tdR, color: '#0d47a1', fontWeight: 'bold' }}>{fmtMoeda(totalBruto)}</td>
+                              <td style={{ ...s.tdR, color: '#1b5e20', fontWeight: 'bold', fontSize: '13px' }}>{fmtMoeda(totalLiquido)}</td>
+                              <td style={{ ...s.td, textAlign: 'center' }}>
+                                <button onClick={() => setDetalheSelecionado(f)} style={{ ...s.btn('#1976d2'), padding: '4px 10px', fontSize: '11px' }} title="Ver detalhes">
+                                  📋
+                                </button>
+                                <button onClick={() => abrirHistorico(f.colaboradorId)} style={{ ...s.btn('#6a1b9a'), padding: '4px 10px', fontSize: '11px', marginLeft: 4 }} title="Histórico analítico">
+                                  📊
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ backgroundColor: '#1b5e20', color: 'white', fontWeight: 'bold' }}>
+                          <td style={{ padding: '8px', fontSize: '13px' }} colSpan={2}>TOTAIS</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.salarioBase + f.periculosidade, 0))}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.totalVariavel, 0))}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80' }}>{fmtMoeda(totalGrid1)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#b3e5fc' }}>{fmtMoeda(totalGrid2)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.inss + f.contrAssistencial, 0))}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(folhasFiltradas.reduce((s, f) => s + f.salarioBase + f.periculosidade + f.totalVariavel, 0))}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{fmtMoeda(totalGrid1 + totalGrid2)}</td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
           </>
         )}
 
