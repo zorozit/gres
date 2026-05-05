@@ -2607,6 +2607,105 @@ export default function FolhaPagamento() {
             </div>
           </div>
 
+          {/* Painel expandido: Presença + Saldos + Saídas + Bases (só mostra para o tipo Variável = Pgto Dia 5) */}
+          {modalPgtoTipo === 'Variável' && (() => {
+            const f = modalPagamento;
+            // Escalas do colaborador no mês selecionado
+            const escalasCol = escalas.filter(e =>
+              e.colaboradorId === f.colaboradorId &&
+              (e.data || '').startsWith(mesAno)
+            );
+            // Contagem de presença
+            let presentes = 0, faltas = 0, justificadas = 0, folgas = 0, feriados = 0;
+            for (const e of escalasCol) {
+              const p = e.presenca;
+              const pn = e.presencaNoite;
+              if (p === 'presente' || pn === 'presente') presentes++;
+              else if (p === 'falta' || pn === 'falta') faltas++;
+              else if (p === 'falta_justificada' || pn === 'falta_justificada') justificadas++;
+              else if (p === 'folga' || pn === 'folga' || e.turno === 'Folga') folgas++;
+              if ((e as any).turno === 'Feriado' || (e as any).feriado) feriados++;
+            }
+            // Saídas do mês
+            const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
+            const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            // Saldos
+            const saldoEspecial = saldosEspeciais[f.colaboradorId] || 0;
+            const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            const transpDevido = (R((f.raw as any)?.valorTransporte) || 0) * presentes;
+            const saldoTransporte = adtoTransp - transpDevido; // se positivo: sobra; se negativo: deve
+            // Bases
+            const fgtsBase = f.salarioBase + f.periculosidade;
+            const fgts = parseFloat((fgtsBase * 0.08).toFixed(2));
+
+            return (
+              <div style={{ backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', marginBottom: '14px' }}>
+                <h4 style={{ margin: '0 0 8px', fontSize: '12px', color: '#1565c0' }}>📋 Resumo do Mês (informativo)</h4>
+
+                {/* Presenças */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px', fontSize: '11px' }}>
+                  <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>✅ {presentes} presenças</span>
+                  {faltas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#fce4ec', color: '#c62828' }}>❌ {faltas} faltas</span>}
+                  {justificadas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#fff3e0', color: '#e65100' }}>⚠️ {justificadas} justificadas</span>}
+                  {folgas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#e3f2fd', color: '#1565c0' }}>🛌 {folgas} folgas</span>}
+                  {feriados > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#f3e5f5', color: '#6a1b9a' }}>🎉 {feriados} feriados</span>}
+                </div>
+
+                {/* Bases editaveis */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
+                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ color: '#666' }}>Sal. Base</div>
+                    <div style={{ fontWeight: 'bold' }}>{fmtMoeda(f.salarioBase)}</div>
+                  </div>
+                  {f.periculosidade > 0 && (
+                    <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+                      <div style={{ color: '#666' }}>Periculosidade</div>
+                      <div style={{ fontWeight: 'bold', color: '#e65100' }}>{fmtMoeda(f.periculosidade)}</div>
+                    </div>
+                  )}
+                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ color: '#666' }}>INSS (calc.)</div>
+                    <div style={{ fontWeight: 'bold', color: '#c62828' }}>{fmtMoeda(f.inss)}</div>
+                  </div>
+                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ color: '#666' }}>Contr.Assist.</div>
+                    <div style={{ fontWeight: 'bold', color: '#c62828' }}>{fmtMoeda(f.contrAssistencial)}</div>
+                  </div>
+                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ color: '#666' }}>FGTS Mes (8%)</div>
+                    <div style={{ fontWeight: 'bold', color: '#0288d1' }}>{fmtMoeda(fgts)}</div>
+                  </div>
+                </div>
+
+                {/* Saídas/descontos do mês */}
+                {(consumo > 0 || aReceber > 0 || adtoEspParc > 0) && (
+                  <div style={{ marginBottom: '6px', fontSize: '11px', color: '#5d4037', backgroundColor: '#fff8e1', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #f57f17' }}>
+                    <strong>(-) Descontos no mês:</strong>
+                    {consumo > 0 && <span style={{ marginLeft: 8 }}>Consumo: {fmtMoeda(consumo)}</span>}
+                    {aReceber > 0 && <span style={{ marginLeft: 8 }}>A receber: {fmtMoeda(aReceber)}</span>}
+                    {adtoEspParc > 0 && <span style={{ marginLeft: 8 }}>Adto Especial (parc.): {fmtMoeda(adtoEspParc)}</span>}
+                  </div>
+                )}
+
+                {/* Saldos pendentes */}
+                {(saldoEspecial > 0 || Math.abs(saldoTransporte) > 0.01) && (
+                  <div style={{ fontSize: '11px', color: '#4a148c', backgroundColor: '#f3e5f5', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #6a1b9a' }}>
+                    <strong>📊 Saldos:</strong>
+                    {saldoEspecial > 0 && <span style={{ marginLeft: 8 }}>Adto Especial em aberto: {fmtMoeda(saldoEspecial)}</span>}
+                    {saldoTransporte > 0 && <span style={{ marginLeft: 8 }}>Transporte: sobra {fmtMoeda(saldoTransporte)}</span>}
+                    {saldoTransporte < -0.01 && <span style={{ marginLeft: 8, color: '#c62828' }}>Transporte: falta {fmtMoeda(Math.abs(saldoTransporte))}</span>}
+                  </div>
+                )}
+
+                <div style={{ fontSize: '10px', color: '#888', marginTop: '6px', fontStyle: 'italic' }}>
+                  ℹ️ Valores acima são informativos. O Adto e Variável são lançados nos campos abaixo.
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Tipo de pagamento */}
           <div style={{ marginBottom: '14px' }}>
             <label style={s.label}>Tipo de pagamento *</label>
