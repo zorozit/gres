@@ -215,10 +215,11 @@ function preencherControleComSaidas(
       const savedEntDia   = isFreelancer ? (hasSaidas ? entDia   : linha.entDia)   : linha.entDia;
       const savedEntNoite = isFreelancer ? (hasSaidas ? entNoite : linha.entNoite) : linha.entNoite;
       const totalViagensEfetivo = savedEntDia + savedEntNoite;
-      // Caixinha: para ambos, preservar do banco se não há saídas; atualizar se há saídas
-      const savedCaixDia   = hasSaidas ? caixinhaDia   : linha.caixinhaDia;
-      const savedCaixNoite = hasSaidas ? caixinhaNoite : linha.caixinhaNoite;
-      const savedCaixTotal = savedCaixDia + savedCaixNoite + (hasSaidas ? caixinhaExtra : 0);
+      // Caixinha: para CLT é campo manual — sempre preservar do banco.
+      // Para Freelancer, caixinha vem das saídas e pode ser atualizada.
+      const savedCaixDia   = isFreelancer ? (hasSaidas ? caixinhaDia   : linha.caixinhaDia)   : linha.caixinhaDia;
+      const savedCaixNoite = isFreelancer ? (hasSaidas ? caixinhaNoite : linha.caixinhaNoite) : linha.caixinhaNoite;
+      const savedCaixTotal = savedCaixDia + savedCaixNoite + (isFreelancer && hasSaidas ? caixinhaExtra : 0);
       const vlVariavel = hasSaidas
         ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagensEfetivo) + savedCaixTotal).toFixed(2))
         : linha.vlVariavel;
