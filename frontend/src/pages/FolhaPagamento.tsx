@@ -1325,6 +1325,8 @@ export default function FolhaPagamento() {
 
   // Estado para modal de confirmação de pagamento CLT
   const [modalPagamento, setModalPagamento] = useState<FolhaMensal | null>(null);
+  // Modal de histórico de pagamentos (lupa 🔍)
+  const [modalLogPgto, setModalLogPgto] = useState<FolhaMensal | null>(null);
 
   /* ── Styles ──────────────────────────────────────────────── */
   const s = {
@@ -2870,12 +2872,91 @@ export default function FolhaPagamento() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalPagamento, modalPgtoTipo, pgtoLinhas, checkItemsCLT, salvando, mesAno]);
 
+  /* ── Modal Histórico de Pagamentos CLT (🔍) ──────────────────────────────── */
+  const modalLogPgtoJSX = !modalLogPgto ? null : (() => {
+    const f = modalLogPgto;
+    const logs = f.logPagamentos || [];
+    const totalPago = logs.reduce((s, p) => s + (p.valor || 0), 0);
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 10003, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setModalLogPgto(null)}>
+        <div style={{ ...s.card, maxWidth: '520px', width: '95%', maxHeight: '85vh', overflowY: 'auto', padding: '24px' }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0, color: '#37474f' }}>🔍 Histórico de Pagamentos</h3>
+            <button onClick={() => setModalLogPgto(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ backgroundColor: '#eceff1', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+            <strong>{f.nome}</strong> &middot; {f.cargo}
+            {f.chavePix && <span style={{ marginLeft: 10, fontSize: 11, color: '#555' }}>📲 PIX: {f.chavePix}</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+            <div style={{ padding: '10px 12px', borderRadius: 6, backgroundColor: f.pagoAdiantamento ? '#e8f5e9' : '#fff3e0', border: `1px solid ${f.pagoAdiantamento ? '#a5d6a7' : '#ffcc80'}` }}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Adiantamento (Dia 20)</div>
+              <div style={{ fontWeight: 'bold', color: f.pagoAdiantamento ? '#2e7d32' : '#e65100' }}>
+                {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
+              </div>
+              {f.dataPgtoAdiantamento && <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>{f.dataPgtoAdiantamento}</div>}
+              <div style={{ fontSize: 11, marginTop: 4 }}>Ref: <strong>{fmtMoeda(f.adtoLiquido + (f.variavelAte19 || 0))}</strong></div>
+            </div>
+            <div style={{ padding: '10px 12px', borderRadius: 6, backgroundColor: f.pagoVariavel ? '#e8f5e9' : '#fff3e0', border: `1px solid ${f.pagoVariavel ? '#a5d6a7' : '#ffcc80'}` }}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Fechamento (Dia 5)</div>
+              <div style={{ fontWeight: 'bold', color: f.pagoVariavel ? '#2e7d32' : '#e65100' }}>
+                {f.pagoVariavel ? '✅ Pago' : '⏳ Pendente'}
+              </div>
+              {f.dataPgtoVariavel && <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>{f.dataPgtoVariavel}</div>}
+              <div style={{ fontSize: 11, marginTop: 4 }}>Ref: <strong>{fmtMoeda(f.pgtosDia05)}</strong></div>
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: '#333', marginBottom: 8 }}>
+              📜 Lançamentos registrados ({logs.length})
+            </div>
+            {logs.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#999', backgroundColor: '#fafafa', borderRadius: 6, border: '1px dashed #ddd' }}>
+                Nenhum pagamento registrado ainda
+              </div>
+            ) : (
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, overflow: 'hidden' }}>
+                {logs.map((p, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                    backgroundColor: i % 2 === 0 ? '#fafafa' : 'white',
+                    borderBottom: i < logs.length - 1 ? '1px solid #eee' : 'none',
+                  }}>
+                    <span style={{ fontWeight: 'bold', color: '#1b5e20', minWidth: 80 }}>{fmtMoeda(p.valor)}</span>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10,
+                      backgroundColor: p.forma === 'PIX' ? '#e3f2fd' : p.forma === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
+                      color: p.forma === 'PIX' ? '#1565c0' : p.forma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                      {p.forma === 'PIX' ? '📱 PIX' : p.forma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#666' }}>{p.data}</span>
+                    {p.tipo && <span style={{ fontSize: 10, color: '#9e9e9e', backgroundColor: '#f5f5f5', padding: '1px 6px', borderRadius: 8 }}>{p.tipo}</span>}
+                    {p.obs && <span style={{ fontSize: 11, color: '#888', fontStyle: 'italic', flex: 1 }}>{p.obs}</span>}
+                  </div>
+                ))}
+                <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: 13 }}>
+                  <span>Total pago:</span>
+                  <span style={{ color: '#1b5e20' }}>{fmtMoeda(totalPago)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => setModalLogPgto(null)} style={s.btn('#9e9e9e')}>Fechar</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   /* ── Render ──────────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
       {modalConfirmarPagamentoCLTJSX}
       {modalConfirmarPgtoFreelancerJSX}
+      {modalLogPgtoJSX}
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
       <ModalSaidaInline />
@@ -3044,17 +3125,24 @@ export default function FolhaPagamento() {
                               )}
                             </td>
                             <td style={{ ...s.td, textAlign: 'center' }}>
-                              <button
-                                onClick={() => {
-                                  if (f.pagoAdiantamento) { handleTogglePago(f); return; }
-                                  // Abre modal completo com forma PIX/Dinheiro/Misto, multi-lançamento
-                                  setModalPagamento(f);
-                                  setModalPgtoTipo('Adiantamento');
-                                }}
-                                disabled={salvando}
-                                style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#fb8c00'), padding: '4px 12px', fontSize: '11px' }}>
-                                {f.pagoAdiantamento ? '↩ Desfazer' : '✅ Pagar Dia 20'}
-                              </button>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                                <button
+                                  onClick={() => {
+                                    if (f.pagoAdiantamento) { handleTogglePago(f); return; }
+                                    setModalPagamento(f);
+                                    setModalPgtoTipo('Adiantamento');
+                                  }}
+                                  disabled={salvando}
+                                  style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#fb8c00'), padding: '4px 12px', fontSize: '11px' }}>
+                                  {f.pagoAdiantamento ? '↩ Desfazer' : '✅ Pagar Dia 20'}
+                                </button>
+                                <button
+                                  onClick={() => setModalLogPgto(f)}
+                                  style={{ ...s.btn('#546e7a'), padding: '4px 8px', fontSize: '11px' }}
+                                  title="Ver histórico de pagamentos">
+                                  🔍
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -3116,17 +3204,24 @@ export default function FolhaPagamento() {
                                 )}
                               </td>
                               <td style={{ ...s.td, textAlign: 'center' }}>
-                                <button
-                                  onClick={() => {
-                                    if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
-                                    // Abre modal completo com painel expandível: pres/falta/folga/feriados, INSS, FGTS, etc.
-                                    setModalPagamento(f);
-                                    setModalPgtoTipo('Variável');
-                                  }}
-                                  disabled={salvando}
-                                  style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#0288d1'), padding: '4px 12px', fontSize: '11px' }}>
-                                  {f.pagoVariavel ? '↩ Desfazer' : '✅ Pagar Dia 5'}
-                                </button>
+                                <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                                  <button
+                                    onClick={() => {
+                                      if (f.pagoVariavel) { handleTogglePagoVariavel(f); return; }
+                                      setModalPagamento(f);
+                                      setModalPgtoTipo('Variável');
+                                    }}
+                                    disabled={salvando}
+                                    style={{ ...s.btn(f.pagoVariavel ? '#e53935' : '#0288d1'), padding: '4px 12px', fontSize: '11px' }}>
+                                    {f.pagoVariavel ? '↩ Desfazer' : '✅ Pagar Dia 5'}
+                                  </button>
+                                  <button
+                                    onClick={() => setModalLogPgto(f)}
+                                    style={{ ...s.btn('#546e7a'), padding: '4px 8px', fontSize: '11px' }}
+                                    title="Ver histórico de pagamentos">
+                                    🔍
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
