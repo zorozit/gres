@@ -715,15 +715,15 @@ export default function FolhaPagamento() {
       let varAte19 = 0, varDe20a31 = 0;
       // Variável 20-31 do MÊS ANTERIOR (entra no Pgto Dia 5)
       let varDe20a31MesAnt = 0;
+      const vEntregaCLT = R(m.valorEntrega);
       if (controle.length > 0) {
         // Usar controle salvo
-        // Para CLT: vlVariavel = caixinhaDia + caixinhaNoite (recalcular aqui para corrigir
-        // registros legados com vlVariavel zerado por bug anterior)
+        // Para CLT motoboy: variável = (entDia+entNoite)×valorEntrega + caixinhaDia + caixinhaNoite
+        // NÃO usar vlVariavel salvo — pode estar zerado em registros antigos
         for (const linha of controle) {
-          // CLT motoboy: variavel = caixinha do dia (vlVariavel pode estar zerado em registros antigos)
-          const vlEfetivo = R(linha.caixinhaDia) + R(linha.caixinhaNoite) > 0
-            ? parseFloat((R(linha.caixinhaDia) + R(linha.caixinhaNoite)).toFixed(2))
-            : R(linha.vlVariavel);
+          const entregas = (R(linha.entDia) + R(linha.entNoite)) * vEntregaCLT;
+          const caixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+          const vlEfetivo = parseFloat((entregas + caixinha).toFixed(2));
           // Linhas do mês atual: dividir entre até 19 e 20-31
           if (linha.data >= `${mesAno}-01` && linha.data <= `${mesAno}-31`) {
             if (linha.data <= dia19) varAte19 += vlEfetivo;

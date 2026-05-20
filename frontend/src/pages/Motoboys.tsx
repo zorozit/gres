@@ -229,8 +229,9 @@ function preencherControleComSaidas(
           ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagensEfetivo) + savedCaixTotal).toFixed(2))
           : linha.vlVariavel;
       } else {
-        // CLT: vlVariavel = caixinha (recalculado sempre para corrigir valores zerados legados)
-        vlVariavel = parseFloat(savedCaixTotal.toFixed(2));
+        // CLT: vlVariavel = (entregas×valorEntrega) + caixinha (recalculado sempre para corrigir legados zerados)
+        const totalViagensEfetivoNf = savedEntDia + savedEntNoite;
+        vlVariavel = parseFloat(((valorEntrega * totalViagensEfetivoNf) + savedCaixTotal).toFixed(2));
       }
       return {
         ...linha,
@@ -564,10 +565,12 @@ export const Motoboys: React.FC = () => {
         linha.vlVariavel = parseFloat(
           (R(linha.chegadaDia) + R(linha.chegadaNoite) + (valorEntrega * totalEntregas) + totalCaixinha).toFixed(2)
         );
-      } else {
-        // CLT: vlVariavel = caixinha total (bônus sobre salário; entregas não entram no valor variável da folha)
+      } else if (motoboyAt) {
+        // CLT: vlVariavel = (entregas×valorEntrega) + caixinha
+        const valorEntrega = R(motoboyAt.valorEntrega);
+        const totalEntregas = R(linha.entDia) + R(linha.entNoite);
         const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
-        linha.vlVariavel = parseFloat(totalCaixinha.toFixed(2));
+        linha.vlVariavel = parseFloat(((valorEntrega * totalEntregas) + totalCaixinha).toFixed(2));
       }
       return next;
     });
