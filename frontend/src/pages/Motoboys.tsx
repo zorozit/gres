@@ -206,20 +206,29 @@ function preencherControleComSaidas(
     const hasSaidas = saidasDoDia.length > 0;
 
     if (modo === 'merge') {
-      // Modo MERGE: preserva chegada/vlVariavel salvos; só atualiza viagens/caixinha/pgto de saídas
-      // Recalcula vlVariavel a partir dos valores salvos de chegada (não do cadastro atual)
+      // Modo MERGE: preserva chegada/vlVariavel salvos; só atualiza viagens/caixinha/pgto de saídas.
+      // IMPORTANTE: entDia/entNoite são campos manuais para CLT — NÃO sobrescrever com dados de saídas.
+      // Para Freelancer, viagens (entDia/entNoite) vêm das saídas e podem ser atualizadas.
       const savedChegadaDia   = linha.chegadaDia   ?? 0;
       const savedChegadaNoite = linha.chegadaNoite ?? 0;
+      // Viagens salvas manualmente (CLT) ou recalculadas de saídas (Freelancer)
+      const savedEntDia   = isFreelancer ? (hasSaidas ? entDia   : linha.entDia)   : linha.entDia;
+      const savedEntNoite = isFreelancer ? (hasSaidas ? entNoite : linha.entNoite) : linha.entNoite;
+      const totalViagensEfetivo = savedEntDia + savedEntNoite;
+      // Caixinha: para ambos, preservar do banco se não há saídas; atualizar se há saídas
+      const savedCaixDia   = hasSaidas ? caixinhaDia   : linha.caixinhaDia;
+      const savedCaixNoite = hasSaidas ? caixinhaNoite : linha.caixinhaNoite;
+      const savedCaixTotal = savedCaixDia + savedCaixNoite + (hasSaidas ? caixinhaExtra : 0);
       const vlVariavel = hasSaidas
-        ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagens) + totalCaixinha).toFixed(2))
+        ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagensEfetivo) + savedCaixTotal).toFixed(2))
         : linha.vlVariavel;
       return {
         ...linha,
-        entDia:         hasSaidas ? entDia         : linha.entDia,
-        entNoite:       hasSaidas ? entNoite       : linha.entNoite,
-        caixinhaDia:    hasSaidas ? caixinhaDia    : linha.caixinhaDia,
-        caixinhaNoite:  hasSaidas ? caixinhaNoite  : linha.caixinhaNoite,
-        pgto:           hasSaidas ? pgto           : linha.pgto,
+        entDia:         savedEntDia,
+        entNoite:       savedEntNoite,
+        caixinhaDia:    savedCaixDia,
+        caixinhaNoite:  savedCaixNoite,
+        pgto:           hasSaidas ? pgto : linha.pgto,
         vlVariavel,
         saidasDia,
         saidasNoite,

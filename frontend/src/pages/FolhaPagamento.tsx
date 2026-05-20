@@ -1098,7 +1098,7 @@ export default function FolhaPagamento() {
 
         // Descontos reais do colaborador: vale/empréstimo, consumo e parcelas de adiantamento especial
         // 'Caixinha' permanece como crédito e não entra nesta lista
-        const TIPOS_DESCONTO_FREELANCER = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
+        const TIPOS_DESCONTO_FREELANCER = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
         const saidasDescFreelancer = saidasPeriodo.filter((s: any) =>
           s.colaboradorId === f.id &&
           TIPOS_DESCONTO_FREELANCER.includes(s.tipo || s.origem || s.referencia || '') &&
@@ -1615,7 +1615,7 @@ export default function FolhaPagamento() {
     void (fr.periodoFim   || fech.dataFechamentoBase);
 
     const buildChecklist = (saidasFrescas: any[]) => {
-      const TIPOS_DESCONTO = ['A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
+      const TIPOS_DESCONTO = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
       const TIPOS_CAIXINHA = ['Caixinha'];
       const saidaData = (s: any) => s.dataPagamento || s.data || '';
       // Usar os limites EFETIVOS (já clipados ao período custom global, se ativo)
@@ -2573,8 +2573,8 @@ export default function FolhaPagamento() {
   // ao líquido na hora do cálculo. Não salvam em cadastro.
   const [overrides, setOverrides] = useState<{ inss?: string; fgts?: string; contrAssist?: string; salBase?: string; periculosidade?: string }>({});
   // Descontos das saídas que o operador inclui/exclui do líquido
-  const [descontosIncluidos, setDescontosIncluidos] = useState<{ consumo: boolean; aReceber: boolean; adtoEspParc: boolean; transporte: boolean }>({
-    consumo: true, aReceber: true, adtoEspParc: true, transporte: false,
+  const [descontosIncluidos, setDescontosIncluidos] = useState<{ consumo: boolean; aReceber: boolean; aPagar: boolean; adtoEspParc: boolean; transporte: boolean }>({
+    consumo: true, aReceber: true, aPagar: true, adtoEspParc: true, transporte: false,
   });
 
   useEffect(() => {
@@ -2582,7 +2582,7 @@ export default function FolhaPagamento() {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
       setOverrides({});
-      setDescontosIncluidos({ consumo: true, aReceber: true, adtoEspParc: true, transporte: false });
+      setDescontosIncluidos({ consumo: true, aReceber: true, aPagar: true, adtoEspParc: true, transporte: false });
     }
   }, [modalPagamento]);
 
@@ -2654,6 +2654,7 @@ export default function FolhaPagamento() {
       const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
       const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
       const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      const aPagar = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A pagar').reduce((sum: number, s: any) => sum + R(s.valor), 0);
       const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
       // Saldo transporte
       const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
@@ -2664,6 +2665,7 @@ export default function FolhaPagamento() {
       const descSelecionados =
         (descontosIncluidos.consumo ? consumo : 0) +
         (descontosIncluidos.aReceber ? aReceber : 0) +
+        (descontosIncluidos.aPagar ? aPagar : 0) +
         (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
         (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
       return parseFloat(Math.max(0,
@@ -2715,6 +2717,7 @@ export default function FolhaPagamento() {
             const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
             const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
             const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            const aPagar = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A pagar').reduce((sum: number, s: any) => sum + R(s.valor), 0);
             const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
             // Saldos
             const saldoEspecial = saldosEspeciais[f.colaboradorId] || 0;
@@ -2791,7 +2794,7 @@ export default function FolhaPagamento() {
 
 
                 {/* Saídas/descontos do mês - COM CHECKBOX para incluir/excluir do líquido */}
-                {(consumo > 0 || aReceber > 0 || adtoEspParc > 0 || saldoTransporte < -0.01) && (
+                {(consumo > 0 || aReceber > 0 || aPagar > 0 || adtoEspParc > 0 || saldoTransporte < -0.01) && (
                   <div style={{ marginBottom: '6px', fontSize: '11px', color: '#5d4037', backgroundColor: '#fff8e1', padding: '8px 10px', borderRadius: '4px', borderLeft: '3px solid #f57f17' }}>
                     <strong style={{ display: 'block', marginBottom: 4 }}>(-) Descontos do mês (marque para abater do líquido):</strong>
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -2807,6 +2810,13 @@ export default function FolhaPagamento() {
                           <input type="checkbox" checked={descontosIncluidos.aReceber}
                             onChange={e => setDescontosIncluidos(p => ({ ...p, aReceber: e.target.checked }))} />
                           💸 A receber: <strong>{fmtMoeda(aReceber)}</strong>
+                        </label>
+                      )}
+                      {aPagar > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={descontosIncluidos.aPagar}
+                            onChange={e => setDescontosIncluidos(p => ({ ...p, aPagar: e.target.checked }))} />
+                          📤 A pagar: <strong>{fmtMoeda(aPagar)}</strong>
                         </label>
                       )}
                       {adtoEspParc > 0 && (
@@ -2849,6 +2859,7 @@ export default function FolhaPagamento() {
                   const descSelecionados =
                     (descontosIncluidos.consumo ? consumo : 0) +
                     (descontosIncluidos.aReceber ? aReceber : 0) +
+                    (descontosIncluidos.aPagar ? aPagar : 0) +
                     (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
                     (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
                   const sugDia5 = parseFloat((
@@ -2865,7 +2876,7 @@ export default function FolhaPagamento() {
                     <div style={{ padding: '8px 10px', backgroundColor: houveOverride || descSelecionados > 0 ? '#fff3e0' : '#e8f5e9', borderRadius: '4px', borderLeft: `4px solid ${houveOverride || descSelecionados > 0 ? '#fb8c00' : '#2e7d32'}`, fontSize: '13px', marginTop: '10px' }}>
                       <strong>💰 Líquido Sugerido Dia 5: {fmtMoeda(Math.max(0, sugDia5))}</strong>
                       <div style={{ fontSize: '10px', color: '#666', marginTop: 4 }}>
-                        = {fmtMoeda(salBaseOv * 0.60)} (60% sal) + {fmtMoeda(periOv)} (peri) + {fmtMoeda(f.feriadosValor || 0)} (feriado) + {fmtMoeda(f.variavelDe20a31 || 0)} (var) − {fmtMoeda(inssOv)} (INSS) − {fmtMoeda(contrOv)} (CtrAss){descSelecionados > 0 ? ` − ${fmtMoeda(descSelecionados)} (descontos)` : ''}
+                        = {fmtMoeda(salBaseOv * 0.60)} (60% sal) + {fmtMoeda(periOv)} (peri) + {fmtMoeda(f.feriadosValor || 0)} (feriado) + {fmtMoeda(f.variavelDe20a31 || 0)} (var) − {fmtMoeda(inssOv)} (INSS) − {fmtMoeda(contrOv)} (CtrAss){descSelecionados > 0 ? ` − ${fmtMoeda(descSelecionados)} (descontos saídas)` : ''}
                       </div>
                       <button
                         onClick={() => {
