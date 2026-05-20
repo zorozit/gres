@@ -2573,29 +2573,72 @@ export default function FolhaPagamento() {
 
   /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
   // Hook called unconditionally (React rules) - state persists across renders
-  /* ── Estado do modal de pagamento com forma (PIX/Dinheiro/Misto) ── */
+  /* ── Estado do modal de pagamento CLT — checklist igual ao Freelancer ── */
+  interface CheckItemCLT { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
+  const [checkItemsCLT, setCheckItemsCLT] = useState<CheckItemCLT[]>([]);
   const [modalPgtoTipo, setModalPgtoTipo] = useState<'Adiantamento' | 'Variável'>('Adiantamento');
   interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
   const novaPgtoLinha = (): LinhaPgto => ({ id: Date.now().toString(), data: new Date().toISOString().split('T')[0], forma: 'PIX', valor: '', valorPix: '', valorDinheiro: '', obs: '' });
   const [pgtoLinhas, setPgtoLinhas] = useState<LinhaPgto[]>([novaPgtoLinha()]);
-  // Overrides editaveis das bases (INSS, FGTS, Contr.Assist, salBase, periculosidade) - aplicados
-  // ao líquido na hora do cálculo. Não salvam em cadastro.
-  const [overrides, setOverrides] = useState<{ inss?: string; fgts?: string; contrAssist?: string; salBase?: string; periculosidade?: string }>({});
-  // Descontos das saídas que o operador inclui/exclui do líquido
-  const [descontosIncluidos, setDescontosIncluidos] = useState<{ consumo: boolean; aReceber: boolean; aPagar: boolean; adtoEspParc: boolean; transporte: boolean }>({
-    consumo: true, aReceber: true, aPagar: true, adtoEspParc: true, transporte: false,
-  });
+  // overrides e descontosIncluidos removidos — modal CLT agora usa checklist igual ao Freelancer
+
+  // Monta checklist CLT ao abrir o modal (busca saídas frescas)
+  useEffect(() => {
+    if (!modalPagamento) return;
+    setCheckItemsCLT([]);
+    const f = modalPagamento;
+
+    const buildChecklistCLT = (saidasFrescas: any[], tipo: 'Adiantamento' | 'Variável') => {
+      const saidasCol = saidasFrescas.filter((s: any) => s.colaboradorId === f.colaboradorId);
+      const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
+      const saidasDesc = saidasCol.filter((s: any) => TIPOS_DESC.includes(s.tipo || s.origem || ''));
+      const adtoTransp = saidasCol
+        .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
+        .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+
+      let items: CheckItemCLT[];
+      if (tipo === 'Adiantamento') {
+        items = [
+          { key: 'adto', label: `💵 Adiantamento Salário (Cód.16 — 40%)`, valor: f.adtoLiquido, tipo: 'credito', checked: true },
+          { key: 'variavel19', label: `📦 Variável ≤19 (entregas + caixinha)`, valor: f.variavelAte19 || 0, tipo: 'credito', checked: (f.variavelAte19 || 0) > 0 },
+          ...(adtoTransp > 0 ? [{ key: 'transp', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
+          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
+        ];
+      } else {
+        items = [
+          { key: 'difsal', label: `💰 Diferença Salário (60% + periculosidade)`, valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade + (f.feriadosValor || 0)).toFixed(2)), tipo: 'credito', checked: true },
+          { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
+          { key: 'inss', label: `🟥 INSS`, valor: f.inss, tipo: 'debito', checked: true },
+          { key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito', checked: true },
+          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
+        ];
+      }
+      setCheckItemsCLT(items);
+    };
+
+    const tipo = modalPgtoTipo;
+    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
+      headers: { Authorization: `Bearer ${token()}` }
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then((fresh: any[]) => {
+        setSaidasPeriodo(Array.isArray(fresh) ? fresh : []);
+        buildChecklistCLT(Array.isArray(fresh) ? fresh : [], tipo);
+      })
+      .catch(() => buildChecklistCLT(saidasPeriodoRef.current, tipo));
+  }, [modalPagamento, modalPgtoTipo]);
 
   useEffect(() => {
     if (modalPagamento) {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
-      setOverrides({});
-      setDescontosIncluidos({ consumo: true, aReceber: true, aPagar: true, adtoEspParc: true, transporte: false });
+      // overrides e descontosIncluidos removidos com a refatoração para checklist
     }
   }, [modalPagamento]);
 
   const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
+  const toggleItemCLT = (key: string) =>
+    setCheckItemsCLT(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
 
   const salvarPagamentoModal = async () => {
     if (!modalPagamento) return;
@@ -2649,295 +2692,29 @@ export default function FolhaPagamento() {
     finally { setSalvando(false); }
   };
 
-  // IMPORTANTE: usar useMemo (não const Component = () =>) para evitar recriação
-  // de componente a cada render do pai, que causava perda de foco nos inputs.
+  // Modal CLT com checklist (igual ao Freelancer) — useMemo para evitar perda de foco
   const modalConfirmarPagamentoCLTJSX = useMemo(() => {
     if (!modalPagamento) return null;
-    // Adiantamento: valor líquido do adto (Cod 16). Variável/Dia 5: líquido sugerido com overrides + descontos
     const f = modalPagamento;
-    const valorReferencia = modalPgtoTipo === 'Adiantamento' ? f.adtoLiquido : (() => {
-      // Recalcular líquido Dia 5 com overrides + descontos selecionados
-      const inssOv = parseFloat(overrides.inss || String(f.inss));
-      const contrOv = parseFloat(overrides.contrAssist || String(f.contrAssistencial));
-      const salBaseOv = parseFloat(overrides.salBase || String(f.salarioBase));
-      const periOv = parseFloat(overrides.periculosidade || String(f.periculosidade));
-      // Saídas do colaborador no mês
-      const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
-      const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      const aPagar = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A pagar').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      // Saldo transporte
-      const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      const escalasCol = escalas.filter((e: any) => e.colaboradorId === f.colaboradorId && (e.data || '').startsWith(mesAno));
-      const presentes = escalasCol.filter((e: any) => e.presenca === 'presente' || e.presencaNoite === 'presente').length;
-      const transpDevido = (R((f.raw as any)?.valorTransporte) || 0) * presentes;
-      const saldoTransporte = adtoTransp - transpDevido;
-      const descSelecionados =
-        (descontosIncluidos.consumo ? consumo : 0) +
-        (descontosIncluidos.aReceber ? aReceber : 0) +
-        (descontosIncluidos.aPagar ? aPagar : 0) +
-        (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
-        (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
-      return parseFloat(Math.max(0,
-        salBaseOv * 0.60 + periOv + (f.feriadosValor || 0) + (f.variavelDe20a31 || 0)
-        - inssOv - contrOv - descSelecionados
-      ).toFixed(2));
-    })();
-    const diff = totalPgtoLinhas - valorReferencia;
+    // Total pelo checklist (créditos - débitos marcados)
+    const totalChecklist = checkItemsCLT.reduce((sum, it) => {
+      if (!it.checked) return sum;
+      return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
+    }, 0);
+    const totalADesembolsar = Math.max(0, totalChecklist);
+    const diff = totalPgtoLinhas - totalADesembolsar;
+
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalPagamento(null)}>
-        <div style={{ ...s.card, maxWidth: '560px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}
+        <div style={{ ...s.card, maxWidth: '580px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}
           onClick={e => e.stopPropagation()}>
+          {/* Cabeçalho */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, color: '#2e7d32' }}>💳 Registrar Pagamento</h3>
+            <h3 style={{ margin: 0, color: '#2e7d32' }}>💳 Registrar Pagamento — {f.nome}</h3>
             <button onClick={() => setModalPagamento(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
           </div>
-
-          {/* Info colaborador */}
-          {(() => {
-            const fm = modalPagamento;
-            // Adiantamento de transporte: usar ref para garantir dados frescos (evita stale closure no useMemo)
-            const _saidas: any[] = saidasPeriodoRef.current;
-            const saidasColModal = _saidas.filter((s: any) => s.colaboradorId === fm.colaboradorId);
-            const adtoTranspModal = saidasColModal
-              .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
-              .reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            // Total a pagar no Dia 20: Adto + Variável ≤19
-            const totalDia20 = fm.adtoLiquido + (fm.variavelAte19 || 0);
-            // Total a pagar no Dia 5: Fechamento
-            const totalDia5 = fm.pgtosDia05 || 0;
-            return (
-              <div style={{ backgroundColor: '#e8f5e9', borderRadius: '6px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', borderLeft: '4px solid #2e7d32' }}>
-                <strong>{fm.nome}</strong> &middot; {fm.cargo}
-                {fm.chavePix && <span style={{ marginLeft: 12, fontSize: 12, color: '#555' }}>📲 PIX: <strong>{fm.chavePix}</strong></span>}
-                <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '6px', fontSize: '12px' }}>
-                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
-                    <div style={{ color: '#666', fontSize: 10 }}>Adto Líquido (Cód.16)</div>
-                    <strong style={{ color: '#1b5e20' }}>{fmtMoeda(fm.adtoLiquido)}</strong>
-                  </div>
-                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
-                    <div style={{ color: '#666', fontSize: 10 }}>Variável ≤19</div>
-                    <strong style={{ color: '#2e7d32' }}>{fmtMoeda(fm.variavelAte19 || 0)}</strong>
-                  </div>
-                  <div style={{ backgroundColor: '#e3f2fd', borderRadius: 4, padding: '6px 8px', border: '1px solid #90caf9' }}>
-                    <div style={{ color: '#666', fontSize: 10 }}>💰 Total Dia 20</div>
-                    <strong style={{ color: '#0d47a1', fontSize: 14 }}>{fmtMoeda(totalDia20)}</strong>
-                  </div>
-                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
-                    <div style={{ color: '#666', fontSize: 10 }}>Total Dia 5</div>
-                    <strong style={{ color: '#e65100' }}>{fmtMoeda(totalDia5)}</strong>
-                  </div>
-                  {adtoTranspModal > 0 && (
-                    <div style={{ backgroundColor: '#fff8e1', borderRadius: 4, padding: '6px 8px', border: '1px solid #ffe082' }}>
-                      <div style={{ color: '#666', fontSize: 10 }}>🚗 Adto Transporte (a abater)</div>
-                      <strong style={{ color: '#e65100' }}>- {fmtMoeda(adtoTranspModal)}</strong>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Painel expandido: Presença + Saldos + Saídas + Bases (só mostra para o tipo Variável = Pgto Dia 5) */}
-          {modalPgtoTipo === 'Variável' && (() => {
-            const f = modalPagamento;
-            // Escalas do colaborador no mês selecionado
-            const escalasCol = escalas.filter(e =>
-              e.colaboradorId === f.colaboradorId &&
-              (e.data || '').startsWith(mesAno)
-            );
-            // Contagem de presença
-            let presentes = 0, faltas = 0, justificadas = 0, folgas = 0, feriados = 0;
-            for (const e of escalasCol) {
-              const p = e.presenca;
-              const pn = e.presencaNoite;
-              if (p === 'presente' || pn === 'presente') presentes++;
-              else if (p === 'falta' || pn === 'falta') faltas++;
-              else if (p === 'falta_justificada' || pn === 'falta_justificada') justificadas++;
-              else if (p === 'folga' || pn === 'folga' || e.turno === 'Folga') folgas++;
-              if ((e as any).turno === 'Feriado' || (e as any).feriado) feriados++;
-            }
-            // Saídas do mês
-            const saidasCol = saidasPeriodo.filter((s: any) => s.colaboradorId === f.colaboradorId);
-            const consumo = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Consumo Interno').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            const aReceber = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A receber').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            const aPagar = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'A pagar').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            const adtoEspParc = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Desconto Adiantamento Especial').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            // Saldos
-            const saldoEspecial = saldosEspeciais[f.colaboradorId] || 0;
-            const adtoTransp = saidasCol.filter((s: any) => (s.tipo || s.origem) === 'Adiantamento Transporte').reduce((sum: number, s: any) => sum + R(s.valor), 0);
-            const transpDevido = (R((f.raw as any)?.valorTransporte) || 0) * presentes;
-            const saldoTransporte = adtoTransp - transpDevido; // se positivo: sobra; se negativo: deve
-            // Bases (incluem feriados trabalhados na base de cálculo)
-            const fgtsBase = f.salarioBase + f.periculosidade + (f.feriadosValor || 0);
-            const fgts = parseFloat((fgtsBase * 0.08).toFixed(2));
-
-            return (
-              <div style={{ backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', marginBottom: '14px' }}>
-                <h4 style={{ margin: '0 0 8px', fontSize: '12px', color: '#1565c0' }}>📋 Resumo do Mês (informativo)</h4>
-
-                {/* Presenças */}
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px', fontSize: '11px' }}>
-                  <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>✅ {presentes} presenças</span>
-                  {faltas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#fce4ec', color: '#c62828' }}>❌ {faltas} faltas</span>}
-                  {justificadas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#fff3e0', color: '#e65100' }}>⚠️ {justificadas} justificadas</span>}
-                  {folgas > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#e3f2fd', color: '#1565c0' }}>🛌 {folgas} folgas</span>}
-                  {feriados > 0 && <span style={{ padding: '3px 8px', borderRadius: '12px', backgroundColor: '#f3e5f5', color: '#6a1b9a' }}>🎉 {feriados} feriados</span>}
-                </div>
-
-                {/* Bases EDITÁVEIS — sobrescreve calc, sem alterar cadastro. */}
-                <div style={{ marginBottom: '4px', fontSize: '10px', color: '#888', fontStyle: 'italic' }}>
-                  ✏️ Editáveis abaixo: ajuste para bater com PDF da contabilidade. Não altera cadastro.
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
-                  {/* Sal. Base */}
-                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666', fontSize: '10px' }}>Sal. Base</div>
-                    <input type="number" step="0.01" min="0"
-                      value={overrides.salBase ?? f.salarioBase.toFixed(2)}
-                      onChange={e => setOverrides(prev => ({ ...prev, salBase: e.target.value }))}
-                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold' }} />
-                  </div>
-                  {/* Periculosidade */}
-                  {f.periculosidade > 0 && (
-                    <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                      <div style={{ color: '#666', fontSize: '10px' }}>Periculosidade</div>
-                      <input type="number" step="0.01" min="0"
-                        value={overrides.periculosidade ?? f.periculosidade.toFixed(2)}
-                        onChange={e => setOverrides(prev => ({ ...prev, periculosidade: e.target.value }))}
-                        style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#e65100' }} />
-                    </div>
-                  )}
-                  {/* INSS */}
-                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666', fontSize: '10px' }}>INSS (calc.)</div>
-                    <input type="number" step="0.01" min="0"
-                      value={overrides.inss ?? f.inss.toFixed(2)}
-                      onChange={e => setOverrides(prev => ({ ...prev, inss: e.target.value }))}
-                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#c62828' }} />
-                  </div>
-                  {/* Contr.Assist. */}
-                  <div style={{ padding: '6px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #e0e0e0' }}>
-                    <div style={{ color: '#666', fontSize: '10px' }}>Contr.Assist.</div>
-                    <input type="number" step="0.01" min="0"
-                      value={overrides.contrAssist ?? f.contrAssistencial.toFixed(2)}
-                      onChange={e => setOverrides(prev => ({ ...prev, contrAssist: e.target.value }))}
-                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#c62828' }} />
-                  </div>
-                  {/* FGTS - somente leitura (não desconta da folha) */}
-                  <div style={{ padding: '6px', backgroundColor: '#f5f5f5', borderRadius: '4px', border: '1px dashed #ccc' }}>
-                    <div style={{ color: '#666', fontSize: '10px' }}>FGTS Mes (8%) — confer.</div>
-                    <input type="number" step="0.01" min="0"
-                      value={overrides.fgts ?? fgts.toFixed(2)}
-                      onChange={e => setOverrides(prev => ({ ...prev, fgts: e.target.value }))}
-                      style={{ width: '100%', padding: '3px 4px', border: '1px solid #ddd', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', color: '#0288d1' }} />
-                    <div style={{ fontSize: '9px', color: '#888' }}>não desconta</div>
-                  </div>
-                </div>
-
-
-
-                {/* Saídas/descontos do mês - COM CHECKBOX para incluir/excluir do líquido */}
-                {(consumo > 0 || aReceber > 0 || aPagar > 0 || adtoEspParc > 0 || saldoTransporte < -0.01) && (
-                  <div style={{ marginBottom: '6px', fontSize: '11px', color: '#5d4037', backgroundColor: '#fff8e1', padding: '8px 10px', borderRadius: '4px', borderLeft: '3px solid #f57f17' }}>
-                    <strong style={{ display: 'block', marginBottom: 4 }}>(-) Descontos do mês (marque para abater do líquido):</strong>
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      {consumo > 0 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={descontosIncluidos.consumo}
-                            onChange={e => setDescontosIncluidos(p => ({ ...p, consumo: e.target.checked }))} />
-                          🍽️ Consumo Interno: <strong>{fmtMoeda(consumo)}</strong>
-                        </label>
-                      )}
-                      {aReceber > 0 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={descontosIncluidos.aReceber}
-                            onChange={e => setDescontosIncluidos(p => ({ ...p, aReceber: e.target.checked }))} />
-                          💸 A receber: <strong>{fmtMoeda(aReceber)}</strong>
-                        </label>
-                      )}
-                      {aPagar > 0 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={descontosIncluidos.aPagar}
-                            onChange={e => setDescontosIncluidos(p => ({ ...p, aPagar: e.target.checked }))} />
-                          📤 A pagar: <strong>{fmtMoeda(aPagar)}</strong>
-                        </label>
-                      )}
-                      {adtoEspParc > 0 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={descontosIncluidos.adtoEspParc}
-                            onChange={e => setDescontosIncluidos(p => ({ ...p, adtoEspParc: e.target.checked }))} />
-                          💰 Adto Especial (parc.): <strong>{fmtMoeda(adtoEspParc)}</strong>
-                        </label>
-                      )}
-                      {saldoTransporte < -0.01 && (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={descontosIncluidos.transporte}
-                            onChange={e => setDescontosIncluidos(p => ({ ...p, transporte: e.target.checked }))} />
-                          🚗 Transporte (falta): <strong>{fmtMoeda(Math.abs(saldoTransporte))}</strong>
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Saldos pendentes (informativo, não desconta automaticamente) */}
-                {(saldoEspecial > 0 || saldoTransporte > 0.01) && (
-                  <div style={{ fontSize: '11px', color: '#4a148c', backgroundColor: '#f3e5f5', padding: '6px 8px', borderRadius: '4px', borderLeft: '3px solid #6a1b9a' }}>
-                    <strong>📊 Saldos (informativo):</strong>
-                    {saldoEspecial > 0 && <span style={{ marginLeft: 8 }}>Adto Especial total em aberto: {fmtMoeda(saldoEspecial)}</span>}
-                    {saldoTransporte > 0 && <span style={{ marginLeft: 8 }}>Transporte: sobra {fmtMoeda(saldoTransporte)}</span>}
-                  </div>
-                )}
-
-                <div style={{ fontSize: '10px', color: '#888', marginTop: '6px', fontStyle: 'italic' }}>
-                  ℹ️ Bases editaveis (não alteram cadastro). Descontos marcados serão abatidos do líquido sugerido.
-                </div>
-
-                {/* Sugestão de Líquido Dia 5 — considera overrides + descontos selecionados */}
-                {(() => {
-                  const inssOv = parseFloat(overrides.inss || String(f.inss));
-                  const contrOv = parseFloat(overrides.contrAssist || String(f.contrAssistencial));
-                  const salBaseOv = parseFloat(overrides.salBase || String(f.salarioBase));
-                  const periOv = parseFloat(overrides.periculosidade || String(f.periculosidade));
-                  const descSelecionados =
-                    (descontosIncluidos.consumo ? consumo : 0) +
-                    (descontosIncluidos.aReceber ? aReceber : 0) +
-                    (descontosIncluidos.aPagar ? aPagar : 0) +
-                    (descontosIncluidos.adtoEspParc ? adtoEspParc : 0) +
-                    (descontosIncluidos.transporte ? Math.max(0, -saldoTransporte) : 0);
-                  const sugDia5 = parseFloat((
-                    salBaseOv * 0.60
-                    + periOv
-                    + (f.feriadosValor || 0)
-                    + (f.variavelDe20a31 || 0)
-                    - inssOv
-                    - contrOv
-                    - descSelecionados
-                  ).toFixed(2));
-                  const houveOverride = !!overrides.inss || !!overrides.contrAssist || !!overrides.salBase || !!overrides.periculosidade;
-                  return (
-                    <div style={{ padding: '8px 10px', backgroundColor: houveOverride || descSelecionados > 0 ? '#fff3e0' : '#e8f5e9', borderRadius: '4px', borderLeft: `4px solid ${houveOverride || descSelecionados > 0 ? '#fb8c00' : '#2e7d32'}`, fontSize: '13px', marginTop: '10px' }}>
-                      <strong>💰 Líquido Sugerido Dia 5: {fmtMoeda(Math.max(0, sugDia5))}</strong>
-                      <div style={{ fontSize: '10px', color: '#666', marginTop: 4 }}>
-                        = {fmtMoeda(salBaseOv * 0.60)} (60% sal) + {fmtMoeda(periOv)} (peri) + {fmtMoeda(f.feriadosValor || 0)} (feriado) + {fmtMoeda(f.variavelDe20a31 || 0)} (var) − {fmtMoeda(inssOv)} (INSS) − {fmtMoeda(contrOv)} (CtrAss){descSelecionados > 0 ? ` − ${fmtMoeda(descSelecionados)} (descontos saídas)` : ''}
-                      </div>
-                      <button
-                        onClick={() => {
-                          const v = Math.max(0, sugDia5).toFixed(2);
-                          setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: v } : l));
-                        }}
-                        style={{ marginTop: 6, padding: '4px 10px', fontSize: '11px', border: 'none', borderRadius: '3px', backgroundColor: '#1565c0', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>
-                        ↓ Aplicar no lançamento
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
-            );
-          })()}
+          {f.chavePix && <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>📲 PIX: <strong>{f.chavePix}</strong></div>}
 
           {/* Tipo de pagamento */}
           <div style={{ marginBottom: '14px' }}>
@@ -2947,10 +2724,43 @@ export default function FolhaPagamento() {
                 <button key={t} onClick={() => setModalPgtoTipo(t)}
                   style={{ ...s.btn(modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e'), padding: '6px 16px', fontSize: '13px',
                     outline: modalPgtoTipo === t ? '2px solid #1b5e20' : 'none' }}>
-                  {t === 'Adiantamento' ? '🏦 Dia 20 (Adiantamento)' : '💰 Dia 5 (Fechamento mes)'}
+                  {t === 'Adiantamento' ? '🏦 Dia 20 (Adiantamento)' : '💰 Dia 5 (Fechamento)'}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Checklist de itens */}
+          <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', marginBottom: '14px', overflow: 'hidden' }}>
+            <div style={{ backgroundColor: '#f5f5f5', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', color: '#333', borderBottom: '1px solid #e0e0e0' }}>
+              📋 Itens do pagamento — marque/desmarque para incluir no total
+            </div>
+            {checkItemsCLT.length === 0 && (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#999', fontSize: '13px' }}>⏳ Carregando itens...</div>
+            )}
+            {checkItemsCLT.map((item, i) => (
+              <div key={item.key} onClick={() => toggleItemCLT(item.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '10px 14px', cursor: 'pointer',
+                  backgroundColor: item.checked ? (item.tipo === 'credito' ? '#f1f8e9' : '#fff8f8') : '#fafafa',
+                  borderBottom: i < checkItemsCLT.length - 1 ? '1px solid #eeeeee' : 'none',
+                  opacity: item.checked ? 1 : 0.5,
+                }}>
+                <input type="checkbox" checked={item.checked} onChange={() => toggleItemCLT(item.key)}
+                  onClick={e => e.stopPropagation()} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                <span style={{ flex: 1, fontSize: '13px' }}>{item.label}</span>
+                <span style={{ fontWeight: 'bold', fontSize: '14px', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', minWidth: 80, textAlign: 'right' }}>
+                  {item.tipo === 'credito' ? '+' : '-'} {fmtMoeda(item.valor)}
+                </span>
+              </div>
+            ))}
+            {checkItemsCLT.length > 0 && (
+              <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '2px solid #c8e6c9' }}>
+                <span style={{ fontSize: '13px', color: '#555' }}>Total a desembolsar:</span>
+                <strong style={{ fontSize: '18px', color: '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
+              </div>
+            )}
           </div>
 
           {/* Linhas de pagamento */}
@@ -2975,28 +2785,26 @@ export default function FolhaPagamento() {
                       <option value="Misto">🔄 Misto</option>
                     </select>
                   </div>
-                  <div style={{ flex: '0 0 110px' }}>
-                    <label style={{ ...s.label, fontSize: '11px' }}>Valor total (R$) *</label>
+                  <div style={{ flex: '0 0 130px' }}>
+                    <label style={{ ...s.label, fontSize: '11px' }}>Valor (R$) *</label>
                     <input type="number" step="0.01" min="0" value={linha.valor} placeholder="0,00"
                       onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valor: e.target.value } : l))}
                       style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
                   </div>
-                  {linha.forma === 'Misto' && (
-                    <>
-                      <div style={{ flex: '0 0 100px' }}>
-                        <label style={{ ...s.label, fontSize: '11px' }}>disso PIX</label>
-                        <input type="number" step="0.01" min="0" value={linha.valorPix} placeholder="0,00"
-                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorPix: e.target.value } : l))}
-                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                      </div>
-                      <div style={{ flex: '0 0 100px' }}>
-                        <label style={{ ...s.label, fontSize: '11px' }}>disso Dinheiro</label>
-                        <input type="number" step="0.01" min="0" value={linha.valorDinheiro} placeholder="0,00"
-                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorDinheiro: e.target.value } : l))}
-                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                      </div>
-                    </>
-                  )}
+                  {linha.forma === 'Misto' && (<>
+                    <div style={{ flex: '0 0 95px' }}>
+                      <label style={{ ...s.label, fontSize: '11px' }}>PIX</label>
+                      <input type="number" step="0.01" min="0" value={linha.valorPix} placeholder="0,00"
+                        onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorPix: e.target.value } : l))}
+                        style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                    </div>
+                    <div style={{ flex: '0 0 95px' }}>
+                      <label style={{ ...s.label, fontSize: '11px' }}>Dinheiro</label>
+                      <input type="number" step="0.01" min="0" value={linha.valorDinheiro} placeholder="0,00"
+                        onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorDinheiro: e.target.value } : l))}
+                        style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                    </div>
+                  </>)}
                   <div style={{ flex: '1', minWidth: '120px' }}>
                     <label style={{ ...s.label, fontSize: '11px' }}>Obs</label>
                     <input type="text" value={linha.obs} placeholder="opcional"
@@ -3010,17 +2818,23 @@ export default function FolhaPagamento() {
                 </div>
               </div>
             ))}
-            <button onClick={() => setPgtoLinhas(prev => [...prev, novaPgtoLinha()])}
-              style={{ ...s.btn('#1565c0'), padding: '6px 14px', fontSize: '12px' }}>+ Adicionar lançamento</button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={() => setPgtoLinhas(prev => [...prev, novaPgtoLinha()])}
+                style={{ ...s.btn('#1565c0'), padding: '6px 14px', fontSize: '12px' }}>+ Adicionar lançamento</button>
+              {totalADesembolsar > 0 && pgtoLinhas[0]?.valor === '' && (
+                <button onClick={() => setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: totalADesembolsar.toFixed(2) } : l))}
+                  style={{ ...s.btn('#43a047'), padding: '6px 14px', fontSize: '12px' }}>↓ Preencher total ({fmtMoeda(totalADesembolsar)})</button>
+              )}
+            </div>
           </div>
 
           {/* Conferência */}
           <div style={{ backgroundColor: Math.abs(diff) < 0.05 ? '#e8f5e9' : '#fff3e0', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <span>Total lançado: <strong>{fmtMoeda(totalPgtoLinhas)}</strong></span>
-              <span>Referência ({modalPgtoTipo}): <strong>{fmtMoeda(valorReferencia)}</strong></span>
+              <span>Total itens marcados: <strong>{fmtMoeda(totalADesembolsar)}</strong></span>
               <span style={{ color: Math.abs(diff) < 0.05 ? '#2e7d32' : diff > 0 ? '#c62828' : '#e65100', fontWeight: 'bold' }}>
-                {Math.abs(diff) < 0.05 ? '✅ Confere' : diff > 0 ? `⚠️ +${fmtMoeda(diff)} a mais` : `⚠️ ${fmtMoeda(diff)} faltando`}
+                {Math.abs(diff) < 0.05 ? '✅ Confere' : diff > 0 ? `⚠️ +${fmtMoeda(diff)} a mais` : `⚠️ ${fmtMoeda(Math.abs(diff))} faltando`}
               </span>
             </div>
           </div>
@@ -3028,7 +2842,7 @@ export default function FolhaPagamento() {
           {/* Histórico de pagamentos já registrados */}
           {(modalPagamento.logPagamentos || []).length > 0 && (
             <div style={{ marginBottom: '14px' }}>
-              <label style={s.label}>📜 Histórico de pagamentos registrados</label>
+              <label style={s.label}>📜 Histórico de pagamentos</label>
               {(modalPagamento.logPagamentos || []).map((p, i) => (
                 <div key={i} style={{ display: 'flex', gap: '8px', padding: '6px 10px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '4px', fontSize: '12px', alignItems: 'center' }}>
                   <span style={{ fontWeight: 'bold', color: '#1b5e20' }}>{fmtMoeda(p.valor)}</span>
@@ -3054,7 +2868,7 @@ export default function FolhaPagamento() {
       </div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modalPagamento, modalPgtoTipo, pgtoLinhas, overrides, descontosIncluidos, salvando, saidasPeriodo, escalas, saldosEspeciais, mesAno]);
+  }, [modalPagamento, modalPgtoTipo, pgtoLinhas, checkItemsCLT, salvando, mesAno]);
 
   /* ── Render ──────────────────────────────────────────────── */
   return (
