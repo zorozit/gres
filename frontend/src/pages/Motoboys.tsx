@@ -220,9 +220,18 @@ function preencherControleComSaidas(
       const savedCaixDia   = isFreelancer ? (hasSaidas ? caixinhaDia   : linha.caixinhaDia)   : linha.caixinhaDia;
       const savedCaixNoite = isFreelancer ? (hasSaidas ? caixinhaNoite : linha.caixinhaNoite) : linha.caixinhaNoite;
       const savedCaixTotal = savedCaixDia + savedCaixNoite + (isFreelancer && hasSaidas ? caixinhaExtra : 0);
-      const vlVariavel = hasSaidas
-        ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagensEfetivo) + savedCaixTotal).toFixed(2))
-        : linha.vlVariavel;
+      // vlVariavel:
+      // - Freelancer: recalcula sempre (chegada + entregas×vEntrega + caixinha)
+      // - CLT: sempre = caixinha total (vlVariavel salvo pode estar zerado por bug anterior)
+      let vlVariavel: number;
+      if (isFreelancer) {
+        vlVariavel = hasSaidas
+          ? parseFloat((savedChegadaDia + savedChegadaNoite + (valorEntrega * totalViagensEfetivo) + savedCaixTotal).toFixed(2))
+          : linha.vlVariavel;
+      } else {
+        // CLT: vlVariavel = caixinha (recalculado sempre para corrigir valores zerados legados)
+        vlVariavel = parseFloat(savedCaixTotal.toFixed(2));
+      }
       return {
         ...linha,
         entDia:         savedEntDia,
@@ -532,12 +541,13 @@ export const Motoboys: React.FC = () => {
       const numVal = valor === '' ? 0 : parseFloat(valor) || 0;
       (next[idx] as any)[campo] = numVal;
 
-      // Auto-preencher chegadaDia/chegadaNoite quando usuário adiciona entregas manualmente
-      // (caso o dia não tenha escala/saída registrada)
+      // Recalcular vlVariavel sempre que qualquer campo numérico mudar
       const motoboyAt = motoboys.find(m => m.id === ctrlMotoboyId);
       const isFreelancerAt = motoboyAt?.vinculo === 'Freelancer';
+      const linha: any = next[idx];
+
       if (isFreelancerAt && motoboyAt) {
-        const linha: any = next[idx];
+        // Freelancer: auto-preencher chegadaDia/chegadaNoite ao digitar entregas
         const vChegadaDia   = R(motoboyAt.valorChegadaDia   ?? motoboyAt.valorChegada);
         const vChegadaNoite = R(motoboyAt.valorChegadaNoite ?? motoboyAt.valorChegada);
         const valorEntrega  = R(motoboyAt.valorEntrega);
@@ -548,12 +558,16 @@ export const Motoboys: React.FC = () => {
           linha.chegadaNoite = numVal > 0 && vChegadaNoite > 0 ? vChegadaNoite : 0;
         }
 
-        // Recalcular vlVariavel da linha (chegadas + entregas + caixinha)
+        // Freelancer: vlVariavel = chegadas + (entregas × valorEntrega) + caixinha
         const totalEntregas = R(linha.entDia) + R(linha.entNoite);
         const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
         linha.vlVariavel = parseFloat(
           (R(linha.chegadaDia) + R(linha.chegadaNoite) + (valorEntrega * totalEntregas) + totalCaixinha).toFixed(2)
         );
+      } else {
+        // CLT: vlVariavel = caixinha total (bônus sobre salário; entregas não entram no valor variável da folha)
+        const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+        linha.vlVariavel = parseFloat(totalCaixinha.toFixed(2));
       }
       return next;
     });

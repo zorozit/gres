@@ -717,14 +717,20 @@ export default function FolhaPagamento() {
       let varDe20a31MesAnt = 0;
       if (controle.length > 0) {
         // Usar controle salvo
+        // Para CLT: vlVariavel = caixinhaDia + caixinhaNoite (recalcular aqui para corrigir
+        // registros legados com vlVariavel zerado por bug anterior)
         for (const linha of controle) {
+          // CLT motoboy: variavel = caixinha do dia (vlVariavel pode estar zerado em registros antigos)
+          const vlEfetivo = R(linha.caixinhaDia) + R(linha.caixinhaNoite) > 0
+            ? parseFloat((R(linha.caixinhaDia) + R(linha.caixinhaNoite)).toFixed(2))
+            : R(linha.vlVariavel);
           // Linhas do mês atual: dividir entre até 19 e 20-31
           if (linha.data >= `${mesAno}-01` && linha.data <= `${mesAno}-31`) {
-            if (linha.data <= dia19) varAte19 += R(linha.vlVariavel);
-            else varDe20a31 += R(linha.vlVariavel);
+            if (linha.data <= dia19) varAte19 += vlEfetivo;
+            else varDe20a31 += vlEfetivo;
           } else if (linha.data > dia19MesAnt && linha.data <= ultimoDiaMesAnt) {
             // Linhas do mês anterior 20-31: entram no pgto dia 5
-            varDe20a31MesAnt += R(linha.vlVariavel);
+            varDe20a31MesAnt += vlEfetivo;
           }
         }
       } else if (saidasMotoboy.length > 0) {
