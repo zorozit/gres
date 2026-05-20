@@ -2646,7 +2646,9 @@ export default function FolhaPagamento() {
     finally { setSalvando(false); }
   };
 
-  const ModalConfirmarPagamentoCLT = () => {
+  // IMPORTANTE: usar useMemo (não const Component = () =>) para evitar recriação
+  // de componente a cada render do pai, que causava perda de foco nos inputs.
+  const modalConfirmarPagamentoCLTJSX = useMemo(() => {
     if (!modalPagamento) return null;
     // Adiantamento: valor líquido do adto (Cod 16). Variável/Dia 5: líquido sugerido com overrides + descontos
     const f = modalPagamento;
@@ -2691,14 +2693,48 @@ export default function FolhaPagamento() {
           </div>
 
           {/* Info colaborador */}
-          <div style={{ backgroundColor: '#e8f5e9', borderRadius: '6px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', borderLeft: '4px solid #2e7d32' }}>
-            <strong>{modalPagamento.nome}</strong> &middot; {modalPagamento.cargo}
-            <div style={{ marginTop: '6px', display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
-              <span>💵 Adto Líquido: <strong>{fmtMoeda(modalPagamento.adtoLiquido)}</strong></span>
-              {modalPagamento.totalVariavel > 0 && <span>📦 Variável: <strong>{fmtMoeda(modalPagamento.totalVariavel)}</strong></span>}
-              {modalPagamento.chavePix && <span>📲 PIX: <strong>{modalPagamento.chavePix}</strong></span>}
-            </div>
-          </div>
+          {(() => {
+            const fm = modalPagamento;
+            // Adiantamento de transporte pago no mês
+            const saidasColModal = saidasPeriodo.filter((s: any) => s.colaboradorId === fm.colaboradorId);
+            const adtoTranspModal = saidasColModal
+              .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
+              .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+            // Total a pagar no Dia 20: Adto + Variável ≤19
+            const totalDia20 = fm.adtoLiquido + (fm.variavelAte19 || 0);
+            // Total a pagar no Dia 5: Fechamento
+            const totalDia5 = fm.pgtosDia05 || 0;
+            return (
+              <div style={{ backgroundColor: '#e8f5e9', borderRadius: '6px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', borderLeft: '4px solid #2e7d32' }}>
+                <strong>{fm.nome}</strong> &middot; {fm.cargo}
+                {fm.chavePix && <span style={{ marginLeft: 12, fontSize: 12, color: '#555' }}>📲 PIX: <strong>{fm.chavePix}</strong></span>}
+                <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '6px', fontSize: '12px' }}>
+                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
+                    <div style={{ color: '#666', fontSize: 10 }}>Adto Líquido (Cód.16)</div>
+                    <strong style={{ color: '#1b5e20' }}>{fmtMoeda(fm.adtoLiquido)}</strong>
+                  </div>
+                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
+                    <div style={{ color: '#666', fontSize: 10 }}>Variável ≤19</div>
+                    <strong style={{ color: '#2e7d32' }}>{fmtMoeda(fm.variavelAte19 || 0)}</strong>
+                  </div>
+                  <div style={{ backgroundColor: '#e3f2fd', borderRadius: 4, padding: '6px 8px', border: '1px solid #90caf9' }}>
+                    <div style={{ color: '#666', fontSize: 10 }}>💰 Total Dia 20</div>
+                    <strong style={{ color: '#0d47a1', fontSize: 14 }}>{fmtMoeda(totalDia20)}</strong>
+                  </div>
+                  <div style={{ backgroundColor: '#fff', borderRadius: 4, padding: '6px 8px', border: '1px solid #c8e6c9' }}>
+                    <div style={{ color: '#666', fontSize: 10 }}>Total Dia 5</div>
+                    <strong style={{ color: '#e65100' }}>{fmtMoeda(totalDia5)}</strong>
+                  </div>
+                  {adtoTranspModal > 0 && (
+                    <div style={{ backgroundColor: '#fff8e1', borderRadius: 4, padding: '6px 8px', border: '1px solid #ffe082' }}>
+                      <div style={{ color: '#666', fontSize: 10 }}>🚗 Adto Transporte (a abater)</div>
+                      <strong style={{ color: '#e65100' }}>- {fmtMoeda(adtoTranspModal)}</strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Painel expandido: Presença + Saldos + Saídas + Bases (só mostra para o tipo Variável = Pgto Dia 5) */}
           {modalPgtoTipo === 'Variável' && (() => {
@@ -3013,13 +3049,14 @@ export default function FolhaPagamento() {
         </div>
       </div>
     );
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalPagamento, modalPgtoTipo, pgtoLinhas, overrides, descontosIncluidos, salvando, saidasPeriodo, escalas, saldosEspeciais, mesAno]);
 
   /* ── Render ──────────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
       <Header title="💰 Folha de Pagamento" showBack={true} />
-      <ModalConfirmarPagamentoCLT />
+      {modalConfirmarPagamentoCLTJSX}
       {modalConfirmarPgtoFreelancerJSX}
       {detalheSelecionado && <ModalDetalhe f={detalheSelecionado} onClose={() => setDetalheSelecionado(null)} />}
       {detalheFreelancer && <ModalDetalheFreelancer data={detalheFreelancer} onClose={() => setDetalheFreelancer(null)} />}
