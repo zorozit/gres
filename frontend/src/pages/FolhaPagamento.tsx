@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -347,6 +347,9 @@ export default function FolhaPagamento() {
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
   // Saídas do período para cruzamento com motoboys
   const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
+  // Ref para acesso síncrono ao saidasPeriodo dentro do useMemo do modal (evita closure stale)
+  const saidasPeriodoRef = React.useRef<any[]>([]);
+  useEffect(() => { saidasPeriodoRef.current = saidasPeriodo; }, [saidasPeriodo]);
   const [saldosEspeciais, setSaldosEspeciais] = useState<Record<string, number>>({});
   // Saídas pendentes de meses anteriores (pago=false)
   const [saidasPendentesAnt, setSaidasPendentesAnt] = useState<any[]>([]);
@@ -2695,8 +2698,9 @@ export default function FolhaPagamento() {
           {/* Info colaborador */}
           {(() => {
             const fm = modalPagamento;
-            // Adiantamento de transporte pago no mês
-            const saidasColModal = saidasPeriodo.filter((s: any) => s.colaboradorId === fm.colaboradorId);
+            // Adiantamento de transporte: usar ref para garantir dados frescos (evita stale closure no useMemo)
+            const _saidas: any[] = saidasPeriodoRef.current;
+            const saidasColModal = _saidas.filter((s: any) => s.colaboradorId === fm.colaboradorId);
             const adtoTranspModal = saidasColModal
               .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
               .reduce((sum: number, s: any) => sum + R(s.valor), 0);
