@@ -14,7 +14,7 @@ const TODOS_MODULOS = [
   { id: 'colaboradores',         icon: '👥', title: 'Gestão de Colaboradores' },
   { id: 'folha-pagamento',       icon: '💳', title: 'Folha de Pagamento' },
   { id: 'extrato',               icon: '📋', title: 'Extrato de Pagamentos' },
-  { id: 'adiantamentos-saldos',  icon: '🧾', title: 'Empréstimos e Saldos' },
+  { id: 'adiantamentos-saldos',  icon: '🧾', title: 'Adiantamentos e Saldos' },
   { id: 'fechamento-dinheiro',   icon: '💵', title: 'Fechamento Dinheiro' },
   { id: 'importacoes-contabeis', icon: '📥', title: 'Importações Contábeis' },
   { id: 'unidades',              icon: '🏢', title: 'Cadastro de Unidades' },

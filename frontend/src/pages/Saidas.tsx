@@ -62,18 +62,7 @@ const CATEGORIAS: Categoria[] = [
     hint: 'Desconto/abatimento manual da carteira de transporte. Útil para registrar devolução parcelada sem perder o saldo histórico.',
     bg: '#fff8e1', text: '#ef6c00', border: '#ffcc80',
   },
-  {
-    value: 'Adiantamento Especial', label: 'Adiantamento Especial', emoji: '💸',
-    dir: 'saida', grupo: 'colaborador', regraFolha: 'saldo_especial',
-    hint: 'Empréstimo / adiantamento especial pago agora ao colaborador. O saldo fica aberto para abatimentos parcelados nas semanas seguintes.',
-    bg: '#f3e5f5', text: '#6a1b9a', border: '#ce93d8',
-  },
-  {
-    value: 'Desconto Adiantamento Especial', label: 'Desconto Adiantamento Especial', emoji: '🧾',
-    dir: 'entrada', grupo: 'colaborador', regraFolha: 'abate_especial',
-    hint: 'Parcela semanal do adiantamento especial. Deve ser lançada a cada abatimento para reduzir o saldo em aberto e descontar do líquido.',
-    bg: '#ede7f6', text: '#4527a0', border: '#b39ddb',
-  },
+
   {
     value: 'Caixinha', label: 'Caixinha 🪙 (gorjeta a pagar)', emoji: '🪙',
     dir: 'saida', grupo: 'colaborador', regraFolha: 'credito_liquido',
@@ -240,6 +229,11 @@ export const Saidas: React.FC = () => {
             return cat.grupo === movGrupo;
           });
         }
+        // Ocultar adiantamentos especiais — gerenciados exclusivamente no módulo Adiantamentos e Saldos
+        lista = lista.filter((r: any) => {
+          const t = (r.tipo || r.origem || r.referencia || '');
+          return t !== 'Adiantamento Especial' && t !== 'Desconto Adiantamento Especial';
+        });
         setMovRegistros(lista);
       }
     } catch (err) { console.error('Erro ao filtrar movimentos:', err); }
