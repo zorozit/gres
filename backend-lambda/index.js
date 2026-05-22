@@ -1737,7 +1737,8 @@ exports.handler = async (event) => {
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
       const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
-              origem, tipo, dataPagamento, unitId, viagens, caixinha, turno, observacao, formaPagamento } = body;
+              origem, tipo, dataPagamento, unitId, viagens, caixinha, turno, observacao, obs, formaPagamento,
+              adiantamentoId, pago } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -1777,6 +1778,9 @@ exports.handler = async (event) => {
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           formaPagamento: formaPagamento || 'PIX',
+          pago: pago !== undefined ? pago : true,
+          obs: obs || observacao || '',
+          ...(adiantamentoId ? { adiantamentoId } : {}),
           unitId: itemUnitId,
           timestamp: new Date().toISOString(),
           createdAt: new Date().toISOString()
