@@ -49,6 +49,7 @@ interface ContratoAdiantamento {
   totalAbatido: number;
   saldo: number;                // valorTotal - totalAbatido
   quitado: boolean;
+  tipoAdiantamento: 'especial' | 'transporte';
   raw: SaidaItem;               // registro original do adiantamento
 }
 
@@ -97,12 +98,13 @@ export const AdiantamentosSaldos: React.FC = () => {
   const [mesesHistorico, setMesesHistorico] = useState('12');
   const [buscaColaborador, setBuscaColaborador] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'aberto' | 'quitado'>('aberto');
+  const [filtroTipo, setFiltroTipo] = useState<'todos' | 'especial' | 'transporte'>('todos');
   const [contratoAberto, setContratoAberto] = useState<string | null>(null); // ID do contrato expandido
 
   // Modal novo adiantamento
   const [modalNovoAdto, setModalNovoAdto] = useState(false);
   const [formNovoAdto, setFormNovoAdto] = useState({
-    colaboradorId: '', valor: '', data: hoje(), formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', descricao: '',
+    colaboradorId: '', tipo: 'especial' as 'especial' | 'transporte', valor: '', data: hoje(), formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', descricao: '',
   });
 
   // Modal nova parcela
@@ -140,100 +142,85 @@ export const AdiantamentosSaldos: React.FC = () => {
 
   /* ── Processar contratos de adiantamento especial ────── */
 
-  const { contratos, saldoTransportePorColab } = useMemo(() => {
+  const { contratos } = useMemo(() => {
     const colabMap = new Map(colaboradores.map(c => [c.id, c]));
 
-    // ── Transporte (lógica simples, sem contrato) ──
-    const transpCreditos = new Map<string, number>();
-    const transpDebitos  = new Map<string, number>();
+    // Tipos de adiantamento e seus descontos correspondentes
+    const PARES: { adto: string; desc: string; tipo: 'especial' | 'transporte' }[] = [
+      { adto: 'Adiantamento Especial',   desc: 'Desconto Adiantamento Especial', tipo: 'especial' },
+      { adto: 'Adiantamento Transporte', desc: 'Desconto Transporte',            tipo: 'transporte' },
+    ];
 
-    // ── Especial: separar adiantamentos (origem) dos descontos ──
-    const adtos   = saidas.filter(s => (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Especial');
-    const descontos = saidas.filter(s => (s.tipo || s.origem || s.referencia || '') === 'Desconto Adiantamento Especial');
-
-    saidas.forEach(s => {
-      const t = s.tipo || s.origem || s.referencia || '';
-      const v = R(s.valor);
-      if (t === 'Adiantamento Transporte')      transpCreditos.set(s.colaboradorId, (transpCreditos.get(s.colaboradorId) || 0) + v);
-      else if (t === 'Desconto Transporte')     transpDebitos.set(s.colaboradorId,  (transpDebitos.get(s.colaboradorId)  || 0) + v);
-    });
-
-    const saldoTransportePorColab = new Map<string, number>();
-    const allColabIds = new Set([...transpCreditos.keys(), ...transpDebitos.keys()]);
-    allColabIds.forEach(id => {
-      const saldo = (transpCreditos.get(id) || 0) - (transpDebitos.get(id) || 0);
-      if (saldo !== 0 || transpCreditos.has(id)) saldoTransportePorColab.set(id, parseFloat(saldo.toFixed(2)));
-    });
-
-    // ── Montar contratos ──
     const contratoMap = new Map<string, ContratoAdiantamento>();
 
-    // 1. Criar contrato para cada adiantamento especial
-    adtos.forEach(adto => {
-      // adiantamentoId pode estar em adto.adiantamentoId (novo) ou gerado a partir do id (legado)
-      const aId = adto.adiantamentoId || adto.id;
-      const colab = colabMap.get(adto.colaboradorId);
-      const dataAdto = adto.dataPagamento || adto.data || '';
-      contratoMap.set(aId, {
-        adiantamentoId: aId,
-        colaboradorId: adto.colaboradorId,
-        colaboradorNome: colab?.nome || adto.colaborador || adto.favorecido || adto.colaboradorId,
-        tipoContrato: colab?.tipoContrato,
-        dataAbertura: dataAdto,
-        valorTotal: R(adto.valor),
-        descricao: adto.obs || adto.observacao || adto.descricao || '',
-        parcelas: [],
-        totalAbatido: 0,
-        saldo: R(adto.valor),
-        quitado: false,
-        raw: adto,
+    PARES.forEach(({ adto: tipoAdto, desc: tipoDesc, tipo }) => {
+      const adtos    = saidas.filter(s => (s.tipo || s.origem || s.referencia || '') === tipoAdto);
+      const descontos = saidas.filter(s => (s.tipo || s.origem || s.referencia || '') === tipoDesc);
+
+      // 1. Criar contrato para cada adiantamento
+      adtos.forEach(adto => {
+        const aId = adto.adiantamentoId || adto.id;
+        const colab = colabMap.get(adto.colaboradorId);
+        const dataAdto = adto.dataPagamento || adto.data || '';
+        contratoMap.set(aId, {
+          adiantamentoId: aId,
+          colaboradorId: adto.colaboradorId,
+          colaboradorNome: colab?.nome || adto.colaborador || adto.favorecido || adto.colaboradorId,
+          tipoContrato: colab?.tipoContrato,
+          tipoAdiantamento: tipo,
+          dataAbertura: dataAdto,
+          valorTotal: R(adto.valor),
+          descricao: adto.obs || adto.observacao || adto.descricao || '',
+          parcelas: [],
+          totalAbatido: 0,
+          saldo: R(adto.valor),
+          quitado: false,
+          raw: adto,
+        });
+      });
+
+      // 2. Vincular descontos ao contrato pelo adiantamentoId
+      const semVinculo: SaidaItem[] = [];
+      descontos.forEach(desc => {
+        const aId = desc.adiantamentoId;
+        if (aId && contratoMap.has(aId)) {
+          const c = contratoMap.get(aId)!;
+          c.parcelas.push(desc);
+          c.totalAbatido = parseFloat((c.totalAbatido + R(desc.valor)).toFixed(2));
+          c.saldo = parseFloat((c.valorTotal - c.totalAbatido).toFixed(2));
+          c.quitado = c.saldo <= 0.01;
+        } else {
+          semVinculo.push(desc);
+        }
+      });
+
+      // 3. Descontos legados (sem adiantamentoId) → contrato mais antigo em aberto do mesmo tipo
+      semVinculo.forEach(desc => {
+        const candidatos = [...contratoMap.values()]
+          .filter(c => c.colaboradorId === desc.colaboradorId && c.tipoAdiantamento === tipo && !c.quitado)
+          .sort((a, b) => a.dataAbertura.localeCompare(b.dataAbertura));
+        if (candidatos.length > 0) {
+          const c = candidatos[0];
+          c.parcelas.push(desc);
+          c.totalAbatido = parseFloat((c.totalAbatido + R(desc.valor)).toFixed(2));
+          c.saldo = parseFloat((c.valorTotal - c.totalAbatido).toFixed(2));
+          c.quitado = c.saldo <= 0.01;
+        }
       });
     });
 
-    // 2. Vincular descontos ao contrato
-    const semVinculo: SaidaItem[] = []; // descontos legados sem adiantamentoId
-    descontos.forEach(desc => {
-      const aId = desc.adiantamentoId;
-      if (aId && contratoMap.has(aId)) {
-        const c = contratoMap.get(aId)!;
-        c.parcelas.push(desc);
-        c.totalAbatido = parseFloat((c.totalAbatido + R(desc.valor)).toFixed(2));
-        c.saldo = parseFloat((c.valorTotal - c.totalAbatido).toFixed(2));
-        c.quitado = c.saldo <= 0.01;
-      } else {
-        // Legado: sem vínculo — tenta associar ao contrato aberto mais antigo do mesmo colaborador
-        semVinculo.push(desc);
-      }
-    });
-
-    // 3. Associar descontos legados (sem adiantamentoId) ao contrato mais antigo aberto do mesmo colab
-    semVinculo.forEach(desc => {
-      const candidatos = [...contratoMap.values()]
-        .filter(c => c.colaboradorId === desc.colaboradorId && !c.quitado)
-        .sort((a, b) => a.dataAbertura.localeCompare(b.dataAbertura));
-      if (candidatos.length > 0) {
-        const c = candidatos[0];
-        c.parcelas.push(desc);
-        c.totalAbatido = parseFloat((c.totalAbatido + R(desc.valor)).toFixed(2));
-        c.saldo = parseFloat((c.valorTotal - c.totalAbatido).toFixed(2));
-        c.quitado = c.saldo <= 0.01;
-      }
-      // Se não encontrou contrato correspondente, desconto fica "órfão" (não afeta nenhum contrato)
-    });
-
-    // 4. Ordenar parcelas por data
+    // 4. Ordenar parcelas por data em cada contrato
     contratoMap.forEach(c => {
       c.parcelas.sort((a, b) => (a.dataPagamento || a.data || '').localeCompare(b.dataPagamento || b.data || ''));
     });
 
     const contratos = [...contratoMap.values()]
       .sort((a, b) => {
-        // Abertos primeiro, depois por data desc
         if (a.quitado !== b.quitado) return a.quitado ? 1 : -1;
         return b.dataAbertura.localeCompare(a.dataAbertura);
       });
 
-    return { contratos, saldoTransportePorColab };
+    return { contratos };
   }, [saidas, colaboradores]);
 
   /* ── Filtros ─────────────────────────────────────────── */
@@ -244,16 +231,18 @@ export const AdiantamentosSaldos: React.FC = () => {
       if (busca && !c.colaboradorNome.toLowerCase().includes(busca)) return false;
       if (filtroStatus === 'aberto'  && c.quitado)  return false;
       if (filtroStatus === 'quitado' && !c.quitado) return false;
+      if (filtroTipo === 'especial'   && c.tipoAdiantamento !== 'especial')   return false;
+      if (filtroTipo === 'transporte' && c.tipoAdiantamento !== 'transporte') return false;
       return true;
     });
-  }, [contratos, buscaColaborador, filtroStatus]);
+  }, [contratos, buscaColaborador, filtroStatus, filtroTipo]);
 
   const totaisResumo = useMemo(() => ({
-    totalAberto:   contratos.filter(c => !c.quitado).reduce((s, c) => s + c.saldo, 0),
+    totalEspecialAberto:   contratos.filter(c => !c.quitado && c.tipoAdiantamento === 'especial').reduce((s, c) => s + c.saldo, 0),
+    totalTransporteAberto: contratos.filter(c => !c.quitado && c.tipoAdiantamento === 'transporte').reduce((s, c) => s + c.saldo, 0),
     qtdAbertos:    contratos.filter(c => !c.quitado).length,
     qtdQuitados:   contratos.filter(c =>  c.quitado).length,
-    totalTransporte: [...saldoTransportePorColab.values()].reduce((s, v) => s + v, 0),
-  }), [contratos, saldoTransportePorColab]);
+  }), [contratos]);
 
   /* ── Salvar novo adiantamento ───────────────────────── */
 
@@ -264,11 +253,12 @@ export const AdiantamentosSaldos: React.FC = () => {
     setSalvando(true);
     const novoId = gerarAdiantamentoId();
     try {
+      const tipoLabel = formNovoAdto.tipo === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
       const payload = {
         unitId, responsavel: responsavelEmail, responsavelId: userId,
         colaboradorId: formNovoAdto.colaboradorId,
-        tipo: 'Adiantamento Especial', origem: 'Adiantamento Especial', referencia: 'Adiantamento Especial',
-        descricao: formNovoAdto.descricao || 'Adiantamento Especial',
+        tipo: tipoLabel, origem: tipoLabel, referencia: tipoLabel,
+        descricao: formNovoAdto.descricao || tipoLabel,
         obs: formNovoAdto.descricao || '',
         valor: parseFloat(formNovoAdto.valor),
         data: formNovoAdto.data, dataPagamento: formNovoAdto.data,
@@ -284,7 +274,7 @@ export const AdiantamentosSaldos: React.FC = () => {
       });
       if (!res.ok) throw new Error(await res.text());
       setModalNovoAdto(false);
-      setFormNovoAdto({ colaboradorId: '', valor: '', data: hoje(), formaPagamento: 'PIX', descricao: '' });
+      setFormNovoAdto({ colaboradorId: '', tipo: 'especial', valor: '', data: hoje(), formaPagamento: 'PIX', descricao: '' });
       await carregarDados();
     } catch (e: any) { alert('Erro: ' + e.message); } finally { setSalvando(false); }
   };
@@ -301,8 +291,9 @@ export const AdiantamentosSaldos: React.FC = () => {
       const payload = {
         unitId, responsavel: responsavelEmail, responsavelId: userId,
         colaboradorId: formParcela.colaboradorId || contrato?.colaboradorId,
-        tipo: 'Desconto Adiantamento Especial', origem: 'Desconto Adiantamento Especial',
-        referencia: 'Desconto Adiantamento Especial',
+        tipo: contrato?.tipoAdiantamento === 'transporte' ? 'Desconto Transporte' : 'Desconto Adiantamento Especial',
+        origem: contrato?.tipoAdiantamento === 'transporte' ? 'Desconto Transporte' : 'Desconto Adiantamento Especial',
+        referencia: contrato?.tipoAdiantamento === 'transporte' ? 'Desconto Transporte' : 'Desconto Adiantamento Especial',
         descricao: `Parcela — ${contrato?.descricao || formParcela.adiantamentoId}`,
         obs: formParcela.obs || '',
         valor: parseFloat(formParcela.valor),
@@ -347,11 +338,27 @@ export const AdiantamentosSaldos: React.FC = () => {
       <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '28px', maxWidth: '500px', width: '96%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h3 style={{ margin: 0 }}>➕ Novo Adiantamento Especial</h3>
+          <h3 style={{ margin: 0 }}>{formNovoAdto.tipo === 'transporte' ? '🚗 Novo Adiantamento Transporte' : '💸 Novo Adiantamento Especial'}</h3>
           <button onClick={() => setModalNovoAdto(false)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer' }}>✕</button>
         </div>
         <div style={{ backgroundColor: '#ecfdf5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#065f46' }}>
           💡 Ao salvar, será criado um <strong>contrato individual</strong> com ID único. Todas as parcelas futuras serão vinculadas a este contrato.
+        </div>
+        {/* Tipo do adiantamento */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={s.label}>Tipo de adiantamento *</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {([{ v: 'especial', label: '💸 Adiantamento Especial', color: '#7c3aed', bg: '#faf5ff' },
+               { v: 'transporte', label: '🚗 Adiantamento Transporte', color: '#c2410c', bg: '#fff7ed' }] as const).map(opt => (
+              <button key={opt.v} onClick={() => setFormNovoAdto(f => ({ ...f, tipo: opt.v }))}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
+                  border: `2px solid ${formNovoAdto.tipo === opt.v ? opt.color : '#cbd5e1'}`,
+                  background: formNovoAdto.tipo === opt.v ? opt.bg : 'white',
+                  color: formNovoAdto.tipo === opt.v ? opt.color : '#475569' }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div style={{ marginBottom: 14 }}>
           <label style={s.label}>Colaborador *</label>
@@ -395,7 +402,7 @@ export const AdiantamentosSaldos: React.FC = () => {
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={() => setModalNovoAdto(false)} style={s.btn('#94a3b8')}>Cancelar</button>
           <button onClick={salvarNovoAdiantamento} disabled={salvando} style={s.btn('#059669')}>
-            {salvando ? '⏳ Salvando...' : '✅ Criar Contrato'}
+            {salvando ? '⏳ Salvando...' : `✅ Criar ${formNovoAdto.tipo === 'transporte' ? 'Adto Transporte' : 'Adto Especial'}`}
           </button>
         </div>
       </div>
@@ -406,7 +413,8 @@ export const AdiantamentosSaldos: React.FC = () => {
 
   // Contratos abertos do colaborador selecionado no modal parcela
   const contratosAbertosDoColab = useMemo(() =>
-    contratos.filter(c => c.colaboradorId === formParcela.colaboradorId && !c.quitado),
+    contratos.filter(c => c.colaboradorId === formParcela.colaboradorId && !c.quitado)
+      .sort((a, b) => { if (a.tipoAdiantamento !== b.tipoAdiantamento) return a.tipoAdiantamento === 'transporte' ? -1 : 1; return a.dataAbertura.localeCompare(b.dataAbertura); }),
     [contratos, formParcela.colaboradorId]
   );
 
@@ -452,7 +460,12 @@ export const AdiantamentosSaldos: React.FC = () => {
                       onChange={() => setFormParcela(f => ({ ...f, adiantamentoId: c.adiantamentoId }))}
                       style={{ marginTop: 2 }} />
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{c.descricao || 'Adiantamento s/ descrição'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={badge(c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff', c.tipoAdiantamento === 'transporte' ? '#c2410c' : '#7c3aed', { fontSize: 10, padding: '2px 7px' })}>
+                        {c.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}
+                      </span>
+                      <span style={{ fontWeight: 700, fontSize: 13 }}>{c.descricao || 'Adiantamento s/ descrição'}</span>
+                    </div>
                       <div style={{ fontSize: 12, color: '#64748b' }}>
                         Emprestado: <strong>{fmtMoeda(c.valorTotal)}</strong> em {fmtDataBR(c.dataAbertura)}
                         &nbsp;· Abatido: <strong style={{ color: '#059669' }}>{fmtMoeda(c.totalAbatido)}</strong>
@@ -556,10 +569,10 @@ export const AdiantamentosSaldos: React.FC = () => {
         {/* KPIs */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
           {[
-            { label: 'Saldo especial em aberto', value: fmtMoeda(totaisResumo.totalAberto), color: '#7c3aed', bg: '#faf5ff' },
+            { label: 'Saldo especial em aberto', value: fmtMoeda(totaisResumo.totalEspecialAberto), color: '#7c3aed', bg: '#faf5ff' },
+            { label: 'Saldo transporte em aberto', value: fmtMoeda(totaisResumo.totalTransporteAberto), color: '#c2410c', bg: '#fff7ed' },
             { label: 'Contratos em aberto', value: String(totaisResumo.qtdAbertos), color: '#dc2626', bg: '#fef2f2' },
             { label: 'Contratos quitados', value: String(totaisResumo.qtdQuitados), color: '#059669', bg: '#ecfdf5' },
-            { label: 'Saldo transporte (total)', value: fmtMoeda(totaisResumo.totalTransporte), color: '#c2410c', bg: '#fff7ed' },
           ].map(k => (
             <div key={k.label} style={{ ...s.card, padding: '14px 16px', backgroundColor: k.bg }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: k.color, marginBottom: 6 }}>{k.label}</div>
@@ -570,7 +583,7 @@ export const AdiantamentosSaldos: React.FC = () => {
 
         {/* Filtros */}
         <div style={{ ...s.card, padding: '14px 18px', marginBottom: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
             <div>
               <label style={s.label}>Buscar colaborador</label>
               <input value={buscaColaborador} onChange={e => setBuscaColaborador(e.target.value)}
@@ -582,6 +595,14 @@ export const AdiantamentosSaldos: React.FC = () => {
                 <option value="todos">Todos</option>
                 <option value="aberto">Em aberto</option>
                 <option value="quitado">Quitados</option>
+              </select>
+            </div>
+            <div>
+              <label style={s.label}>Tipo</label>
+              <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} style={s.input}>
+                <option value="todos">Todos</option>
+                <option value="especial">💸 Adiantamento Especial</option>
+                <option value="transporte">🚗 Adiantamento Transporte</option>
               </select>
             </div>
             <div>
@@ -610,12 +631,15 @@ export const AdiantamentosSaldos: React.FC = () => {
               const aberto = contratoAberto === c.adiantamentoId;
               const progresso = c.valorTotal > 0 ? Math.min(100, (c.totalAbatido / c.valorTotal) * 100) : 0;
               return (
-                <div key={c.adiantamentoId} style={{ ...s.card, overflow: 'hidden', borderLeft: `4px solid ${c.quitado ? '#10b981' : '#7c3aed'}` }}>
+                <div key={c.adiantamentoId} style={{ ...s.card, overflow: 'hidden', borderLeft: `4px solid ${c.quitado ? '#10b981' : c.tipoAdiantamento === 'transporte' ? '#ef6c00' : '#7c3aed'}` }}>
                   {/* Cabeçalho do contrato */}
                   <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-                    cursor: 'pointer', backgroundColor: aberto ? '#faf5ff' : 'white' }}
+                    cursor: 'pointer', backgroundColor: aberto ? (c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff') : 'white' }}
                     onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}>
-                    {/* Status */}
+                    {/* Tipo + Status */}
+                    <span style={badge(c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff', c.tipoAdiantamento === 'transporte' ? '#c2410c' : '#7c3aed')}>
+                      {c.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}
+                    </span>
                     <span style={badge(c.quitado ? '#dcfce7' : '#fef3c7', c.quitado ? '#166534' : '#92400e')}>
                       {c.quitado ? '✅ Quitado' : '🔴 Em aberto'}
                     </span>
@@ -660,8 +684,8 @@ export const AdiantamentosSaldos: React.FC = () => {
                             setFormParcela(f => ({ ...f, colaboradorId: c.colaboradorId, adiantamentoId: c.adiantamentoId, valor: '', obs: '' }));
                             setModalParcela(true);
                           }}
-                          style={{ ...s.btn('#7c3aed'), padding: '6px 12px', fontSize: 12 }}>
-                          ➖ Parcela
+                          style={{ ...s.btn(c.tipoAdiantamento === 'transporte' ? '#ef6c00' : '#7c3aed'), padding: '6px 12px', fontSize: 12 }}>
+                          ➖ {c.tipoAdiantamento === 'transporte' ? 'Desconto' : 'Parcela'}
                         </button>
                       )}
                       <button onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}
@@ -731,38 +755,7 @@ export const AdiantamentosSaldos: React.FC = () => {
           </div>
         )}
 
-        {/* Seção Transporte */}
-        {saldoTransportePorColab.size > 0 && (
-          <div style={{ ...s.card, marginTop: 24, overflow: 'hidden' }}>
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #e5e7eb', borderLeft: '4px solid #ef6c00' }}>
-              <h3 style={{ margin: 0, color: '#c2410c' }}>🚗 Saldo Adiantamento Transporte</h3>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Gerenciado pelo módulo Saídas (adiantamento por corrida/semana)</div>
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={s.th}>Colaborador</th>
-                  <th style={{ ...s.th, textAlign: 'right' as const }}>Saldo em aberto</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...saldoTransportePorColab.entries()]
-                  .sort((a, b) => a[0].localeCompare(b[0]))
-                  .map(([colabId, saldo]) => {
-                    const colab = colaboradores.find(c => c.id === colabId);
-                    return (
-                      <tr key={colabId}>
-                        <td style={s.td}>{colab?.nome || colabId}</td>
-                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: saldo > 0 ? '#c2410c' : '#059669' }}>
-                          {fmtMoeda(saldo)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-          </div>
-        )}
+
 
       </div>
       <Footer />
