@@ -35,6 +35,7 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
 
   // Mapa local: saidaId → forma de pagamento selecionada pelo usuário
   const [formaMap, setFormaMap]     = useState<Record<string, string>>({});
+  const [mostrarPix,  setMostrarPix]  = useState(false); // por padrão oculta saídas PIX
 
   // Itens manuais (pagamentos fora do sistema)
   const [manualNome,  setManualNome]  = useState('');
@@ -253,14 +254,18 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
             </div>
           </div>
 
-          {/* Seção 2 — Todas as Saídas com seleção de forma */}
+          {/* Seção 2 — Saídas em Dinheiro */}
           <div style={S.card}>
             <div style={S.title}>
-              💸 Saídas do Período — Selecione a Forma de Pagamento
-              <span style={{ fontSize:'12px', fontWeight:400, color:'#888' }}>({saidasRows.length} registros)</span>
+              💵 Saídas em Dinheiro
+              <span style={{ fontSize:'12px', fontWeight:400, color:'#888' }}>({saidasDinheiro.length} de {saidasRows.length} registros)</span>
             </div>
-            <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'12px', color:'#795548' }}>
-              💡 <strong>Como usar:</strong> O padrão é <strong>📱 PIX</strong>. Clique em <strong>💵 Din.</strong> apenas nas saídas que foram pagas em dinheiro físico — essas entram no cálculo da sobra. PIX não desconta do caixa físico.
+            <div style={{ background:'#e8f5e9', border:'1px solid #a5d6a7', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'12px', color:'#2e7d32' }}>
+              💡 Exibindo apenas saídas pagas em <strong>💵 Dinheiro</strong> ou <strong>🔄 Misto</strong>. Saídas em PIX não impactam o caixa físico.
+              <button onClick={() => setMostrarPix(p => !p)}
+                style={{ marginLeft: 12, padding: '2px 10px', borderRadius: 6, border: '1px solid #a5d6a7', backgroundColor: mostrarPix ? '#fff3e0' : 'white', color: mostrarPix ? '#e65100' : '#555', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>
+                {mostrarPix ? '🙈 Ocultar PIX' : '👁 Ver PIX também'}
+              </button>
             </div>
             {saidasRows.length === 0 ? (
               <p style={{ color:'#999', fontSize:'13px' }}>Nenhuma saída registrada no período.</p>
@@ -273,14 +278,18 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
                     <th style={S.th}>Descrição</th>
                     <th style={S.th}>Tipo</th>
                     <th style={{ ...S.th, textAlign:'right' }}>Valor</th>
-                    <th style={{ ...S.th, textAlign:'center' }}>Forma de Pagamento</th>
+                    <th style={{ ...S.th, textAlign:'center' }}>Forma</th>
                   </tr></thead>
                   <tbody>
-                    {saidasRows.map(s => {
+                    {saidasRows.filter(s => {
+                      const formaAtual = formaMap[s.id] || s.formaPagamento || '';
+                      const isDin = formaAtual === 'Dinheiro' || formaAtual === 'Misto';
+                      return mostrarPix || isDin;
+                    }).map(s => {
                       const formaAtual = formaMap[s.id] || s.formaPagamento || '';
                       const isDin = formaAtual === 'Dinheiro' || formaAtual === 'Misto';
                       return (
-                        <tr key={s.id} style={{ background: isDin ? '#fffde7' : 'transparent' }}>
+                        <tr key={s.id} style={{ background: isDin ? '#fffde7' : '#fafafa', opacity: isDin ? 1 : 0.5 }}>
                           <td style={S.td}>{fmtD(s.data)}</td>
                           <td style={S.td}>{s.colaborador||s.favorecido||'—'}</td>
                           <td style={{ ...S.td, maxWidth:'260px', overflow:'hidden', textOverflow:'ellipsis' }}>{s.descricao}</td>
@@ -372,7 +381,7 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
                 </tr>
                 <tr>
                   <td colSpan={2} style={{ ...S.td, fontSize:'11px', color:'#888', borderTop:'1px solid #eee', paddingTop:'8px' }}>
-                    💡 Saídas em PIX ({fmtM(totalSaisPix)}) não impactam o saldo físico de dinheiro — não entram na sobra.
+                    💡 Saídas em PIX ({fmtM(totalSaisPix)}) não impactam o caixa físico — não entram na sobra. {mostrarPix && <span style={{color:'#e65100'}}> (exibindo PIX para conferência)</span>}
                   </td>
                 </tr>
               </tbody>
