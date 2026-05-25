@@ -1672,6 +1672,16 @@ export default function FolhaPagamento() {
             : `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransporteSemana)}`)
         : '';
 
+      // Caixinha do controle-motoboy: já calculada em fr.caixinhaDetalhe (não vem de Saídas)
+      // Junta com caixinha de saídas para montar checkItems unificados
+      const caixCtrlItems = (fr.caixinhaDetalhe || []).map((d: any, i: number) => ({
+        key: `caix_ctrl_${i}`,
+        label: `🪙 ${d.descricao || 'Caixinha'} (${d.data})`,
+        valor: d.valor,
+        tipo: 'credito' as const,
+        checked: true,
+      }));
+
       const items: CheckItem[] = [
         { key: 'dobras', label: `Dobras (${fr.dobras}× ${obsValor})`, valor: fr.total, tipo: 'credito', checked: true },
         // Transporte: item ativo só quando há saldo real a pagar; sempre visível como info quando coberto por adto
@@ -1682,13 +1692,16 @@ export default function FolhaPagamento() {
           tipo: 'credito' as const,
           checked: fr.transporteSaldo > 0,  // pré-marcado só se há saldo real
         }] : []),
-        ...caixDetalhe.map((d, i) => ({
+        // Caixinha do controle-motoboy (só se não vier duplicada via saídas)
+        ...caixCtrlItems,
+        // Caixinha de Saídas (freelancers não-motoboy); motoboy usa caixCtrlItems acima
+        ...(caixCtrlItems.length === 0 ? caixDetalhe.map((d, i) => ({
           key: `caix_${i}`,
           label: `🪙 ${d.descricao} (${d.data})`,
           valor: d.valor,
           tipo: 'credito' as const,
           checked: true,
-        })),
+        })) : []),
         ...descDetalhe.map((d, i) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
         ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
           key: `pend_${i}`,
