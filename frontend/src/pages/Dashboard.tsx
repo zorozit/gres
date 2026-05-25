@@ -110,9 +110,11 @@ export const Dashboard: React.FC = () => {
       if (e.data >= dataInicio && e.data <= dataFim) diasSet.add(e.data);
     });
 
+    const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     return Array.from(diasSet).sort().map(data => {
-      const [, m, d] = data.split('-');
-      const label = `${d}/${m}`;
+      const [y, m, d] = data.split('-');
+      const diaSem = DIAS_SEMANA[new Date(Number(y), Number(m) - 1, Number(d)).getDay()];
+      const label = `${d}/${m} ${diaSem}`;
       const caixaDia   = caixaData.find(c => c.data === data && c.periodo?.toLowerCase() === 'dia');
       const caixaNoite = caixaData.find(c => c.data === data && c.periodo?.toLowerCase() === 'noite');
       const fat_dia    = R(caixaDia?.total);

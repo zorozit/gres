@@ -65,14 +65,20 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
         d.setMonth(d.getMonth() + 1);
       }
 
-      const [rC, rS, ...rFolhas] = await Promise.all([
+      const [rC, rS, rColabs, ...rFolhas] = await Promise.all([
         fetch(`${API}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
         fetch(`${API}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
+        fetch(`${API}/colaboradores?unitId=${unitId}`, { headers: h }),
         ...[...mesesSet].map(mes => fetch(`${API}/folha-pagamento?unitId=${unitId}&mes=${mes}`, { headers: h })),
       ]);
 
       const caixaJson  = rC.ok ? await rC.json() : [];
       const saidasJson = rS.ok ? await rS.json() : [];
+      const colabsJson = rColabs.ok ? await rColabs.json() : [];
+      const colabsArr: any[] = Array.isArray(colabsJson) ? colabsJson : [];
+      // Mapa id -> nome para lookup rápido
+      const colabNome: Record<string, string> = {};
+      colabsArr.forEach((c: any) => { if (c.id) colabNome[c.id] = c.nome || c.id; });
       const caixaArr   = Array.isArray(caixaJson)  ? caixaJson.sort((a: any,b: any) => a.data.localeCompare(b.data)) : [];
       const saidasArr  = Array.isArray(saidasJson) ? saidasJson.sort((a: any,b: any) => a.data.localeCompare(b.data)) : [];
 
@@ -98,7 +104,7 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
           if (seenFolha.has(item.id)) continue;
           seenFolha.add(item.id);
           // Busca nome do colaborador (pode vir como nomeColaborador ou precisa de lookup)
-          const nomeColab = item.nomeColaborador || item.colaboradorId || '—';
+          const nomeColab = item.nomeColaborador || colabNome[item.colaboradorId] || item.colaboradorId || '—';
           const turnoLabel = item.tipoCodigo === 'transporte-freelancer' ? 'Transporte'
             : item.turno === 'Noite' ? 'Turno Noite' : 'Turno Dia';
           folhaFiltrada.push({
@@ -140,7 +146,7 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
             seenFolha.add(pid);
             folhaFiltrada.push({
               id: pid,
-              nome: item.nomeColaborador || item.colaboradorId || '—',
+              nome: item.nomeColaborador || colabNome[item.colaboradorId] || item.colaboradorId || '—',
               descricao: `${p.label} — ${item.mes || ''}`,
               data: p.dt,
               valor: p.val,
