@@ -107,6 +107,10 @@ export const AdiantamentosSaldos: React.FC = () => {
     colaboradorId: '', tipo: 'especial' as 'especial' | 'transporte', valor: '', data: hoje(), formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', descricao: '',
   });
 
+  // Modal editar adiantamento
+  const [modalEditarAdto, setModalEditarAdto] = useState<ContratoAdiantamento | null>(null);
+  const [formEditarAdto, setFormEditarAdto] = useState({ valor: '', data: '', descricao: '', formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto' });
+
   // Modal nova parcela
   const [modalParcela, setModalParcela] = useState(false);
   const [formParcela, setFormParcela] = useState({
@@ -281,7 +285,52 @@ export const AdiantamentosSaldos: React.FC = () => {
 
   /* ── Salvar parcela ──────────────────────────────────── */
 
-  const salvarParcela = async () => {
+  /* ── Editar adiantamento ────────────────────────────────── */
+
+  const abrirEdicaoAdto = (contrato: ContratoAdiantamento) => {
+    setFormEditarAdto({
+      valor: String(contrato.valorTotal),
+      data: contrato.dataAbertura,
+      descricao: contrato.descricao,
+      formaPagamento: (contrato.raw.formaPagamento as any) || 'PIX',
+    });
+    setModalEditarAdto(contrato);
+  };
+
+  const salvarEdicaoAdto = async () => {
+    if (!modalEditarAdto) return;
+    const novoValor = parseFloat(formEditarAdto.valor);
+    if (isNaN(novoValor) || novoValor <= 0) { alert('Valor inválido.'); return; }
+    setSalvando(true);
+    const raw = modalEditarAdto.raw;
+    const tipoLabel = modalEditarAdto.tipoAdiantamento === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
+    try {
+      const res = await fetch(`${apiUrl}/saidas/${raw.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({
+          responsavel: responsavelEmail,
+          responsavelId: userId,
+          colaboradorId: raw.colaboradorId,
+          tipo: tipoLabel, origem: tipoLabel, referencia: tipoLabel,
+          descricao: formEditarAdto.descricao || tipoLabel,
+          obs: formEditarAdto.descricao || '',
+          observacao: formEditarAdto.descricao || '',
+          valor: novoValor,
+          data: formEditarAdto.data,
+          dataPagamento: formEditarAdto.data,
+          formaPagamento: formEditarAdto.formaPagamento,
+          adiantamentoId: raw.adiantamentoId,
+          pago: true,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setModalEditarAdto(null);
+      await carregarDados();
+    } catch (e: any) { alert('Erro ao salvar: ' + e.message); } finally { setSalvando(false); }
+  };
+
+    const salvarParcela = async () => {
     if (!formParcela.adiantamentoId || !formParcela.valor || parseFloat(formParcela.valor) <= 0) {
       alert('Selecione o adiantamento e informe o valor.'); return;
     }
@@ -546,6 +595,79 @@ export const AdiantamentosSaldos: React.FC = () => {
       {modalNovoAdtoJSX}
       {modalParcelaJSX}
 
+      {/* Modal editar adiantamento */}
+      {modalEditarAdto && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setModalEditarAdto(null)}>
+          <div style={{ ...s.card, maxWidth: 460, width: '95%', padding: 28 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 16, color: '#0284c7' }}>✏️ Editar Adiantamento</h3>
+              <button onClick={() => setModalEditarAdto(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#64748b' }}>✕</button>
+            </div>
+
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 16, padding: '10px 14px', backgroundColor: '#f0f9ff', borderRadius: 8, borderLeft: '4px solid #0284c7' }}>
+              <strong>{modalEditarAdto.colaboradorNome}</strong> — {modalEditarAdto.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}<br/>
+              <span style={{ fontSize: 11 }}>ID: {modalEditarAdto.adiantamentoId}</span>
+            </div>
+
+            {modalEditarAdto.totalAbatido > 0 && (
+              <div style={{ fontSize: 12, color: '#92400e', backgroundColor: '#fff7ed', borderRadius: 8, padding: '8px 14px', marginBottom: 14, borderLeft: '4px solid #f59e0b' }}>
+                ⚠️ Já existem <strong>{fmtMoeda(modalEditarAdto.totalAbatido)}</strong> abatidos neste contrato.
+                O novo valor deve ser maior ou igual ao total já abatido.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={s.label}>Valor do Adiantamento (R$) *</label>
+                <input type="number" step="0.01" min={modalEditarAdto.totalAbatido || 0.01}
+                  value={formEditarAdto.valor}
+                  onChange={e => setFormEditarAdto(f => ({ ...f, valor: e.target.value }))}
+                  style={{ ...s.input, width: '100%', fontSize: 15, fontWeight: 700 }}
+                  autoFocus />
+                {modalEditarAdto.totalAbatido > 0 && (
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                    Mínimo: {fmtMoeda(modalEditarAdto.totalAbatido)} (já abatido)
+                  </div>
+                )}
+              </div>
+              <div>
+                <label style={s.label}>Data do Adiantamento</label>
+                <input type="date" value={formEditarAdto.data}
+                  onChange={e => setFormEditarAdto(f => ({ ...f, data: e.target.value }))}
+                  style={{ ...s.input, width: '100%' }} />
+              </div>
+              <div>
+                <label style={s.label}>Descrição / Observação</label>
+                <input type="text" placeholder="Ex: Adiantamento para despesa médica"
+                  value={formEditarAdto.descricao}
+                  onChange={e => setFormEditarAdto(f => ({ ...f, descricao: e.target.value }))}
+                  style={{ ...s.input, width: '100%' }} />
+              </div>
+              <div>
+                <label style={s.label}>Forma de Pagamento</label>
+                <select value={formEditarAdto.formaPagamento}
+                  onChange={e => setFormEditarAdto(f => ({ ...f, formaPagamento: e.target.value as any }))}
+                  style={{ ...s.input, width: '100%' }}>
+                  <option value="PIX">PIX</option>
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Misto">Misto</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>
+              <button onClick={() => setModalEditarAdto(null)} style={{ ...s.btn('#94a3b8'), padding: '8px 20px' }}>Cancelar</button>
+              <button onClick={salvarEdicaoAdto} disabled={salvando
+                || parseFloat(formEditarAdto.valor) < modalEditarAdto.totalAbatido}
+                style={{ ...s.btn('#0284c7'), padding: '8px 20px', fontWeight: 700 }}>
+                {salvando ? '⏳ Salvando...' : '✅ Salvar Alterações'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={s.wrap}>
 
         {/* Cabeçalho */}
@@ -688,6 +810,11 @@ export const AdiantamentosSaldos: React.FC = () => {
                           ➖ {c.tipoAdiantamento === 'transporte' ? 'Desconto' : 'Parcela'}
                         </button>
                       )}
+                      <button onClick={() => abrirEdicaoAdto(c)}
+                        style={{ ...s.btn('#0284c7'), padding: '6px 12px', fontSize: 12 }}
+                        title="Editar valor, data ou descrição do adiantamento">
+                        ✏️ Editar
+                      </button>
                       <button onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}
                         style={{ ...s.btn('#475569'), padding: '6px 12px', fontSize: 12 }}>
                         {aberto ? '▲ Fechar' : '▼ Detalhes'}

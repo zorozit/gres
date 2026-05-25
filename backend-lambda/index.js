@@ -1929,7 +1929,8 @@ exports.handler = async (event) => {
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
       const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
-              origem, tipo, dataPagamento, viagens, caixinha, turno, observacao } = body;
+              origem, tipo, dataPagamento, viagens, caixinha, turno, observacao,
+              obs, adiantamentoId, pago, formaPagamento } = body;
 
       if (!saidaId || !responsavel || !descricao || !valor || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -1972,6 +1973,10 @@ exports.handler = async (event) => {
           referencia: tipo || origem || original.referencia || 'A pagar',
           dataPagamento: dataPagamento || original.dataPagamento || '',
           observacao: observacao !== undefined ? observacao : (original.observacao || ''),
+          obs: obs !== undefined ? obs : (original.obs || ''),
+          adiantamentoId: adiantamentoId !== undefined ? adiantamentoId : (original.adiantamentoId || undefined),
+          pago: pago !== undefined ? pago : (original.pago !== undefined ? original.pago : true),
+          formaPagamento: formaPagamento !== undefined ? formaPagamento : (original.formaPagamento || 'PIX'),
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),
           updatedAt: new Date().toISOString()
