@@ -183,6 +183,8 @@ interface FechamentoSemanalFreelancer {
     diasPagos: { data: string; turno: string; valor: number }[];         // dias pendentes (a pagar)
     diasJaPagosDetalhe: { data: string; turno: string; valor: number }[]; // dias já pagos anteriormente
     totalJaPago: number;            // valor já pago em outros registros no período
+    totalBrutoPeriodo: number;      // total bruto completo (pendente + já pago)
+    totalDobrasExib: number;        // contagem de dobras do período completo
     periodoInicio: string;          // YYYY-MM-DD início real do período pago
     periodoFim: string;             // YYYY-MM-DD fim real do período pago
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
@@ -4563,37 +4565,57 @@ export default function FolhaPagamento() {
                 {/* Resumo mensal de freelancers */}
                 <div style={{ ...s.card, borderTop: '3px solid #1976d2' }}>
                   <h4 style={{ marginTop: 0, color: '#1976d2' }}>📊 Consolidado do Mês</h4>
+                  <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                     <thead>
-                      <tr>
-                        {['Freelancer', 'PIX', 'Total Dobras', 'Total R$'].map(h => (
-                          <th key={h} style={s.th}>{h}</th>
-                        ))}
+                      <tr style={{ backgroundColor: '#1565c0', color: 'white' }}>
+                        <th style={{ ...s.th, backgroundColor: '#1565c0', color: 'white' }}>Freelancer</th>
+                        <th style={{ ...s.th, backgroundColor: '#1565c0', color: 'white' }}>PIX</th>
+                        <th style={{ ...s.th, backgroundColor: '#1565c0', color: 'white', textAlign: 'center' }}>Dobras</th>
+                        <th style={{ ...s.th, backgroundColor: '#c62828', color: 'white', textAlign: 'right' }}>Total Dobras</th>
+                        <th style={{ ...s.th, backgroundColor: '#1565c0', color: 'white', textAlign: 'right' }}>🚗 Transp.</th>
+                        <th style={{ ...s.th, backgroundColor: '#1565c0', color: 'white', textAlign: 'right' }}>🪙 Caixinha</th>
+                        <th style={{ ...s.th, backgroundColor: '#c62828', color: 'white', textAlign: 'right' }}>Desconto</th>
+                        <th style={{ ...s.th, backgroundColor: '#1b5e20', color: 'white', textAlign: 'right' }}>Líquido Total</th>
                       </tr>
                     </thead>
                     <tbody>
                       {freelancers.map((fr, fi) => {
                         let totalDobras = 0;
-                        let totalMesLiquido = 0;
-                        let totalDescontoMes = 0;
+                        let totalBruto = 0;
+                        let totalTransp = 0;
+                        let totalCaixinha = 0;
+                        let totalDesconto = 0;
+                        let totalLiquidoMes = 0;
                         for (const fech of fechamentosFreelancer) {
                           const frSem = fech.freelancers.find(x => x.id === fr.id);
                           if (frSem) {
-                            totalDobras += frSem.dobras;
-                            totalMesLiquido += frSem.totalLiquido;
-                            totalDescontoMes += frSem.saidasDesconto || 0;
+                            // Dobras: total do período (pagas + pendentes)
+                            totalDobras    += frSem.totalDobrasExib ?? frSem.dobras;
+                            // Bruto: total bruto do período
+                            totalBruto     += frSem.totalBrutoPeriodo ?? (frSem.total + (frSem.totalJaPago || 0));
+                            // Transporte: bruto calculado do período
+                            totalTransp    += frSem.totalTransporte || 0;
+                            // Caixinha
+                            totalCaixinha  += frSem.caixinhaTotal || 0;
+                            // Desconto
+                            totalDesconto  += frSem.saidasDesconto || 0;
+                            // Líquido: pendente + transporte saldo + caixinha - desconto
+                            totalLiquidoMes += frSem.totalLiquido || 0;
                           }
                         }
-                        if (totalDobras === 0) return null;
+                        if (totalDobras === 0 && totalBruto === 0) return null;
+                        const corLiq = totalLiquidoMes < 0 ? '#c62828' : '#1b5e20';
                         return (
                           <tr key={fr.id} style={{ backgroundColor: fi % 2 === 0 ? '#fafafa' : 'white' }}>
                             <td style={{ ...s.td, fontWeight: 'bold' }}>{fr.nome}</td>
-                            <td style={{ ...s.td, fontSize: '11px' }}>{fr.chavePix || '-'}</td>
+                            <td style={{ ...s.td, fontSize: '11px', color: '#555' }}>{fr.chavePix || '-'}</td>
                             <td style={{ ...s.td, textAlign: 'center', fontWeight: 'bold', color: '#2e7d32' }}>{totalDobras}</td>
-                            <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#c2185b', fontSize: '13px' }}>
-                              {fmtMoeda(totalMesLiquido)}
-                              {totalDescontoMes > 0 && <div style={{ fontSize: '10px', color: '#c62828', fontWeight: 'normal' }}>(desc. {fmtMoeda(totalDescontoMes)})</div>}
-                            </td>
+                            <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#c62828' }}>{fmtMoeda(totalBruto)}</td>
+                            <td style={{ ...s.td, textAlign: 'right', color: '#1565c0' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '-'}</td>
+                            <td style={{ ...s.td, textAlign: 'right', color: '#e65100' }}>{totalCaixinha > 0 ? fmtMoeda(totalCaixinha) : '-'}</td>
+                            <td style={{ ...s.td, textAlign: 'right', color: '#c62828' }}>{totalDesconto > 0 ? `-${fmtMoeda(totalDesconto)}` : '-'}</td>
+                            <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: corLiq, fontSize: '13px' }}>{fmtMoeda(totalLiquidoMes)}</td>
                           </tr>
                         );
                       }).filter(Boolean)}
@@ -4601,10 +4623,23 @@ export default function FolhaPagamento() {
                     <tfoot>
                       <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
                         <td style={{ padding: '8px' }} colSpan={3}>TOTAL FREELANCERS DO MÊS</td>
-                        <td style={{ padding: '8px', textAlign: 'right', fontSize: '14px' }}>{fmtMoeda(totalFreelancerMes)}</td>
+                        <td style={{ padding: '8px', textAlign: 'right', color: '#ffcdd2' }}>
+                          {fmtMoeda(fechamentosFreelancer.reduce((s, f) => s + f.freelancers.reduce((ss, fr) => ss + (fr.totalBrutoPeriodo ?? (fr.total + (fr.totalJaPago||0))), 0), 0))}
+                        </td>
+                        <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9' }}>
+                          {fmtMoeda(fechamentosFreelancer.reduce((s, f) => s + f.freelancers.reduce((ss, fr) => ss + (fr.totalTransporte||0), 0), 0))}
+                        </td>
+                        <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80' }}>
+                          {fmtMoeda(fechamentosFreelancer.reduce((s, f) => s + f.freelancers.reduce((ss, fr) => ss + (fr.caixinhaTotal||0), 0), 0))}
+                        </td>
+                        <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
+                          -{fmtMoeda(fechamentosFreelancer.reduce((s, f) => s + f.freelancers.reduce((ss, fr) => ss + (fr.saidasDesconto||0), 0), 0))}
+                        </td>
+                        <td style={{ padding: '8px', textAlign: 'right', fontSize: '14px', color: '#a5d6a7' }}>{fmtMoeda(totalFreelancerMes)}</td>
                       </tr>
                     </tfoot>
                   </table>
+                  </div>
                 </div>
               </>
             )}
