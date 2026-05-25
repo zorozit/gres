@@ -28,6 +28,8 @@ export const Dashboard: React.FC = () => {
   const [caixaData,    setCaixaData]    = useState<any[]>([]);
   const [colaboradores,setColaboradores]= useState<any[]>([]);
   const [escalas,      setEscalas]      = useState<any[]>([]);
+  const [motoboys,     setMotoboys]     = useState<any[]>([]);
+  const [saidasMes,    setSaidasMes]    = useState<any[]>([]);  // saídas do mês (para variável motoboy)
 
   const unitId = activeUnit?.id || '';
 
@@ -51,14 +53,18 @@ export const Dashboard: React.FC = () => {
       const h = { Authorization: `Bearer ${token()}` };
       // Para escalas, pega o mês de dataInicio
       const mesAno = dataInicio.substring(0, 7);
-      const [rC, rCol, rEsc] = await Promise.all([
+      const [rC, rCol, rEsc, rMoto, rSaidas] = await Promise.all([
         fetch(`${apiUrl}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: h }).catch(() => null),
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: h }).catch(() => null),
+        fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: h }).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
       ]);
-      if (rC?.ok)   { const d = await rC.json();   setCaixaData   (Array.isArray(d) ? d : []); }
-      if (rCol?.ok) { const d = await rCol.json(); setColaboradores(Array.isArray(d) ? d : []); }
-      if (rEsc?.ok) { const d = await rEsc.json(); setEscalas     (Array.isArray(d) ? d : []); }
+      if (rC?.ok)      { const d = await rC.json();      setCaixaData   (Array.isArray(d) ? d : []); }
+      if (rCol?.ok)    { const d = await rCol.json();    setColaboradores(Array.isArray(d) ? d : []); }
+      if (rEsc?.ok)    { const d = await rEsc.json();    setEscalas     (Array.isArray(d) ? d : []); }
+      if (rMoto?.ok)   { const d = await rMoto.json();   setMotoboys    (Array.isArray(d) ? d : []); }
+      if (rSaidas?.ok) { const d = await rSaidas.json(); setSaidasMes   (Array.isArray(d) ? d : []); }
     } catch (e) { console.error(e); }
     finally { setLoadingChart(false); }
   };
@@ -73,31 +79,73 @@ export const Dashboard: React.FC = () => {
 
   // Calcula custo de mão de obra por dia e por turno
   const calcCustoPorTurno = (data: string, turno: 'Dia' | 'Noite') => {
-    let custoCLT = 0, custoFree = 0;
+    let custoCLT = 0, custoFree = 0, custoMotoboy = 0;
+
+    // Conjunto de IDs de motoboys para excluir da lista de colaboradores CLT
+    const motoboyIds = new Set(motoboys.map((m: any) => m.id));
+    const motoboyCpfs = new Set(motoboys.filter((m: any) => m.cpf).map((m: any) => m.cpf));
+
+    // ── Freelancers e CLT (excluindo motoboys) ────────────────────────────
     for (const colab of colaboradores) {
       if (colab.ativo === false) continue;
+      if (motoboyIds.has(colab.id)) continue;
+      if (colab.cpf && motoboyCpfs.has(colab.cpf)) continue;
+      if ((colab.cargo || '').toLowerCase() === 'motoboy') continue;
+
       const isFree = colab.tipoContrato === 'Freelancer';
-      // Escalas deste colaborador neste dia neste turno
-      const escsColabDia = escalas.filter(e =>
+      const escsColabDia = escalas.filter((e: any) =>
         e.colaboradorId === colab.id &&
         e.data === data &&
         (e.turno === turno || e.turno === 'DiaNoite')
       );
       if (escsColabDia.length === 0) continue;
-      const qtd = escsColabDia.length; // normalmente 1
-      const transp = R(colab.valorTransporte) * qtd;
+      const temDN = escsColabDia.some((e: any) => e.turno === 'DiaNoite');
+      const fator = temDN ? 0.5 : 1;
+      const transp = R(colab.valorTransporte);
+
       if (isFree) {
-        const vd = R(colab.valorDia) || 120;
-        // DiaNoite conta como 0.5 para cada turno
-        const fator = escsColabDia.some(e => e.turno === 'DiaNoite') ? 0.5 : 1;
-        custoFree += vd * fator * qtd + transp;
+        // Freelancer: valorDia × fator + transporte (se turno puro ou metade de DN)
+        const vDobra = R(colab.valorDia) || 120;
+        custoFree += vDobra * fator + transp;
       } else {
-        const valorTurno = turno === 'Dia' ? R(colab.valorDia) : R(colab.valorNoite);
-        const fator = escsColabDia.some(e => e.turno === 'DiaNoite') ? 0.5 : 1;
-        custoCLT += (valorTurno * fator + R(colab.salario) / (4.3 * 2)) * qtd + transp;
+        // CLT: salario/30 (custo diário do sal. base) + valor do turno (dobra) + transporte
+        const salDia   = parseFloat((R(colab.salario) / 30).toFixed(2));
+        const vTurno   = turno === 'Dia' ? R(colab.valorDia) : R(colab.valorNoite);
+        custoCLT += salDia + vTurno * fator + transp;
       }
     }
-    return { custoCLT, custoFree, custo: custoCLT + custoFree };
+
+    // ── Motoboys ─────────────────────────────────────────────────────────
+    // Motoboys não têm turno na escala da mesma forma — custo é diário fixo
+    // Só soma no turno 'Dia' para não duplicar
+    if (turno === 'Dia') {
+      for (const m of motoboys) {
+        if (m.ativo === false) continue;
+        // Verifica se o motoboy tem alguma escala neste dia (qualquer turno)
+        const escsMoto = escalas.filter((e: any) =>
+          e.colaboradorId === m.id && e.data === data
+        );
+        if (escsMoto.length === 0) continue;
+
+        // Custo fixo do dia: salario/30 + transporte
+        const salDia  = parseFloat((R(m.salario || m.salarioBase) / 30).toFixed(2));
+        const transp  = R(m.valorTransporte);
+
+        // Custo variável do dia: entregas × valorEntrega + caixinha
+        // Busca saídas deste motoboy neste dia para obter entregas e caixinha reais
+        const saidasMotoHoje = saidasMes.filter((s: any) =>
+          s.colaboradorId === m.id && (s.data || '').startsWith(data)
+        );
+        const entregasDia  = saidasMotoHoje.reduce((sum: number, s: any) => sum + R(s.viagens), 0);
+        const caixinhaDia  = saidasMotoHoje.reduce((sum: number, s: any) => sum + R(s.caixinha), 0);
+        const vEntrega     = R(m.valorEntrega);
+        const custoVar     = entregasDia > 0 ? entregasDia * vEntrega + caixinhaDia : 0;
+
+        custoMotoboy += salDia + transp + custoVar;
+      }
+    }
+
+    return { custoCLT, custoFree, custoMotoboy, custo: custoCLT + custoFree + custoMotoboy };
   };
 
   // Agrupa por dia
@@ -137,7 +185,7 @@ export const Dashboard: React.FC = () => {
         func_noite: funcNoite,
       };
     });
-  }, [dataInicio, dataFim, caixaData, colaboradores, escalas]);
+  }, [dataInicio, dataFim, caixaData, colaboradores, escalas, motoboys, saidasMes]);
 
   /* ─── Render ── */
   return (
