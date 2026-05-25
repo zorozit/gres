@@ -350,6 +350,8 @@ export default function FolhaPagamento() {
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
   // Saídas do período para cruzamento com motoboys
   const [saidasPeriodo, setSaidasPeriodo] = useState<any[]>([]);
+  // Saídas do mês completo (para cálculo de adiantamento transporte quando período custom ativo)
+  const [saidasMesCompleto, setSaidasMesCompleto] = useState<any[]>([]);
   // Ref para acesso síncrono ao saidasPeriodo dentro do useMemo do modal (evita closure stale)
   const saidasPeriodoRef = React.useRef<any[]>([]);
   useEffect(() => { saidasPeriodoRef.current = saidasPeriodo; }, [saidasPeriodo]);
@@ -458,7 +460,12 @@ export default function FolhaPagamento() {
       const escalaFetches = mesesAlvo.map(mm =>
         fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
       );
-      const [rC, foRs, esRs, rS, rSPend, rSHist] = await Promise.all([
+      // Quando período custom ativo, buscar também o mês completo para adiantamentos de transporte
+      const rSMes = periodoCustomAtivo
+        ? fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalMesAnoInicio}&dataFim=${mesalMesAnoFim}`, auth).catch(() => null)
+        : null;
+
+      const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
         Promise.all(folhaFetches),
         Promise.all(escalaFetches),
@@ -467,6 +474,8 @@ export default function FolhaPagamento() {
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(() => null),
         // Histórico longo para saldo de adiantamento especial
         fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, auth).catch(() => null),
+        // Saídas do mês completo (usado para adiantamento transporte quando período custom ativo)
+        rSMes || Promise.resolve(null),
       ]);
 
 
@@ -562,6 +571,15 @@ export default function FolhaPagamento() {
         setSaidasPeriodo(Array.isArray(dS) ? dS : []);
       } else {
         setSaidasPeriodo([]);
+      }
+
+      // Saídas do mês completo: se período custom ativo usa rSMesResult, senão = saidasPeriodo
+      if (rSMesResult?.ok) {
+        const dSM = await rSMesResult.json();
+        setSaidasMesCompleto(Array.isArray(dSM) ? dSM : []);
+      } else {
+        // Período normal = rS já cobre o mês inteiro
+        setSaidasMesCompleto([]);
       }
 
       // Carregar saídas pendentes de meses anteriores
@@ -1057,7 +1075,9 @@ export default function FolhaPagamento() {
         // - transporteSaldo desta semana = max(0, totalTransporte - saldo disponível)
 
         // 1. Total adiantado no mês todo
-        const saidasTransporteMes = saidasPeriodo.filter((s: any) =>
+        // Usa saidasMesCompleto quando período custom está ativo (saidasPeriodo seria só a semana)
+        const fonteSaidasTransp = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+        const saidasTransporteMes = fonteSaidasTransp.filter((s: any) =>
           s.colaboradorId === f.id &&
           (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
         );
@@ -1220,7 +1240,7 @@ export default function FolhaPagamento() {
   // Recalcular fechamentos quando editFechamento, saidas ou escalas mudam
   useEffect(() => {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
-  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasPendentesAnt, saldosEspeciais, controlesMap, motoboys]);
+  }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasMesCompleto, saidasPendentesAnt, saldosEspeciais, controlesMap, motoboys]);
 
   /* ── Toggle pago CLT ─────────────────────────────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
