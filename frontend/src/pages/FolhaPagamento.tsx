@@ -188,7 +188,8 @@ interface FechamentoSemanalFreelancer {
     diasCodigo: string;             // Ex: "Ter D | Qui DN | Sex DN | Sáb D"
     pago?: boolean;
   }[];
-  totalSemana: number;
+  totalSemana: number;                // bruto do período completo (pendente + já pago)
+  totalSemanaPendente?: number;        // só o que resta pagar
   totalCaixinha: number;               // soma das caixinhas a pagar da semana
   totalTransporte: number;             // saldo a pagar (calculado - adiantado)
   totalTransporteCalculado?: number;   // transporte bruto pelos dias trabalhados
@@ -1174,12 +1175,18 @@ export default function FolhaPagamento() {
       const combustivel = parseFloat(ef.combustivel || '0') || 0;
       const extra = parseFloat(ef.extra || '0') || 0;
       const desconto = parseFloat(ef.desconto || '0') || 0;
-      const totalSemana = frList.reduce((s, fr) => s + fr.total, 0);
-      const totalTransporteSemana = frList.reduce((s, fr) => s + (fr.totalTransporte || 0), 0);
+      // totalSemana: soma pendentes + já pagos (totalBrutoPeriodo) para o subtotal refletir o período completo
+      const totalSemana          = frList.reduce((s, fr) => s + (fr.totalBrutoPeriodo ?? fr.total), 0);
+      // totalSemanaPendente: só o que ainda falta pagar (usado no Líquido a pagar)
+      const totalSemanaPendente  = frList.reduce((s, fr) => s + fr.total, 0);
+      // totalTransporteSemana: transporte bruto total do período (inclui já pagos)
+      const totalTransporteSemana    = frList.reduce((s, fr) => s + (fr.totalTransporte || 0), 0);
+      // Para o subtotal exibir o transporte do período completo:
+      // diasTrabalhados × valorTransporte de cada um (já é o que totalTransporte representa)
       const totalTransporteAdiantado = frList.reduce((s, fr) => s + (fr.transporteAdiantado || 0), 0);
-      const totalTransporteSaldo = frList.reduce((s, fr) => s + (fr.transporteSaldo || 0), 0);
-      const totalSaidasDesconto = frList.reduce((s, fr) => s + (fr.saidasDesconto || 0), 0);
-      const totalCaixinhaSemana = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
+      const totalTransporteSaldo     = frList.reduce((s, fr) => s + (fr.transporteSaldo || 0), 0);
+      const totalSaidasDesconto      = frList.reduce((s, fr) => s + (fr.saidasDesconto || 0), 0);
+      const totalCaixinhaSemana      = frList.reduce((s, fr) => s + (fr.caixinhaTotal || 0), 0);
 
       return {
         semanaLabel: periodoCustomAtivo
@@ -1190,16 +1197,17 @@ export default function FolhaPagamento() {
         dataInicioBase: isoInicio, // início efetivo (já clipado se período global ativo)
         dataFimEfetivo: isoFim,    // fim efetivo (já clipado se período global ativo)
         freelancers: frList,
-        totalSemana,
-        totalCaixinha: totalCaixinhaSemana,           // caixinha total a pagar na semana
-        totalTransporte: totalTransporteSaldo,         // só o saldo (calculado - adiantado)
+        totalSemana,               // bruto do período completo (pendente + já pago) — subtotal
+        totalSemanaPendente,       // só o que resta pagar — Líquido a pagar
+        totalCaixinha: totalCaixinhaSemana,
+        totalTransporte: totalTransporteSaldo,
         totalTransporteCalculado: totalTransporteSemana,
         totalTransporteAdiantado,
         totalCombustivel: combustivel,
         totalExtra: extra,
         totalDesconto: desconto,
         totalSaidasDesconto,
-        totalLiquido: totalSemana + totalTransporteSaldo + totalCaixinhaSemana - totalSaidasDesconto + extra - desconto,
+        totalLiquido: totalSemanaPendente + totalTransporteSaldo + totalCaixinhaSemana - totalSaidasDesconto + extra - desconto,
         observacao: ef.obs,
       };
     });
@@ -4472,11 +4480,11 @@ export default function FolhaPagamento() {
                                 {fmtMoeda(fech.totalSemana)}
                               </td>
                               <td style={{ padding: '8px', textAlign: 'right', color: '#90caf9', fontSize: '11px' }}>
-                                {fech.totalTransporte > 0
-                                  ? <span title={`Calculado: ${fmtMoeda(fech.totalTransporteCalculado||0)}${(fech.totalTransporteAdiantado||0) > 0 ? ` | Adiantado: -${fmtMoeda(fech.totalTransporteAdiantado||0)}` : ''}`}>
-                                      +{fmtMoeda(fech.totalTransporte)}{(fech.totalTransporteAdiantado||0) > 0 ? ' *' : ''}
+                                {(fech.totalTransporteCalculado||0) > 0
+                                  ? <span title={`Total período: ${fmtMoeda(fech.totalTransporteCalculado||0)} | Adiantado: ${fmtMoeda(fech.totalTransporteAdiantado||0)} | Saldo a pagar: ${fmtMoeda(fech.totalTransporte)}`}>
+                                      {fmtMoeda(fech.totalTransporteCalculado||0)}{(fech.totalTransporteAdiantado||0) > 0 ? ' *' : ''}
                                     </span>
-                                  : (fech.totalTransporteCalculado||0) > 0 ? <span style={{ color: '#a5d6a7' }}>✔ quitado</span> : '-'}
+                                  : '-'}
                               </td>
                               {/* 🪙 Caixinha total da semana (crédito) */}
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ffcc80', fontSize: '11px' }}>
@@ -4485,8 +4493,9 @@ export default function FolhaPagamento() {
                               <td style={{ padding: '8px', textAlign: 'right', color: '#ef9a9a' }}>
                                 {fech.totalSaidasDesconto > 0 ? `-${fmtMoeda(fech.totalSaidasDesconto)}` : '-'}
                               </td>
-                              <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7', fontWeight: 'bold' }}>
-                                {fmtMoeda(fech.totalSemana + fech.totalTransporte + (fech.totalCaixinha || 0) - fech.totalSaidasDesconto)}
+                              <td style={{ padding: '8px', textAlign: 'right', fontSize: '13px', color: '#a5d6a7', fontWeight: 'bold' }}
+                                title={`A pagar: ${fmtMoeda(fech.totalLiquido)} | Total período: ${fmtMoeda(fech.totalSemana + fech.totalTransporte + (fech.totalCaixinha || 0) - fech.totalSaidasDesconto)}`}>
+                                {fmtMoeda(fech.totalLiquido)}
                               </td>
                               <td colSpan={2} style={{ padding: '8px' }} />
                             </tr>
