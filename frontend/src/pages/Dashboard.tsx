@@ -100,11 +100,14 @@ export const Dashboard: React.FC = () => {
 
     for (const reg of folhasDB) {
       // Granulares freelancer (1 por turno/dia)
+      // Usa reg.data (dia do serviço) para mapear o custo no dia correto do gráfico.
+      // dataPagamento é quando o dinheiro saiu (pode ser domingo, fora do range).
       if (reg.tipo === 'freelancer-dia' && reg.pago) {
-        const dia = reg.dataPagamento || reg.data || '';
+        const dia = reg.data || reg.dataPagamento || '';
         if (!dia || dia < dataInicio || dia > dataFim) continue;
         const entry = map.get(dia) || { free: 0, clt: 0, moto: 0 };
-        const val = R(reg.totalFinal) || R(reg.valorBruto) || R(reg.totalLiquido) || 0;
+        // 'valor' = valor do turno deste dia; totalFinal/valorBruto são legados
+        const val = R(reg.valor) || R(reg.totalFinal) || R(reg.valorBruto) || 0;
         if (motoboyIds.has(reg.colaboradorId)) entry.moto += val;
         else entry.free += val;
         map.set(dia, entry);
