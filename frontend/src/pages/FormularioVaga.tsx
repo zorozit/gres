@@ -222,18 +222,10 @@ export default function FormularioVaga() {
             </div>
           )}
 
-          {/* WhatsApp */}
-          {(vagaPrincipal as any)?.whatsapp && (
-            <div style={{ ...styles.headerBlock, backgroundColor: '#e8f5e9', borderLeft: '3px solid #27ae60' }}>
-              <strong>✅ Próximo passo:</strong> após enviar o formulário, entre em contato pelo WhatsApp&nbsp;
-              <a
-                href={`https://wa.me/55${(vagaPrincipal as any).whatsapp.replace(/\D/g,'')}`}
-                target="_blank" rel="noopener noreferrer"
-                style={{ color: '#27ae60', fontWeight: 700 }}
-              >
-                {(vagaPrincipal as any).whatsapp}
-              </a>
-              &nbsp;com uma breve apresentação: vaga desejada + experiência + disponibilidade + bairro/cidade.
+          {/* Próximo passo — texto livre editado pelo usuário */}
+          {(vagaPrincipal as any)?.proximoPasso && (
+            <div style={{ ...styles.headerBlock, backgroundColor: '#e8f5e9', borderLeft: '3px solid #27ae60', whiteSpace: 'pre-line' }}>
+              {(vagaPrincipal as any).proximoPasso}
             </div>
           )}
         </div>

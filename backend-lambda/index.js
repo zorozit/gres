@@ -2459,7 +2459,7 @@ exports.handler = async (event) => {
           endereco: body.endereco || '',
           horarios: body.horarios || '',
           beneficios: body.beneficios || '',
-          whatsapp: body.whatsapp || '',
+          proximoPasso: body.proximoPasso || '',
           status: 'aberta', createdAt: now, updatedAt: now
         };
         await dynamodb.put({ TableName: 'gres-prod-vagas', Item: item }).promise();

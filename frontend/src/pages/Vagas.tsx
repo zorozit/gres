@@ -22,7 +22,7 @@ interface Vaga {
   endereco?: string;
   horarios?: string;
   beneficios?: string;
-  whatsapp?: string;
+  proximoPasso?: string;
 }
 
 interface Candidato {
@@ -108,7 +108,7 @@ export default function Vagas() {
   const [loadingVagas, setLoadingVagas] = useState(false);
   const [showModalVaga, setShowModalVaga] = useState(false);
   const [vagaEditando, setVagaEditando] = useState<Vaga | null>(null); // null = criar, vaga = editar
-  const emptyVagaForm = { titulo: '', tipo: 'Ambos', descricao: '', nomeRestaurante: '', endereco: '', horarios: '', beneficios: '', whatsapp: '' };
+  const emptyVagaForm = { titulo: '', tipo: 'Ambos', descricao: '', nomeRestaurante: '', endereco: '', horarios: '', beneficios: '', proximoPasso: '' };
   const [novaVaga, setNovaVaga] = useState<typeof emptyVagaForm>(emptyVagaForm);
   const [salvandoVaga, setSalvandoVaga] = useState(false);
 
@@ -176,7 +176,7 @@ export default function Vagas() {
       endereco: v.endereco || '',
       horarios: v.horarios || '',
       beneficios: v.beneficios || '',
-      whatsapp: v.whatsapp || '',
+      proximoPasso: v.proximoPasso || '',
     });
     setShowModalVaga(true);
   };
@@ -494,8 +494,13 @@ export default function Vagas() {
                 <textarea style={{ ...styles.input, minHeight: '72px', resize: 'vertical' }} value={novaVaga.beneficios} onChange={e => setNovaVaga(p => ({ ...p, beneficios: e.target.value }))} placeholder={"Ex: CLT: salário + VT + VR + seguro de vida\nFreelancer: a partir de R$ 120/dia + transporte"} />
               </ModalField>
 
-              <ModalField label="WhatsApp para contato (opcional)">
-                <input style={styles.input} value={novaVaga.whatsapp} onChange={e => setNovaVaga(p => ({ ...p, whatsapp: e.target.value }))} placeholder="Ex: 11 97100-4268" />
+              <ModalField label="✅ Próximo passo / instruções finais (opcional)">
+                <textarea
+                  style={{ ...styles.input, minHeight: '72px', resize: 'vertical' }}
+                  value={novaVaga.proximoPasso}
+                  onChange={e => setNovaVaga(p => ({ ...p, proximoPasso: e.target.value }))}
+                  placeholder={'Ex: ✅ Próximo passo: após enviar o formulário, envie seu currículo e uma breve apresentação pelo WhatsApp: 11 97100-4268. Se não tiver currículo, mande uma mensagem com: vaga desejada + experiência + disponibilidade + bairro/cidade.'}
+                />
               </ModalField>
 
               <ModalField label="Descrição interna (opcional)">
