@@ -22,6 +22,7 @@ const TODOS_MODULOS = [
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões' },
   { id: 'auditoria',             icon: '🔒', title: 'Auditoria' },
   { id: 'feriados',              icon: '🎉', title: 'Feriados' },
+  { id: 'vagas',                 icon: '📢', title: 'Recrutamento de Vagas' },
 ];
 
 // ─── Perfis do sistema ───────────────────────────────────────────────────────
@@ -32,6 +33,8 @@ const PERFIS = [
     desc: 'Acesso intermediário — operações + financeiro do restaurante' },
   { key: 'admin',    label: 'Administrador', icon: '👑', color: '#7b1fa2', bg: '#f3e5f5',
     desc: 'Acesso completo — gestão total da plataforma' },
+  { key: 'rh',       label: 'RH',            icon: '🧑‍💼', color: '#e67e22', bg: '#fff3e0',
+    desc: 'Acesso exclusivo ao módulo de recrutamento e triagem de vagas' },
 ];
 
 // Tudo bloqueado por padrão — admin configura explicitamente, sem fallbacks
@@ -39,6 +42,7 @@ const DEFAULT_PERMISSOES: Record<string, Record<string, boolean>> = {
   operador: Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
   gerente:  Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
   admin:    Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
+  rh:       Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
 };
 
 // ─── Componente principal ────────────────────────────────────────────────────
