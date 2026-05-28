@@ -2315,28 +2315,51 @@ exports.handler = async (event) => {
       }
     }
 
-// ─── GET /vagas-publicas — vagas abertas para formulário público (sem auth) ───
+// ─── GET /vagas-publicas — busca vaga pelo ID (sem auth) ───
+    // Suporta: /vagas-publicas?vagaId=xxx (link por vaga) OU /vagas-publicas?unitId=xxx (link por unidade legado)
     if (rawPath === '/vagas-publicas' && httpMethod === 'GET') {
-      const { unitId } = queryParams;
-      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      const { unitId, vagaId } = queryParams;
       try {
-        // Buscar nome da unidade
-        let nomeUnidade = '';
-        try {
-          const unidadeRes = await dynamodb.get({
-            TableName: 'gres-prod-unidades',
-            Key: { id: unitId }
+        // Modo 1: link por vaga individual
+        if (vagaId) {
+          const vagaRes = await dynamodb.get({
+            TableName: 'gres-prod-vagas',
+            Key: { id: vagaId }
           }).promise();
-          nomeUnidade = unidadeRes.Item?.nome || '';
-        } catch (_) {}
-
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-vagas',
-          FilterExpression: 'unitId = :uid AND #s = :status',
-          ExpressionAttributeNames: { '#s': 'status' },
-          ExpressionAttributeValues: { ':uid': unitId, ':status': 'aberta' }
-        }).promise();
-        return response(200, { vagas: result.Items || [], nomeUnidade });
+          const vaga = vagaRes.Item;
+          if (!vaga || vaga.status !== 'aberta') {
+            return response(200, { vaga: null, nomeUnidade: '', encerrada: true });
+          }
+          let nomeUnidade = '';
+          try {
+            const unidadeRes = await dynamodb.get({ TableName: 'gres-prod-unidades', Key: { id: vaga.unitId } }).promise();
+            nomeUnidade = unidadeRes.Item?.nome || '';
+          } catch (_) {}
+          // Buscar todas as vagas abertas da unidade para o multiselect
+          const vagasRes = await dynamodb.scan({
+            TableName: 'gres-prod-vagas',
+            FilterExpression: 'unitId = :uid AND #s = :status',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ExpressionAttributeValues: { ':uid': vaga.unitId, ':status': 'aberta' }
+          }).promise();
+          return response(200, { vaga, vagas: vagasRes.Items || [], nomeUnidade, encerrada: false });
+        }
+        // Modo 2: link por unitId (legado)
+        if (unitId) {
+          let nomeUnidade = '';
+          try {
+            const unidadeRes = await dynamodb.get({ TableName: 'gres-prod-unidades', Key: { id: unitId } }).promise();
+            nomeUnidade = unidadeRes.Item?.nome || '';
+          } catch (_) {}
+          const result = await dynamodb.scan({
+            TableName: 'gres-prod-vagas',
+            FilterExpression: 'unitId = :uid AND #s = :status',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ExpressionAttributeValues: { ':uid': unitId, ':status': 'aberta' }
+          }).promise();
+          return response(200, { vagas: result.Items || [], nomeUnidade, encerrada: false });
+        }
+        return response(400, { error: 'vagaId ou unitId obrigatório' });
       } catch (err) {
         return response(500, { error: 'Erro ao buscar vagas: ' + err.message });
       }

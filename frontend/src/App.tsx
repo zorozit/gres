@@ -92,8 +92,8 @@ function App() {
             <Route path="/modulos/vagas"
               element={<ProtectedRoute moduloId="vagas"><Vagas /></ProtectedRoute>} />
 
-            {/* Formulário público de vagas — sem autenticação */}
-            <Route path="/vaga/:unitId" element={<FormularioVaga />} />
+            {/* Formulário público de vagas — sem autenticação, link por vagaId */}
+            <Route path="/vaga/:vagaId" element={<FormularioVaga />} />
 
             <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>

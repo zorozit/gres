@@ -3,7 +3,7 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
-const FORM_BASE = 'https://www.gires.com.br/vaga';
+const FORM_BASE = 'https://www.gires.com.br/vaga';  // /vaga/:vagaId
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 interface Vaga {
@@ -179,10 +179,10 @@ export default function Vagas() {
   };
 
   /* ── Copiar link do formulário ── */
-  const copiarLink = (uid: string) => {
-    const link = `${FORM_BASE}/${uid}`;
+  const copiarLink = (vagaId: string) => {
+    const link = `${FORM_BASE}/${vagaId}`;
     navigator.clipboard.writeText(link).then(() => {
-      setCopiado(uid);
+      setCopiado(vagaId);
       setTimeout(() => setCopiado(''), 2000);
     });
   };
@@ -247,16 +247,7 @@ export default function Vagas() {
       {/* Header */}
       <div style={styles.pageHeader}>
         <h2 style={styles.pageTitle}>📢 Recrutamento de Vagas</h2>
-        <p style={styles.pageSubtitle}>
-          Link do formulário público:&nbsp;
-          <a href={`${FORM_BASE}/${unitId}`} target="_blank" rel="noopener noreferrer" style={styles.linkText}>
-            {FORM_BASE}/{unitId}
-          </a>
-          &nbsp;
-          <button style={styles.copyBtn} onClick={() => copiarLink(unitId)}>
-            {copiado === unitId ? '✅ Copiado!' : '📋 Copiar'}
-          </button>
-        </p>
+        <p style={styles.pageSubtitle}>Crie uma vaga e copie o link gerado para divulgar nas redes e grupos.</p>
       </div>
 
       {/* Abas */}
@@ -294,8 +285,8 @@ export default function Vagas() {
                     <span>· 👤 {v.totalCandidatos ?? 0} candidatos</span>
                   </div>
                   <div style={styles.vagaActions}>
-                    <button style={styles.smallBtn} onClick={() => copiarLink(unitId)}>
-                      {copiado === unitId ? '✅ Copiado!' : '📋 Copiar link'}
+                    <button style={styles.smallBtn} onClick={() => copiarLink(v.id)}>
+                      {copiado === v.id ? '✅ Copiado!' : '📋 Copiar link'}
                     </button>
                     <button
                       style={{ ...styles.smallBtn, color: v.status === 'aberta' ? '#c62828' : '#2e7d32' }}

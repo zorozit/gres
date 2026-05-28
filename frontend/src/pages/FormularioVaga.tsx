@@ -13,6 +13,7 @@ interface Vaga {
   id: string;
   titulo: string;
   tipo: string;
+  unitId: string;
 }
 
 const initialForm = {
@@ -39,26 +40,47 @@ const initialForm = {
 };
 
 export default function FormularioVaga() {
-  const { unitId } = useParams<{ unitId: string }>();
+  // Suporta tanto /vaga/:vagaId quanto /vaga/:unitId (legado)
+  const { vagaId } = useParams<{ vagaId: string }>();
   const [vagas, setVagas] = useState<Vaga[]>([]);
+  const [vagaPrincipal, setVagaPrincipal] = useState<Vaga | null>(null);
   const [nomeUnidade, setNomeUnidade] = useState('');
+  const [unitId, setUnitId] = useState('');
   const [form, setForm] = useState(initialForm);
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
   const [erro, setErro] = useState('');
   const [loading, setLoading] = useState(true);
+  const [encerrada, setEncerrada] = useState(false);
 
   useEffect(() => {
-    if (!unitId) return;
-    fetch(`${API_URL}/vagas-publicas?unitId=${unitId}`)
+    if (!vagaId) return;
+    // Tenta primeiro como vagaId, depois como unitId (legado)
+    fetch(`${API_URL}/vagas-publicas?vagaId=${vagaId}`)
       .then(r => r.json())
       .then(d => {
-        setVagas(d.vagas || []);
-        setNomeUnidade(d.nomeUnidade || '');
+        if (d.encerrada) {
+          setEncerrada(true);
+          return;
+        }
+        if (d.vaga) {
+          // Modo vagaId
+          setVagaPrincipal(d.vaga);
+          setVagas(d.vagas || [d.vaga]);
+          setNomeUnidade(d.nomeUnidade || '');
+          setUnitId(d.vaga.unitId);
+          // Pré-selecionar a vaga do link
+          setForm(prev => ({ ...prev, vagasInteresse: [d.vaga.titulo] }));
+        } else if (d.vagas) {
+          // Modo unitId legado
+          setVagas(d.vagas || []);
+          setNomeUnidade(d.nomeUnidade || '');
+          setUnitId(vagaId);
+        }
       })
-      .catch(() => setErro('Erro ao carregar vagas. Tente novamente.'))
+      .catch(() => setErro('Erro ao carregar o formulário. Tente novamente.'))
       .finally(() => setLoading(false));
-  }, [unitId]);
+  }, [vagaId]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -78,7 +100,6 @@ export default function FormularioVaga() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro('');
-
     if (!form.nome || !form.email || !form.celular) {
       setErro('Preencha os campos obrigatórios: Nome, E-mail e Celular.');
       return;
@@ -87,7 +108,6 @@ export default function FormularioVaga() {
       setErro('Selecione ao menos uma vaga de interesse.');
       return;
     }
-
     setEnviando(true);
     try {
       const res = await fetch(`${API_URL}/candidatos-publico`, {
@@ -96,6 +116,7 @@ export default function FormularioVaga() {
         body: JSON.stringify({
           ...form,
           unitId,
+          vagaId: vagaPrincipal?.id || null,
           gastoTransporte: Number(form.gastoTransporte) || 0,
           idade: Number(form.idade) || 0,
         }),
@@ -116,7 +137,26 @@ export default function FormularioVaga() {
   if (loading) {
     return (
       <div style={styles.container}>
-        <div style={styles.loading}>Carregando formulário...</div>
+        <div style={styles.loadingBox}>
+          <div style={styles.spinner} />
+          <p style={{ color: '#888', marginTop: '16px' }}>Carregando formulário...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (encerrada) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <div style={{ fontSize: '56px', marginBottom: '16px' }}>🔒</div>
+            <h2 style={{ color: '#555', fontWeight: 700 }}>Vaga encerrada</h2>
+            <p style={{ color: '#888', fontSize: '15px' }}>
+              Esta vaga não está mais disponível.<br />Obrigado pelo interesse!
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -125,15 +165,17 @@ export default function FormularioVaga() {
     return (
       <div style={styles.container}>
         <div style={styles.card}>
-          <div style={styles.successIcon}>✅</div>
-          <h2 style={styles.successTitle}>Candidatura enviada com sucesso!</h2>
-          <p style={styles.successText}>
-            Obrigado, <strong>{form.nome}</strong>! Recebemos sua candidatura
-            {nomeUnidade ? ` para o ${nomeUnidade}` : ''}.
-          </p>
-          <p style={styles.successText}>
-            Entraremos em contato em breve pelo celular ou e-mail informado.
-          </p>
+          <div style={{ textAlign: 'center', padding: '32px 0' }}>
+            <div style={{ fontSize: '64px', marginBottom: '16px' }}>✅</div>
+            <h2 style={{ color: '#27ae60', fontWeight: 700, marginBottom: '10px' }}>
+              Candidatura enviada!
+            </h2>
+            <p style={{ color: '#555', fontSize: '15px', lineHeight: '1.7' }}>
+              Obrigado, <strong>{form.nome}</strong>!<br />
+              {nomeUnidade ? `Recebemos sua candidatura para o ${nomeUnidade}.` : 'Recebemos sua candidatura.'}<br />
+              Entraremos em contato em breve pelo celular ou e-mail informado.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -142,11 +184,13 @@ export default function FormularioVaga() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
+        {/* Header */}
         <div style={styles.header}>
+          {nomeUnidade && <p style={styles.unidade}>{nomeUnidade}</p>}
           <h1 style={styles.title}>
-            {nomeUnidade ? `${nomeUnidade}` : 'Formulário de Candidatura'}
+            {vagaPrincipal ? `Vaga: ${vagaPrincipal.titulo}` : 'Formulário de Candidatura'}
           </h1>
-          <p style={styles.subtitle}>Preencha o formulário abaixo para se candidatar a uma vaga</p>
+          <p style={styles.subtitle}>Preencha o formulário abaixo para se candidatar</p>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -169,7 +213,7 @@ export default function FormularioVaga() {
             </Field>
           </Section>
 
-          {/* Vagas de interesse */}
+          {/* Vagas — se houver mais de uma disponível */}
           {vagas.length > 0 && (
             <Section title="💼 Vagas de Interesse *">
               <div style={styles.checkGrid}>
@@ -181,7 +225,7 @@ export default function FormularioVaga() {
                       onChange={() => handleMultiCheck('vagasInteresse', v.titulo)}
                       style={styles.checkbox}
                     />
-                    {v.titulo}
+                    <span>{v.titulo}</span>
                     {v.tipo && v.tipo !== 'Ambos' && (
                       <span style={styles.vagaTipo}>{v.tipo}</span>
                     )}
@@ -199,7 +243,7 @@ export default function FormularioVaga() {
                 {TIPOS_CONTRATACAO.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="Pretensão de Ganho (CLT mensal / Freelancer diário)">
+            <Field label="Pretensão de ganho (mensal CLT / diário Freelancer)">
               <input style={styles.input} name="pretensaoGanho" value={form.pretensaoGanho} onChange={handleChange} placeholder="Ex: R$ 1.800 CLT / R$ 130 diária" />
             </Field>
             <Field label="Quando pode começar?">
@@ -239,7 +283,7 @@ export default function FormularioVaga() {
 
           {/* Experiência */}
           <Section title="🎓 Experiência">
-            <Field label="Tempo de experiência">
+            <Field label="Tempo de experiência na área">
               <select style={styles.input} name="tempoExperiencia" value={form.tempoExperiencia} onChange={handleChange}>
                 <option value="">Selecione...</option>
                 {TEMPOS_EXPERIENCIA.map(t => <option key={t} value={t}>{t}</option>)}
@@ -271,10 +315,10 @@ export default function FormularioVaga() {
 
           {/* Complementar */}
           <Section title="📎 Informações Complementares">
-            <Field label="Contato de referência (nome do estabelecimento e telefone — opcional)">
+            <Field label="Referência (nome do estabelecimento e telefone — opcional)">
               <input style={styles.input} name="referencia" value={form.referencia} onChange={handleChange} placeholder="Ex: Restaurante XYZ - (11) 3333-4444" />
             </Field>
-            <Field label="Link do currículo (Google Drive, LinkedIn, etc. — opcional)">
+            <Field label="Currículo (link Google Drive, LinkedIn, etc. — opcional)">
               <input style={styles.input} name="curriculo" value={form.curriculo} onChange={handleChange} placeholder="https://..." />
             </Field>
           </Section>
@@ -290,10 +334,11 @@ export default function FormularioVaga() {
   );
 }
 
+/* ─── Sub-components ─────────────────────────────────────────────────────── */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '24px' }}>
-      <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#e67e22', marginBottom: '12px', paddingBottom: '6px', borderBottom: '1px solid #f0e6d3' }}>{title}</h3>
+      <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#e67e22', marginBottom: '12px', paddingBottom: '6px', borderBottom: '1px solid #f0e6d3', margin: '0 0 12px' }}>{title}</h3>
       {children}
     </div>
   );
@@ -321,6 +366,7 @@ function RadioGroup({ name, value, options, onChange }: { name: string; value: s
   );
 }
 
+/* ─── Styles ─────────────────────────────────────────────────────────────── */
 const styles: Record<string, React.CSSProperties> = {
   container: {
     minHeight: '100vh',
@@ -342,17 +388,9 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: '20px',
     borderBottom: '2px solid #e67e22',
   },
-  title: {
-    fontSize: '22px',
-    fontWeight: 700,
-    color: '#2c2c2c',
-    margin: 0,
-  },
-  subtitle: {
-    fontSize: '14px',
-    color: '#888',
-    marginTop: '6px',
-  },
+  unidade: { fontSize: '13px', color: '#e67e22', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 6px' },
+  title: { fontSize: '22px', fontWeight: 700, color: '#2c2c2c', margin: '0 0 6px' },
+  subtitle: { fontSize: '14px', color: '#888', margin: 0 },
   input: {
     width: '100%',
     padding: '10px 12px',
@@ -362,12 +400,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#333',
     backgroundColor: '#fafafa',
     boxSizing: 'border-box',
-    transition: 'border 0.2s',
     outline: 'none',
   },
   checkGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))',
     gap: '8px',
   },
   checkLabel: {
@@ -376,22 +413,19 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
     fontSize: '14px',
     cursor: 'pointer',
-    padding: '6px',
+    padding: '6px 8px',
     borderRadius: '6px',
     backgroundColor: '#f8f8f8',
+    userSelect: 'none',
   },
-  checkbox: {
-    width: '16px',
-    height: '16px',
-    cursor: 'pointer',
-  },
+  checkbox: { width: '16px', height: '16px', cursor: 'pointer', flexShrink: 0 },
   vagaTipo: {
     fontSize: '10px',
     padding: '1px 6px',
     borderRadius: '10px',
     backgroundColor: '#e8f4fd',
     color: '#2980b9',
-    marginLeft: '4px',
+    marginLeft: '2px',
   },
   submitBtn: {
     width: '100%',
@@ -404,7 +438,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     cursor: 'pointer',
     marginTop: '20px',
-    transition: 'background 0.2s',
   },
   erro: {
     backgroundColor: '#fff3cd',
@@ -414,29 +447,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '14px',
     marginTop: '12px',
   },
-  loading: {
-    textAlign: 'center',
-    padding: '80px 20px',
-    fontSize: '16px',
-    color: '#888',
-  },
-  successIcon: {
-    fontSize: '64px',
-    textAlign: 'center',
-    marginBottom: '16px',
-  },
-  successTitle: {
-    fontSize: '22px',
-    fontWeight: 700,
-    color: '#27ae60',
-    textAlign: 'center',
-    marginBottom: '12px',
-  },
-  successText: {
-    fontSize: '15px',
-    color: '#555',
-    textAlign: 'center',
-    lineHeight: '1.6',
-    marginBottom: '8px',
+  loadingBox: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' },
+  spinner: {
+    width: '40px', height: '40px',
+    border: '4px solid #f0e6d3',
+    borderTop: '4px solid #e67e22',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
   },
 };
