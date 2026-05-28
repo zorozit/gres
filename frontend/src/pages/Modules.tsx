@@ -23,6 +23,7 @@ const ALL_MODULES = [
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões',     description: 'Defina quais módulos cada perfil pode acessar',                                   path: '/modulos/permissoes',            color: '#e53935' },
   { id: 'auditoria',             icon: '🔒', title: 'Auditoria',                  description: 'Histórico completo de alterações — quem mudou, quando, antes/depois',         path: '/modulos/auditoria',             color: '#37474f' },
   { id: 'feriados',              icon: '🎉', title: 'Feriados',                   description: 'Configurar feriados (afeta cálculo da folha — cód.1311)',                          path: '/modulos/feriados',              color: '#fb8c00' },
+  { id: 'vagas',                 icon: '📢', title: 'Recrutamento de Vagas',       description: 'Publique vagas, gere link de formulário público e faça triagem de candidatos',        path: '/modulos/vagas',                 color: '#e67e22' },
 ];
 
 export const Modules: React.FC = () => {

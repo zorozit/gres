@@ -2315,6 +2315,233 @@ exports.handler = async (event) => {
       }
     }
 
+// ─── GET /vagas-publicas — vagas abertas para formulário público (sem auth) ───
+    if (rawPath === '/vagas-publicas' && httpMethod === 'GET') {
+      const { unitId } = queryParams;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        // Buscar nome da unidade
+        let nomeUnidade = '';
+        try {
+          const unidadeRes = await dynamodb.get({
+            TableName: 'gres-prod-unidades',
+            Key: { id: unitId }
+          }).promise();
+          nomeUnidade = unidadeRes.Item?.nome || '';
+        } catch (_) {}
+
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-vagas',
+          FilterExpression: 'unitId = :uid AND #s = :status',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':uid': unitId, ':status': 'aberta' }
+        }).promise();
+        return response(200, { vagas: result.Items || [], nomeUnidade });
+      } catch (err) {
+        return response(500, { error: 'Erro ao buscar vagas: ' + err.message });
+      }
+    }
+
+    // ─── POST /candidatos-publico — submissão do formulário público (sem auth) ───
+    if (rawPath === '/candidatos-publico' && httpMethod === 'POST') {
+      const { unitId, nome, email: emailCandidato, celular } = body;
+      if (!unitId || !nome || !emailCandidato || !celular) {
+        return response(400, { error: 'unitId, nome, email e celular são obrigatórios' });
+      }
+      try {
+        const { v4: uuidv4 } = require('uuid');
+        const id = uuidv4();
+        const now = new Date().toISOString();
+        const item = {
+          id,
+          unitId,
+          status: 'novo',
+          nome: body.nome || '',
+          email: body.email || '',
+          celular: body.celular || '',
+          cidadeBairro: body.cidadeBairro || '',
+          vagasInteresse: body.vagasInteresse || [],
+          tipoContratacao: body.tipoContratacao || '',
+          pretensaoGanho: body.pretensaoGanho || '',
+          tempoExperiencia: body.tempoExperiencia || '',
+          transporteProprio: body.transporteProprio || '',
+          gastoTransporte: body.gastoTransporte || 0,
+          referencia: body.referencia || '',
+          idade: body.idade || 0,
+          quandoComeca: body.quandoComeca || '',
+          trabalhouBuffet: body.trabalhouBuffet || '',
+          turnoPref: body.turnoPref || '',
+          diasDisponiveis: body.diasDisponiveis || [],
+          trabalhaFds: body.trabalhaFds || '',
+          fazDobras: body.fazDobras || '',
+          lidarPressao: body.lidarPressao || '',
+          curriculo: body.curriculo || '',
+          notas: '',
+          createdAt: now,
+          updatedAt: now
+        };
+        await dynamodb.put({ TableName: 'gres-prod-candidatos', Item: item }).promise();
+        return response(200, { success: true, id });
+      } catch (err) {
+        return response(500, { error: 'Erro ao salvar candidatura: ' + err.message });
+      }
+    }
+
+    // ─── GET /vagas — lista vagas da unidade (protegido) ───
+    if (rawPath === '/vagas' && httpMethod === 'GET') {
+      const { unitId } = queryParams;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-vagas',
+          FilterExpression: 'unitId = :uid',
+          ExpressionAttributeValues: { ':uid': unitId }
+        }).promise();
+        // Contar candidatos por vaga
+        const vagas = result.Items || [];
+        const candidResult = await dynamodb.scan({
+          TableName: 'gres-prod-candidatos',
+          FilterExpression: 'unitId = :uid',
+          ExpressionAttributeValues: { ':uid': unitId }
+        }).promise();
+        const candidatos = candidResult.Items || [];
+        const vagasComCount = vagas.map(v => ({
+          ...v,
+          totalCandidatos: candidatos.filter(c => 
+            c.vagasInteresse && c.vagasInteresse.includes(v.titulo)
+          ).length
+        }));
+        vagasComCount.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        return response(200, { vagas: vagasComCount });
+      } catch (err) {
+        return response(500, { error: 'Erro ao listar vagas: ' + err.message });
+      }
+    }
+
+    // ─── POST /vagas — criar vaga (protegido) ───
+    if (rawPath === '/vagas' && httpMethod === 'POST') {
+      const { unitId, titulo, tipo, descricao } = body;
+      if (!unitId || !titulo) return response(400, { error: 'unitId e titulo são obrigatórios' });
+      try {
+        const { v4: uuidv4 } = require('uuid');
+        const id = uuidv4();
+        const now = new Date().toISOString();
+        const item = { id, unitId, titulo, tipo: tipo || 'Ambos', descricao: descricao || '', status: 'aberta', createdAt: now, updatedAt: now };
+        await dynamodb.put({ TableName: 'gres-prod-vagas', Item: item }).promise();
+        return response(200, { success: true, id, item });
+      } catch (err) {
+        return response(500, { error: 'Erro ao criar vaga: ' + err.message });
+      }
+    }
+
+    // ─── PUT /vagas/:id — atualizar vaga (protegido) ───
+    if (rawPath.match(/\/vagas\/.+/) && httpMethod === 'PUT') {
+      const id = rawPath.split('/vagas/')[1];
+      try {
+        const now = new Date().toISOString();
+        const updates = { ...body, updatedAt: now };
+        delete updates.id;
+        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
+        const names = {};
+        const vals = {};
+        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
+        await dynamodb.update({
+          TableName: 'gres-prod-vagas',
+          Key: { id },
+          UpdateExpression: 'SET ' + exprs.join(', '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: vals
+        }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar vaga: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /vagas/:id — fechar vaga (soft delete, protegido) ───
+    if (rawPath.match(/\/vagas\/.+/) && httpMethod === 'DELETE') {
+      const id = rawPath.split('/vagas/')[1];
+      try {
+        await dynamodb.update({
+          TableName: 'gres-prod-vagas',
+          Key: { id },
+          UpdateExpression: 'SET #s = :s, updatedAt = :u',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':s': 'fechada', ':u': new Date().toISOString() }
+        }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao fechar vaga: ' + err.message });
+      }
+    }
+
+    // ─── GET /candidatos — lista candidatos da unidade (protegido) ───
+    if (rawPath === '/candidatos' && httpMethod === 'GET') {
+      const { unitId, status: statusFiltro, vagaTitulo } = queryParams;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        let filterExpr = 'unitId = :uid';
+        const exprVals = { ':uid': unitId };
+        if (statusFiltro) { filterExpr += ' AND #s = :sf'; exprVals[':sf'] = statusFiltro; }
+        const params = {
+          TableName: 'gres-prod-candidatos',
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals
+        };
+        if (statusFiltro) params.ExpressionAttributeNames = { '#s': 'status' };
+        const result = await dynamodb.scan(params).promise();
+        let items = result.Items || [];
+        if (vagaTitulo) {
+          items = items.filter(c => c.vagasInteresse && c.vagasInteresse.includes(vagaTitulo));
+        }
+        items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        return response(200, { candidatos: items });
+      } catch (err) {
+        return response(500, { error: 'Erro ao listar candidatos: ' + err.message });
+      }
+    }
+
+    // ─── PUT /candidatos/:id — atualizar status/notas do candidato (protegido) ───
+    if (rawPath.match(/\/candidatos\/.+/) && httpMethod === 'PUT') {
+      const id = rawPath.split('/candidatos/')[1];
+      try {
+        const now = new Date().toISOString();
+        const updates = { ...body, updatedAt: now };
+        delete updates.id;
+        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
+        const names = {};
+        const vals = {};
+        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
+        await dynamodb.update({
+          TableName: 'gres-prod-candidatos',
+          Key: { id },
+          UpdateExpression: 'SET ' + exprs.join(', '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: vals
+        }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar candidato: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /candidatos/:id — arquivar candidato (protegido) ───
+    if (rawPath.match(/\/candidatos\/.+/) && httpMethod === 'DELETE') {
+      const id = rawPath.split('/candidatos/')[1];
+      try {
+        await dynamodb.update({
+          TableName: 'gres-prod-candidatos',
+          Key: { id },
+          UpdateExpression: 'SET #s = :s, updatedAt = :u',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':s': 'arquivado', ':u': new Date().toISOString() }
+        }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao arquivar candidato: ' + err.message });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 

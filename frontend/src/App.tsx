@@ -21,6 +21,8 @@ import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
 import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
+import Vagas from './pages/Vagas';
+import FormularioVaga from './pages/FormularioVaga';
 import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
@@ -86,6 +88,12 @@ function App() {
 
             <Route path="/modulos/feriados"
               element={<ProtectedRoute moduloId="feriados"><Feriados /></ProtectedRoute>} />
+
+            <Route path="/modulos/vagas"
+              element={<ProtectedRoute moduloId="vagas"><Vagas /></ProtectedRoute>} />
+
+            {/* Formulário público de vagas — sem autenticação */}
+            <Route path="/vaga/:unitId" element={<FormularioVaga />} />
 
             <Route path="/" element={<Navigate to="/modulos" replace />} />
           </Routes>
