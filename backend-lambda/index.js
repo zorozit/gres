@@ -2451,7 +2451,17 @@ exports.handler = async (event) => {
         const { v4: uuidv4 } = require('uuid');
         const id = uuidv4();
         const now = new Date().toISOString();
-        const item = { id, unitId, titulo, tipo: tipo || 'Ambos', descricao: descricao || '', status: 'aberta', createdAt: now, updatedAt: now };
+        const item = {
+          id, unitId, titulo,
+          tipo: tipo || 'Ambos',
+          descricao: body.descricao || '',
+          nomeRestaurante: body.nomeRestaurante || '',
+          endereco: body.endereco || '',
+          horarios: body.horarios || '',
+          beneficios: body.beneficios || '',
+          whatsapp: body.whatsapp || '',
+          status: 'aberta', createdAt: now, updatedAt: now
+        };
         await dynamodb.put({ TableName: 'gres-prod-vagas', Item: item }).promise();
         return response(200, { success: true, id, item });
       } catch (err) {

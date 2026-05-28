@@ -17,6 +17,12 @@ interface Vaga {
   createdAt: string;
   updatedAt: string;
   totalCandidatos?: number;
+  // Campos do cabeçalho do formulário público
+  nomeRestaurante?: string;
+  endereco?: string;
+  horarios?: string;
+  beneficios?: string;
+  whatsapp?: string;
 }
 
 interface Candidato {
@@ -91,7 +97,7 @@ function StatusBadge({ status }: { status: string }) {
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function Vagas() {
   const { activeUnit } = useUnit();
-  const { user } = useAuth() as any;
+  const { user, email: authEmail } = useAuth() as any;
   const unitId = activeUnit?.id || (user as any)?.unitId || '';
 
   const navigate = useNavigate();
@@ -101,7 +107,9 @@ export default function Vagas() {
   const [vagas, setVagas] = useState<Vaga[]>([]);
   const [loadingVagas, setLoadingVagas] = useState(false);
   const [showModalVaga, setShowModalVaga] = useState(false);
-  const [novaVaga, setNovaVaga] = useState({ titulo: '', tipo: 'Ambos', descricao: '' });
+  const [vagaEditando, setVagaEditando] = useState<Vaga | null>(null); // null = criar, vaga = editar
+  const emptyVagaForm = { titulo: '', tipo: 'Ambos', descricao: '', nomeRestaurante: '', endereco: '', horarios: '', beneficios: '', whatsapp: '' };
+  const [novaVaga, setNovaVaga] = useState<typeof emptyVagaForm>(emptyVagaForm);
   const [salvandoVaga, setSalvandoVaga] = useState(false);
 
   // ── Candidatos ──
@@ -152,17 +160,49 @@ export default function Vagas() {
   useEffect(() => { if (aba === 'candidatos') fetchCandidatos(); }, [aba, fetchCandidatos]);
 
   /* ── Criar Vaga ── */
-  const criarVaga = async () => {
+  const abrirModalNova = () => {
+    setVagaEditando(null);
+    setNovaVaga(emptyVagaForm);
+    setShowModalVaga(true);
+  };
+
+  const abrirModalEditar = (v: Vaga) => {
+    setVagaEditando(v);
+    setNovaVaga({
+      titulo: v.titulo || '',
+      tipo: v.tipo || 'Ambos',
+      descricao: v.descricao || '',
+      nomeRestaurante: v.nomeRestaurante || '',
+      endereco: v.endereco || '',
+      horarios: v.horarios || '',
+      beneficios: v.beneficios || '',
+      whatsapp: v.whatsapp || '',
+    });
+    setShowModalVaga(true);
+  };
+
+  const salvarVaga = async () => {
     if (!novaVaga.titulo.trim()) return;
     setSalvandoVaga(true);
     try {
-      await fetch(`${API_URL}/vagas`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ ...novaVaga, unitId }),
-      });
+      if (vagaEditando) {
+        // Editar
+        await fetch(`${API_URL}/vagas/${vagaEditando.id}`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify(novaVaga),
+        });
+      } else {
+        // Criar
+        await fetch(`${API_URL}/vagas`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ ...novaVaga, unitId }),
+        });
+      }
       setShowModalVaga(false);
-      setNovaVaga({ titulo: '', tipo: 'Ambos', descricao: '' });
+      setNovaVaga(emptyVagaForm);
+      setVagaEditando(null);
       fetchVagas();
     } finally {
       setSalvandoVaga(false);
@@ -246,19 +286,24 @@ export default function Vagas() {
 
   return (
     <div style={styles.page}>
-      {/* Header */}
-      <div style={styles.pageHeader}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
-          <button
-            onClick={() => navigate('/modulos')}
-            style={{ padding: '6px 14px', background: '#f0f0f0', color: '#555', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
-          >
+      {/* Header — mesmo padrão visual dos demais módulos */}
+      <header style={styles.moduleHeader}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <button onClick={() => navigate('/modulos')} style={styles.backBtn}>
             ← Módulos
           </button>
-          <h2 style={styles.pageTitle}>📢 Recrutamento de Vagas</h2>
+          <span style={{ fontSize: '18px', fontWeight: 700, color: '#fff', letterSpacing: '-0.3px' }}>
+            📢 Recrutamento de Vagas
+          </span>
         </div>
-        <p style={styles.pageSubtitle}>Crie uma vaga e copie o link gerado para divulgar nas redes e grupos.</p>
-      </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '13px', color: 'rgba(255,255,255,0.85)' }}>
+          {activeUnit && <span style={{ color: '#f39c12', fontWeight: 700 }}>{activeUnit.nome}</span>}
+          {authEmail && <span>{authEmail}</span>}
+        </div>
+      </header>
+
+      {/* Corpo com padding */}
+      <div style={{ padding: '20px 24px', maxWidth: '1200px', margin: '0 auto' }}>
 
       {/* Abas */}
       <div style={styles.tabs}>
@@ -274,7 +319,7 @@ export default function Vagas() {
       {aba === 'vagas' && (
         <div>
           <div style={styles.toolbar}>
-            <button style={styles.primaryBtn} onClick={() => setShowModalVaga(true)}>+ Nova Vaga</button>
+            <button style={styles.primaryBtn} onClick={abrirModalNova}>+ Nova Vaga</button>
           </div>
 
           {loadingVagas ? (
@@ -297,6 +342,9 @@ export default function Vagas() {
                   <div style={styles.vagaActions}>
                     <button style={styles.smallBtn} onClick={() => copiarLink(v.id)}>
                       {copiado === v.id ? '✅ Copiado!' : '📋 Copiar link'}
+                    </button>
+                    <button style={styles.smallBtn} onClick={() => abrirModalEditar(v)}>
+                      ✏️ Editar
                     </button>
                     <button
                       style={{ ...styles.smallBtn, color: v.status === 'aberta' ? '#c62828' : '#2e7d32' }}
@@ -406,29 +454,59 @@ export default function Vagas() {
         </div>
       )}
 
+      </div>{/* fim corpo padding */}
+
       {/* ══ MODAL NOVA VAGA ══ */}
       {showModalVaga && (
-        <div style={styles.overlay} onClick={() => setShowModalVaga(false)}>
-          <div style={styles.modal} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Nova Vaga</h3>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={styles.label}>Título da vaga *</label>
-              <input style={styles.input} value={novaVaga.titulo} onChange={e => setNovaVaga(p => ({ ...p, titulo: e.target.value }))} placeholder="Ex: Garçom, Caixa, Cozinheiro..." autoFocus />
-            </div>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={styles.label}>Tipo de contratação</label>
-              <select style={styles.input} value={novaVaga.tipo} onChange={e => setNovaVaga(p => ({ ...p, tipo: e.target.value }))}>
-                {['CLT', 'Freelancer', 'Ambos'].map(t => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={styles.label}>Descrição (opcional)</label>
-              <textarea style={{ ...styles.input, minHeight: '70px' }} value={novaVaga.descricao} onChange={e => setNovaVaga(p => ({ ...p, descricao: e.target.value }))} placeholder="Breve descrição da vaga..." />
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button style={styles.smallBtn} onClick={() => setShowModalVaga(false)}>Cancelar</button>
-              <button style={styles.primaryBtn} onClick={criarVaga} disabled={salvandoVaga || !novaVaga.titulo.trim()}>
-                {salvandoVaga ? 'Salvando...' : 'Criar Vaga'}
+        <div style={styles.overlay} onClick={() => { setShowModalVaga(false); setVagaEditando(null); }}>
+          <div style={{ ...styles.modal, width: '560px', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '16px', color: '#2c2c2c' }}>
+              {vagaEditando ? '✏️ Editar Vaga' : '➕ Nova Vaga'}
+            </h3>
+            <div>
+              {/* Linha: titulo + tipo */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: '10px', marginBottom: '10px' }}>
+                <div>
+                  <label style={styles.label}>Título da vaga *</label>
+                  <input style={styles.input} value={novaVaga.titulo} onChange={e => setNovaVaga(p => ({ ...p, titulo: e.target.value }))} placeholder="Ex: Garçom, Caixa, Cozinheiro..." autoFocus />
+                </div>
+                <div>
+                  <label style={styles.label}>Contratação</label>
+                  <select style={styles.input} value={novaVaga.tipo} onChange={e => setNovaVaga(p => ({ ...p, tipo: e.target.value }))}>
+                    {['CLT', 'Freelancer', 'Ambos'].map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <ModalField label="Nome do restaurante">
+                <input style={styles.input} value={novaVaga.nomeRestaurante} onChange={e => setNovaVaga(p => ({ ...p, nomeRestaurante: e.target.value }))} placeholder="Ex: Restaurante Quintas SteakHouse" />
+              </ModalField>
+
+              <ModalField label="Endereço">
+                <input style={styles.input} value={novaVaga.endereco} onChange={e => setNovaVaga(p => ({ ...p, endereco: e.target.value }))} placeholder="Ex: Av. Raimundo Pereira de Magalhães 555, Vila Anastácio - SP" />
+              </ModalField>
+
+              <ModalField label="Horários de funcionamento">
+                <textarea style={{ ...styles.input, minHeight: '72px', resize: 'vertical' }} value={novaVaga.horarios} onChange={e => setNovaVaga(p => ({ ...p, horarios: e.target.value }))} placeholder={"Ex: Seg a Sáb\n• Almoço: 11h às 16h\n• Jantar: 18h às 23h"} />
+              </ModalField>
+
+              <ModalField label="Benefícios / condições">
+                <textarea style={{ ...styles.input, minHeight: '72px', resize: 'vertical' }} value={novaVaga.beneficios} onChange={e => setNovaVaga(p => ({ ...p, beneficios: e.target.value }))} placeholder={"Ex: CLT: salário + VT + VR + seguro de vida\nFreelancer: a partir de R$ 120/dia + transporte"} />
+              </ModalField>
+
+              <ModalField label="WhatsApp para contato (opcional)">
+                <input style={styles.input} value={novaVaga.whatsapp} onChange={e => setNovaVaga(p => ({ ...p, whatsapp: e.target.value }))} placeholder="Ex: 11 97100-4268" />
+              </ModalField>
+
+              <ModalField label="Descrição interna (opcional)">
+                <input style={styles.input} value={novaVaga.descricao} onChange={e => setNovaVaga(p => ({ ...p, descricao: e.target.value }))} placeholder="Nota interna sobre a vaga..." />
+              </ModalField>
+
+            </div>{/* fim campos */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button style={styles.smallBtn} onClick={() => { setShowModalVaga(false); setVagaEditando(null); }}>Cancelar</button>
+              <button style={styles.primaryBtn} onClick={salvarVaga} disabled={salvandoVaga || !novaVaga.titulo.trim()}>
+                {salvandoVaga ? 'Salvando...' : vagaEditando ? '💾 Salvar alterações' : 'Criar Vaga'}
               </button>
             </div>
           </div>
@@ -535,6 +613,15 @@ export default function Vagas() {
   );
 }
 
+function ModalField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: '10px' }}>
+      <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#666', marginBottom: '4px' }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: string | number }) {
   return (
     <div style={{ marginBottom: '6px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -547,10 +634,28 @@ function InfoRow({ label, value }: { label: string; value: string | number }) {
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    padding: '24px',
-    maxWidth: '1200px',
-    margin: '0 auto',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  moduleHeader: {
+    background: 'linear-gradient(135deg, #e67e22, #d35400)',
+    color: '#fff',
+    padding: '0 24px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: '56px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+    marginBottom: '0',
+  },
+  backBtn: {
+    padding: '6px 14px',
+    background: 'rgba(255,255,255,0.18)',
+    color: '#fff',
+    border: '1px solid rgba(255,255,255,0.35)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 600,
   },
   pageHeader: { marginBottom: '20px' },
   pageTitle: { fontSize: '22px', fontWeight: 700, margin: '0 0 6px', color: '#2c2c2c' },

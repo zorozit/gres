@@ -188,13 +188,54 @@ export default function FormularioVaga() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        {/* Header */}
+        {/* Header rico */}
         <div style={styles.header}>
           {nomeUnidade && <p style={styles.unidade}>{nomeUnidade}</p>}
           <h1 style={styles.title}>
-            {vagaPrincipal ? `Vaga: ${vagaPrincipal.titulo}` : 'Formulário de Candidatura'}
+            {vagaPrincipal ? vagaPrincipal.titulo : 'Formulário de Candidatura'}
           </h1>
-          <p style={styles.subtitle}>Preencha o formulário abaixo para se candidatar</p>
+
+          {/* Endereço */}
+          {(vagaPrincipal as any)?.endereco && (
+            <p style={styles.headerInfo}>
+              📍 {(vagaPrincipal as any).endereco}
+            </p>
+          )}
+
+          {/* Horários */}
+          {(vagaPrincipal as any)?.horarios && (
+            <div style={styles.headerBlock}>
+              <strong>Horários de funcionamento:</strong>
+              <div style={{ whiteSpace: 'pre-line', marginTop: '4px' }}>
+                {(vagaPrincipal as any).horarios}
+              </div>
+            </div>
+          )}
+
+          {/* Benefícios */}
+          {(vagaPrincipal as any)?.beneficios && (
+            <div style={styles.headerBlock}>
+              <strong>Modelo de contratação:</strong>
+              <div style={{ whiteSpace: 'pre-line', marginTop: '4px' }}>
+                {(vagaPrincipal as any).beneficios}
+              </div>
+            </div>
+          )}
+
+          {/* WhatsApp */}
+          {(vagaPrincipal as any)?.whatsapp && (
+            <div style={{ ...styles.headerBlock, backgroundColor: '#e8f5e9', borderLeft: '3px solid #27ae60' }}>
+              <strong>✅ Próximo passo:</strong> após enviar o formulário, entre em contato pelo WhatsApp&nbsp;
+              <a
+                href={`https://wa.me/55${(vagaPrincipal as any).whatsapp.replace(/\D/g,'')}`}
+                target="_blank" rel="noopener noreferrer"
+                style={{ color: '#27ae60', fontWeight: 700 }}
+              >
+                {(vagaPrincipal as any).whatsapp}
+              </a>
+              &nbsp;com uma breve apresentação: vaga desejada + experiência + disponibilidade + bairro/cidade.
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -407,6 +448,13 @@ const styles: Record<string, React.CSSProperties> = {
   unidade: { fontSize: '13px', color: '#e67e22', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', margin: '0 0 6px' },
   title: { fontSize: '22px', fontWeight: 700, color: '#2c2c2c', margin: '0 0 6px' },
   subtitle: { fontSize: '14px', color: '#888', margin: 0 },
+  headerInfo: { fontSize: '14px', color: '#666', margin: '8px 0 0', textAlign: 'left' as const },
+  headerBlock: {
+    fontSize: '14px', color: '#555', margin: '12px 0 0',
+    padding: '10px 12px', backgroundColor: '#fef9f0',
+    borderLeft: '3px solid #e67e22', borderRadius: '4px',
+    lineHeight: '1.6', textAlign: 'left' as const,
+  },
   input: {
     width: '100%',
     padding: '10px 12px',
