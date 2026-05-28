@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 const API_URL = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
 const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+const SEGMENTOS = ['À la carte', 'Buffet', 'Pizzaria', 'Hamburgueria', 'Eventos', 'Comida japonesa', 'Dark kitchen', 'Cozinha industrial'];
 const TIPOS_CONTRATACAO = ['CLT', 'Freelancer', 'Ambos'];
 const TEMPOS_EXPERIENCIA = ['Não tenho experiência', 'Menos de 1 ano', 'Entre 1 e 3 anos', 'Entre 3 a 5 anos', 'Mais de 5 anos'];
 const QUANDO_COMECA = ['Imediato', 'Até 7 dias', 'Até 15 dias', 'Até 30 dias'];
@@ -36,6 +37,8 @@ const initialForm = {
   trabalhaFds: '',
   fazDobras: '',
   lidarPressao: '',
+  resumoExperiencia: '',
+  segmentosExperiencia: [] as string[],
   curriculo: '',
 };
 
@@ -87,7 +90,7 @@ export default function FormularioVaga() {
     setForm(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleMultiCheck = (field: 'vagasInteresse' | 'diasDisponiveis', value: string) => {
+  const handleMultiCheck = (field: 'vagasInteresse' | 'diasDisponiveis' | 'segmentosExperiencia', value: string) => {
     setForm(prev => {
       const arr = prev[field] as string[];
       return {
@@ -119,6 +122,7 @@ export default function FormularioVaga() {
           vagaId: vagaPrincipal?.id || null,
           gastoTransporte: Number(form.gastoTransporte) || 0,
           idade: Number(form.idade) || 0,
+          trabalhouBuffet: form.segmentosExperiencia.length > 0 ? form.segmentosExperiencia.join(', ') : 'Não',
         }),
       });
       const data = await res.json();
@@ -289,16 +293,28 @@ export default function FormularioVaga() {
                 {TEMPOS_EXPERIENCIA.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="Já trabalhou com buffet / pizzaria?">
-              <RadioGroup name="trabalhouBuffet" value={form.trabalhouBuffet} options={['Sim', 'Não']} onChange={v => setForm(p => ({ ...p, trabalhouBuffet: v }))} />
+            <Field label="Já trabalhou com (marque todos que se aplicam):">
+              <div style={styles.checkGrid}>
+                {SEGMENTOS.map(s => (
+                  <label key={s} style={styles.checkLabel}>
+                    <input
+                      type="checkbox"
+                      checked={form.segmentosExperiencia.includes(s)}
+                      onChange={() => handleMultiCheck('segmentosExperiencia', s)}
+                      style={styles.checkbox}
+                    />
+                    <span>{s}</span>
+                  </label>
+                ))}
+              </div>
             </Field>
-            <Field label="Em 2–3 linhas: como você lida com pressão e pico de movimento?">
+            <Field label="Em 2–3 linhas: faça um breve resumo da sua experiência">
               <textarea
                 style={{ ...styles.input, minHeight: '90px', resize: 'vertical' }}
-                name="lidarPressao"
-                value={form.lidarPressao}
+                name="resumoExperiencia"
+                value={form.resumoExperiencia}
                 onChange={handleChange}
-                placeholder="Conte brevemente como você se comporta em situações de muito movimento..."
+                placeholder="Conte um pouco sobre sua trajetória profissional e principais experiências..."
               />
             </Field>
           </Section>

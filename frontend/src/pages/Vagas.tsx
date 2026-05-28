@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -93,6 +94,7 @@ export default function Vagas() {
   const { user } = useAuth() as any;
   const unitId = activeUnit?.id || (user as any)?.unitId || '';
 
+  const navigate = useNavigate();
   const [aba, setAba] = useState<'vagas' | 'candidatos'>('vagas');
 
   // ── Vagas ──
@@ -246,7 +248,15 @@ export default function Vagas() {
     <div style={styles.page}>
       {/* Header */}
       <div style={styles.pageHeader}>
-        <h2 style={styles.pageTitle}>📢 Recrutamento de Vagas</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+          <button
+            onClick={() => navigate('/modulos')}
+            style={{ padding: '6px 14px', background: '#f0f0f0', color: '#555', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+          >
+            ← Módulos
+          </button>
+          <h2 style={styles.pageTitle}>📢 Recrutamento de Vagas</h2>
+        </div>
         <p style={styles.pageSubtitle}>Crie uma vaga e copie o link gerado para divulgar nas redes e grupos.</p>
       </div>
 
@@ -478,7 +488,7 @@ export default function Vagas() {
                 <InfoRow label="Faz dobras" value={candidatoAberto.fazDobras} />
                 <InfoRow label="Transporte próprio" value={candidatoAberto.transporteProprio} />
                 <InfoRow label="Gasto transporte/dia" value={candidatoAberto.gastoTransporte ? `R$ ${candidatoAberto.gastoTransporte}` : '—'} />
-                <InfoRow label="Trabalhou buffet/pizzaria" value={candidatoAberto.trabalhouBuffet} />
+                <InfoRow label="Segmentos (experiência)" value={(candidatoAberto as any).segmentosExperiencia?.join(', ') || candidatoAberto.trabalhouBuffet} />
                 <InfoRow label="Quando pode começar" value={candidatoAberto.quandoComeca} />
                 <InfoRow label="Referência" value={candidatoAberto.referencia || '—'} />
                 {candidatoAberto.curriculo && (
@@ -487,6 +497,12 @@ export default function Vagas() {
                     <a href={candidatoAberto.curriculo} target="_blank" rel="noopener noreferrer" style={{ color: '#e67e22', fontSize: '13px' }}>
                       Abrir link ↗
                     </a>
+                  </div>
+                )}
+                {(candidatoAberto as any).resumoExperiencia && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <span style={styles.infoLabel}>Resumo da experiência</span>
+                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#555', lineHeight: '1.5' }}>{(candidatoAberto as any).resumoExperiencia}</p>
                   </div>
                 )}
                 {candidatoAberto.lidarPressao && (
