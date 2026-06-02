@@ -110,7 +110,7 @@ const corTipo = (tipo: string) => COR_TIPO[tipo] ?? { bg: '#f5f5f5', text: '#555
 // ── Componente principal ───────────────────────────────────────────────────
 const ConciliacaoBancaria: React.FC = () => {
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
+  useAuth();
   const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
   const authToken = localStorage.getItem('auth_token') || '';
