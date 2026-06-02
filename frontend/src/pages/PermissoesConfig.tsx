@@ -23,6 +23,7 @@ const TODOS_MODULOS = [
   { id: 'auditoria',             icon: '🔒', title: 'Auditoria' },
   { id: 'feriados',              icon: '🎉', title: 'Feriados' },
   { id: 'vagas',                 icon: '📢', title: 'Recrutamento de Vagas' },
+  { id: 'conciliacao-bancaria',  icon: '🏦', title: 'Conciliação Bancária' },
 ];
 
 // ─── Perfis do sistema ───────────────────────────────────────────────────────
@@ -43,6 +44,20 @@ const DEFAULT_PERMISSOES: Record<string, Record<string, boolean>> = {
   gerente:  Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
   admin:    Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
   rh:       Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
+};
+
+// ─── Preset recomendado por perfil ──────────────────────────────────────────
+// Usado pelo botão "Aplicar Preset Recomendado" — não substitui permissões salvas no servidor
+const PRESET_RECOMENDADO: Record<string, string[]> = {
+  operador: ['dashboard', 'caixa', 'escalas', 'motoboys'],
+  gerente:  [
+    'dashboard', 'caixa', 'escalas', 'saidas', 'motoboys',
+    'colaboradores', 'folha-pagamento', 'extrato',
+    'adiantamentos-saldos', 'fechamento-dinheiro',
+    'importacoes-contabeis', 'conciliacao-bancaria',
+  ],
+  admin: TODOS_MODULOS.map(m => m.id),
+  rh:    ['vagas'],
 };
 
 // ─── Componente principal ────────────────────────────────────────────────────
@@ -263,7 +278,7 @@ export const PermissoesConfig: React.FC = () => {
             </div>
 
             {/* Ações rápidas */}
-            <div style={{ padding: '10px 20px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: '8px' }}>
+            <div style={{ padding: '10px 20px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button
                 onClick={() => {
                   const tudo: Record<string, boolean> = {};
@@ -289,6 +304,17 @@ export const PermissoesConfig: React.FC = () => {
                 }}
                 style={s.btn('#f3e5f5', '#7b1fa2')}
               >🔄 Padrão deste perfil</button>
+              <button
+                title={`Aplica conjunto de módulos recomendados para o perfil ${perfilInfo.label}`}
+                onClick={() => {
+                  const preset = PRESET_RECOMENDADO[perfilAtivo] || [];
+                  const novas: Record<string, boolean> = {};
+                  TODOS_MODULOS.forEach(m => { novas[m.id] = preset.includes(m.id); });
+                  setPermissoes(prev => ({ ...prev, [perfilAtivo]: novas }));
+                  setDirty(true);
+                }}
+                style={s.btn('#e8f5e9', '#2e7d32')}
+              >⭐ Preset recomendado</button>
             </div>
 
             {/* Lista de módulos */}
