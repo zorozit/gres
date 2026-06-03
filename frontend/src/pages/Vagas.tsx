@@ -108,7 +108,7 @@ export default function Vagas() {
   const [loadingVagas, setLoadingVagas] = useState(false);
   const [showModalVaga, setShowModalVaga] = useState(false);
   const [vagaEditando, setVagaEditando] = useState<Vaga | null>(null); // null = criar, vaga = editar
-  const emptyVagaForm = { titulo: '', tipo: 'Ambos', descricao: '', nomeRestaurante: '', endereco: '', horarios: '', beneficios: '', proximoPasso: '' };
+  const emptyVagaForm = { titulo: '', tipo: 'Ambos', descricao: '', nomeRestaurante: '', endereco: '', horarios: '', beneficios: '', proximoPasso: '', exibirTodasVagas: true as boolean };
   const [novaVaga, setNovaVaga] = useState<typeof emptyVagaForm>(emptyVagaForm);
   const [salvandoVaga, setSalvandoVaga] = useState(false);
 
@@ -177,6 +177,7 @@ export default function Vagas() {
       horarios: v.horarios || '',
       beneficios: v.beneficios || '',
       proximoPasso: v.proximoPasso || '',
+      exibirTodasVagas: (v as any).exibirTodasVagas !== false,
     });
     setShowModalVaga(true);
   };
@@ -505,6 +506,22 @@ export default function Vagas() {
 
               <ModalField label="Descrição interna (opcional)">
                 <input style={styles.input} value={novaVaga.descricao} onChange={e => setNovaVaga(p => ({ ...p, descricao: e.target.value }))} placeholder="Nota interna sobre a vaga..." />
+              </ModalField>
+
+              <ModalField label="Exibir outras vagas no formulário público?">
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '2px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer', fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: novaVaga.exibirTodasVagas ? '2px solid #e67e22' : '1px solid #ddd', background: novaVaga.exibirTodasVagas ? '#fff3e6' : '#fafafa', fontWeight: novaVaga.exibirTodasVagas ? 700 : 400, color: novaVaga.exibirTodasVagas ? '#c0502a' : '#555' }}>
+                    <input type="radio" name="exibirTodasVagas" checked={novaVaga.exibirTodasVagas === true} onChange={() => setNovaVaga(p => ({ ...p, exibirTodasVagas: true }))} />
+                    👥 Sim — mostrar todas as vagas abertas
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer', fontSize: '13px', padding: '8px 14px', borderRadius: '8px', border: novaVaga.exibirTodasVagas === false ? '2px solid #e67e22' : '1px solid #ddd', background: novaVaga.exibirTodasVagas === false ? '#fff3e6' : '#fafafa', fontWeight: novaVaga.exibirTodasVagas === false ? 700 : 400, color: novaVaga.exibirTodasVagas === false ? '#c0502a' : '#555' }}>
+                    <input type="radio" name="exibirTodasVagas" checked={novaVaga.exibirTodasVagas === false} onChange={() => setNovaVaga(p => ({ ...p, exibirTodasVagas: false }))} />
+                    🎯 Não — exibir somente esta vaga
+                  </label>
+                </div>
+                <p style={{ fontSize: '11px', color: '#999', margin: '6px 0 0', lineHeight: '1.5' }}>
+                  Define se o candidato verá os botões das outras vagas abertas ao acessar o link desta vaga.
+                </p>
               </ModalField>
 
             </div>{/* fim campos */}

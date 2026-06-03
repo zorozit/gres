@@ -21,6 +21,7 @@ interface Vaga {
   horarios?: string;
   beneficios?: string;
   proximoPasso?: string;
+  exibirTodasVagas?: boolean;  // configurado pelo admin
 }
 
 const initialForm = {
@@ -60,8 +61,8 @@ export default function FormularioVaga() {
   // ── seleção ativa ──
   // null = "Todas as vagas"
   const [vagaSelecionada, setVagaSelecionada] = useState<Vaga | null>(null);
-  // modo exibição: "todas" mostra todos os botões; "unica" esconde os demais
-  const [modoExibicao, setModoExibicao]       = useState<'todas' | 'unica'>('todas');
+  // exibirTodas: determinado pelo campo exibirTodasVagas da vaga do link (configurado pelo admin)
+  const [exibirTodas, setExibirTodas]         = useState(true);
 
   // ── form / UX ──
   const [form, setForm]     = useState(initialForm);
@@ -88,9 +89,12 @@ export default function FormularioVaga() {
           setNomeUnidade(d.nomeUnidade || '');
           setUnitId(vp.unitId);
 
+          // Respeita configuração do admin: exibirTodasVagas (default true)
+          const mostrarTodas = vp.exibirTodasVagas !== false;
+          setExibirTodas(mostrarTodas);
+
           // Seleciona a vaga do link por padrão
           setVagaSelecionada(vp);
-          setModoExibicao('unica');
           setForm(prev => ({ ...prev, vagasInteresse: [vp.titulo] }));
 
         } else if (d.vagas) {
@@ -100,7 +104,7 @@ export default function FormularioVaga() {
           setNomeUnidade(d.nomeUnidade || '');
           setUnitId(vagaId);
           setVagaSelecionada(null);
-          setModoExibicao('todas');
+          setExibirTodas(true);
         }
       })
       .catch(() => setErro('Erro ao carregar o formulário. Tente novamente.'))
@@ -111,30 +115,19 @@ export default function FormularioVaga() {
   const selecionarVaga = (vaga: Vaga | null) => {
     setVagaSelecionada(vaga);
     if (vaga) {
-      // Marca apenas essa vaga no interesse, sem resetar o resto do form
       setForm(prev => ({ ...prev, vagasInteresse: [vaga.titulo] }));
     } else {
-      // "Todas" — limpa pré-seleção
+      // "Todas" — limpa pré-seleção para o candidato escolher nos checkboxes
       setForm(prev => ({ ...prev, vagasInteresse: [] }));
     }
     setErro('');
   };
 
-  /* ── Alterna modo de exibição (única / todas) ── */
-  const toggleModo = () => {
-    const novoModo = modoExibicao === 'unica' ? 'todas' : 'unica';
-    setModoExibicao(novoModo);
-    if (novoModo === 'todas') {
-      // ao mostrar todas, mantém a vaga atual selecionada mas permite ver as outras
-    }
-  };
-
-  /* ── Vagas visíveis no seletor ── */
-  // No modo 'unica': exibe só a vaga selecionada
-  // No modo 'todas': exibe todas + botão "Todas"
-  const vagasVisiveis = modoExibicao === 'unica' && vagaSelecionada
-    ? [vagaSelecionada]
-    : todasVagas;
+  /* ── Vagas visíveis no seletor ──
+     - exibirTodas=true  → mostra todos os botões (configurado pelo admin)
+     - exibirTodas=false → só o botão da vaga do link
+  */
+  const vagasVisiveis = exibirTodas ? todasVagas : (vagaSelecionada ? [vagaSelecionada] : todasVagas.slice(0, 1));
 
   /* ── Informações do cabeçalho (da vaga selecionada ou da vagaInicial) ── */
   const vagaHeader: Vaga | null = vagaSelecionada ?? vagaInicial;
@@ -249,25 +242,18 @@ export default function FormularioVaga() {
 
             {/* Título da seção */}
             <div style={st.selectorHeader}>
-              <span style={st.selectorTitle}>💼 Selecione a vaga desejada</span>
-              {/* Botão toggle modo */}
-              {todasVagas.length > 1 && (
-                <button
-                  type="button"
-                  onClick={toggleModo}
-                  style={st.toggleModoBtn}
-                  title={modoExibicao === 'unica' ? 'Mostrar todas as vagas' : 'Exibir somente esta vaga'}
-                >
-                  {modoExibicao === 'unica' ? '👁 Ver todas as vagas' : '🎯 Exibir só esta vaga'}
-                </button>
-              )}
+              <span style={st.selectorTitle}>💼
+                {exibirTodas && todasVagas.length > 1
+                  ? ' Selecione a vaga desejada'
+                  : ' Vaga'}
+              </span>
             </div>
 
             {/* Botões das vagas */}
             <div style={st.vagaBtnsWrap}>
 
-              {/* Botão "Todas" — só aparece no modo 'todas' com mais de 1 vaga */}
-              {modoExibicao === 'todas' && todasVagas.length > 1 && (
+              {/* Botão "Todas" — só aparece quando exibirTodas=true e há mais de 1 vaga */}
+              {exibirTodas && todasVagas.length > 1 && (
                 <button
                   type="button"
                   onClick={() => selecionarVaga(null)}
@@ -314,7 +300,7 @@ export default function FormularioVaga() {
             </div>
 
             {/* Dica quando "Todas" selecionada */}
-            {vagaSelecionada === null && modoExibicao === 'todas' && todasVagas.length > 1 && (
+            {vagaSelecionada === null && exibirTodas && todasVagas.length > 1 && (
               <p style={st.selectorDica}>
                 💡 Você pode se candidatar a mais de uma vaga ao mesmo tempo. Basta marcar no formulário abaixo.
               </p>
@@ -376,8 +362,8 @@ export default function FormularioVaga() {
             </Field>
           </Section>
 
-          {/* Vagas de Interesse — só aparece quando "Todas" selecionado OU quando há mais de uma disponível e nenhuma selecionada */}
-          {(vagaSelecionada === null && todasVagas.length > 1) && (
+          {/* Vagas de Interesse — só aparece quando exibirTodas=true, modo "Todas" e há mais de 1 vaga */}
+          {(exibirTodas && vagaSelecionada === null && todasVagas.length > 1) && (
             <Section title="💼 Vagas de Interesse *">
               <p style={{ fontSize: '13px', color: '#888', marginBottom: '10px', marginTop: 0 }}>
                 Marque todas as vagas nas quais tem interesse:
@@ -604,18 +590,7 @@ const st: Record<string, React.CSSProperties> = {
     color: '#c0502a',
     letterSpacing: '0.2px',
   },
-  toggleModoBtn: {
-    background: 'none',
-    border: '1px solid #e0a87c',
-    color: '#c0502a',
-    borderRadius: '20px',
-    padding: '4px 12px',
-    fontSize: '12px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap' as const,
-    transition: 'all 0.15s',
-  },
+
   vagaBtnsWrap: {
     display: 'flex',
     flexWrap: 'wrap' as const,
