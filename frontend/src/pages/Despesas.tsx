@@ -5,14 +5,16 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   GESTÃO DE DESPESAS OPERACIONAIS
-   Entrada via formulário manual OU via foto/upload de pedido ou NF
-   Status de pagamento: pendente / pago / vencido / cancelado / parcial
-   Formas: cartão, boleto, PIX, dinheiro
-   Integração com Conciliação Bancária via transacaoBancariaId
+   MÓDULO DE DESPESAS
+   Gestão de despesas operacionais com:
+   - Entrada via formulário ou foto/NF (upload de imagem/PDF)
+   - Status: pendente / pago / vencido / cancelado / parcial
+   - Formas de pagamento: cartão, boleto, PIX, dinheiro, transferência
+   - Integração com Conciliação Bancária (transacaoBancariaId)
+   - Vínculo com Fornecedores
 ═══════════════════════════════════════════════════════════════════════════ */
 
-const API = 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
+const API_BASE = 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
 interface Despesa {
   id: string;
@@ -41,7 +43,8 @@ interface Fornecedor {
   id: string;
   razaoSocial: string;
   nomeFantasia?: string;
-  categoria?: string;
+  categoria: string;
+  ativo: boolean;
 }
 
 const CATEGORIAS_DESPESA = [
@@ -58,23 +61,31 @@ const CATEGORIAS_DESPESA = [
   'Aluguel / Imóvel',
   'Folha de Pagamento',
   'Impostos / Taxas',
-  'Utilidades (Água/Luz/Internet)',
+  'Energia / Água / Telefone',
   'Equipamentos / Utensílios',
-  'Uniformes / EPI',
-  'Outras Despesas',
+  'Uniformes / EPIs',
+  'Outros',
 ];
 
-const FORMAS_PAGAMENTO = ['Cartão de Crédito', 'Cartão de Débito', 'Boleto', 'PIX', 'Dinheiro', 'Transferência'];
+const FORMAS_PAGAMENTO = [
+  'Cartão de Crédito',
+  'Cartão de Débito',
+  'Boleto Bancário',
+  'PIX',
+  'Dinheiro',
+  'Transferência Bancária (TED/DOC)',
+  'Débito Automático',
+];
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: string }> = {
-  pendente:  { label: 'Pendente',  color: '#e65100', bg: '#fff3e0', icon: '⏳' },
-  pago:      { label: 'Pago',      color: '#1b5e20', bg: '#e8f5e9', icon: '✅' },
-  vencido:   { label: 'Vencido',   color: '#b71c1c', bg: '#ffebee', icon: '🚨' },
-  cancelado: { label: 'Cancelado', color: '#546e7a', bg: '#eceff1', icon: '🚫' },
-  parcial:   { label: 'Parcial',   color: '#1565c0', bg: '#e3f2fd', icon: '⚡' },
+  pendente:  { label: 'Pendente',  color: '#f59e0b', bg: '#fef3c7', icon: '⏳' },
+  pago:      { label: 'Pago',      color: '#10b981', bg: '#d1fae5', icon: '✅' },
+  vencido:   { label: 'Vencido',   color: '#ef4444', bg: '#fee2e2', icon: '🚨' },
+  cancelado: { label: 'Cancelado', color: '#6b7280', bg: '#f3f4f6', icon: '❌' },
+  parcial:   { label: 'Parcial',   color: '#3b82f6', bg: '#dbeafe', icon: '🔵' },
 };
 
-const EMPTY_FORM: Partial<Despesa> = {
+const EMPTY_FORM: Omit<Despesa, 'id' | 'unitId' | 'createdAt' | 'updatedAt' | 'criadoPor'> = {
   fornecedorId: '',
   fornecedorNome: '',
   categoria: '',
@@ -92,919 +103,959 @@ const EMPTY_FORM: Partial<Despesa> = {
   observacoes: '',
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-function fmtCurrency(v: number) {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
-function fmtDate(iso?: string) {
-  if (!iso) return '—';
-  const [y, m, d] = iso.split('T')[0].split('-');
-  return `${d}/${m}/${y}`;
-}
-function today() {
-  return new Date().toISOString().split('T')[0];
-}
-function isVencido(d: Despesa) {
-  if (d.status === 'pago' || d.status === 'cancelado') return false;
-  return d.dataVencimento && d.dataVencimento < today();
-}
+/* ── helpers ── */
+const fmt = (v: number) =>
+  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-// ─── Component ──────────────────────────────────────────────────────────────
+const fmtDate = (d?: string) => {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+};
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+const isVencido = (d: Despesa) =>
+  d.status === 'pendente' && d.dataVencimento < today();
+
+/* ──────────────────────────────────────────────────────────── */
 export default function Despesas() {
-  const { activeUnit: selectedUnit } = useUnit();
+  const { activeUnit } = useUnit();
   const { user } = useAuth();
 
-  // Data
-  const [despesas, setDespesas]       = useState<Despesa[]>([]);
+  /* ── state ── */
+  const [despesas, setDespesas]         = useState<Despesa[]>([]);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
-  const [loading, setLoading]         = useState(false);
-  const [saving, setSaving]           = useState(false);
-  const [error, setError]             = useState('');
+  const [loading, setLoading]           = useState(false);
+  const [erro, setErro]                 = useState('');
+  const [sucesso, setSucesso]           = useState('');
 
-  // View
-  const [activeTab, setActiveTab]     = useState<'lista' | 'form' | 'upload'>('lista');
-  const [editingId, setEditingId]     = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [viewingDespesa, setViewingDespesa] = useState<Despesa | null>(null);
+  // tab: 'lista' | 'form' | 'upload'
+  const [tab, setTab]                   = useState<'lista' | 'form' | 'upload'>('lista');
+  const [editando, setEditando]         = useState<Despesa | null>(null);
+  const [form, setForm]                 = useState({ ...EMPTY_FORM });
 
-  // Filters
-  const [filtroStatus, setFiltroStatus] = useState('todos');
-  const [filtroCategoria, setFiltroCategoria] = useState('todas');
-  const [filtroPeriodoInicio, setFiltroPeriodoInicio] = useState('');
-  const [filtroPeriodoFim, setFiltroPeriodoFim]       = useState('');
-  const [filtroBusca, setFiltroBusca]                 = useState('');
-  const [filtroForma, setFiltroForma]                 = useState('todas');
+  // upload NF / foto
+  const fileRef                         = useRef<HTMLInputElement>(null);
+  const [preview, setPreview]           = useState<string>('');
+  const [uploadArquivo, setUploadArquivo] = useState<File | null>(null);
+  const [uploadando, setUploadando]     = useState(false);
 
-  // Form
-  const [form, setForm] = useState<Partial<Despesa>>(EMPTY_FORM);
-  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  // filtros
+  const [filtroStatus,   setFiltroStatus]   = useState('todos');
+  const [filtroCategoria, setFiltroCategoria] = useState('');
+  const [filtroPeriodo,  setFiltroPeriodo]  = useState('');  // YYYY-MM
+  const [filtroTexto,    setFiltroTexto]    = useState('');
+  const [filtroForma,    setFiltroForma]    = useState('');
 
-  // Upload / foto
-  const [uploadFile, setUploadFile]   = useState<File | null>(null);
-  const [uploadPreview, setUploadPreview] = useState<string>('');
-  const [uploadProcessing, setUploadProcessing] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  // modal de confirmação de exclusão
+  const [excluindo, setExcluindo]       = useState<Despesa | null>(null);
+  const [salvando, setSalvando]         = useState(false);
 
-  // ── Fetch ──────────────────────────────────────────────────────────────────
-  const fetchDespesas = useCallback(async () => {
-    if (!selectedUnit?.id) return;
+  /* ── carrega dados ── */
+  const carregarDespesas = useCallback(async () => {
+    if (!activeUnit?.id) return;
     setLoading(true);
-    setError('');
+    setErro('');
     try {
-      const res = await fetch(`${API}/despesas?unitId=${selectedUnit.id}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const lista: Despesa[] = Array.isArray(data) ? data : (data.items || data.despesas || []);
-      // Auto-mark vencidos
-      const updated = lista.map(d => ({ ...d, status: isVencido(d) ? 'vencido' as const : d.status }));
-      setDespesas(updated);
+      const r = await fetch(`${API_BASE}/despesas?unitId=${activeUnit!.id}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const lista: Despesa[] = Array.isArray(data) ? data : (data.items ?? []);
+      // marcar vencidos automaticamente no frontend
+      const comStatus = lista.map(d => ({
+        ...d,
+        status: isVencido(d) ? ('vencido' as const) : d.status,
+      }));
+      setDespesas(comStatus.sort((a, b) => a.dataVencimento.localeCompare(b.dataVencimento)));
     } catch (e: any) {
-      setError('Erro ao carregar despesas: ' + e.message);
+      setErro('Erro ao carregar despesas: ' + e.message);
     } finally {
       setLoading(false);
     }
-  }, [selectedUnit?.id]);
+  }, [activeUnit?.id]);
 
-  const fetchFornecedores = useCallback(async () => {
-    if (!selectedUnit?.id) return;
+  const carregarFornecedores = useCallback(async () => {
+    if (!activeUnit?.id) return;
     try {
-      const res = await fetch(`${API}/fornecedores?unitId=${selectedUnit.id}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const lista: Fornecedor[] = Array.isArray(data) ? data : (data.items || data.fornecedores || []);
-      setFornecedores(lista.filter(f => (f as any).ativo !== false));
-    } catch {
-      // silencioso — fornecedores é opcional
-    }
-  }, [selectedUnit?.id]);
+      const r = await fetch(`${API_BASE}/fornecedores?unitId=${activeUnit!.id}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      const lista: Fornecedor[] = Array.isArray(data) ? data : (data.items ?? []);
+      setFornecedores(lista.filter(f => f.ativo));
+    } catch { /* silencioso */ }
+  }, [activeUnit?.id]);
 
   useEffect(() => {
-    fetchDespesas();
-    fetchFornecedores();
-  }, [fetchDespesas, fetchFornecedores]);
+    carregarDespesas();
+    carregarFornecedores();
+  }, [carregarDespesas, carregarFornecedores]);
 
-  // ── Filters ───────────────────────────────────────────────────────────────
+  /* ── feedback helpers ── */
+  const showSucesso = (msg: string) => {
+    setSucesso(msg);
+    setTimeout(() => setSucesso(''), 4000);
+  };
+
+  /* ── filtros aplicados ── */
   const despesasFiltradas = despesas.filter(d => {
     if (filtroStatus !== 'todos' && d.status !== filtroStatus) return false;
-    if (filtroCategoria !== 'todas' && d.categoria !== filtroCategoria) return false;
-    if (filtroForma !== 'todas' && d.formaPagamento !== filtroForma) return false;
-    if (filtroPeriodoInicio && d.dataVencimento < filtroPeriodoInicio) return false;
-    if (filtroPeriodoFim   && d.dataVencimento > filtroPeriodoFim)    return false;
-    if (filtroBusca) {
-      const q = filtroBusca.toLowerCase();
-      const match =
-        d.descricao.toLowerCase().includes(q) ||
-        (d.fornecedorNome || '').toLowerCase().includes(q) ||
-        (d.numeroNF || '').toLowerCase().includes(q) ||
-        d.categoria.toLowerCase().includes(q);
-      if (!match) return false;
+    if (filtroCategoria && d.categoria !== filtroCategoria) return false;
+    if (filtroForma && d.formaPagamento !== filtroForma) return false;
+    if (filtroPeriodo) {
+      const mes = d.dataVencimento?.slice(0, 7);
+      if (mes !== filtroPeriodo) return false;
+    }
+    if (filtroTexto) {
+      const q = filtroTexto.toLowerCase();
+      const campos = [
+        d.descricao, d.fornecedorNome, d.categoria,
+        d.numeroNF, d.observacoes,
+      ].join(' ').toLowerCase();
+      if (!campos.includes(q)) return false;
     }
     return true;
   });
 
-  // ── Summary ───────────────────────────────────────────────────────────────
-  const totalGeral     = despesas.reduce((s, d) => s + d.valor, 0);
-  const totalPago      = despesas.filter(d => d.status === 'pago').reduce((s, d) => s + d.valor, 0);
-  const totalPendente  = despesas.filter(d => d.status === 'pendente').reduce((s, d) => s + d.valor, 0);
-  const totalVencido   = despesas.filter(d => d.status === 'vencido').reduce((s, d) => s + d.valor, 0);
+  /* ── totais ── */
+  const totais = {
+    total:    despesasFiltradas.reduce((s, d) => s + d.valor, 0),
+    pago:     despesasFiltradas.filter(d => d.status === 'pago').reduce((s, d) => s + d.valor, 0),
+    pendente: despesasFiltradas.filter(d => d.status === 'pendente').reduce((s, d) => s + d.valor, 0),
+    vencido:  despesasFiltradas.filter(d => d.status === 'vencido').reduce((s, d) => s + d.valor, 0),
+  };
 
-  // ── Validate ──────────────────────────────────────────────────────────────
-  function validateForm() {
-    const errs: Record<string, string> = {};
-    if (!form.categoria)     errs.categoria     = 'Categoria obrigatória';
-    if (!form.descricao?.trim()) errs.descricao = 'Descrição obrigatória';
-    if (!form.valor || form.valor <= 0) errs.valor = 'Valor deve ser maior que zero';
-    if (!form.dataVencimento) errs.dataVencimento = 'Data de vencimento obrigatória';
-    if (form.status === 'pago' && !form.dataPagamento) errs.dataPagamento = 'Data de pagamento obrigatória para status Pago';
-    setFormErrors(errs);
-    return Object.keys(errs).length === 0;
-  }
+  /* ── formulário ── */
+  const abrirNovo = () => {
+    setEditando(null);
+    setForm({ ...EMPTY_FORM, dataVencimento: today() });
+    setPreview('');
+    setUploadArquivo(null);
+    setTab('form');
+  };
 
-  // ── Save ──────────────────────────────────────────────────────────────────
-  async function handleSave() {
-    if (!validateForm()) return;
-    if (!selectedUnit?.id) return;
-    setSaving(true);
-    setError('');
-    try {
-      const payload = {
-        ...form,
-        unitId: selectedUnit.id,
-        valor: Number(form.valor),
-        criadoPor: (user as any)?.name || user?.email || 'sistema',
-        updatedAt: new Date().toISOString(),
-      };
-      if (!editingId) payload.createdAt = new Date().toISOString();
+  const abrirEdicao = (d: Despesa) => {
+    setEditando(d);
+    setForm({
+      fornecedorId:       d.fornecedorId ?? '',
+      fornecedorNome:     d.fornecedorNome ?? '',
+      categoria:          d.categoria,
+      descricao:          d.descricao,
+      valor:              d.valor,
+      dataEmissao:        d.dataEmissao ?? '',
+      dataVencimento:     d.dataVencimento,
+      dataPagamento:      d.dataPagamento ?? '',
+      formaPagamento:     d.formaPagamento ?? '',
+      status:             d.status,
+      numeroNF:           d.numeroNF ?? '',
+      anexoUrl:           d.anexoUrl ?? '',
+      anexoNome:          d.anexoNome ?? '',
+      transacaoBancariaId: d.transacaoBancariaId ?? '',
+      observacoes:        d.observacoes ?? '',
+    });
+    setPreview(d.anexoUrl ?? '');
+    setUploadArquivo(null);
+    setTab('form');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-      const url    = editingId ? `${API}/despesas/${editingId}` : `${API}/despesas`;
-      const method = editingId ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      resetForm();
-      await fetchDespesas();
-      setActiveTab('lista');
-    } catch (e: any) {
-      setError('Erro ao salvar despesa: ' + e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(id: string) {
-    setSaving(true);
-    try {
-      const res = await fetch(`${API}/despesas/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setDeleteConfirm(null);
-      await fetchDespesas();
-    } catch (e: any) {
-      setError('Erro ao excluir: ' + e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleStatusChange(id: string, novoStatus: Despesa['status']) {
-    try {
-      const despesa = despesas.find(d => d.id === id);
-      if (!despesa) return;
-      const payload: Partial<Despesa> = { status: novoStatus };
-      if (novoStatus === 'pago' && !despesa.dataPagamento) payload.dataPagamento = today();
-      await fetch(`${API}/despesas/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...despesa, ...payload }),
-      });
-      await fetchDespesas();
-    } catch (e: any) {
-      setError('Erro ao atualizar status: ' + e.message);
-    }
-  }
-
-  // ── Form helpers ──────────────────────────────────────────────────────────
-  function startEdit(d: Despesa) {
-    setForm({ ...d });
-    setEditingId(d.id);
-    setFormErrors({});
-    setActiveTab('form');
-  }
-  function resetForm() {
-    setForm(EMPTY_FORM);
-    setEditingId(null);
-    setFormErrors({});
-    setUploadFile(null);
-    setUploadPreview('');
-  }
-  function handleFormChange(field: keyof Despesa, value: any) {
-    setForm(prev => ({ ...prev, [field]: value }));
-    if (formErrors[field]) setFormErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
-  }
-  function handleFornecedorSelect(id: string) {
-    const f = fornecedores.find(f => f.id === id);
+  const handleFornecedorChange = (id: string) => {
+    const f = fornecedores.find(x => x.id === id);
     setForm(prev => ({
       ...prev,
       fornecedorId: id,
       fornecedorNome: f ? (f.nomeFantasia || f.razaoSocial) : '',
-      categoria: prev.categoria || f?.categoria || '',
     }));
-  }
+  };
 
-  // ── File / Photo upload ───────────────────────────────────────────────────
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  /* ── upload de arquivo ── */
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadFile(file);
+    setUploadArquivo(file);
+    setForm(prev => ({ ...prev, anexoNome: file.name }));
+
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = ev => setUploadPreview(ev.target?.result as string);
+      reader.onload = ev => setPreview(ev.target?.result as string);
       reader.readAsDataURL(file);
     } else {
-      setUploadPreview('');
+      setPreview('');
     }
-  }
+  };
 
-  async function handleUploadAnexo() {
-    if (!uploadFile) return;
-    setUploadProcessing(true);
-    try {
-      // Converte para base64 e salva inline (sem S3)
+  // Converte arquivo para base64 para envio
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        const base64 = ev.target?.result as string;
-        // Salva URL como data URI (funciona para NFs pequenas, <1MB)
-        // Para produção com S3, substituir aqui pelo upload ao bucket
-        setForm(prev => ({
-          ...prev,
-          anexoUrl: base64,
-          anexoNome: uploadFile.name,
-        }));
-        setUploadProcessing(false);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  /* ── salvar ── */
+  const handleSalvar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeUnit?.id) return;
+
+    if (!form.categoria) { setErro('Selecione a categoria.'); return; }
+    if (!form.descricao.trim()) { setErro('Informe a descrição.'); return; }
+    if (!form.valor || form.valor <= 0) { setErro('Informe o valor da despesa.'); return; }
+    if (!form.dataVencimento) { setErro('Informe a data de vencimento.'); return; }
+
+    setSalvando(true);
+    setErro('');
+
+    try {
+      let anexoUrl = form.anexoUrl;
+      let anexoNome = form.anexoNome;
+
+      // Se há arquivo novo, converte para base64 (backend pode salvar ou repassar a S3)
+      if (uploadArquivo) {
+        setUploadando(true);
+        try {
+          const base64 = await fileToBase64(uploadArquivo);
+          // Envia junto com a despesa; o backend deve armazenar (S3 ou inline)
+          anexoUrl = base64;
+          anexoNome = uploadArquivo.name;
+        } finally {
+          setUploadando(false);
+        }
+      }
+
+      const payload: any = {
+        ...form,
+        anexoUrl,
+        anexoNome,
+        valor: Number(form.valor),
+        unitId: activeUnit!.id,
+        criadoPor: user?.email ?? 'sistema',
       };
-      reader.readAsDataURL(uploadFile);
-    } catch (e: any) {
-      setError('Erro ao processar arquivo: ' + e.message);
-      setUploadProcessing(false);
-    }
-  }
 
-  async function handleUploadAndCreate() {
-    if (!uploadFile || !selectedUnit?.id) return;
-    setUploadProcessing(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const base64 = ev.target?.result as string;
-        const payload: Partial<Despesa> = {
-          ...form,
-          unitId: selectedUnit.id,
-          valor: Number(form.valor) || 0,
-          categoria: form.categoria || 'Outras Despesas',
-          descricao: form.descricao || uploadFile.name.replace(/\.[^.]+$/, ''),
-          dataVencimento: form.dataVencimento || today(),
-          status: 'pendente' as const,
-          anexoUrl: base64,
-          anexoNome: uploadFile.name,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          criadoPor: (user as any)?.name || user?.email || 'sistema',
-        };
-        const res = await fetch(`${API}/despesas`, {
+      // Remove campos vazios
+      Object.keys(payload).forEach(k => {
+        if (payload[k] === '' || payload[k] === null) delete payload[k];
+      });
+
+      let resp: Response;
+      if (editando) {
+        resp = await fetch(`${API_BASE}/despesas/${editando.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        resp = await fetch(`${API_BASE}/despesas`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setUploadFile(null);
-        setUploadPreview('');
-        setForm(EMPTY_FORM);
-        await fetchDespesas();
-        setActiveTab('lista');
-        setUploadProcessing(false);
-      };
-      reader.readAsDataURL(uploadFile);
-    } catch (e: any) {
-      setError('Erro ao salvar com anexo: ' + e.message);
-      setUploadProcessing(false);
-    }
-  }
+      }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // RENDER
-  // ══════════════════════════════════════════════════════════════════════════
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${resp.status}`);
+      }
+
+      showSucesso(editando ? 'Despesa atualizada com sucesso!' : 'Despesa registrada com sucesso!');
+      setTab('lista');
+      setEditando(null);
+      setForm({ ...EMPTY_FORM });
+      setPreview('');
+      setUploadArquivo(null);
+      await carregarDespesas();
+    } catch (e: any) {
+      setErro('Erro ao salvar despesa: ' + e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  /* ── excluir ── */
+  const confirmarExclusao = async () => {
+    if (!excluindo) return;
+    try {
+      const resp = await fetch(`${API_BASE}/despesas/${excluindo.id}`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      showSucesso('Despesa excluída.');
+      setExcluindo(null);
+      await carregarDespesas();
+    } catch (e: any) {
+      setErro('Erro ao excluir: ' + e.message);
+      setExcluindo(null);
+    }
+  };
+
+  /* ── marcar como pago rápido ── */
+  const marcarPago = async (d: Despesa) => {
+    try {
+      const resp = await fetch(`${API_BASE}/despesas/${d.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...d,
+          status: 'pago',
+          dataPagamento: today(),
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      showSucesso('Despesa marcada como paga!');
+      await carregarDespesas();
+    } catch (e: any) {
+      setErro('Erro ao atualizar status: ' + e.message);
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════
+     RENDER
+  ══════════════════════════════════════════════════════════════ */
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', background: '#f8fafc', display: 'flex', flexDirection: 'column' }}>
       <Header title="Despesas" />
 
-      <main style={{ flex: 1, maxWidth: 1200, margin: '0 auto', padding: '24px 16px', width: '100%' }}>
+      <main style={{ flex: 1, padding: '24px 16px', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
 
-        {/* ── Page Header ── */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        {/* ── Título ── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#1a1a2e' }}>💸 Despesas</h1>
-            <p style={{ margin: '4px 0 0', color: '#666', fontSize: 14 }}>
-              Gestão de despesas operacionais — {selectedUnit?.nome || selectedUnit?.id || 'Selecione uma unidade'}
+            <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1e293b', margin: 0 }}>
+              💸 Despesas
+            </h1>
+            <p style={{ color: '#64748b', margin: '4px 0 0', fontSize: 14 }}>
+              Gestão de despesas operacionais · {activeUnit?.nome ?? '—'}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => { resetForm(); setActiveTab('upload'); }}
-              style={{ padding: '10px 18px', background: '#7b1fa2', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
-              📷 Foto / NF
+            <button
+              onClick={() => { setTab('upload'); setEditando(null); setForm({ ...EMPTY_FORM }); setPreview(''); setUploadArquivo(null); }}
+              style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              📷 Upload NF/Foto
             </button>
-            <button onClick={() => { resetForm(); setActiveTab('form'); }}
-              style={{ padding: '10px 18px', background: '#c62828', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
-              ＋ Nova Despesa
+            <button
+              onClick={abrirNovo}
+              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              + Nova Despesa
             </button>
           </div>
         </div>
 
-        {error && (
-          <div style={{ background: '#ffebee', color: '#c62828', padding: '12px 16px', borderRadius: 8, marginBottom: 16, border: '1px solid #ef9a9a' }}>
-            ⚠️ {error}
-            <button onClick={() => setError('')} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontWeight: 700 }}>✕</button>
+        {/* ── Feedbacks ── */}
+        {erro && (
+          <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '12px 16px', marginBottom: 16, color: '#991b1b', display: 'flex', justifyContent: 'space-between' }}>
+            <span>⚠️ {erro}</span>
+            <button onClick={() => setErro('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#991b1b', fontWeight: 700 }}>✕</button>
+          </div>
+        )}
+        {sucesso && (
+          <div style={{ background: '#d1fae5', border: '1px solid #6ee7b7', borderRadius: 8, padding: '12px 16px', marginBottom: 16, color: '#065f46' }}>
+            ✅ {sucesso}
           </div>
         )}
 
-        {/* ── Summary Cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
-          {[
-            { label: 'Total Geral',    value: totalGeral,    color: '#1a237e', icon: '📊' },
-            { label: 'Pago',           value: totalPago,     color: '#1b5e20', icon: '✅' },
-            { label: 'A Pagar',        value: totalPendente, color: '#e65100', icon: '⏳' },
-            { label: 'Vencido',        value: totalVencido,  color: '#b71c1c', icon: '🚨' },
-          ].map(card => (
-            <div key={card.label} style={{ background: '#fff', borderRadius: 12, padding: '18px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderLeft: `4px solid ${card.color}` }}>
-              <div style={{ fontSize: 22 }}>{card.icon}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: card.color, marginTop: 4 }}>{fmtCurrency(card.value)}</div>
-              <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>{card.label}</div>
-            </div>
-          ))}
-        </div>
-
         {/* ── Tabs ── */}
-        <div style={{ display: 'flex', gap: 0, marginBottom: 0, borderBottom: '2px solid #e0e0e0' }}>
-          {(['lista', 'form', 'upload'] as const).map(tab => (
-            <button key={tab} onClick={() => { if (tab !== 'form') resetForm(); setActiveTab(tab); }}
+        <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid #e2e8f0', marginBottom: 24 }}>
+          {([
+            { key: 'lista',  label: '📋 Lista' },
+            { key: 'form',   label: editando ? '✏️ Editar' : '➕ Nova Despesa' },
+            { key: 'upload', label: '📷 Upload NF' },
+          ] as const).map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
               style={{
-                padding: '10px 22px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14,
-                background: activeTab === tab ? '#fff' : 'transparent',
-                color: activeTab === tab ? '#c62828' : '#666',
-                borderBottom: activeTab === tab ? '2px solid #c62828' : '2px solid transparent',
-                marginBottom: -2, borderRadius: '8px 8px 0 0',
-              }}>
-              {tab === 'lista' ? '📋 Lista' : tab === 'form' ? (editingId ? '✏️ Editar' : '➕ Formulário') : '📷 Upload / Foto'}
+                padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer',
+                fontWeight: tab === t.key ? 700 : 400,
+                color: tab === t.key ? '#dc2626' : '#64748b',
+                borderBottom: tab === t.key ? '2px solid #dc2626' : '2px solid transparent',
+                marginBottom: -2, fontSize: 14,
+              }}
+            >
+              {t.label}
             </button>
           ))}
         </div>
 
-        <div style={{ background: '#fff', borderRadius: '0 0 12px 12px', padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        {/* ══════════════════ TAB: LISTA ══════════════════ */}
+        {tab === 'lista' && (
+          <>
+            {/* Cards de resumo */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 24 }}>
+              {[
+                { label: 'Total Filtrado',  value: totais.total,    color: '#1e293b', icon: '💰' },
+                { label: 'Pago',            value: totais.pago,     color: '#10b981', icon: '✅' },
+                { label: 'Pendente',        value: totais.pendente, color: '#f59e0b', icon: '⏳' },
+                { label: 'Vencido',         value: totais.vencido,  color: '#ef4444', icon: '🚨' },
+              ].map(c => (
+                <div key={c.label} style={{ background: '#fff', borderRadius: 10, padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,.08)', borderLeft: `4px solid ${c.color}` }}>
+                  <div style={{ fontSize: 22 }}>{c.icon}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: c.color, marginTop: 4 }}>{fmt(c.value)}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{c.label}</div>
+                </div>
+              ))}
+            </div>
 
-          {/* ════════════════════ TAB: LISTA ════════════════════ */}
-          {activeTab === 'lista' && (
-            <>
-              {/* Filters */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-                <input placeholder="🔍 Buscar…" value={filtroBusca} onChange={e => setFiltroBusca(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }} />
+            {/* Filtros */}
+            <div style={{ background: '#fff', borderRadius: 10, padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,.08)', marginBottom: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+                <input
+                  placeholder="🔍 Buscar..."
+                  value={filtroTexto}
+                  onChange={e => setFiltroTexto(e.target.value)}
+                  style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14 }}
+                />
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }}>
+                  style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14 }}>
                   <option value="todos">Todos os status</option>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+                  {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+                    <option key={k} value={k}>{v.icon} {v.label}</option>
+                  ))}
                 </select>
                 <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }}>
-                  <option value="todas">Todas as categorias</option>
+                  style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14 }}>
+                  <option value="">Todas as categorias</option>
                   {CATEGORIAS_DESPESA.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <select value={filtroForma} onChange={e => setFiltroForma(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }}>
-                  <option value="todas">Todas as formas</option>
+                  style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14 }}>
+                  <option value="">Todas as formas</option>
                   {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
-                <input type="date" value={filtroPeriodoInicio} onChange={e => setFiltroPeriodoInicio(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }} />
-                <input type="date" value={filtroPeriodoFim} onChange={e => setFiltroPeriodoFim(e.target.value)}
-                  style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 }} />
+                <input
+                  type="month"
+                  value={filtroPeriodo}
+                  onChange={e => setFiltroPeriodo(e.target.value)}
+                  style={{ padding: '8px 12px', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14 }}
+                />
+                <button
+                  onClick={() => { setFiltroStatus('todos'); setFiltroCategoria(''); setFiltroPeriodo(''); setFiltroTexto(''); setFiltroForma(''); }}
+                  style={{ padding: '8px 12px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14, cursor: 'pointer', color: '#475569' }}
+                >
+                  🗑️ Limpar filtros
+                </button>
               </div>
+            </div>
 
-              {loading ? (
-                <div style={{ textAlign: 'center', padding: 48, color: '#666' }}>⏳ Carregando despesas…</div>
-              ) : despesasFiltradas.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 48, color: '#999' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>💸</div>
-                  <div style={{ fontWeight: 600 }}>Nenhuma despesa encontrada</div>
-                  <div style={{ fontSize: 13, marginTop: 4 }}>Use "Nova Despesa" ou "Foto / NF" para registrar</div>
-                </div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                    <thead>
-                      <tr style={{ background: '#f9f9f9' }}>
-                        {['Vencimento', 'Fornecedor / Descrição', 'Categoria', 'Valor', 'Forma', 'Status', 'Ações'].map(h => (
-                          <th key={h} style={{ padding: '10px 12px', textAlign: 'left', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap', color: '#444', fontWeight: 600 }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {despesasFiltradas.map(d => {
-                        const sc = STATUS_CONFIG[d.status] || STATUS_CONFIG.pendente;
-                        return (
-                          <tr key={d.id} style={{ borderBottom: '1px solid #f0f0f0', transition: 'background .15s' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#fafafa')}
-                            onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                            <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', color: d.status === 'vencido' ? '#b71c1c' : '#333' }}>
-                              {fmtDate(d.dataVencimento)}
-                              {d.dataPagamento && <div style={{ fontSize: 11, color: '#4caf50' }}>pago {fmtDate(d.dataPagamento)}</div>}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{d.fornecedorNome || '—'}</div>
-                              <div style={{ fontSize: 12, color: '#666' }}>{d.descricao}</div>
-                              {d.numeroNF && <div style={{ fontSize: 11, color: '#888' }}>NF {d.numeroNF}</div>}
-                              {d.anexoUrl && <span style={{ fontSize: 11, color: '#7b1fa2', cursor: 'pointer' }} onClick={() => window.open(d.anexoUrl, '_blank')}>📎 {d.anexoNome || 'Anexo'}</span>}
-                            </td>
-                            <td style={{ padding: '10px 12px', color: '#555', fontSize: 13 }}>{d.categoria}</td>
-                            <td style={{ padding: '10px 12px', fontWeight: 700, color: '#c62828', whiteSpace: 'nowrap' }}>{fmtCurrency(d.valor)}</td>
-                            <td style={{ padding: '10px 12px', color: '#555', fontSize: 13 }}>{d.formaPagamento || '—'}</td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 12, background: sc.bg, color: sc.color, fontWeight: 600, fontSize: 12 }}>
-                                {sc.icon} {sc.label}
+            {/* Tabela */}
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: 48, color: '#64748b' }}>⏳ Carregando despesas...</div>
+            ) : despesasFiltradas.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 48, background: '#fff', borderRadius: 10, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+                <div style={{ fontSize: 48 }}>💸</div>
+                <p style={{ color: '#64748b', marginTop: 8 }}>
+                  {despesas.length === 0 ? 'Nenhuma despesa cadastrada.' : 'Nenhuma despesa para os filtros selecionados.'}
+                </p>
+                <button onClick={abrirNovo}
+                  style={{ marginTop: 12, background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontWeight: 600 }}>
+                  + Registrar primeira despesa
+                </button>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      {['Status', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Valor', 'Forma Pgto', 'NF', 'Ações'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#475569', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {despesasFiltradas.map(d => {
+                      const st = STATUS_CONFIG[d.status] ?? STATUS_CONFIG.pendente;
+                      return (
+                        <tr key={d.id} style={{ borderBottom: '1px solid #f1f5f9', background: d.status === 'vencido' ? '#fff5f5' : '#fff' }}>
+                          <td style={{ padding: '10px 12px' }}>
+                            <span style={{ background: st.bg, color: st.color, borderRadius: 20, padding: '3px 10px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
+                              {st.icon} {st.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', color: d.status === 'vencido' ? '#ef4444' : '#1e293b', fontWeight: d.status === 'vencido' ? 700 : 400 }}>
+                            {fmtDate(d.dataVencimento)}
+                            {d.dataPagamento && (
+                              <div style={{ fontSize: 11, color: '#10b981' }}>Pago: {fmtDate(d.dataPagamento)}</div>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 12px', maxWidth: 200 }}>
+                            <div style={{ fontWeight: 500, color: '#1e293b' }}>{d.descricao}</div>
+                            {d.observacoes && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{d.observacoes.slice(0, 60)}{d.observacoes.length > 60 ? '…' : ''}</div>}
+                          </td>
+                          <td style={{ padding: '10px 12px', color: '#475569', whiteSpace: 'nowrap' }}>
+                            {d.fornecedorNome || '—'}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <span style={{ background: '#f1f5f9', color: '#475569', borderRadius: 4, padding: '2px 8px', fontSize: 12 }}>
+                              {d.categoria}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap' }}>
+                            {fmt(d.valor)}
+                          </td>
+                          <td style={{ padding: '10px 12px', color: '#64748b', fontSize: 12 }}>
+                            {d.formaPagamento || '—'}
+                          </td>
+                          <td style={{ padding: '10px 12px', fontSize: 12 }}>
+                            {d.numeroNF ? (
+                              <span style={{ background: '#ede9fe', color: '#6d28d9', borderRadius: 4, padding: '2px 8px' }}>
+                                NF {d.numeroNF}
                               </span>
-                            </td>
-                            <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
-                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                {/* Quick status change */}
-                                {d.status !== 'pago' && d.status !== 'cancelado' && (
-                                  <button onClick={() => handleStatusChange(d.id, 'pago')}
-                                    title="Marcar como Pago"
-                                    style={{ padding: '4px 8px', background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                                    ✅ Pagar
-                                  </button>
-                                )}
-                                <button onClick={() => startEdit(d)} title="Editar"
-                                  style={{ padding: '4px 8px', background: '#e3f2fd', color: '#1565c0', border: '1px solid #90caf9', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                                  ✏️
+                            ) : '—'}
+                            {d.anexoUrl && (
+                              <a
+                                href={d.anexoUrl.startsWith('data:') ? d.anexoUrl : d.anexoUrl}
+                                target="_blank" rel="noreferrer"
+                                style={{ display: 'block', color: '#0ea5e9', fontSize: 11, marginTop: 2 }}
+                              >
+                                📎 {d.anexoNome ? d.anexoNome.slice(0, 20) : 'Ver anexo'}
+                              </a>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                              {(d.status === 'pendente' || d.status === 'vencido') && (
+                                <button
+                                  onClick={() => marcarPago(d)}
+                                  title="Marcar como pago"
+                                  style={{ background: '#d1fae5', color: '#065f46', border: 'none', borderRadius: 6, padding: '5px 8px', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
+                                >
+                                  ✅ Pagar
                                 </button>
-                                <button onClick={() => setViewingDespesa(d)} title="Detalhes"
-                                  style={{ padding: '4px 8px', background: '#f3e5f5', color: '#7b1fa2', border: '1px solid #ce93d8', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                                  🔍
-                                </button>
-                                <button onClick={() => setDeleteConfirm(d.id)} title="Excluir"
-                                  style={{ padding: '4px 8px', background: '#ffebee', color: '#c62828', border: '1px solid #ef9a9a', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                                  🗑️
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr style={{ background: '#f5f5f5', fontWeight: 700 }}>
-                        <td colSpan={3} style={{ padding: '10px 12px', textAlign: 'right' }}>Total filtrado:</td>
-                        <td style={{ padding: '10px 12px', color: '#c62828' }}>
-                          {fmtCurrency(despesasFiltradas.reduce((s, d) => s + d.valor, 0))}
-                        </td>
-                        <td colSpan={3} style={{ padding: '10px 12px', color: '#666', fontWeight: 400, fontSize: 13 }}>
-                          {despesasFiltradas.length} registro(s) de {despesas.length} total
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
+                              )}
+                              <button
+                                onClick={() => abrirEdicao(d)}
+                                title="Editar"
+                                style={{ background: '#dbeafe', color: '#1d4ed8', border: 'none', borderRadius: 6, padding: '5px 8px', cursor: 'pointer', fontSize: 12 }}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => setExcluindo(d)}
+                                title="Excluir"
+                                style={{ background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, padding: '5px 8px', cursor: 'pointer', fontSize: 12 }}
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div style={{ padding: '10px 12px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: 13, color: '#64748b' }}>
+                  {despesasFiltradas.length} despesa(s) · Total: <strong style={{ color: '#1e293b' }}>{fmt(totais.total)}</strong>
                 </div>
-              )}
-            </>
-          )}
+              </div>
+            )}
+          </>
+        )}
 
-          {/* ════════════════════ TAB: FORMULÁRIO ════════════════════ */}
-          {activeTab === 'form' && (
-            <div style={{ maxWidth: 760, margin: '0 auto' }}>
-              <h3 style={{ margin: '0 0 20px', color: '#1a1a2e' }}>{editingId ? '✏️ Editar Despesa' : '➕ Nova Despesa'}</h3>
+        {/* ══════════════════ TAB: FORMULÁRIO ══════════════════ */}
+        {tab === 'form' && (
+          <div style={{ background: '#fff', borderRadius: 10, padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', marginBottom: 20 }}>
+              {editando ? '✏️ Editar Despesa' : '➕ Nova Despesa'}
+            </h2>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-
-                {/* Fornecedor */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={labelStyle}>Fornecedor <span style={{ color: '#999', fontSize: 12 }}>(opcional)</span></label>
-                  <select value={form.fornecedorId || ''} onChange={e => handleFornecedorSelect(e.target.value)}
-                    style={inputStyle}>
-                    <option value="">— Sem fornecedor vinculado —</option>
+            <form onSubmit={handleSalvar}>
+              {/* Linha 1: Fornecedor + Categoria */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={labelStyle}>Fornecedor</label>
+                  <select
+                    value={form.fornecedorId}
+                    onChange={e => handleFornecedorChange(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">— Selecione o fornecedor (opcional) —</option>
                     {fornecedores.map(f => (
-                      <option key={f.id} value={f.id}>{f.nomeFantasia || f.razaoSocial}</option>
+                      <option key={f.id} value={f.id}>
+                        {f.nomeFantasia || f.razaoSocial} · {f.categoria}
+                      </option>
                     ))}
                   </select>
-                  {!form.fornecedorId && (
-                    <input placeholder="Ou digite o nome do fornecedor manualmente"
-                      value={form.fornecedorNome || ''}
-                      onChange={e => handleFormChange('fornecedorNome', e.target.value)}
-                      style={{ ...inputStyle, marginTop: 8 }} />
+                  {fornecedores.length === 0 && (
+                    <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                      Nenhum fornecedor cadastrado. <a href="/modulos/fornecedores" style={{ color: '#0ea5e9' }}>Cadastrar fornecedor →</a>
+                    </span>
                   )}
                 </div>
-
-                {/* Categoria */}
                 <div>
                   <label style={labelStyle}>Categoria *</label>
-                  <select value={form.categoria || ''} onChange={e => handleFormChange('categoria', e.target.value)}
-                    style={{ ...inputStyle, borderColor: formErrors.categoria ? '#c62828' : '#ddd' }}>
-                    <option value="">Selecione a categoria</option>
+                  <select
+                    value={form.categoria}
+                    onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
+                    required
+                    style={inputStyle}
+                  >
+                    <option value="">— Selecione —</option>
                     {CATEGORIAS_DESPESA.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  {formErrors.categoria && <span style={errorStyle}>{formErrors.categoria}</span>}
                 </div>
+              </div>
 
-                {/* Valor */}
+              {/* Linha 2: Descrição */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Descrição *</label>
+                <input
+                  type="text"
+                  value={form.descricao}
+                  onChange={e => setForm(p => ({ ...p, descricao: e.target.value }))}
+                  required
+                  placeholder="Ex: Compra de embalagens — Fornecedor X"
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* Linha 3: Valor + Data Emissão + Data Vencimento */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
                 <div>
                   <label style={labelStyle}>Valor (R$) *</label>
-                  <input type="number" min="0" step="0.01" placeholder="0,00"
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
                     value={form.valor || ''}
-                    onChange={e => handleFormChange('valor', e.target.value)}
-                    style={{ ...inputStyle, borderColor: formErrors.valor ? '#c62828' : '#ddd' }} />
-                  {formErrors.valor && <span style={errorStyle}>{formErrors.valor}</span>}
+                    onChange={e => setForm(p => ({ ...p, valor: parseFloat(e.target.value) || 0 }))}
+                    required
+                    placeholder="0,00"
+                    style={inputStyle}
+                  />
                 </div>
-
-                {/* Descrição */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={labelStyle}>Descrição *</label>
-                  <input placeholder="Descreva a despesa…"
-                    value={form.descricao || ''}
-                    onChange={e => handleFormChange('descricao', e.target.value)}
-                    style={{ ...inputStyle, borderColor: formErrors.descricao ? '#c62828' : '#ddd' }} />
-                  {formErrors.descricao && <span style={errorStyle}>{formErrors.descricao}</span>}
-                </div>
-
-                {/* NF */}
                 <div>
-                  <label style={labelStyle}>Número da NF</label>
-                  <input placeholder="Ex: 001234"
-                    value={form.numeroNF || ''}
-                    onChange={e => handleFormChange('numeroNF', e.target.value)}
-                    style={inputStyle} />
+                  <label style={labelStyle}>Data de Emissão (NF)</label>
+                  <input
+                    type="date"
+                    value={form.dataEmissao}
+                    onChange={e => setForm(p => ({ ...p, dataEmissao: e.target.value }))}
+                    style={inputStyle}
+                  />
                 </div>
-
-                {/* Status */}
-                <div>
-                  <label style={labelStyle}>Status *</label>
-                  <select value={form.status || 'pendente'} onChange={e => handleFormChange('status', e.target.value)}
-                    style={inputStyle}>
-                    {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
-                  </select>
-                </div>
-
-                {/* Data emissão */}
-                <div>
-                  <label style={labelStyle}>Data de Emissão</label>
-                  <input type="date"
-                    value={form.dataEmissao || ''}
-                    onChange={e => handleFormChange('dataEmissao', e.target.value)}
-                    style={inputStyle} />
-                </div>
-
-                {/* Data vencimento */}
                 <div>
                   <label style={labelStyle}>Data de Vencimento *</label>
-                  <input type="date"
-                    value={form.dataVencimento || ''}
-                    onChange={e => handleFormChange('dataVencimento', e.target.value)}
-                    style={{ ...inputStyle, borderColor: formErrors.dataVencimento ? '#c62828' : '#ddd' }} />
-                  {formErrors.dataVencimento && <span style={errorStyle}>{formErrors.dataVencimento}</span>}
+                  <input
+                    type="date"
+                    value={form.dataVencimento}
+                    onChange={e => setForm(p => ({ ...p, dataVencimento: e.target.value }))}
+                    required
+                    style={inputStyle}
+                  />
                 </div>
+              </div>
 
-                {/* Forma pagamento */}
+              {/* Linha 4: Forma de Pagamento + Status + Data Pagamento */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
                 <div>
                   <label style={labelStyle}>Forma de Pagamento</label>
-                  <select value={form.formaPagamento || ''} onChange={e => handleFormChange('formaPagamento', e.target.value)}
-                    style={inputStyle}>
-                    <option value="">Selecione…</option>
+                  <select
+                    value={form.formaPagamento}
+                    onChange={e => setForm(p => ({ ...p, formaPagamento: e.target.value }))}
+                    style={inputStyle}
+                  >
+                    <option value="">— Selecione —</option>
                     {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </div>
-
-                {/* Data pagamento */}
                 <div>
-                  <label style={labelStyle}>Data de Pagamento {form.status === 'pago' && '*'}</label>
-                  <input type="date"
-                    value={form.dataPagamento || ''}
-                    onChange={e => handleFormChange('dataPagamento', e.target.value)}
-                    style={{ ...inputStyle, borderColor: formErrors.dataPagamento ? '#c62828' : '#ddd' }} />
-                  {formErrors.dataPagamento && <span style={errorStyle}>{formErrors.dataPagamento}</span>}
+                  <label style={labelStyle}>Status *</label>
+                  <select
+                    value={form.status}
+                    onChange={e => setForm(p => ({ ...p, status: e.target.value as Despesa['status'] }))}
+                    style={inputStyle}
+                  >
+                    {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+                      <option key={k} value={k}>{v.icon} {v.label}</option>
+                    ))}
+                  </select>
                 </div>
+                <div>
+                  <label style={labelStyle}>Data de Pagamento</label>
+                  <input
+                    type="date"
+                    value={form.dataPagamento}
+                    onChange={e => setForm(p => ({ ...p, dataPagamento: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
 
-                {/* Link Conciliação */}
-                <div style={{ gridColumn: '1 / -1' }}>
+              {/* Linha 5: Número NF + ID Conciliação */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={labelStyle}>Número da NF / Pedido</label>
+                  <input
+                    type="text"
+                    value={form.numeroNF}
+                    onChange={e => setForm(p => ({ ...p, numeroNF: e.target.value }))}
+                    placeholder="Ex: 001234"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
                   <label style={labelStyle}>
-                    🏦 ID Transação Bancária <span style={{ color: '#999', fontSize: 12 }}>(vínculo com Conciliação Bancária)</span>
+                    🏦 Transação Bancária (Conciliação)
+                    <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 4 }}>ID da transação vinculada</span>
                   </label>
-                  <input placeholder="Ex: txn-1714588800000 (preenchido automaticamente pela conciliação)"
-                    value={form.transacaoBancariaId || ''}
-                    onChange={e => handleFormChange('transacaoBancariaId', e.target.value)}
-                    style={inputStyle} />
-                </div>
-
-                {/* Anexo */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={labelStyle}>Anexo / NF <span style={{ color: '#999', fontSize: 12 }}>(imagem ou PDF)</span></label>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input ref={fileInputRef} type="file" accept="image/*,application/pdf"
-                      onChange={handleFileChange} style={{ display: 'none' }} />
-                    <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
-                      onChange={handleFileChange} style={{ display: 'none' }} />
-                    <button type="button" onClick={() => fileInputRef.current?.click()}
-                      style={{ padding: '8px 14px', background: '#f3e5f5', color: '#7b1fa2', border: '1px solid #ce93d8', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
-                      📁 Selecionar arquivo
-                    </button>
-                    <button type="button" onClick={() => cameraInputRef.current?.click()}
-                      style={{ padding: '8px 14px', background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
-                      📷 Tirar foto
-                    </button>
-                    {uploadFile && (
-                      <button type="button" onClick={handleUploadAnexo} disabled={uploadProcessing}
-                        style={{ padding: '8px 14px', background: '#e3f2fd', color: '#1565c0', border: '1px solid #90caf9', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
-                        {uploadProcessing ? '⏳ Processando…' : '⬆️ Anexar'}
-                      </button>
-                    )}
-                    {form.anexoUrl && (
-                      <span style={{ fontSize: 13, color: '#7b1fa2', cursor: 'pointer' }}
-                        onClick={() => window.open(form.anexoUrl, '_blank')}>
-                        📎 {form.anexoNome || 'Ver anexo'}
-                      </span>
-                    )}
-                  </div>
-                  {uploadPreview && (
-                    <img src={uploadPreview} alt="Preview" style={{ marginTop: 10, maxHeight: 160, borderRadius: 8, border: '1px solid #ddd' }} />
-                  )}
-                  {uploadFile && !uploadPreview && (
-                    <div style={{ marginTop: 8, fontSize: 13, color: '#666' }}>📄 {uploadFile.name}</div>
-                  )}
-                </div>
-
-                {/* Observações */}
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={labelStyle}>Observações</label>
-                  <textarea rows={3} placeholder="Observações adicionais…"
-                    value={form.observacoes || ''}
-                    onChange={e => handleFormChange('observacoes', e.target.value)}
-                    style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                  <input
+                    type="text"
+                    value={form.transacaoBancariaId}
+                    onChange={e => setForm(p => ({ ...p, transacaoBancariaId: e.target.value }))}
+                    placeholder="Deixe em branco ou vincule manualmente"
+                    style={inputStyle}
+                  />
                 </div>
               </div>
 
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'flex-end' }}>
-                <button onClick={() => { resetForm(); setActiveTab('lista'); }}
-                  style={{ padding: '10px 24px', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-                  Cancelar
-                </button>
-                <button onClick={handleSave} disabled={saving}
-                  style={{ padding: '10px 28px', background: saving ? '#ccc' : '#c62828', color: '#fff', border: 'none', borderRadius: 8, cursor: saving ? 'default' : 'pointer', fontWeight: 600, fontSize: 15 }}>
-                  {saving ? '⏳ Salvando…' : editingId ? '💾 Salvar Alterações' : '✅ Criar Despesa'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ════════════════════ TAB: UPLOAD / FOTO ════════════════════ */}
-          {activeTab === 'upload' && (
-            <div style={{ maxWidth: 680, margin: '0 auto' }}>
-              <h3 style={{ margin: '0 0 6px', color: '#1a1a2e' }}>📷 Registrar Despesa via Foto ou NF</h3>
-              <p style={{ color: '#666', fontSize: 14, marginTop: 0, marginBottom: 24 }}>
-                Tire uma foto do pedido / nota fiscal ou selecione um arquivo PDF. Preencha os campos básicos e salve.
-              </p>
-
-              {/* Drop zone */}
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: '2px dashed #ce93d8', borderRadius: 12, padding: '40px 20px', textAlign: 'center',
-                  cursor: 'pointer', background: '#fdf5ff', marginBottom: 20, transition: 'border-color .2s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = '#7b1fa2')}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = '#ce93d8')}>
-                <div style={{ fontSize: 40 }}>📄</div>
-                <div style={{ fontWeight: 600, color: '#7b1fa2', marginTop: 8 }}>Clique para selecionar arquivo</div>
-                <div style={{ fontSize: 13, color: '#999', marginTop: 4 }}>PDF, JPG, PNG até 2MB</div>
-                <input ref={fileInputRef} type="file" accept="image/*,application/pdf"
-                  onChange={handleFileChange} style={{ display: 'none' }} />
-              </div>
-
-              {/* Camera button */}
-              <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                <span style={{ color: '#999', fontSize: 13 }}>— ou —</span>
-                <br />
-                <button type="button" onClick={() => cameraInputRef.current?.click()}
-                  style={{ marginTop: 10, padding: '12px 28px', background: '#7b1fa2', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 15, fontWeight: 600 }}>
-                  📷 Abrir câmera
-                </button>
-                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment"
-                  onChange={handleFileChange} style={{ display: 'none' }} />
-              </div>
-
-              {/* Preview */}
-              {uploadPreview && (
-                <div style={{ marginBottom: 20, textAlign: 'center' }}>
-                  <img src={uploadPreview} alt="Preview NF" style={{ maxHeight: 220, borderRadius: 10, border: '1px solid #ce93d8', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-                </div>
-              )}
-              {uploadFile && !uploadPreview && (
-                <div style={{ padding: '12px 16px', background: '#f3e5f5', borderRadius: 8, marginBottom: 20, fontSize: 14, color: '#7b1fa2' }}>
-                  📄 {uploadFile.name} ({(uploadFile.size / 1024).toFixed(1)} KB)
-                </div>
-              )}
-
-              {/* Quick fields */}
-              {uploadFile && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <label style={labelStyle}>Fornecedor</label>
-                    <select value={form.fornecedorId || ''} onChange={e => handleFornecedorSelect(e.target.value)}
-                      style={inputStyle}>
-                      <option value="">— Sem fornecedor vinculado —</option>
-                      {fornecedores.map(f => (
-                        <option key={f.id} value={f.id}>{f.nomeFantasia || f.razaoSocial}</option>
-                      ))}
-                    </select>
-                    {!form.fornecedorId && (
-                      <input placeholder="Ou nome do fornecedor"
-                        value={form.fornecedorNome || ''}
-                        onChange={e => handleFormChange('fornecedorNome', e.target.value)}
-                        style={{ ...inputStyle, marginTop: 8 }} />
-                    )}
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Categoria</label>
-                    <select value={form.categoria || ''} onChange={e => handleFormChange('categoria', e.target.value)}
-                      style={inputStyle}>
-                      <option value="">Selecione…</option>
-                      {CATEGORIAS_DESPESA.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Valor (R$)</label>
-                    <input type="number" min="0" step="0.01" placeholder="0,00"
-                      value={form.valor || ''}
-                      onChange={e => handleFormChange('valor', e.target.value)}
-                      style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Descrição</label>
-                    <input placeholder="Descreva a despesa…"
-                      value={form.descricao || ''}
-                      onChange={e => handleFormChange('descricao', e.target.value)}
-                      style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Nº NF</label>
-                    <input placeholder="001234"
-                      value={form.numeroNF || ''}
-                      onChange={e => handleFormChange('numeroNF', e.target.value)}
-                      style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Vencimento</label>
-                    <input type="date"
-                      value={form.dataVencimento || today()}
-                      onChange={e => handleFormChange('dataVencimento', e.target.value)}
-                      style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Forma de Pagamento</label>
-                    <select value={form.formaPagamento || ''} onChange={e => handleFormChange('formaPagamento', e.target.value)}
-                      style={inputStyle}>
-                      <option value="">Selecione…</option>
-                      {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Status</label>
-                    <select value={form.status || 'pendente'} onChange={e => handleFormChange('status', e.target.value as Despesa['status'])}
-                      style={inputStyle}>
-                      {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
-                    </select>
-                  </div>
-
-                  <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
-                    <button onClick={() => { setUploadFile(null); setUploadPreview(''); setForm(EMPTY_FORM); }}
-                      style={{ padding: '10px 20px', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-                      Limpar
-                    </button>
-                    <button onClick={handleUploadAndCreate} disabled={uploadProcessing}
-                      style={{ padding: '10px 28px', background: uploadProcessing ? '#ccc' : '#7b1fa2', color: '#fff', border: 'none', borderRadius: 8, cursor: uploadProcessing ? 'default' : 'pointer', fontWeight: 600, fontSize: 15 }}>
-                      {uploadProcessing ? '⏳ Salvando…' : '💾 Salvar com Anexo'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-        </div>{/* end white card */}
-      </main>
-
-      {/* ════════════════════ MODAL: DETALHES ════════════════════ */}
-      {viewingDespesa && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-          onClick={() => setViewingDespesa(null)}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: 32, maxWidth: 560, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}
-            onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ margin: 0, color: '#1a1a2e' }}>🔍 Detalhes da Despesa</h3>
-              <button onClick={() => setViewingDespesa(null)}
-                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#666' }}>✕</button>
-            </div>
-
-            {(() => {
-              const d = viewingDespesa;
-              const sc = STATUS_CONFIG[d.status];
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <DetailRow label="Fornecedor" value={d.fornecedorNome || '—'} />
-                  <DetailRow label="Categoria" value={d.categoria} />
-                  <DetailRow label="Descrição" value={d.descricao} />
-                  <DetailRow label="Valor" value={fmtCurrency(d.valor)} bold />
-                  <DetailRow label="Nº NF" value={d.numeroNF || '—'} />
-                  <DetailRow label="Emissão" value={fmtDate(d.dataEmissao)} />
-                  <DetailRow label="Vencimento" value={fmtDate(d.dataVencimento)} />
-                  <DetailRow label="Pagamento" value={fmtDate(d.dataPagamento)} />
-                  <DetailRow label="Forma" value={d.formaPagamento || '—'} />
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ color: '#666', fontSize: 13, minWidth: 140 }}>Status:</span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 12, background: sc.bg, color: sc.color, fontWeight: 600, fontSize: 13 }}>
-                      {sc.icon} {sc.label}
-                    </span>
-                  </div>
-                  {d.transacaoBancariaId && <DetailRow label="ID Conciliação" value={d.transacaoBancariaId} />}
-                  {d.observacoes && <DetailRow label="Observações" value={d.observacoes} />}
-                  {d.anexoUrl && (
+              {/* Linha 6: Anexo (NF/Foto) */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>📎 Anexo (NF, Nota, Foto do Pedido)</label>
+                <div
+                  onClick={() => fileRef.current?.click()}
+                  style={{
+                    border: '2px dashed #cbd5e1', borderRadius: 8, padding: '20px',
+                    textAlign: 'center', cursor: 'pointer', background: '#f8fafc',
+                    transition: 'border-color .2s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#0ea5e9')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#cbd5e1')}
+                >
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={handleFileChange}
+                    style={{ display: 'none' }}
+                  />
+                  {preview ? (
+                    <img src={preview} alt="preview" style={{ maxHeight: 160, maxWidth: '100%', borderRadius: 6, objectFit: 'contain' }} />
+                  ) : form.anexoNome ? (
                     <div>
-                      <span style={{ color: '#666', fontSize: 13, display: 'block', marginBottom: 6 }}>Anexo:</span>
-                      {d.anexoUrl.startsWith('data:image') ? (
-                        <img src={d.anexoUrl} alt="NF" style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid #ddd' }} />
-                      ) : (
-                        <a href={d.anexoUrl} target="_blank" rel="noreferrer"
-                          style={{ color: '#7b1fa2', fontWeight: 600 }}>📎 {d.anexoNome || 'Abrir anexo'}</a>
-                      )}
+                      <span style={{ fontSize: 32 }}>📄</span>
+                      <p style={{ margin: '8px 0 0', color: '#0ea5e9', fontWeight: 500 }}>{form.anexoNome}</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <span style={{ fontSize: 32 }}>📷</span>
+                      <p style={{ margin: '8px 0 0', color: '#64748b' }}>Clique para selecionar uma imagem ou PDF da nota fiscal</p>
+                      <p style={{ margin: 4, color: '#94a3b8', fontSize: 12 }}>JPG, PNG, PDF · máx. 5 MB</p>
                     </div>
                   )}
-                  <DetailRow label="Criado em" value={d.createdAt ? fmtDate(d.createdAt) : '—'} />
-                  <DetailRow label="Criado por" value={d.criadoPor || '—'} />
+                </div>
+                {(form.anexoNome || preview) && (
+                  <button
+                    type="button"
+                    onClick={() => { setPreview(''); setUploadArquivo(null); setForm(p => ({ ...p, anexoUrl: '', anexoNome: '' })); if (fileRef.current) fileRef.current.value = ''; }}
+                    style={{ marginTop: 6, background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}
+                  >
+                    🗑️ Remover anexo
+                  </button>
+                )}
+              </div>
 
-                  <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'flex-end' }}>
-                    <button onClick={() => { setViewingDespesa(null); startEdit(d); }}
-                      style={{ padding: '8px 20px', background: '#e3f2fd', color: '#1565c0', border: '1px solid #90caf9', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-                      ✏️ Editar
+              {/* Linha 7: Observações */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={labelStyle}>Observações</label>
+                <textarea
+                  value={form.observacoes}
+                  onChange={e => setForm(p => ({ ...p, observacoes: e.target.value }))}
+                  rows={3}
+                  placeholder="Informações adicionais, condições especiais, etc."
+                  style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
+                />
+              </div>
+
+              {/* Botões */}
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => { setTab('lista'); setEditando(null); }}
+                  style={{ padding: '10px 24px', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', color: '#475569', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvando || uploadando}
+                  style={{ padding: '10px 28px', background: salvando ? '#94a3b8' : '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: salvando ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 15 }}
+                >
+                  {uploadando ? '⏫ Enviando arquivo...' : salvando ? '💾 Salvando...' : editando ? '💾 Salvar alterações' : '💾 Registrar Despesa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* ══════════════════ TAB: UPLOAD NF ══════════════════ */}
+        {tab === 'upload' && (
+          <div style={{ background: '#fff', borderRadius: 10, padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>
+              📷 Upload Rápido de NF / Foto do Pedido
+            </h2>
+            <p style={{ color: '#64748b', marginBottom: 24, fontSize: 14 }}>
+              Fotografe ou selecione a nota fiscal e preencha os dados básicos para registrar a despesa rapidamente.
+            </p>
+
+            {/* Área de upload */}
+            <div
+              onClick={() => fileRef.current?.click()}
+              style={{
+                border: '2px dashed #0ea5e9', borderRadius: 12, padding: '40px 20px',
+                textAlign: 'center', cursor: 'pointer', background: '#f0f9ff',
+                marginBottom: 20,
+              }}
+            >
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,.pdf"
+                capture="environment"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
+              {preview ? (
+                <img src={preview} alt="NF" style={{ maxHeight: 200, maxWidth: '100%', borderRadius: 8, objectFit: 'contain' }} />
+              ) : uploadArquivo ? (
+                <div>
+                  <span style={{ fontSize: 48 }}>📄</span>
+                  <p style={{ color: '#0ea5e9', fontWeight: 500, marginTop: 8 }}>{uploadArquivo.name}</p>
+                </div>
+              ) : (
+                <div>
+                  <span style={{ fontSize: 56 }}>📷</span>
+                  <p style={{ color: '#0ea5e9', fontWeight: 600, marginTop: 12, fontSize: 16 }}>
+                    Clique para tirar foto ou selecionar arquivo
+                  </p>
+                  <p style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                    Aceita JPG, PNG, PDF · Câmera do celular disponível
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {uploadArquivo && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                  <span style={{ fontSize: 14, color: '#10b981', fontWeight: 500 }}>
+                    ✅ Arquivo selecionado: {uploadArquivo.name}
+                  </span>
+                  <button
+                    onClick={() => { setUploadArquivo(null); setPreview(''); if (fileRef.current) fileRef.current.value = ''; }}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    🗑️ Remover
+                  </button>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 20 }}>
+                  <p style={{ color: '#475569', fontWeight: 600, marginBottom: 16 }}>
+                    Preencha os dados básicos da despesa:
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+                    <div>
+                      <label style={labelStyle}>Categoria *</label>
+                      <select value={form.categoria} onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))} style={inputStyle}>
+                        <option value="">— Selecione —</option>
+                        {CATEGORIAS_DESPESA.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Valor (R$) *</label>
+                      <input type="number" step="0.01" min="0.01" value={form.valor || ''} onChange={e => setForm(p => ({ ...p, valor: parseFloat(e.target.value) || 0 }))} placeholder="0,00" style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Vencimento *</label>
+                      <input type="date" value={form.dataVencimento || today()} onChange={e => setForm(p => ({ ...p, dataVencimento: e.target.value }))} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Nº NF / Pedido</label>
+                      <input type="text" value={form.numeroNF} onChange={e => setForm(p => ({ ...p, numeroNF: e.target.value }))} placeholder="001234" style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Forma de Pagamento</label>
+                      <select value={form.formaPagamento} onChange={e => setForm(p => ({ ...p, formaPagamento: e.target.value }))} style={inputStyle}>
+                        <option value="">— Selecione —</option>
+                        {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Fornecedor</label>
+                      <select value={form.fornecedorId} onChange={e => handleFornecedorChange(e.target.value)} style={inputStyle}>
+                        <option value="">— Opcional —</option>
+                        {fornecedores.map(f => <option key={f.id} value={f.id}>{f.nomeFantasia || f.razaoSocial}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <label style={labelStyle}>Descrição *</label>
+                    <input type="text" value={form.descricao} onChange={e => setForm(p => ({ ...p, descricao: e.target.value }))} placeholder="Ex: Compra de embalagens — NF 1234" style={inputStyle} />
+                  </div>
+
+                  <div style={{ marginTop: 20, display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => { setTab('lista'); setForm({ ...EMPTY_FORM }); setPreview(''); setUploadArquivo(null); }}
+                      style={{ padding: '10px 24px', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', color: '#475569', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Cancelar
                     </button>
-                    <button onClick={() => setViewingDespesa(null)}
-                      style={{ padding: '8px 20px', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer' }}>
-                      Fechar
+                    <button
+                      onClick={handleSalvar as any}
+                      disabled={salvando || uploadando || !form.categoria || !form.descricao || !form.valor || !form.dataVencimento}
+                      style={{
+                        padding: '10px 28px', background: (salvando || uploadando || !form.categoria || !form.descricao || !form.valor) ? '#94a3b8' : '#0ea5e9',
+                        color: '#fff', border: 'none', borderRadius: 8,
+                        cursor: (salvando || uploadando || !form.categoria || !form.descricao || !form.valor) ? 'not-allowed' : 'pointer',
+                        fontWeight: 700, fontSize: 15,
+                      }}
+                    >
+                      {uploadando ? '⏫ Enviando...' : salvando ? '💾 Salvando...' : '💾 Salvar Despesa com Anexo'}
                     </button>
                   </div>
                 </div>
-              );
-            })()}
+              </>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ════════════════════ MODAL: CONFIRMAÇÃO DELETE ════════════════════ */}
-      {deleteConfirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: 32, maxWidth: 400, width: '100%' }}>
-            <h3 style={{ margin: '0 0 12px', color: '#c62828' }}>⚠️ Confirmar Exclusão</h3>
-            <p style={{ color: '#555', marginBottom: 24 }}>Tem certeza que deseja excluir esta despesa? Essa ação não pode ser desfeita.</p>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteConfirm(null)}
-                style={{ padding: '10px 20px', background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer' }}>
-                Cancelar
-              </button>
-              <button onClick={() => handleDelete(deleteConfirm)} disabled={saving}
-                style={{ padding: '10px 20px', background: '#c62828', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-                {saving ? '⏳…' : '🗑️ Excluir'}
-              </button>
+        {/* ══════════════════ MODAL EXCLUSÃO ══════════════════ */}
+        {excluindo && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: '#fff', borderRadius: 12, padding: 32, maxWidth: 420, width: '90%', boxShadow: '0 10px 40px rgba(0,0,0,.2)' }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', marginBottom: 12 }}>🗑️ Confirmar Exclusão</h3>
+              <p style={{ color: '#475569', marginBottom: 8 }}>
+                Tem certeza que deseja excluir a despesa:
+              </p>
+              <div style={{ background: '#fee2e2', borderRadius: 8, padding: '10px 14px', marginBottom: 20 }}>
+                <strong style={{ color: '#dc2626' }}>{excluindo.descricao}</strong>
+                <br />
+                <span style={{ color: '#64748b', fontSize: 13 }}>{fmt(excluindo.valor)} · {fmtDate(excluindo.dataVencimento)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                <button onClick={() => setExcluindo(null)} style={{ padding: '10px 20px', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', cursor: 'pointer', color: '#475569' }}>
+                  Cancelar
+                </button>
+                <button onClick={confirmarExclusao} style={{ padding: '10px 20px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}>
+                  Sim, excluir
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
+      </main>
       <Footer />
     </div>
   );
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
-function DetailRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
-  return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-      <span style={{ color: '#666', fontSize: 13, minWidth: 140, flexShrink: 0 }}>{label}:</span>
-      <span style={{ color: '#1a1a2e', fontSize: 14, fontWeight: bold ? 700 : 400 }}>{value}</span>
-    </div>
-  );
-}
-
-// ─── Shared styles ────────────────────────────────────────────────────────────
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1px solid #ddd', borderRadius: 8,
-  fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box',
-};
+/* ── estilos reutilizáveis ── */
 const labelStyle: React.CSSProperties = {
-  display: 'block', marginBottom: 5, fontWeight: 600, fontSize: 13, color: '#444',
+  display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600, color: '#374151',
 };
-const errorStyle: React.CSSProperties = {
-  color: '#c62828', fontSize: 12, marginTop: 3, display: 'block',
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '9px 12px', border: '1px solid #e2e8f0',
+  borderRadius: 6, fontSize: 14, color: '#1e293b',
+  boxSizing: 'border-box', background: '#fff',
 };
