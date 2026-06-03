@@ -34,7 +34,8 @@ interface TransacaoStone {
   contraparteInstituicao?: string;
   // conciliação
   status: 'pendente' | 'conciliado' | 'ignorado';
-  saidaId?: string;         // vínculo com lançamento em /saidas
+  saidaId?: string;         // vínculo com lançamento em /saidas ou /despesas
+  lancamentoTipo?: 'saida' | 'despesa'; // de qual módulo veio o vínculo
   obs?: string;
 }
 
@@ -50,6 +51,10 @@ interface SaidaApi {
   colaborador?: string;
   responsavelNome?: string;
   formaPagamento?: string;
+  // campo extra para diferenciar origem
+  _fonte?: 'saida' | 'despesa';
+  fornecedorNome?: string;
+  categoria?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -119,6 +124,7 @@ const ConciliacaoBancaria: React.FC = () => {
   const [transacoes, setTransacoes] = useState<TransacaoStone[]>([]);
   const [saidasApi, setSaidasApi] = useState<SaidaApi[]>([]);
   const [carregandoSaidas, setCarregandoSaidas] = useState(false);
+  const [totalDespesasCarregadas, setTotalDespesasCarregadas] = useState(0);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [erroArquivo, setErroArquivo] = useState('');
 
@@ -210,21 +216,50 @@ const ConciliacaoBancaria: React.FC = () => {
     reader.readAsArrayBuffer(file);
   }, [unitId, authToken, apiUrl]);
 
-  // ── Carregar saídas da API ─────────────────────────────────────────────
+  // ── Carregar saídas + despesas da API ────────────────────────────────────
   const carregarSaidas = async (inicio: string, fim: string) => {
     if (!unitId || !authToken) return;
     setCarregandoSaidas(true);
     try {
-      const res = await fetch(
-        `${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
-        { headers: { Authorization: `Bearer ${authToken}` } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        setSaidasApi(Array.isArray(data) ? data : []);
+      // Busca saídas e despesas em paralelo
+      const [resSaidas, resDespesas] = await Promise.allSettled([
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+          { headers: { Authorization: `Bearer ${authToken}` } }),
+        fetch(`${apiUrl}/despesas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+          { headers: { Authorization: `Bearer ${authToken}` } }),
+      ]);
+
+      const saidas: SaidaApi[] = [];
+      const despesas: SaidaApi[] = [];
+
+      if (resSaidas.status === 'fulfilled' && resSaidas.value.ok) {
+        const data = await resSaidas.value.json();
+        const arr: SaidaApi[] = Array.isArray(data) ? data : [];
+        saidas.push(...arr.map(s => ({ ...s, _fonte: 'saida' as const })));
       }
+
+      if (resDespesas.status === 'fulfilled' && resDespesas.value.ok) {
+        const data = await resDespesas.value.json();
+        const arr: any[] = Array.isArray(data) ? data : [];
+        // Normaliza despesa para o shape de SaidaApi
+        despesas.push(...arr.map(d => ({
+          id: d.id,
+          descricao: d.descricao || d.categoria,
+          valor: d.valor,
+          data: d.dataVencimento || d.dataEmissao || '',
+          dataPagamento: d.dataPagamento,
+          tipo: d.categoria || 'Despesa',
+          formaPagamento: d.formaPagamento,
+          fornecedorNome: d.fornecedorNome,
+          categoria: d.categoria,
+          _fonte: 'despesa' as const,
+        })));
+        setTotalDespesasCarregadas(despesas.length);
+      }
+
+      setSaidasApi([...saidas, ...despesas]);
     } catch (err) {
-      console.error('Erro ao carregar saídas:', err);
+      console.error('Erro ao carregar saídas/despesas:', err);
     } finally {
       setCarregandoSaidas(false);
     }
@@ -343,6 +378,8 @@ const ConciliacaoBancaria: React.FC = () => {
 
   // ── Saída selecionada no modal ─────────────────────────────────────────
   const saidaModal = saidasApi.find(s => s.id === saidaVinculo);
+  const saidasSomente = saidasApi.filter(s => s._fonte !== 'despesa');
+  const despesasSomente = saidasApi.filter(s => s._fonte === 'despesa');
 
   // ── Sugestões de conciliação para o modal ──────────────────────────────
   const sugestoes = transacaoSelecionada
@@ -498,7 +535,7 @@ const ConciliacaoBancaria: React.FC = () => {
                 📋 {transacoesFiltradas.length} transação(ões)
               </h3>
               <div style={{ fontSize: '12px', color: '#888' }}>
-                {saidasApi.length} saídas carregadas do período
+                {saidasSomente.length} saídas + {totalDespesasCarregadas} despesas carregadas
               </div>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1000px' }}>
@@ -620,7 +657,7 @@ const ConciliacaoBancaria: React.FC = () => {
           <div style={{ ...s.card, maxWidth: '560px', width: '94%', maxHeight: '92vh', overflowY: 'auto' }}>
             {/* Cabeçalho do modal */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, color: '#1565c0', fontSize: '16px' }}>🔗 Vincular a uma Saída</h3>
+              <h3 style={{ margin: 0, color: '#1565c0', fontSize: '16px' }}>🔗 Vincular a Saída ou Despesa</h3>
               <button onClick={() => setTransacaoSelecionada(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#888' }}>✕</button>
             </div>
 
@@ -664,18 +701,31 @@ const ConciliacaoBancaria: React.FC = () => {
 
             {/* Selecionar saída manualmente */}
             <div style={{ marginBottom: '14px' }}>
-              <label style={s.label}>Ou selecionar saída manualmente:</label>
+              <label style={s.label}>Selecionar saída ou despesa manualmente:</label>
               <select
                 value={saidaVinculo}
                 onChange={e => setSaidaVinculo(e.target.value)}
                 style={{ ...s.input }}
               >
                 <option value="">— Nenhuma (marcar como conciliado sem vínculo) —</option>
-                {saidasApi.map(s2 => (
-                  <option key={s2.id} value={s2.id}>
-                    {fmtData(s2.dataPagamento || s2.data)} | {fmt(s2.valor)} | {s2.descricao} | {s2.tipo || s2.origem}
-                  </option>
-                ))}
+                {saidasSomente.length > 0 && (
+                  <optgroup label="💸 Saídas">
+                    {saidasSomente.map(s2 => (
+                      <option key={s2.id} value={s2.id}>
+                        {fmtData(s2.dataPagamento || s2.data)} | {fmt(s2.valor)} | {s2.descricao} | {s2.tipo || s2.origem}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {despesasSomente.length > 0 && (
+                  <optgroup label="🧾 Despesas">
+                    {despesasSomente.map(s2 => (
+                      <option key={s2.id} value={s2.id}>
+                        {fmtData(s2.dataPagamento || s2.data)} | {fmt(s2.valor)} | {s2.fornecedorNome || s2.descricao} | {s2.categoria}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               {saidaModal && (
                 <div style={{ marginTop: '8px', padding: '8px 10px', background: '#e8f5e9', borderRadius: '6px', fontSize: '12px', color: '#2e7d32', fontWeight: 600 }}>

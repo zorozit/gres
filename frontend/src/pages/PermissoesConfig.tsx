@@ -24,6 +24,8 @@ const TODOS_MODULOS = [
   { id: 'feriados',              icon: '🎉', title: 'Feriados' },
   { id: 'vagas',                 icon: '📢', title: 'Recrutamento de Vagas' },
   { id: 'conciliacao-bancaria',  icon: '🏦', title: 'Conciliação Bancária' },
+  { id: 'despesas',              icon: '💸', title: 'Gestão de Despesas' },
+  { id: 'fornecedores',          icon: '🏪', title: 'Cadastro de Fornecedores' },
 ];
 
 // ─── Perfis do sistema ───────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ const PRESET_RECOMENDADO: Record<string, string[]> = {
     'colaboradores', 'folha-pagamento', 'extrato',
     'adiantamentos-saldos', 'fechamento-dinheiro',
     'importacoes-contabeis', 'conciliacao-bancaria',
+    'despesas', 'fornecedores',
   ],
   admin: TODOS_MODULOS.map(m => m.id),
   rh:    ['vagas'],

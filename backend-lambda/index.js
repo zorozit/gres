@@ -2577,6 +2577,161 @@ exports.handler = async (event) => {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // FORNECEDORES
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── GET /fornecedores — lista fornecedores da unidade ───────────
+    if (rawPath === '/fornecedores' && httpMethod === 'GET') {
+      const { unitId } = queryParams;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-fornecedores',
+          FilterExpression: 'unitId = :uid',
+          ExpressionAttributeValues: { ':uid': unitId }
+        }).promise();
+        const items = (result.Items || []).sort((a, b) =>
+          (a.razaoSocial || '').localeCompare(b.razaoSocial || '', 'pt-BR'));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao listar fornecedores: ' + err.message });
+      }
+    }
+
+    // ─── POST /fornecedores — criar fornecedor ───────────────────────
+    if (rawPath === '/fornecedores' && httpMethod === 'POST') {
+      try {
+        const now = new Date().toISOString();
+        const item = {
+          id: `fornecedor-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          ...body,
+          ativo: body.ativo !== false,
+          createdAt: now,
+          updatedAt: now
+        };
+        await dynamodb.put({ TableName: 'gres-prod-fornecedores', Item: item }).promise();
+        return response(201, item);
+      } catch (err) {
+        return response(500, { error: 'Erro ao criar fornecedor: ' + err.message });
+      }
+    }
+
+    // ─── PUT /fornecedores/:id — atualizar fornecedor ─────────────────
+    if (rawPath.match(/\/fornecedores\/.+/) && httpMethod === 'PUT') {
+      const id = rawPath.split('/fornecedores/')[1];
+      try {
+        const now = new Date().toISOString();
+        const updates = { ...body, updatedAt: now };
+        delete updates.id;
+        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
+        const names = {};
+        const vals  = {};
+        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
+        await dynamodb.update({
+          TableName: 'gres-prod-fornecedores',
+          Key: { id },
+          UpdateExpression: 'SET ' + exprs.join(', '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: vals
+        }).promise();
+        return response(200, { success: true, id });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar fornecedor: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /fornecedores/:id — excluir fornecedor ────────────────
+    if (rawPath.match(/\/fornecedores\/.+/) && httpMethod === 'DELETE') {
+      const id = rawPath.split('/fornecedores/')[1];
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-fornecedores', Key: { id } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao excluir fornecedor: ' + err.message });
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DESPESAS
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── GET /despesas — lista despesas da unidade ───────────────────
+    if (rawPath === '/despesas' && httpMethod === 'GET') {
+      const { unitId, status: statusFiltro, categoria, dataInicio, dataFim } = queryParams;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-despesas',
+          FilterExpression: 'unitId = :uid',
+          ExpressionAttributeValues: { ':uid': unitId }
+        }).promise();
+        let items = result.Items || [];
+        // Filtros opcionais
+        if (statusFiltro) items = items.filter(d => d.status === statusFiltro);
+        if (categoria)    items = items.filter(d => d.categoria === categoria);
+        if (dataInicio)   items = items.filter(d => (d.dataVencimento || '') >= dataInicio);
+        if (dataFim)      items = items.filter(d => (d.dataVencimento || '') <= dataFim);
+        items.sort((a, b) => (b.dataVencimento || '').localeCompare(a.dataVencimento || ''));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao listar despesas: ' + err.message });
+      }
+    }
+
+    // ─── POST /despesas — criar despesa ──────────────────────────────
+    if (rawPath === '/despesas' && httpMethod === 'POST') {
+      try {
+        const now = new Date().toISOString();
+        const item = {
+          id: `despesa-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          ...body,
+          status: body.status || 'pendente',
+          createdAt: body.createdAt || now,
+          updatedAt: now
+        };
+        await dynamodb.put({ TableName: 'gres-prod-despesas', Item: item }).promise();
+        return response(201, item);
+      } catch (err) {
+        return response(500, { error: 'Erro ao criar despesa: ' + err.message });
+      }
+    }
+
+    // ─── PUT /despesas/:id — atualizar despesa ────────────────────────
+    if (rawPath.match(/\/despesas\/.+/) && httpMethod === 'PUT') {
+      const id = rawPath.split('/despesas/')[1];
+      try {
+        const now = new Date().toISOString();
+        const updates = { ...body, updatedAt: now };
+        delete updates.id;
+        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
+        const names = {};
+        const vals  = {};
+        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
+        await dynamodb.update({
+          TableName: 'gres-prod-despesas',
+          Key: { id },
+          UpdateExpression: 'SET ' + exprs.join(', '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: vals
+        }).promise();
+        return response(200, { success: true, id });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar despesa: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /despesas/:id — excluir despesa ───────────────────────
+    if (rawPath.match(/\/despesas\/.+/) && httpMethod === 'DELETE') {
+      const id = rawPath.split('/despesas/')[1];
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-despesas', Key: { id } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao excluir despesa: ' + err.message });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 

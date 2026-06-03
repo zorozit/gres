@@ -25,6 +25,8 @@ const ALL_MODULES = [
   { id: 'feriados',              icon: '🎉', title: 'Feriados',                   description: 'Configurar feriados (afeta cálculo da folha — cód.1311)',                          path: '/modulos/feriados',              color: '#fb8c00' },
   { id: 'vagas',                 icon: '📢', title: 'Recrutamento de Vagas',       description: 'Publique vagas, gere link de formulário público e faça triagem de candidatos',        path: '/modulos/vagas',                 color: '#e67e22' },
   { id: 'conciliacao-bancaria',  icon: '🏦', title: 'Conciliação Bancária',          description: 'Importe extrato Stone e concilie transações com saídas registradas no sistema',       path: '/modulos/conciliacao-bancaria',  color: '#0277bd' },
+  { id: 'despesas',              icon: '💸', title: 'Gestão de Despesas',            description: 'Registre despesas via formulário ou foto/NF com status de pagamento e vínculo bancário', path: '/modulos/despesas',              color: '#c62828' },
+  { id: 'fornecedores',          icon: '🏪', title: 'Cadastro de Fornecedores',      description: 'Gerencie fornecedores, dados bancários, PIX, categorias e formas de pagamento',          path: '/modulos/fornecedores',          color: '#00695c' },
 ];
 
 export const Modules: React.FC = () => {

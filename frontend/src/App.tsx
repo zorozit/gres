@@ -24,6 +24,8 @@ import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
 import Vagas from './pages/Vagas';
 import FormularioVaga from './pages/FormularioVaga';
 import ConciliacaoBancaria from './pages/ConciliacaoBancaria';
+import Despesas from './pages/Despesas';
+import Fornecedores from './pages/Fornecedores';
 import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
@@ -95,6 +97,12 @@ function App() {
 
             <Route path="/modulos/conciliacao-bancaria"
               element={<ProtectedRoute moduloId="conciliacao-bancaria"><ConciliacaoBancaria /></ProtectedRoute>} />
+
+            <Route path="/modulos/despesas"
+              element={<ProtectedRoute moduloId="despesas"><Despesas /></ProtectedRoute>} />
+
+            <Route path="/modulos/fornecedores"
+              element={<ProtectedRoute moduloId="fornecedores"><Fornecedores /></ProtectedRoute>} />
 
             {/* Formulário público de vagas — sem autenticação, link por vagaId */}
             <Route path="/vaga/:vagaId" element={<FormularioVaga />} />
