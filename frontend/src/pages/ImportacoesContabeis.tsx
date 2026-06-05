@@ -240,6 +240,11 @@ export const ImportacoesContabeis: React.FC = () => {
       saldoFinal: row.valorLiquido,
       valorBruto: row.salarioBase,
       totalFinal: row.valorLiquido,
+      // Campos extraídos do PDF (contabilidade)
+      salContrInss: row.salContrInss,
+      inssValor: row.inssValor,
+      valeTransporte: row.valeTransporte,
+      feriado: row.feriado,
       obs: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
     };
 
@@ -426,8 +431,11 @@ export const ImportacoesContabeis: React.FC = () => {
                       <th style={styles.th}>Cargo</th>
                       <th style={styles.th}>Competência</th>
                       <th style={styles.th}>Ref.</th>
-                      <th style={styles.th}>Salário base</th>
-                      <th style={styles.th}>Valor</th>
+                      <th style={styles.th}>Sal. Base</th>
+                      <th style={styles.th}>Sal.Contr.INSS</th>
+                      <th style={styles.th}>INSS</th>
+                      <th style={styles.th}>VT</th>
+                      <th style={styles.th}>Líquido</th>
                       <th style={styles.th}>Status</th>
                     </tr>
                   </thead>
@@ -457,6 +465,9 @@ export const ImportacoesContabeis: React.FC = () => {
                           <td style={styles.td}>{row.competencia}</td>
                           <td style={styles.td}>{row.referencia ? `${row.referencia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` : '—'}</td>
                           <td style={{ ...styles.td, textAlign: 'right' }}>{fmtMoeda(row.salarioBase)}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', color: '#37474f' }}>{row.salContrInss > 0 ? fmtMoeda(row.salContrInss) : '—'}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', color: '#c62828' }}>{row.inssValor > 0 ? fmtMoeda(row.inssValor) : '—'}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', color: '#c62828' }}>{row.valeTransporte > 0 ? fmtMoeda(row.valeTransporte) : '—'}</td>
                           <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtMoeda(row.valorLiquido)}</td>
                           <td style={styles.td}>
                             <span style={{ ...styles.statusBadge, backgroundColor: statusColors[0], color: statusColors[1] }}>{statusLabel}</span>

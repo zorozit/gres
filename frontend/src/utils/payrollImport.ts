@@ -21,6 +21,10 @@ export interface ImportPayrollRecord {
   cargo: string;
   cbo: string;
   salarioBase: number;
+  salContrInss: number;        // Sal.Contr.INSS do PDF (base real p/ cálculo INSS)
+  inssValor: number;           // Cód.11 - INSS descontado no holerite
+  valeTransporte: number;      // Cód.109 - Desconto Vale Transporte
+  feriado: number;             // Cód.1311 - Valor do feriado trabalhado
   referencia: number;
   valorDocumento: number;
   valorLiquido: number;
@@ -137,6 +141,8 @@ const detectEmsLayout = (pageTexts: string[]) => {
   return sample.includes('RECIBO DE PAGAMENTO') && sample.includes('CODIGO NOME CBO') && sample.includes('SALARIO BASE');
 };
 
+
+
 const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayrollRecord | null => {
   const compactLines = collapseDuplicateBlock(lines);
   const blob = compactLines.join('\n');
@@ -155,7 +161,70 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayroll
   const cargo = compactLines[employeeLineIndex + 1] || '';
 
   const refAdvanceMatch = blob.match(/Adiantamento Cr[eé]dito\s+([\d.,]+)\s+([\d.,]+)/i);
+
+  // Salário Base
   const salaryBaseMatch = blob.match(/Salario Base(?:[^\n]*?)\n([\d.,]+)/i) || blob.match(/Salario Base\s+([\d.,]+)/i);
+  const salarioBase = toMoney(salaryBaseMatch?.[1]);
+
+  // Sal.Contr.INSS — base real usada pela contabilidade para calcular o INSS
+  // Aparece após "Sal.Contr.INSS" ou "Sal.Contr.INSS Base Calculo FGTS" no PDF
+  const salContrInssMatch =
+    blob.match(/Sal\.Contr\.INSS[^\n]*\n([\d.,]+)/i) ||
+    blob.match(/Sal\.Contr\.INSS\s+([\d.,]+)/i);
+  const salContrInss = toMoney(salContrInssMatch?.[1]) || salarioBase;
+
+  // INSS (Cód. 11) — valor efetivamente descontado no holerite
+  // Estratégia: localizar "INSS Sobre Salário" e pegar o valor monetário seguinte
+  const inssLineIdx = compactLines.findIndex((l) => /INSS Sobre Sal/i.test(l));
+  let inssValor = 0;
+  if (inssLineIdx >= 0) {
+    // O valor pode estar na mesma linha ou nas próximas 3
+    const candidates = compactLines.slice(inssLineIdx, inssLineIdx + 4).join(' ');
+    const allMoney = candidates.match(moneyRegex);
+    if (allMoney) {
+      // Pega o último valor monetário do bloco (valor do desconto)
+      inssValor = toMoney(allMoney[allMoney.length - 1]);
+    }
+  }
+  // Fallback: calcular via tabela progressiva 2026 sobre Sal.Contr.INSS
+  if (!inssValor && salContrInss > 0) {
+    const tabela = [
+      { ate: 1518.00, aliq: 0.075 },
+      { ate: 2793.88, aliq: 0.09 },
+      { ate: 4190.83, aliq: 0.12 },
+      { ate: 8157.41, aliq: 0.14 },
+    ];
+    let base = salContrInss;
+    let anterior = 0;
+    for (const faixa of tabela) {
+      if (base <= 0) break;
+      const faixaVal = Math.min(base, faixa.ate - anterior);
+      inssValor += faixaVal * faixa.aliq;
+      base -= faixaVal;
+      anterior = faixa.ate;
+      if (salContrInss <= faixa.ate) break;
+    }
+    inssValor = parseFloat(inssValor.toFixed(2));
+  }
+
+  // Vale Transporte (Cód. 109) — Desc. Vale Transporte
+  const vtLineIdx = compactLines.findIndex((l) => /Desc\.?\s*Vale Transp/i.test(l) || /Vale Transporte/i.test(l));
+  let valeTransporte = 0;
+  if (vtLineIdx >= 0) {
+    const vtBlock = compactLines.slice(vtLineIdx, vtLineIdx + 4).join(' ');
+    const vtMoney = vtBlock.match(moneyRegex);
+    if (vtMoney) valeTransporte = toMoney(vtMoney[vtMoney.length - 1]);
+  }
+
+  // Feriado (Cód. 1311)
+  const ferLineIdx = compactLines.findIndex((l) => /Feriado/i.test(l));
+  let feriado = 0;
+  if (ferLineIdx >= 0) {
+    const ferBlock = compactLines.slice(ferLineIdx, ferLineIdx + 3).join(' ');
+    const ferMoney = ferBlock.match(moneyRegex);
+    if (ferMoney) feriado = toMoney(ferMoney[ferMoney.length - 1]);
+  }
+
   const totalLiquido = findMoneyNear(compactLines, (line) => /Total Liquido/i.test(line));
 
   const mesNome = competenceMatch[1];
@@ -163,7 +232,6 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayroll
   const competencia = formatCompetencia(mesNome, ano);
   const valorAdiantamento = toMoney(refAdvanceMatch?.[2]);
   const referencia = toMoney(refAdvanceMatch?.[1]);
-  const salarioBase = toMoney(salaryBaseMatch?.[1]);
   const valorLiquido = kind === 'adiantamento' ? valorAdiantamento : (totalLiquido || valorAdiantamento);
   const valorDocumento = kind === 'adiantamento' ? valorAdiantamento : (totalLiquido || valorAdiantamento);
 
@@ -182,6 +250,10 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayroll
     cargo: cargo.trim(),
     cbo: employeeMatch[3],
     salarioBase,
+    salContrInss,
+    inssValor,
+    valeTransporte,
+    feriado,
     referencia,
     valorDocumento,
     valorLiquido,

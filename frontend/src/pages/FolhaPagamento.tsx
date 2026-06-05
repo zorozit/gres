@@ -106,6 +106,10 @@ interface FolhaMensal {
   salarioBase: number;
   periculosidade: number;
   inss: number;
+  /** Sal.Contr.INSS = Math.floor(salBase + periculosidade + feriados) — base usada pela contabilidade */
+  salContrInss: number;
+  /** Desconto Vale Transporte (Cód.109) = mín(6% salBase, VT mensal cadastrado) */
+  valeTransporte: number;
   contrAssistencial: number;
   adiantamentoSalario: number;
   adiantamentoValor: number;
@@ -651,18 +655,23 @@ export default function FolhaPagamento() {
       // Salário por dia (igual PDF: salBase/30) - dobra de feriado = 1 dia adicional
       const salDiaCLT = salBase / 30;
       const feriadosValor = parseFloat((feriadosTrab * salDiaCLT).toFixed(2));
-      // Base INSS/FGTS = salário + feriados (igual PDF)
-      const salBruto = salBase * (1 + peri) + feriadosValor;
-      const inss = calcINSS(salBruto);
+      // Sal.Contr.INSS = truncado no inteiro (padrão da contabilidade)
+      const salContrInss = Math.floor(salBase * (1 + peri) + feriadosValor);
+      const inss = calcINSS(salContrInss);
       // Contr. Assist. agora vem do cadastro (cod 1000 da folha). Default 0.
       const contrAssist = R((c as any).contribuicaoAssistencial);
+      // Vale Transporte: desconto = mín(6% salBase, VT mensal = vtDiário × 22 dias)
+      const vtDiario = R((c as any).valorTransporte);
+      const vtMensal = parseFloat((vtDiario * 22).toFixed(2));
+      const vtDesconto6pct = parseFloat((salBase * 0.06).toFixed(2));
+      const valeTransporte = vtMensal > 0 ? parseFloat(Math.min(vtDesconto6pct, vtMensal).toFixed(2)) : 0;
       const adiantPct = 0.40;
       // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - padrão contabilidade
       const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
       // Diferença = 60% salBase + periculosidade + feriados (paga no dia 05)
       const periBruto = salBase * peri;
       const difSal = parseFloat((salBase * (1 - adiantPct) + periBruto + feriadosValor).toFixed(2));
-      const saldoFinal = difSal - inss - contrAssist;
+      const saldoFinal = difSal - inss - contrAssist - valeTransporte;
       // Cálculo contábil: Cód.16 = 40% do salário BASE (sem periculosidade)
       const adtoContabil = parseFloat((salBase * 0.40).toFixed(2));
       const adtoLiquido = Math.floor(adtoContabil); // número inteiro (liquido real)
@@ -680,7 +689,8 @@ export default function FolhaPagamento() {
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
-        salarioBase: salBase, periculosidade: salBase * peri, inss, contrAssistencial: contrAssist,
+        salarioBase: salBase, periculosidade: salBase * peri, inss, salContrInss, valeTransporte,
+        contrAssistencial: contrAssist,
         adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
         adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
         diferencaSalario: difSal, feriadosTrab, feriadosValor,
@@ -718,9 +728,15 @@ export default function FolhaPagamento() {
       ).length;
       const salDiaMot = salBase / 30;
       const feriadosValorM = parseFloat((feriadosTrabM * salDiaMot).toFixed(2));
-      const salBruto = salBase * (1 + peri) + feriadosValorM;
+      // Sal.Contr.INSS = truncado no inteiro (padrão da contabilidade)
+      const salContrInssMot = Math.floor(salBase * (1 + peri) + feriadosValorM);
       const periculosidadeValor = salBase * peri;
-      const inss = calcINSS(salBruto);
+      const inss = calcINSS(salContrInssMot);
+      // Vale Transporte motoboy CLT
+      const vtDiarioMot = R((m as any).valorTransporte);
+      const vtMensalMot = parseFloat((vtDiarioMot * 22).toFixed(2));
+      const vtDesc6pctMot = parseFloat((salBase * 0.06).toFixed(2));
+      const valeTransporteMot = vtMensalMot > 0 ? parseFloat(Math.min(vtDesc6pctMot, vtMensalMot).toFixed(2)) : 0;
       // Contr. Assist. (Sindimoto cod 1305) agora do cadastro. Fallback 32.62 para motoboys legados.
       const contrAssist = R((m as any).contribuicaoAssistencial) || 32.62;
       const dia19 = `${mesAno}-19`;
@@ -772,8 +788,9 @@ export default function FolhaPagamento() {
       const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
       // Diferença = 60% salBase + periculosidade total (paga no dia 05)
       const difSal = parseFloat((salBase * 0.60 + periculosidadeValor + feriadosValorM).toFixed(2));
-      const descontos = inss + contrAssist;
-      const saldoFinal = parseFloat((totalVariavel + salBruto - descontos).toFixed(2));
+      const descontos = inss + contrAssist + valeTransporteMot;
+      const salBrutoMot = salBase * (1 + peri) + feriadosValorM;
+      const saldoFinal = parseFloat((totalVariavel + salBrutoMot - descontos).toFixed(2));
       const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
       // Cálculo contábil motoboy: Cód.16 = 40% do salário BASE (sem periculosidade)
       const adtoContabilMoto = parseFloat((salBase * 0.40).toFixed(2));
@@ -791,7 +808,8 @@ export default function FolhaPagamento() {
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
-        salarioBase: salBase, periculosidade: periculosidadeValor, inss, contrAssistencial: contrAssist,
+        salarioBase: salBase, periculosidade: periculosidadeValor, inss, salContrInss: salContrInssMot,
+        valeTransporte: valeTransporteMot, contrAssistencial: contrAssist,
         feriadosTrab: feriadosTrabM, feriadosValor: feriadosValorM,
         adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
         adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
@@ -1504,13 +1522,13 @@ export default function FolhaPagamento() {
         </div>
 
         {(() => {
-          // Cálculos de holerith
-          // Base FGTS/INSS = salBase + periculosidade + feriados (igual PDF)
-          const fgtsBase = f.salarioBase + f.periculosidade + (f.feriadosValor || 0);
-          const fgts = parseFloat((fgtsBase * 0.08).toFixed(2)); // 8% sobre base
+          // Sal.Contr.INSS = base real da contabilidade (truncado no inteiro)
+          const salContrInss = f.salContrInss ?? Math.floor(f.salarioBase + f.periculosidade + (f.feriadosValor || 0));
+          const fgts = parseFloat((salContrInss * 0.08).toFixed(2)); // FGTS 8% sobre Sal.Contr.INSS
           const totalVencimentos = f.salarioBase + f.periculosidade + (f.feriadosValor || 0) + f.totalVariavel
             + (f.arredondamentoPos || 0);
           const totalDescontos = f.inss + f.contrAssistencial + f.adiantamentoValor
+            + (f.valeTransporte || 0)
             + (f.arredondamentoNeg || 0);
           const liquidoMes = totalVencimentos - totalDescontos;
           return (
@@ -1556,7 +1574,8 @@ export default function FolhaPagamento() {
                   )}
                   {/* Descontos */}
                   <tr style={{ backgroundColor: '#fff3e0' }}>
-                    <td style={{ padding: '4px 8px' }}>11</td><td style={{ padding: '4px 8px' }}>INSS sobre Salário</td>
+                    <td style={{ padding: '4px 8px' }}>11</td>
+                    <td style={{ padding: '4px 8px' }}>INSS sobre Salário <span style={{ color: '#888', fontSize: '10px' }}>(base: {fmtMoeda(salContrInss)})</span></td>
                     <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.inss)}</td>
                   </tr>
                   <tr><td style={{ padding: '4px 8px' }}>12</td><td style={{ padding: '4px 8px' }}>Adiantamento Anterior</td>
@@ -1565,6 +1584,13 @@ export default function FolhaPagamento() {
                   {f.arredondamentoNeg > 0 && (
                     <tr style={{ backgroundColor: '#fff3e0' }}><td style={{ padding: '4px 8px' }}>19</td><td style={{ padding: '4px 8px' }}>Arredondamento Anterior</td>
                       <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.arredondamentoNeg)}</td></tr>
+                  )}
+                  {(f.valeTransporte || 0) > 0 && (
+                    <tr style={{ backgroundColor: '#e3f2fd' }}>
+                      <td style={{ padding: '4px 8px' }}>109</td>
+                      <td style={{ padding: '4px 8px' }}>Desc. Vale Transporte <span style={{ color: '#888', fontSize: '10px' }}>(6% sal.)</span></td>
+                      <td /><td style={{ padding: '4px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(f.valeTransporte || 0)}</td>
+                    </tr>
                   )}
                   {f.contrAssistencial > 0 && (
                     <tr><td style={{ padding: '4px 8px' }}>{(f.cargo || '').toLowerCase() === 'motoboy' ? '1305' : '1000'}</td><td style={{ padding: '4px 8px' }}>Contr. Assistencial</td>
@@ -1587,8 +1613,8 @@ export default function FolhaPagamento() {
               {/* Bases de cálculo (igual ao PDF da contabilidade) */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '6px', padding: '8px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '11px', marginBottom: '10px' }}>
                 <div><div style={{ color: '#666', fontWeight: 'bold' }}>Sal. Base</div><div>{fmtMoeda(f.salarioBase)}</div></div>
-                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Sal.Contr.INSS</div><div>{fmtMoeda(fgtsBase)}</div></div>
-                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Base Cálc. FGTS</div><div>{fmtMoeda(fgtsBase)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Sal.Contr.INSS</div><div>{fmtMoeda(salContrInss)}</div></div>
+                <div><div style={{ color: '#666', fontWeight: 'bold' }}>Base Cálc. FGTS</div><div>{fmtMoeda(salContrInss)}</div></div>
                 <div><div style={{ color: '#666', fontWeight: 'bold' }}>FGTS do Mês (8%)</div><div style={{ color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(fgts)}</div></div>
                 <div><div style={{ color: '#666', fontWeight: 'bold' }}>Pgto Dia 20</div><div style={{ color: '#fb8c00', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</div></div>
                 <div><div style={{ color: '#666', fontWeight: 'bold' }}>Pgto Dia 5</div><div style={{ color: '#0288d1', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia05)}</div></div>
