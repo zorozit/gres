@@ -2684,11 +2684,33 @@ export default function FolhaPagamento() {
           ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
         ];
       } else {
+        // Monta label da DifSal dinamicamente: só menciona peri/feriado se existirem
+        const temPeri    = f.periculosidade > 0;
+        const temFeriado = (f.feriadosValor || 0) > 0;
+        const difSalLabel = temPeri
+          ? `💰 Diferença Salário (60% + periculosidade)`
+          : `💰 Diferença Salário (60% sal. base)`;
+
         items = [
-          { key: 'difsal', label: `💰 Diferença Salário (60% + periculosidade)`, valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade + (f.feriadosValor || 0)).toFixed(2)), tipo: 'credito', checked: true },
+          // ── Vencimentos ────────────────────────────────────────────────
+          // Cod.1: 60% salBase (sem peri, sem feriado — item próprio)
+          { key: 'difsal', label: difSalLabel,
+            valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade).toFixed(2)),
+            tipo: 'credito', checked: true },
+          // Cod.1311: Feriado — item separado; pré-marcado se já detectado na escala,
+          // desmarcado (mas visível) se = 0 para facilitar ajuste manual
+          { key: 'feriado',
+            label: `🟣 Feriado trabalhado (Cód.1311)${temFeriado ? ` — ${f.feriadosTrab} dia${(f.feriadosTrab||0)>1?'s':''}` : ' — marque se houver'}`,
+            valor: f.feriadosValor || 0,
+            tipo: 'credito', checked: temFeriado },
           { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
+          // ── Descontos ──────────────────────────────────────────────────
+          // Cod.12: Adiantamento Anterior — informativo (já pago no dia 20)
+          { key: 'adto12', label: `💵 Adiantamento Anterior (Cód.12 — 40% sal.)`,
+            valor: f.adtoLiquido || f.adiantamentoValor,
+            tipo: 'debito', checked: true },
           { key: 'inss', label: `🟥 INSS`, valor: f.inss, tipo: 'debito', checked: true },
-          { key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito', checked: true },
+          ...(f.contrAssistencial > 0 ? [{ key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito' as const, checked: true }] : []),
           ...((f.valeTransporte || 0) > 0 ? [{ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: f.valeTransporte, tipo: 'debito' as const, checked: true }] : []),
           ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
         ];
@@ -2971,11 +2993,17 @@ export default function FolhaPagamento() {
     const total20Calc = itens20.reduce((s, i) => i.tipo === 'credito' ? s + i.valor : s - i.valor, 0);
 
     // Composição Dia 5
+    const difSalLabel5 = f.periculosidade > 0
+      ? '💰 Diferença Salário (60% + periculosidade)'
+      : '💰 Diferença Salário (60% sal. base)';
     const itens5: { label: string; valor: number; tipo: 'credito' | 'debito' }[] = [
-      { label: '💰 Diferença Salário (60% + periculosidade)', valor: f.diferencaSalario || 0, tipo: 'credito' },
+      { label: difSalLabel5, valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade).toFixed(2)), tipo: 'credito' },
+      ...((f.feriadosValor || 0) > 0 ? [{ label: `🟣 Feriado trabalhado (Cód.1311 — ${f.feriadosTrab} dia${(f.feriadosTrab||0)>1?'s':''})`, valor: f.feriadosValor || 0, tipo: 'credito' as const }] : []),
       { label: '🛵 Variável 20–31 (entregas + caixinha)', valor: f.variavelDe20a31 || 0, tipo: 'credito' },
+      { label: '(-) Adiantamento Anterior (Cód.12 — 40%)', valor: f.adtoLiquido || f.adiantamentoValor || 0, tipo: 'debito' },
       { label: '(-) INSS', valor: f.inss || 0, tipo: 'debito' },
-      { label: '(-) Contr. Assistencial', valor: f.contrAssistencial || 0, tipo: 'debito' },
+      ...(f.contrAssistencial > 0 ? [{ label: '(-) Contr. Assistencial', valor: f.contrAssistencial, tipo: 'debito' as const }] : []),
+      ...((f.valeTransporte || 0) > 0 ? [{ label: '(-) Desc. Vale Transporte (Cód.109)', valor: f.valeTransporte, tipo: 'debito' as const }] : []),
     ];
     const total5Calc = itens5.reduce((s, i) => i.tipo === 'credito' ? s + i.valor : s - i.valor, 0);
 
