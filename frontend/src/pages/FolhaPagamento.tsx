@@ -2653,7 +2653,7 @@ export default function FolhaPagamento() {
   /* ── Modal Confirmar Pagamento CLT (com data editável) ── */
   // Hook called unconditionally (React rules) - state persists across renders
   /* ── Estado do modal de pagamento CLT — checklist igual ao Freelancer ── */
-  interface CheckItemCLT { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
+  interface CheckItemCLT { key: string; label: string; valor: number; tipo: 'credito'|'debito'|'info'; checked: boolean; }
   const [checkItemsCLT, setCheckItemsCLT] = useState<CheckItemCLT[]>([]);
   const [modalPgtoTipo, setModalPgtoTipo] = useState<'Adiantamento' | 'Variável'>('Adiantamento');
   interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
@@ -2674,6 +2674,9 @@ export default function FolhaPagamento() {
       const adtoTransp = saidasCol
         .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
         .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      // Adiantamento Especial — saídas a abater no Dia 5
+      const adtoEspecialSaidas = saidasCol
+        .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Especial');
 
       let items: CheckItemCLT[];
       if (tipo === 'Adiantamento') {
@@ -2687,31 +2690,37 @@ export default function FolhaPagamento() {
         // Monta label da DifSal dinamicamente: só menciona peri/feriado se existirem
         const temPeri    = f.periculosidade > 0;
         const temFeriado = (f.feriadosValor || 0) > 0;
+        const adtoAnteriorValor = parseFloat((f.adtoLiquido || f.adiantamentoValor || 0).toString());
+        // Racional: sal100% = salBase + peri + feriado; adto40% = adtoAnteriorValor
+        const sal100 = parseFloat((f.salarioBase + f.periculosidade + (f.feriadosValor || 0)).toFixed(2));
         const difSalLabel = temPeri
-          ? `💰 Diferença Salário (60% + periculosidade)`
-          : `💰 Diferença Salário (60% sal. base)`;
+          ? `💰 Diferença Salário (60% sal. + periculosidade${temFeriado ? ' + feriado' : ''})`
+          : `💰 Diferença Salário (60% sal. base${temFeriado ? ' + feriado' : ''})`;
 
         items = [
+          // ── Racional informativo (não entra no total) ──────────────────
+          { key: 'racional_100', label: `ℹ️ Salário 100% (base${temPeri?' + peri':''}${temFeriado?' + feriado':''})`,
+            valor: sal100, tipo: 'info', checked: false },
+          { key: 'racional_40', label: `ℹ️ (−) Adiantamento 40% já pago no Dia 20 (Cód.12)`,
+            valor: adtoAnteriorValor, tipo: 'info', checked: false },
           // ── Vencimentos ────────────────────────────────────────────────
-          // Cod.1: 60% salBase (sem peri, sem feriado — item próprio)
           { key: 'difsal', label: difSalLabel,
-            valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade).toFixed(2)),
+            valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade + (temFeriado ? (f.feriadosValor || 0) : 0)).toFixed(2)),
             tipo: 'credito', checked: true },
-          // Cod.1311: Feriado — item separado; pré-marcado se já detectado na escala,
-          // desmarcado (mas visível) se = 0 para facilitar ajuste manual
-          { key: 'feriado',
-            label: `🟣 Feriado trabalhado (Cód.1311)${temFeriado ? ` — ${f.feriadosTrab} dia${(f.feriadosTrab||0)>1?'s':''}` : ' — marque se houver'}`,
-            valor: f.feriadosValor || 0,
-            tipo: 'credito', checked: temFeriado },
+          // Cod.1311: Feriado — item separado para casos onde feriado = 0 mas pode ocorrer
+          ...(!temFeriado ? [{ key: 'feriado',
+            label: `🟣 Feriado trabalhado (Cód.1311) — marque se houver`,
+            valor: 0, tipo: 'credito' as const, checked: false }] : []),
           { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
           // ── Descontos ──────────────────────────────────────────────────
-          // Cod.12: Adiantamento Anterior — informativo (já pago no dia 20)
-          { key: 'adto12', label: `💵 Adiantamento Anterior (Cód.12 — 40% sal.)`,
-            valor: f.adtoLiquido || f.adiantamentoValor,
-            tipo: 'debito', checked: true },
           { key: 'inss', label: `🟥 INSS`, valor: f.inss, tipo: 'debito', checked: true },
           ...(f.contrAssistencial > 0 ? [{ key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito' as const, checked: true }] : []),
           ...((f.valeTransporte || 0) > 0 ? [{ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: f.valeTransporte, tipo: 'debito' as const, checked: true }] : []),
+          // Adiantamento Transporte — abater no Dia 5 (igual ao Dia 20)
+          ...(adtoTransp > 0 ? [{ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
+          // Adiantamento Especial — saídas registradas a abater
+          ...adtoEspecialSaidas.map((s: any, i: number) => ({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
+          // Outros descontos (A pagar, Consumo Interno, etc.)
           ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
         ];
       }
@@ -2740,7 +2749,9 @@ export default function FolhaPagamento() {
 
   const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
   const toggleItemCLT = (key: string) =>
-    setCheckItemsCLT(prev => prev.map(it => it.key === key ? { ...it, checked: !it.checked } : it));
+    setCheckItemsCLT(prev => prev.map(it =>
+      it.key === key && it.tipo !== 'info' ? { ...it, checked: !it.checked } : it
+    ));
 
   const salvarPagamentoModal = async () => {
     if (!modalPagamento) return;
@@ -2782,13 +2793,45 @@ export default function FolhaPagamento() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
-      setFolhasLocais(prev => prev.map(f =>
-        f.colaboradorId === modalPagamento.colaboradorId
-          ? { ...f, pagoAdiantamento: isPagoAdto, dataPgtoAdiantamento: isPagoAdto ? dataPrimeiro : f.dataPgtoAdiantamento,
-              pagoVariavel: isPagoVar, dataPgtoVariavel: isPagoVar ? dataPrimeiro : f.dataPgtoVariavel,
-              pago: isPagoAdto, logPagamentos: newLogs }
-          : f
-      ));
+      // Atualiza folhasLocais E folhasDB para que ao reabrir o modal o estado persista corretamente
+      const atualizaFolha = (f: any) => {
+        if (f.colaboradorId !== modalPagamento.colaboradorId) return f;
+        if (f.mes && f.mes !== mesAno) return f;
+        return {
+          ...f,
+          pagoAdiantamento: isPagoAdto,
+          dataPgtoAdiantamento: isPagoAdto ? dataPrimeiro : f.dataPgtoAdiantamento,
+          pagoVariavel: isPagoVar,
+          dataPgtoVariavel: isPagoVar ? dataPrimeiro : f.dataPgtoVariavel,
+          pago: isPagoAdto,
+          logPagamentos: newLogs,
+        };
+      };
+      setFolhasLocais(prev => prev.map(atualizaFolha));
+      // Sincroniza também folhasDB: garante que na próxima recalculação de folhasLocais
+      // (via useEffect que dep. de folhasDB) os dados de pagamento sejam preservados
+      setFolhasDB(prev => {
+        const idx = prev.findIndex((r: any) =>
+          r.colaboradorId === modalPagamento.colaboradorId &&
+          (r.mes === mesAno || !r.mes)
+        );
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = atualizaFolha(updated[idx]);
+          return updated;
+        }
+        // Registro ainda não existe no DB local — insere para garantir persistência
+        return [...prev, {
+          colaboradorId: modalPagamento.colaboradorId,
+          mes: mesAno, unitId,
+          pagoAdiantamento: isPagoAdto,
+          dataPgtoAdiantamento: isPagoAdto ? dataPrimeiro : null,
+          pagoVariavel: isPagoVar,
+          dataPgtoVariavel: isPagoVar ? dataPrimeiro : null,
+          pago: isPagoAdto,
+          logPagamentos: newLogs,
+        }];
+      });
       setModalPagamento(null);
     } catch { alert('Erro ao salvar pagamento'); }
     finally { setSalvando(false); }
@@ -2798,9 +2841,10 @@ export default function FolhaPagamento() {
   const modalConfirmarPagamentoCLTJSX = useMemo(() => {
     if (!modalPagamento) return null;
     const f = modalPagamento;
-    // Total pelo checklist (créditos - débitos marcados)
+    // Total pelo checklist — itens tipo 'info' são apenas informativos, não entram no cálculo
     const totalChecklist = checkItemsCLT.reduce((sum, it) => {
       if (!it.checked) return sum;
+      if (it.tipo === 'info') return sum; // racional informativo: não afeta total
       return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
     }, 0);
     const totalADesembolsar = Math.max(0, totalChecklist);
@@ -2840,13 +2884,39 @@ export default function FolhaPagamento() {
             {checkItemsCLT.length === 0 && (
               <div style={{ padding: '16px', textAlign: 'center', color: '#999', fontSize: '13px' }}>⏳ Carregando itens...</div>
             )}
-            {checkItemsCLT.map((item, i) => (
+            {/* Painel de racional — itens info agrupados no topo (somente Dia 5) */}
+            {checkItemsCLT.some(it => it.tipo === 'info') && (() => {
+              const infoItems = checkItemsCLT.filter(it => it.tipo === 'info');
+              const racional100 = infoItems.find(it => it.key === 'racional_100');
+              const racional40  = infoItems.find(it => it.key === 'racional_40');
+              const difCalculada = racional100 && racional40 ? (racional100.valor - racional40.valor) : null;
+              return (
+                <div style={{ backgroundColor: '#e3f2fd', borderBottom: '2px solid #90caf9', padding: '10px 14px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#1565c0', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📊 Racional do pagamento (informativo)</div>
+                  {infoItems.map(it => (
+                    <div key={it.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#37474f', padding: '2px 0' }}>
+                      <span>{it.label}</span>
+                      <span style={{ fontWeight: 'bold', color: it.key === 'racional_40' ? '#c62828' : '#1b5e20', minWidth: 80, textAlign: 'right' }}>
+                        {it.key === 'racional_40' ? '− ' : '  '}{fmtMoeda(it.valor)}
+                      </span>
+                    </div>
+                  ))}
+                  {difCalculada !== null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1565c0', padding: '4px 0 0', borderTop: '1px dashed #90caf9', marginTop: '4px', fontWeight: 'bold' }}>
+                      <span>= Saldo a pagar (60% ± adicionais)</span>
+                      <span style={{ minWidth: 80, textAlign: 'right' }}>{fmtMoeda(difCalculada)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {checkItemsCLT.filter(it => it.tipo !== 'info').map((item, i, arr) => (
               <div key={item.key} onClick={() => toggleItemCLT(item.key)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '10px 14px', cursor: 'pointer',
                   backgroundColor: item.checked ? (item.tipo === 'credito' ? '#f1f8e9' : '#fff8f8') : '#fafafa',
-                  borderBottom: i < checkItemsCLT.length - 1 ? '1px solid #eeeeee' : 'none',
+                  borderBottom: i < arr.length - 1 ? '1px solid #eeeeee' : 'none',
                   opacity: item.checked ? 1 : 0.5,
                 }}>
                 <input type="checkbox" checked={item.checked} onChange={() => toggleItemCLT(item.key)}
