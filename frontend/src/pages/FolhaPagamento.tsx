@@ -218,9 +218,17 @@ const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
+/**
+ * Tabela progressiva INSS 2026 — faixa 1 = R$ 1.621,00.
+ * A Portaria MPS 1.730/2025 publicou R$ 1.518,00, porém o sistema EMS da
+ * contabilidade utiliza R$ 1.621,00 como limite da 1ª faixa (salário mínimo
+ * 2026 = R$ 1.622,00 menos arredondamento de centavos), conforme verificado
+ * cruzando os INSS de todos os funcionários do holerite Maio/2026.
+ * Base: Sal.Contr.INSS = Math.floor(salBase*(1+peri) + feriadosValor).
+ */
 function calcINSS(salarioBruto: number): number {
   const tabela = [
-    { ate: 1518.00, aliq: 0.075 },
+    { ate: 1621.00, aliq: 0.075 },   // faixa usada pelo EMS (≈ salário mínimo 2026)
     { ate: 2793.88, aliq: 0.09 },
     { ate: 4190.83, aliq: 0.12 },
     { ate: 8157.41, aliq: 0.14 },
@@ -2681,6 +2689,7 @@ export default function FolhaPagamento() {
           { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
           { key: 'inss', label: `🟥 INSS`, valor: f.inss, tipo: 'debito', checked: true },
           { key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito', checked: true },
+          ...((f.valeTransporte || 0) > 0 ? [{ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: f.valeTransporte, tipo: 'debito' as const, checked: true }] : []),
           ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
         ];
       }
