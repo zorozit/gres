@@ -1725,17 +1725,16 @@ export const Extrato: React.FC = () => {
                       const totalGrupo  = totalDobras + totalTransp;
                       const bgMae = !item.pago ? '#fffde7' : i % 2 === 0 ? '#f0fdf4' : '#f9fbe7';
 
-                      // ── Auditoria: opção B (campo estruturado) ou A (parsear obs) ──
+                      // ── Auditoria: opção B (campo estruturado) ou A (parsear obs legado) ──
                       const audit = extrairAuditoria(raw, totalGrupo);
 
-                      // ── Saídas do período da semana — conexão com o PIX líquido ──────
-                      // Calcula a data de início da semana (semana - 7 dias) para filtrar
-                      // as saídas de débito desse colaborador que caem nesse intervalo.
-                      const semanaFim   = item.semana || '';  // ex: "2026-05-31"
-                      const semanaIniD  = semanaFim ? new Date(semanaFim + 'T00:00:00') : null;
+                      // ── Saídas do período — filtro por colaborador + intervalo da semana ──
+                      // Intervalo: [semana - 7 dias, semana]. Inclui saídas de débito (descontos).
+                      const semanaFim  = item.semana || '';
+                      const semanaIniD = semanaFim ? new Date(semanaFim + 'T00:00:00') : null;
                       if (semanaIniD) semanaIniD.setDate(semanaIniD.getDate() - 7);
-                      const semanaIni   = semanaIniD ? semanaIniD.toISOString().split('T')[0] : '';
-                      // Saídas do período: filtrar allItems (já carregados) por colaborador + data + débito
+                      const semanaIni  = semanaIniD ? semanaIniD.toISOString().split('T')[0] : '';
+
                       const saidasPeriodo = items.filter(s =>
                         s.origem === 'saida' &&
                         s.tipo === 'debito' &&
@@ -1744,19 +1743,36 @@ export const Extrato: React.FC = () => {
                         (s.dataPagamento ?? '') <= semanaFim
                       );
                       const totalSaidasPeriodo = saidasPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
-                      // Verificar divergência: dado gravado no obs vs saídas reais registradas
-                      const divergencia = totalSaidasPeriodo > 0 && audit.descSaidas > 0 && Math.abs(totalSaidasPeriodo - audit.descSaidas) > 0.05;
-                      // Dado efetivo: se há saídas reais registradas, elas prevalecem sobre o gravado no obs
-                      // (dado real > dado histórico potencialmente desatualizado)
-                      const descEfetivaGlobal = totalSaidasPeriodo > 0 ? totalSaidasPeriodo
+
+                      // ── Abatimento especial: saídas de crédito do tipo Adiantamento Especial no período ──
+                      const abatPeriodo = items.filter(s =>
+                        s.origem === 'saida' &&
+                        s.tipo === 'debito' &&
+                        s.colaboradorId === item.colaboradorId &&
+                        (s.tipoSaida === 'Desconto Adiantamento Especial' || s.tipoSaida === 'Adiantamento Especial') &&
+                        (s.dataPagamento ?? '') >= semanaIni &&
+                        (s.dataPagamento ?? '') <= semanaFim
+                      );
+                      const totalAbatPeriodo = abatPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
+
+                      // ── Valores definitivos ──
+                      // Saídas reais prevalecem sobre dado gravado no obs (dado real > histórico)
+                      const descEfetiva = totalSaidasPeriodo > 0 ? totalSaidasPeriodo
                         : (audit.descSaidas > 0 ? audit.descSaidas : 0);
-                      const liquidoEfetivoGlobal = descEfetivaGlobal > 0
-                        ? Math.max(0, totalGrupo - descEfetivaGlobal - audit.abatEsp)
+                      // Abat: usa dado estruturado ou o que veio do período
+                      const abatEfetivo = audit.abatEsp > 0 ? audit.abatEsp : totalAbatPeriodo;
+                      // Líquido: bruto − descontos − abat
+                      const liquidoEfetivo = descEfetiva > 0 || abatEfetivo > 0
+                        ? Math.max(0, totalGrupo - descEfetiva - abatEfetivo)
                         : (audit.liquido > 0 && audit.liquido < totalGrupo ? audit.liquido : totalGrupo);
 
                       const rows: React.ReactElement[] = [];
 
-                      // ── Linha-mãe (cabeçalho expansível) ─────────────────────────────
+                      // ═══════════════════════════════════════════════════════════════════
+                      // LINHA-MÃE — cabeçalho do lote, sempre visível
+                      // Mostra: nome · tipo · origem · data pag. · semana · descrição resumida
+                      //         forma · bruto dobras · bruto transp. · LÍQUIDO (destaque)
+                      // ═══════════════════════════════════════════════════════════════════
                       rows.push(
                         <tr key={item.id}
                           style={{ backgroundColor: bgMae, borderLeft: '3px solid #43a047', borderBottom: expandido ? 'none' : '1px solid #c8e6c9' }}>
@@ -1768,7 +1784,7 @@ export const Extrato: React.FC = () => {
                                 return next;
                               })}
                               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', marginRight: '4px', color: '#1b5e20', fontWeight: 'bold', padding: '0 2px' }}
-                              title={expandido ? 'Recolher turnos' : 'Ver turnos linha a linha'}>
+                              title={expandido ? 'Recolher detalhes' : 'Ver linha a linha: turnos + descontos'}>
                               {expandido ? '▼' : '▶'}
                             </button>
                             {item.nomeColaborador}
@@ -1791,18 +1807,18 @@ export const Extrato: React.FC = () => {
                           </td>
                           <td style={{ ...s.td, maxWidth: '200px', fontSize: '11px' }}>
                             <div style={{ color: '#1b5e20', fontWeight: 'bold' }}>
-                              {diasDobras.length} turno(s){diasTransp.length > 0 ? ` + 🚗 Transporte` : ''}
-                              <span style={{ marginLeft: '6px', fontWeight: 'normal', color: '#666', fontSize: '10px' }}>
-                                {expandido ? '(clique ▼ p/ recolher)' : '(clique ▶ p/ detalhar)'}
+                              {diasDobras.length} turno(s){diasTransp.length > 0 ? ' + 🚗 Transp.' : ''}
+                              {saidasPeriodo.length > 0 && (
+                                <span style={{ color: '#c62828', marginLeft: 4 }}>+ {saidasPeriodo.length} desc.</span>
+                              )}
+                              <span style={{ marginLeft: '6px', fontWeight: 'normal', color: '#888', fontSize: '10px' }}>
+                                {expandido ? '▼ recolher' : '▶ ver linha a linha'}
                               </span>
                             </div>
                             <div style={{ color: '#555', fontSize: '10px', marginTop: '2px' }}>
                               {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
-                              {diasTransp.length > 0 && ` · Transp. ${fmtMoeda(totalTransp)}`}
+                              {diasTransp.length > 0 && ` · 🚗 ${fmtMoeda(totalTransp)}`}
                             </div>
-                            {item.formaPagamento && !audit.temCampoEstruturado && audit.descSaidas === 0 && (
-                              <div style={{ fontSize: '9px', color: '#bbb', marginTop: '1px' }}>(obs s/ desc estruturado)</div>
-                            )}
                           </td>
                           <td style={s.tdC}>
                             {item.formaPagamento ? (
@@ -1813,34 +1829,21 @@ export const Extrato: React.FC = () => {
                               </span>
                             ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
                           </td>
-                          {/* Col. Dobras: sempre mostra bruto das dobras */}
                           <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{totalDobras > 0 ? fmtMoeda(totalDobras) : '—'}</td>
-                          {/* Col. Transp.: bruto do transporte */}
                           <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
-                          {/* Col. Total/PIX: valor líquido efetivo + breakdown conectado com saídas */}
+                          {/* Coluna Valor: líquido real em destaque + equação resumida */}
                           <td style={{ ...s.tdR, fontWeight: 'bold', fontSize: '13px' }}>
-                            <div style={{ color: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32' }}>
-                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivoGlobal)}
+                            <div style={{ color: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32', fontSize: '14px' }}>
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivo)}
                             </div>
-                            {/* Breakdown: usa saídas reais do período ou audit.descSaidas como fallback */}
-                            {(() => {
-                              if (descEfetivaGlobal === 0 && audit.abatEsp === 0) return null;
-                              return (
-                                <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.4', marginTop: '2px' }}>
-                                  bruto {fmtMoeda(totalGrupo)}
-                                  {descEfetivaGlobal > 0 && (
-                                    <span style={{ color: '#c62828' }}>
-                                      {' '}−{fmtMoeda(descEfetivaGlobal)} saídas
-                                      {totalSaidasPeriodo > 0 &&
-                                        <span style={{ color: '#e57373', fontStyle: 'italic' }}> ({saidasPeriodo.length})</span>}
-                                      {divergencia &&
-                                        <span style={{ color: '#ff9800' }} title={`Obs gravado: ${fmtMoeda(audit.descSaidas)} — usando saídas reais: ${fmtMoeda(totalSaidasPeriodo)}`}> ⚠️</span>}
-                                    </span>
-                                  )}
-                                  {audit.abatEsp > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)} adto.esp.</span>}
-                                </div>
-                              );
-                            })()}
+                            {(descEfetiva > 0 || abatEfetivo > 0) && (
+                              <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.5', marginTop: '2px' }}>
+                                bruto {fmtMoeda(totalGrupo)}
+                                {descEfetiva > 0 && <span style={{ color: '#c62828' }}> −{fmtMoeda(descEfetiva)}</span>}
+                                {abatEfetivo > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(abatEfetivo)} adto.</span>}
+                                {' = '}<span style={{ color: '#1b5e20', fontWeight: 'bold' }}>{fmtMoeda(liquidoEfetivo)}</span>
+                              </div>
+                            )}
                           </td>
                           <td style={s.tdC}>
                             <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
@@ -1854,9 +1857,12 @@ export const Extrato: React.FC = () => {
                         </tr>
                       );
 
-                      // ── Sub-linhas detalhadas (visíveis quando expandido) ─────────────
+                      // ═══════════════════════════════════════════════════════════════════
+                      // SUB-LINHAS — visíveis apenas quando expandido
+                      // Ordem: CRÉDITOS primeiro (turnos + transporte), depois DÉBITOS (descontos)
+                      // ═══════════════════════════════════════════════════════════════════
                       if (expandido) {
-                        // Uma linha por turno (dobra)
+                        // ── [1] Turnos (dobras) — créditos ──────────────────────────────
                         diasDobras.forEach((d: any) => {
                           const turnoLabel = d.turno === 'Dia' ? '☀️ Dia' : d.turno === 'Noite' ? '🌙 Noite' : (d.turno || '?');
                           const isPagoTurno = d.pago === true;
@@ -1865,12 +1871,12 @@ export const Extrato: React.FC = () => {
                             : '—';
                           rows.push(
                             <tr key={`${item.id}_turno_${d.id || d.data}_${d.turno}`}
-                              style={{ backgroundColor: isPagoTurno ? '#f9fbe7' : '#fffde7', borderBottom: '1px dashed #e0e0e0', borderLeft: '6px solid #a5d6a7' }}>
-                              <td style={{ ...s.td, paddingLeft: '28px', color: '#555', fontStyle: 'italic', fontSize: '11px' }} colSpan={2}>
-                                ↳ <strong>{item.nomeColaborador}</strong>
+                              style={{ backgroundColor: '#f1f8e9', borderBottom: '1px dashed #c5e1a5', borderLeft: '6px solid #a5d6a7' }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                ↳ {item.nomeColaborador}
                               </td>
-                              <td style={{ ...s.tdC }}>
-                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#f1f8e9', color: '#558b2f' }}>↳ turno</span>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#dcedc8', color: '#33691e' }}>☀️ turno</span>
                               </td>
                               <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
                                 {dataFormatada}
@@ -1878,28 +1884,20 @@ export const Extrato: React.FC = () => {
                               <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
                                 {item.semana ? fmtDataBR(item.semana) : '—'}
                               </td>
-                              <td style={{ ...s.td, fontSize: '11px', color: '#2e7d32' }}>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#33691e' }}>
                                 <strong>{turnoLabel}</strong> — dobra individual
                               </td>
                               <td style={s.tdC}>
-                                {item.formaPagamento ? (
-                                  <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold',
-                                    backgroundColor: '#e3f2fd', color: '#1565c0' }}>
-                                    {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento}
-                                  </span>
-                                ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                                <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                  {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento || '—'}
+                                </span>
                               </td>
-                              <td style={{ ...s.tdR, color: '#2e7d32', fontSize: '11px', fontWeight: 'bold' }}>
-                                {fmtMoeda(R(d.valor))}
-                              </td>
+                              <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(R(d.valor))}</td>
                               <td style={s.tdR}>—</td>
-                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#558b2f', fontSize: '12px' }}>
-                                +{fmtMoeda(R(d.valor))}
-                              </td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
                               <td style={s.tdC}>
                                 <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                                  backgroundColor: isPagoTurno ? '#e8f5e9' : '#fff9c4',
-                                  color: isPagoTurno ? '#2e7d32' : '#f57f17' }}>
+                                  backgroundColor: isPagoTurno ? '#e8f5e9' : '#fff9c4', color: isPagoTurno ? '#2e7d32' : '#f57f17' }}>
                                   {isPagoTurno ? '✅ Pago' : '⏳ Pend.'}
                                 </span>
                               </td>
@@ -1908,19 +1906,18 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
-                        // Uma linha por transporte
+                        // ── [2] Transporte — crédito ────────────────────────────────────
                         diasTransp.forEach((d: any) => {
-                          const dataFormatada = d.dataPagamento
-                            ? fmtDataBR(d.dataPagamento)
+                          const dataFormatada = d.dataPagamento ? fmtDataBR(d.dataPagamento)
                             : (d.data ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—');
                           rows.push(
                             <tr key={`${item.id}_transp_${d.id || d.data}`}
-                              style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #c8e6c9', borderLeft: '6px solid #81c784' }}>
-                              <td style={{ ...s.td, paddingLeft: '28px', color: '#555', fontStyle: 'italic', fontSize: '11px' }} colSpan={2}>
-                                ↳ <strong>{item.nomeColaborador}</strong>
+                              style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                ↳ {item.nomeColaborador}
                               </td>
                               <td style={s.tdC}>
-                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>↳ transp.</span>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>🚗 transp.</span>
                               </td>
                               <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
                                 {dataFormatada}
@@ -1928,24 +1925,17 @@ export const Extrato: React.FC = () => {
                               <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
                                 {item.semana ? fmtDataBR(item.semana) : '—'}
                               </td>
-                              <td style={{ ...s.td, fontSize: '11px', color: '#2e7d32' }}>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#1b5e20' }}>
                                 🚗 <strong>Transporte</strong> — crédito semanal
                               </td>
                               <td style={s.tdC}>
-                                {item.formaPagamento ? (
-                                  <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold',
-                                    backgroundColor: '#e3f2fd', color: '#1565c0' }}>
-                                    {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento}
-                                  </span>
-                                ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                                <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                  {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento || '—'}
+                                </span>
                               </td>
                               <td style={s.tdR}>—</td>
-                              <td style={{ ...s.tdR, color: '#2e7d32', fontSize: '11px', fontWeight: 'bold' }}>
-                                {fmtMoeda(R(d.valor))}
-                              </td>
-                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
-                                +{fmtMoeda(R(d.valor))}
-                              </td>
+                              <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(R(d.valor))}</td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
                               <td style={s.tdC}>
                                 <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
                                   backgroundColor: d.pago ? '#e8f5e9' : '#fff9c4', color: d.pago ? '#2e7d32' : '#f57f17' }}>
@@ -1957,59 +1947,143 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
-                        // ── Linha de subtotal do grupo (fundo verde escuro, PIX líquido em destaque) ──
-                        // Usa saídas reais (totalSaidasPeriodo) se existirem — dado real prevalece sobre obs gravado
-                        const descEfetivaSubtotal = descEfetivaGlobal;
-                        const liquidoEfetivoSubtotal = liquidoEfetivoGlobal;
+                        // ── [3] Descontos (saídas débito do período) — integrados ao grupo ──
+                        // Cada desconto aparece como sub-linha vermelha dentro do grupo expandido
+                        saidasPeriodo.forEach((saida) => {
+                          const dataFormatada = saida.dataPagamento
+                            ? fmtDataBR(saida.dataPagamento)
+                            : '—';
+                          const isAdtEsp = saida.tipoSaida === 'Desconto Adiantamento Especial'
+                            || saida.tipoSaida === 'Adiantamento Especial';
+                          rows.push(
+                            <tr key={`${item.id}_desc_${saida.id}`}
+                              style={{ backgroundColor: isAdtEsp ? '#fce4ec' : '#fff8f8', borderBottom: '1px dashed #ffcdd2', borderLeft: `6px solid ${isAdtEsp ? '#e91e63' : '#ef9a9a'}` }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                ↳ {item.nomeColaborador}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px',
+                                  backgroundColor: isAdtEsp ? '#fce4ec' : '#ffebee',
+                                  color: isAdtEsp ? '#880e4f' : '#c62828' }}>
+                                  {isAdtEsp ? '⏩ adto.esp.' : '📉 desc.'}
+                                </span>
+                              </td>
+                              <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {dataFormatada}
+                              </td>
+                              <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                {item.semana ? fmtDataBR(item.semana) : '—'}
+                              </td>
+                              <td style={{ ...s.td, fontSize: '11px' }}>
+                                <div style={{ color: isAdtEsp ? '#880e4f' : '#c62828', fontWeight: 'bold' }}>
+                                  {saida.descricao || saida.tipoSaida || 'Desconto'}
+                                </div>
+                                {saida.obs && (
+                                  <div style={{ color: '#999', fontSize: '10px', fontStyle: 'italic' }}>📝 {saida.obs}</div>
+                                )}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                  {saida.formaPagamento === 'PIX' ? '📱 PIX' : saida.formaPagamento || '—'}
+                                </span>
+                              </td>
+                              <td style={s.tdR}>—</td>
+                              <td style={s.tdR}>—</td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: isAdtEsp ? '#880e4f' : '#c62828' }}>
+                                −{fmtMoeda(R(saida.valor))}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: saida.pago ? '#e8f5e9' : '#fff9c4', color: saida.pago ? '#2e7d32' : '#f57f17' }}>
+                                  {saida.pago ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        });
+
+                        // ── [4] Subtotal do lote (fundo verde escuro) ───────────────────
+                        // Equação completa: bruto + transp. − descontos − abat. = LÍQUIDO
                         rows.push(
                           <tr key={`${item.id}_subtotal`}
                             style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047', borderLeft: '6px solid #43a047' }}>
-                            <td colSpan={6} style={{ padding: '6px 8px 6px 28px', fontSize: '11px', color: '#a5d6a7', fontWeight: 'bold' }}>
-                              📊 Subtotal lote · {diasDobras.length} turno(s){diasTransp.length > 0 ? ` + 🚗 transp.` : ''}
-                              {totalTransp > 0 && (
-                                <span style={{ fontWeight: 'normal', color: '#c8e6c9', marginLeft: '6px' }}>
-                                  dobras: {fmtMoeda(totalDobras)} · transp.: {fmtMoeda(totalTransp)}
-                                </span>
-                              )}
-                              {/* Breakdown completo: descontos + saídas do período */}
-                              <span style={{ display: 'block', fontWeight: 'normal', color: '#ffcdd2', fontSize: '10px', marginTop: '3px', lineHeight: '1.5' }}>
-                                bruto {fmtMoeda(totalGrupo)}
-                                {descEfetivaSubtotal > 0 && (
-                                  <>
-                                    {' · '}
-                                    <span style={{ color: '#ef9a9a' }}>−{fmtMoeda(descEfetivaSubtotal)} saídas</span>
-                                    {totalSaidasPeriodo > 0 && (
-                                      <span style={{ color: '#ffccbc', fontStyle: 'italic' }}> ({saidasPeriodo.length} lançamentos)</span>
-                                    )}
-                                    {divergencia && (
-                                      <span style={{ color: '#ffeb3b' }} title={`Obs gravado: ${fmtMoeda(audit.descSaidas)} — usando saídas reais: ${fmtMoeda(totalSaidasPeriodo)}`}>
-                                        {' '}⚠️
-                                      </span>
-                                    )}
-                                  </>
-                                )}
-                                {audit.abatEsp > 0 && <> · <span style={{ color: '#ce93d8' }}>−{fmtMoeda(audit.abatEsp)} adto.esp.</span></>}
-                                {' → '}
-                                <span style={{ color: 'white', fontWeight: 'bold' }}>líquido {fmtMoeda(liquidoEfetivoSubtotal)}</span>
-                              </span>
+                            <td colSpan={6} style={{ padding: '8px 8px 8px 28px', fontSize: '11px', color: '#a5d6a7', fontWeight: 'bold' }}>
+                              📊 Lote · sem. {item.semana ? fmtDataBR(item.semana) : '—'}
+                              {/* Equação completa linha a linha */}
+                              <table style={{ marginTop: '6px', borderCollapse: 'collapse', width: '100%' }}>
+                                <tbody>
+                                  {diasDobras.map((d: any, idx: number) => (
+                                    <tr key={idx}>
+                                      <td style={{ color: '#c8e6c9', fontSize: '10px', paddingRight: '8px' }}>
+                                        ☀️ {d.turno || '?'} {d.data ? d.data.substring(8) + '/' + d.data.substring(5,7) : ''}
+                                      </td>
+                                      <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(R(d.valor))}</td>
+                                    </tr>
+                                  ))}
+                                  {diasTransp.map((d: any, idx: number) => (
+                                    <tr key={`t${idx}`}>
+                                      <td style={{ color: '#c8e6c9', fontSize: '10px', paddingRight: '8px' }}>🚗 Transporte</td>
+                                      <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(R(d.valor))}</td>
+                                    </tr>
+                                  ))}
+                                  <tr>
+                                    <td colSpan={2} style={{ borderTop: '1px solid #388e3c', paddingTop: '3px' }} />
+                                  </tr>
+                                  <tr>
+                                    <td style={{ color: '#ffcdd2', fontSize: '10px', fontWeight: 'bold' }}>= Bruto</td>
+                                    <td style={{ color: '#ffcdd2', fontSize: '10px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(totalGrupo)}</td>
+                                  </tr>
+                                  {saidasPeriodo.map((saida) => (
+                                    <tr key={saida.id}>
+                                      <td style={{ color: '#ef9a9a', fontSize: '10px', paddingRight: '8px' }}>
+                                        📉 {saida.descricao || saida.tipoSaida}
+                                      </td>
+                                      <td style={{ color: '#ef9a9a', fontSize: '10px', textAlign: 'right' }}>−{fmtMoeda(R(saida.valor))}</td>
+                                    </tr>
+                                  ))}
+                                  {descEfetiva === 0 && audit.descSaidas > 0 && (
+                                    <tr>
+                                      <td style={{ color: '#ef9a9a', fontSize: '10px' }}>📉 Desc. saídas (obs)</td>
+                                      <td style={{ color: '#ef9a9a', fontSize: '10px', textAlign: 'right' }}>−{fmtMoeda(audit.descSaidas)}</td>
+                                    </tr>
+                                  )}
+                                  {abatEfetivo > 0 && descEfetiva === 0 && (
+                                    <tr>
+                                      <td style={{ color: '#ce93d8', fontSize: '10px' }}>⏩ Abat. adto.esp.</td>
+                                      <td style={{ color: '#ce93d8', fontSize: '10px', textAlign: 'right' }}>−{fmtMoeda(abatEfetivo)}</td>
+                                    </tr>
+                                  )}
+                                  <tr>
+                                    <td colSpan={2} style={{ borderTop: '1px solid #388e3c', paddingTop: '3px' }} />
+                                  </tr>
+                                  <tr>
+                                    <td style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>
+                                      {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '💳'} Líquido
+                                    </td>
+                                    <td style={{ color: '#69f0ae', fontSize: '13px', textAlign: 'right', fontWeight: 'bold' }}>
+                                      {fmtMoeda(liquidoEfetivo)}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
                             </td>
-                            <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                            <td style={{ padding: '6px 8px', textAlign: 'center', verticalAlign: 'top' }}>
                               {item.formaPagamento ? (
                                 <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
-                                  backgroundColor: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32',
-                                  color: 'white' }}>
+                                  backgroundColor: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32', color: 'white' }}>
                                   {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
                                 </span>
                               ) : null}
                             </td>
-                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px' }}>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px', verticalAlign: 'top' }}>
                               {fmtMoeda(totalDobras)}
                             </td>
-                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px' }}>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px', verticalAlign: 'top' }}>
                               {totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}
                             </td>
-                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: 'white', fontSize: '14px' }}>
-                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivoSubtotal)}
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#69f0ae', fontSize: '16px', verticalAlign: 'top' }}>
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivo)}
                             </td>
                             <td colSpan={2} />
                           </tr>

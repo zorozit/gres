@@ -2078,6 +2078,8 @@ export default function FolhaPagamento() {
                     dataPagamento: dataLocalFreelancer,
                     formaPagamento: formaFreelancer,
                     dias: diasParaPagar,
+                    // ── Responsável pelo pagamento (auditoria) ──
+                    ...auditoriaCampos(),
                     // ── Campos estruturados de auditoria ──
                     valorBruto:      valorBrutoLote,    // dobras + transporte + caixinha
                     valorDescSaidas: valorDescSaidas,   // total descontos (consumo/transp)
@@ -2105,6 +2107,7 @@ export default function FolhaPagamento() {
                       dataPagamento: dataLocalFreelancer,
                       formaPagamento: formaFreelancer,
                       pagamentoId: pagamentoIdGerado,
+                      ...auditoriaCampos(),
                       // Referência ao lote principal para auditoria
                       valorBruto:      valorBrutoLote,
                       valorDescSaidas: valorDescSaidas,
