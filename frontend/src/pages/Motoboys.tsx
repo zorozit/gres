@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
@@ -292,6 +293,7 @@ function preencherControleComSaidas(
 /* ─── Component ─────────────────────────────────────────────────────────── */
 
 export const Motoboys: React.FC = () => {
+  const navigate = useNavigate();
   const { activeUnit } = useUnit();
   const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
@@ -758,9 +760,34 @@ export const Motoboys: React.FC = () => {
         </div>
 
         {/* Sem abas — modulo de Motoboys agora eh apenas Controle Diario.
-            Lista de motoboys e cadastro estao em "Colaboradores". */}
-        <div style={{ padding: '8px 12px', backgroundColor: '#e3f2fd', borderLeft: '3px solid #1565c0', borderRadius: '4px', marginBottom: '12px', fontSize: '12px', color: '#0d47a1' }}>
-          📊 <strong>Controle Diario de Motoboys</strong> — cadastro de motoboys e parametros financeiros (valor entrega, chegada, etc) ficam em <strong>Colaboradores</strong>.
+            Lista e cadastro foram movidos para o módulo Colaboradores.
+            Auditoria detalhada (estilo Extrato) fica em MotoboyAuditoria. */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, padding: '8px 12px', backgroundColor: '#e3f2fd', borderLeft: '3px solid #1565c0', borderRadius: '4px', fontSize: '12px', color: '#0d47a1' }}>
+            📊 <strong>Controle Diário de Motoboys</strong> — cadastro e parâmetros financeiros ficam em <strong>Colaboradores</strong>.
+          </div>
+          <button
+            onClick={() => navigate('/modulos/motoboy-auditoria')}
+            style={{
+              padding: '8px 16px', border: '2px solid #1b5e20', cursor: 'pointer',
+              fontWeight: 'bold', borderRadius: '6px',
+              backgroundColor: '#e8f5e9', color: '#1b5e20', fontSize: '12px',
+              whiteSpace: 'nowrap' as const,
+            }}
+            title="Auditoria linha a linha: chegadas, entregas, descontos e log de pagamento por semana">
+            🔍 Auditoria Detalhada ↗
+          </button>
+          <button
+            onClick={() => navigate('/modulos/folha-pagamento')}
+            style={{
+              padding: '8px 16px', border: '2px solid #1565c0', cursor: 'pointer',
+              fontWeight: 'bold', borderRadius: '6px',
+              backgroundColor: '#e3f2fd', color: '#1565c0', fontSize: '12px',
+              whiteSpace: 'nowrap' as const,
+            }}
+            title="Folha de Pagamento CLT">
+            🧾 Folha Pagamento ↗
+          </button>
         </div>
 
         {/* ─── CONTROLE DIÁRIO ────────────────────────────────────── */}

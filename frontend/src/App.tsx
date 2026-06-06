@@ -18,6 +18,7 @@ import Auditoria from './pages/Auditoria';
 import Feriados from './pages/Feriados';
 import FolhaPagamento from './pages/FolhaPagamento';
 import FreelancerPagamento from './pages/FreelancerPagamento';
+import MotoboyAuditoria from './pages/MotoboyAuditoria';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
@@ -68,6 +69,9 @@ function App() {
 
             <Route path="/modulos/freelancer-pagamento"
               element={<ProtectedRoute moduloId="folha-pagamento"><FreelancerPagamento /></ProtectedRoute>} />
+
+            <Route path="/modulos/motoboy-auditoria"
+              element={<ProtectedRoute moduloId="folha-pagamento"><MotoboyAuditoria /></ProtectedRoute>} />
 
             <Route path="/modulos/extrato"
               element={<ProtectedRoute moduloId="extrato"><Extrato /></ProtectedRoute>} />

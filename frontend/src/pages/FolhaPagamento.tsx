@@ -351,7 +351,11 @@ export default function FolhaPagamento() {
   const [periodoFim, setPeriodoFim] = useState<string>('');
   const periodoCustomAtivo = !!(periodoIni && periodoFim);
   const [loading, setLoading] = useState(false);
-  const [aba, setAba] = useState<'clt' | 'freelancers' | 'dobras'>('clt');
+  const [aba, setAba] = useState<'clt' | 'freelancers' | 'dobras' | 'auditoria-clt'>('clt');
+  // Expansão de grupos na aba Auditoria CLT
+  const [auditoriaCLTExpandidos, setAuditoriaCLTExpandidos] = useState<Set<string>>(new Set());
+  const toggleAuditoriaCLT = (id: string) =>
+    setAuditoriaCLTExpandidos(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
@@ -3295,6 +3299,9 @@ export default function FolhaPagamento() {
           <button style={s.tab(aba === 'dobras')} onClick={() => setAba('dobras')}>
             📅 Dobras Semanais CLT
           </button>
+          <button style={s.tab(aba === 'auditoria-clt')} onClick={() => setAba('auditoria-clt')}>
+            🔍 Auditoria CLT
+          </button>
           {/* Freelancers agora têm módulo dedicado — botão de atalho */}
           <button
             onClick={() => navigate('/modulos/freelancer-pagamento')}
@@ -3305,6 +3312,17 @@ export default function FolhaPagamento() {
             }}
             title="Abre o módulo dedicado de pagamento de Freelancers com auditoria completa">
             🎯 Freelancers ↗
+          </button>
+          {/* Motoboys — botão de auditoria */}
+          <button
+            onClick={() => navigate('/modulos/motoboy-auditoria')}
+            style={{
+              padding: '10px 18px', border: '2px solid #1b5e20', cursor: 'pointer',
+              fontWeight: 'bold', borderRadius: '4px 4px 0 0',
+              backgroundColor: '#e8f5e9', color: '#1b5e20', fontSize: '13px',
+            }}
+            title="Auditoria linha a linha de Motoboys (CLT e Freelancer)">
+            🏍️ Motoboys ↗
           </button>
         </div>
 
@@ -4177,6 +4195,172 @@ export default function FolhaPagamento() {
             </div>
           );
         })()}
+
+        {/* ── ABA AUDITORIA CLT ─────────────────────────────────── */}
+        {aba === 'auditoria-clt' && (
+          <div style={{ borderRadius: '0 8px 8px 8px' }}>
+            {loading ? (
+              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
+            ) : folhasLocais.length === 0 ? (
+              <div style={{ ...s.card, textAlign: 'center', padding: '40px', color: '#999' }}>Nenhum colaborador CLT em {mesAno}.</div>
+            ) : (
+              <div style={{ ...s.card, overflowX: 'auto' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1565c0' }}>🔍 Auditoria linha a linha — Colaboradores CLT</span>
+                  <button onClick={() => setAuditoriaCLTExpandidos(new Set(folhasLocais.map(f => f.colaboradorId)))}
+                    style={{ padding: '4px 12px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#2e7d32', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>
+                    ▼ Expandir Todos
+                  </button>
+                  {auditoriaCLTExpandidos.size > 0 && (
+                    <button onClick={() => setAuditoriaCLTExpandidos(new Set())}
+                      style={{ padding: '4px 12px', fontSize: '11px', border: 'none', borderRadius: '4px', backgroundColor: '#757575', color: 'white', cursor: 'pointer', fontWeight: 'bold' }}>
+                      ▲ Recolher
+                    </button>
+                  )}
+                  <span style={{ fontSize: '11px', color: '#888' }}>{folhasLocais.length} colaborador(es)</span>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...s.th, width: '28px' }}>▶</th>
+                      <th style={s.th}>Colaborador</th>
+                      <th style={{ ...s.th, textAlign: 'center' }}>Cargo</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>Sal. Base</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>Periculosidade</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>INSS</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>VT Desc.</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>Adto (40%)</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>Variável</th>
+                      <th style={{ ...s.th, textAlign: 'right' }}>💳 Líquido Dia 5</th>
+                      <th style={{ ...s.th, textAlign: 'center' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {folhasLocais.flatMap(f => {
+                      const exp = auditoriaCLTExpandidos.has(f.colaboradorId);
+                      const bgMae = f.pago ? '#f0fdf4' : '#fffde7';
+                      const liquidoDia5 = f.pgtosDia05 + (f.variavelDe20a31 || 0);
+                      const rows: React.ReactElement[] = [];
+
+                      /* Linha-mãe */
+                      rows.push(
+                        <tr key={f.colaboradorId} style={{ backgroundColor: bgMae, borderLeft: '3px solid #1976d2', borderBottom: exp ? 'none' : '1px solid #bbdefb' }}>
+                          <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                            <button onClick={() => toggleAuditoriaCLT(f.colaboradorId)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#1565c0', fontWeight: 'bold', padding: '0 2px' }}>
+                              {exp ? '▼' : '▶'}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px', fontWeight: 'bold', fontSize: '13px' }}>
+                            <div>{f.nome}</div>
+                            {f.chavePix && <div style={{ fontSize: '10px', color: '#1976d2' }}>📱 {f.chavePix}</div>}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'center', fontSize: '11px', color: '#555' }}>{f.cargo || '—'}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(f.salarioBase)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#e65100' }}>
+                            {f.periculosidade > 0 ? `+${fmtMoeda(f.periculosidade)}` : '—'}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#c62828' }}>−{fmtMoeda(f.inss)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#c62828' }}>
+                            {f.valeTransporte > 0 ? `−${fmtMoeda(f.valeTransporte)}` : '—'}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#1976d2', fontWeight: 'bold' }}>{fmtMoeda(f.pgtosDia20)}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#43a047' }}>
+                            {f.totalVariavel > 0 ? `+${fmtMoeda(f.totalVariavel)}` : '—'}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold', fontSize: '14px', color: '#1b5e20' }}>
+                            {fmtMoeda(liquidoDia5)}
+                          </td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{ padding: '3px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
+                              backgroundColor: f.pago ? '#e8f5e9' : '#fff9c4',
+                              color: f.pago ? '#2e7d32' : '#f57f17' }}>
+                              {f.pago ? '✅ Pago' : '⏳ Pendente'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+
+                      if (!exp) return rows;
+
+                      /* Sub-linhas de auditoria */
+                      const itensAudit = [
+                        { label: '💰 Salário Base', valor: f.salarioBase, cor: '#1565c0', sinal: '+' },
+                        ...(f.periculosidade > 0 ? [{ label: '⚠️ Periculosidade', valor: f.periculosidade, cor: '#e65100', sinal: '+' }] : []),
+                        ...((f.feriadosValor || 0) > 0 ? [{ label: `🎉 Feriados trabalhados (${f.feriadosTrab}×)`, valor: f.feriadosValor || 0, cor: '#7b1fa2', sinal: '+' }] : []),
+                        { label: '📋 Sal. Contr. INSS (base)', valor: f.salContrInss, cor: '#555', sinal: '=' },
+                        { label: '🔴 INSS', valor: f.inss, cor: '#c62828', sinal: '−' },
+                        ...(f.valeTransporte > 0 ? [{ label: '🚌 VT Desc. (6% ou VT mensal)', valor: f.valeTransporte, cor: '#c62828', sinal: '−' }] : []),
+                        ...(f.contrAssistencial > 0 ? [{ label: '🤝 Contr. Assistencial', valor: f.contrAssistencial, cor: '#c62828', sinal: '−' }] : []),
+                        { label: '💸 Adiantamento Dia 20 (40% base)', valor: f.pgtosDia20, cor: '#1976d2', sinal: '⟹' },
+                        ...(f.variavelAte19 > 0 ? [{ label: '📈 Variável até dia 19', valor: f.variavelAte19, cor: '#43a047', sinal: '+' }] : []),
+                        ...(f.variavelDe20a31 > 0 ? [{ label: '📈 Variável 20-31', valor: f.variavelDe20a31, cor: '#43a047', sinal: '+' }] : []),
+                        ...(f.adiantamentoValor > 0 ? [{ label: '💳 Adto salário já pago', valor: f.adiantamentoValor, cor: '#c62828', sinal: '−' }] : []),
+                        { label: '✅ Líquido Dia 5 (fechamento)', valor: liquidoDia5, cor: '#1b5e20', sinal: '⟹' },
+                      ];
+                      for (const item of itensAudit) {
+                        rows.push(
+                          <tr key={`${f.colaboradorId}_${item.label}`}
+                            style={{ backgroundColor: item.sinal === '⟹' ? (item.cor === '#1b5e20' ? '#e8f5e9' : '#e3f2fd') : '#fafafa',
+                              borderBottom: '1px dashed #e0e0e0', borderLeft: '6px solid #90caf9' }}>
+                            <td colSpan={2} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#555' }}>
+                              ↳ {item.label}
+                            </td>
+                            <td colSpan={2} style={{ padding: '5px 8px', textAlign: 'right', fontWeight: item.sinal === '⟹' ? 'bold' : 'normal', color: item.cor, fontSize: '12px' }}>
+                              {item.sinal !== '=' ? item.sinal : ''} {fmtMoeda(item.valor)}
+                            </td>
+                            <td colSpan={7} />
+                          </tr>
+                        );
+                      }
+                      /* Log de pagamentos */
+                      const logs: any[] = Array.isArray(f.logPagamentos) ? f.logPagamentos : [];
+                      logs.forEach((log, idx) => {
+                        rows.push(
+                          <tr key={`${f.colaboradorId}_log_${idx}`}
+                            style={{ backgroundColor: '#e3f2fd', borderBottom: '1px dashed #90caf9', borderLeft: '6px solid #1565c0' }}>
+                            <td colSpan={2} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#1565c0' }}>
+                              ↳ <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>📱 pgto.</span>
+                            </td>
+                            <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: '11px', color: '#666', fontFamily: 'monospace' }}>{log.data || '—'}</td>
+                            <td style={{ padding: '5px 8px', fontSize: '11px', color: '#1565c0' }}>
+                              {log.forma === 'PIX' ? '📱 PIX' : log.forma === 'Dinheiro' ? '💵 Dinheiro' : log.forma || 'PIX'} — {log.tipo || 'Pagamento'}
+                              {log.obs && <span style={{ color: '#777', marginLeft: '6px' }}>({log.obs})</span>}
+                            </td>
+                            <td colSpan={6} style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(R(log.valor))}</td>
+                            <td />
+                          </tr>
+                        );
+                      });
+                      /* Linha separadora */
+                      rows.push(
+                        <tr key={`${f.colaboradorId}_sep`} style={{ backgroundColor: '#1565c0', height: '2px' }}>
+                          <td colSpan={11} />
+                        </tr>
+                      );
+                      return rows;
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
+                      <td colSpan={3} style={{ padding: '10px 8px' }}>TOTAIS CLT ({folhasLocais.length})</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>{fmtMoeda(folhasLocais.reduce((s, f) => s + f.salarioBase, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', color: '#ffcc80' }}>{fmtMoeda(folhasLocais.reduce((s, f) => s + f.periculosidade, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', color: '#ef9a9a' }}>−{fmtMoeda(folhasLocais.reduce((s, f) => s + f.inss, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', color: '#ef9a9a' }}>−{fmtMoeda(folhasLocais.reduce((s, f) => s + f.valeTransporte, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', color: '#90caf9' }}>{fmtMoeda(folhasLocais.reduce((s, f) => s + f.pgtosDia20, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', color: '#a5d6a7' }}>{fmtMoeda(folhasLocais.reduce((s, f) => s + f.totalVariavel, 0))}</td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '14px', color: '#a5d6a7' }}>
+                        {fmtMoeda(folhasLocais.reduce((s, f) => s + f.pgtosDia05 + (f.variavelDe20a31 || 0), 0))}
+                      </td>
+                      <td style={{ padding: '10px 8px' }} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── ABA FREELANCERS ──────────────────────────────────── */}
         {aba === 'freelancers' && (
