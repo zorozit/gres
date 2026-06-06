@@ -1559,6 +1559,8 @@ exports.handler = async (event) => {
               valorBruto, valorTransporte, transporteCalculado, transporteAdiantado,
               desconto, caixinha, totalFinal, obs, formaPagamento, diasPagos,
               dias,
+              // Campos estruturados de auditoria Opção B (novos registros granulares)
+              valorDescSaidas, valorAbatEsp, valorLiquido,
               // NOVO: campos específicos CLT
               pagoAdiantamento, dataPgtoAdiantamento, pagoVariavel, dataPgtoVariavel,
               logPagamentos } = body;
@@ -1598,6 +1600,13 @@ exports.handler = async (event) => {
               pagamentoId: pagamentoId,           // amarra todos os turnos deste ato de pagamento
               transacaoBancariaId: null,           // reservado para conciliação bancária (fase 3 MVP)
               confiabilidade: 'real',              // gerado pelo sistema — não recalculado
+              // Campos estruturados de auditoria Opção B — propagados do payload do lote.
+              // Presença destes campos habilita temCampoEstruturado=true no Extrato,
+              // evitando fallback para parsing de obs (Opção A legado).
+              ...(valorBruto      !== undefined ? { valorBruto:      parseFloat(valorBruto)      || 0 } : {}),
+              ...(valorDescSaidas !== undefined ? { valorDescSaidas: parseFloat(valorDescSaidas) || 0 } : {}),
+              ...(valorAbatEsp    !== undefined ? { valorAbatEsp:    parseFloat(valorAbatEsp)    || 0 } : {}),
+              ...(valorLiquido    !== undefined ? { valorLiquido:    parseFloat(valorLiquido)    || 0 } : {}),
               obs: obs || '',
               updatedAt: now,
             };
@@ -1738,7 +1747,8 @@ exports.handler = async (event) => {
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
       const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
               origem, tipo, dataPagamento, unitId, viagens, caixinha, turno, observacao, obs, formaPagamento,
-              adiantamentoId, pago } = body;
+              adiantamentoId, pago,
+              pagamentoIdLigado, excedeAdto } = body;
 
       if (!responsavel || !descricao || !valor || !data || !colaboradorId) {
         return response(400, { error: 'Campos obrigatórios faltando' });
@@ -1781,6 +1791,11 @@ exports.handler = async (event) => {
           pago: pago !== undefined ? pago : true,
           obs: obs || observacao || '',
           ...(adiantamentoId ? { adiantamentoId } : {}),
+          // Rastreabilidade de lote: amarra a saída auto-gerada ao pagamentoId do lote que a criou.
+          // Permite filtrar saídas como "Desconto Transporte" e "Desconto Adiantamento Especial"
+          // fora da lista geral do Extrato (elas aparecem como sub-linhas dentro do grupo expandido).
+          ...(pagamentoIdLigado ? { pagamentoIdLigado } : {}),
+          ...(excedeAdto !== undefined ? { excedeAdto: !!excedeAdto } : {}),
           unitId: itemUnitId,
           timestamp: new Date().toISOString(),
           createdAt: new Date().toISOString()
