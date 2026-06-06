@@ -86,6 +86,38 @@ const fmtDataBR = (iso: string) => {
 };
 const hoje = () => new Date().toISOString().split('T')[0];
 
+/**
+ * Extrai valores de auditoria do lote de pagamento freelancer.
+ * Opção B (campo estruturado): usa valorLiquido/valorDescSaidas/valorAbatEsp direto do raw.
+ * Opção A (fallback legado): parseia o campo `obs` para extrair os valores.
+ *
+ * Formato do obs legado:
+ *   "Freelancer sem. ... - Desc. saídas: R$66,00 - Abat. adto.esp.: R$150,00 - Líquido: R$619,00"
+ */
+const extrairAuditoria = (raw: any, totalBruto: number): {
+  bruto: number; descSaidas: number; abatEsp: number; liquido: number; temCampoEstruturado: boolean;
+} => {
+  // Opção B — campo estruturado (novos registros)
+  if (raw?.valorLiquido !== undefined && raw.valorLiquido !== null) {
+    return {
+      bruto:      R(raw.valorBruto)      || totalBruto,
+      descSaidas: R(raw.valorDescSaidas) || 0,
+      abatEsp:    R(raw.valorAbatEsp)    || 0,
+      liquido:    R(raw.valorLiquido),
+      temCampoEstruturado: true,
+    };
+  }
+  // Opção A — parsear obs (registros legados)
+  const obs: string = raw?.obs || '';
+  const matchDesc   = obs.match(/Desc\. sa[íi]das:\s*R\$\s*([\d.,]+)/i);
+  const matchAbat   = obs.match(/Abat\. adto\.esp\.:\s*R\$\s*([\d.,]+)/i);
+  const matchLiq    = obs.match(/L[íi]quido:\s*R\$\s*([\d.,]+)/i);
+  const descSaidas  = matchDesc  ? R(matchDesc[1].replace(',', '.'))  : 0;
+  const abatEsp     = matchAbat  ? R(matchAbat[1].replace(',', '.'))  : 0;
+  const liquido     = matchLiq   ? R(matchLiq[1].replace(',', '.'))   : Math.max(0, totalBruto - descSaidas - abatEsp);
+  return { bruto: totalBruto, descSaidas, abatEsp, liquido, temCampoEstruturado: false };
+};
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export const Extrato: React.FC = () => {
   const navigate = useNavigate();
@@ -1194,6 +1226,9 @@ export const Extrato: React.FC = () => {
                       const totalGrupo = totalDobras + totalTransp;
                       const bgMae = !item.pago ? '#fffde7' : '#f0fdf4';
 
+                      // ── Auditoria: opção B (campo estruturado) ou A (parsear obs) ──
+                      const audit = extrairAuditoria(raw, totalGrupo);
+
                       const rows: React.ReactElement[] = [];
 
                       // Linha-mãe (cabeçalho expansível)
@@ -1216,21 +1251,30 @@ export const Extrato: React.FC = () => {
                           </td>
                           <td style={{ padding: '6px 8px', maxWidth: '240px' }}>
                             <div style={{ fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
-                              Dobras semanais — {diasDobras.length} turno(s)
-                              {diasTransp.length > 0 && ` + 🚗 Transporte`}
+                              {diasDobras.length} turno(s){diasTransp.length > 0 && ` + 🚗 Transp.`}
                             </div>
                             <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
                               {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
-                              {diasTransp.length > 0 && ` · Transp. ${fmtMoeda(totalTransp)}`}
                             </div>
                             {item.formaPagamento && (
                               <div style={{ fontSize: '10px', color: '#1565c0', marginTop: '1px' }}>
-                                📱 {item.formaPagamento}
+                                {item.formaPagamento === 'PIX' ? '📱' : '💵'} {item.formaPagamento}
+                                {!audit.temCampoEstruturado && audit.descSaidas === 0 && <span style={{ color: '#bbb', marginLeft: 4 }}>(obs s/ desc)</span>}
                               </div>
                             )}
                           </td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32', fontSize: '13px' }}>
-                            +{fmtMoeda(totalGrupo)}
+                          {/* Valor: mostra PIX líquido com bruto em subscript */}
+                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                            <div style={{ fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                              📱 {fmtMoeda(audit.liquido)}
+                            </div>
+                            {(audit.descSaidas > 0 || audit.abatEsp > 0) && (
+                              <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
+                                bruto {fmtMoeda(totalGrupo)}
+                                {audit.descSaidas > 0 && <span style={{ color: '#c62828' }}> −{fmtMoeda(audit.descSaidas)}</span>}
+                                {audit.abatEsp    > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)}</span>}
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                             <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
@@ -1281,8 +1325,12 @@ export const Extrato: React.FC = () => {
                             </tr>
                           );
                         }
-                        // Créditos: transporte
+                        // Créditos: transporte (com detalhamento do obs)
                         for (const d of diasTransp) {
+                          const transpObs: string = d.obs || '';
+                          const matchDias = transpObs.match(/(\d+)\s*dias?\s*-\s*R\$([\d.,]+)/i);
+                          const nDias   = matchDias ? parseInt(matchDias[1]) : null;
+                          const vDia    = (nDias && R(d.valor) > 0) ? R(d.valor) / nDias : null;
                           rows.push(
                             <tr key={`${item.id}_transp_${d.id || d.data}`}
                               style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #c8e6c9', borderLeft: '6px solid #81c784' }}>
@@ -1293,10 +1341,10 @@ export const Extrato: React.FC = () => {
                                 <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>🚗 Transporte</span>
                               </td>
                               <td style={{ padding: '4px 8px', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
-                                {d.dataPagamento ? fmtDataBR(d.dataPagamento) : fmtDataBR(d.data || '')}
+                                sem. {fmtDataBR(item.semana || '')}
                               </td>
                               <td style={{ padding: '4px 8px', maxWidth: '240px', fontSize: '11px', color: '#333' }}>
-                                🚗 Transporte saldo semana
+                                🚗 <strong>Transporte</strong> — {nDias ? `${nDias} dias × ${fmtMoeda(vDia!)}` : 'saldo semanal'}
                               </td>
                               <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
                                 +{fmtMoeda(R(d.valor))}
@@ -1311,19 +1359,23 @@ export const Extrato: React.FC = () => {
                             </tr>
                           );
                         }
-                        // Linha de subtotal do grupo
-                        const subtotalDobras = diasDobras.reduce((s: number, d: any) => s + R(d.valor), 0);
-                        const subtotalTransp = diasTransp.reduce((s: number, d: any) => s + R(d.valor), 0);
+                        // Linha de subtotal com PIX líquido destacado
                         rows.push(
-                          <tr key={`${item.id}_subtotal`} style={{ backgroundColor: '#c8e6c9', borderBottom: '2px solid #81c784', borderLeft: '6px solid #43a047' }}>
-                            <td colSpan={4} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
-                              Subtotal do lote de pagamento
-                              {subtotalTransp > 0 && ` · Dobras: ${fmtMoeda(subtotalDobras)} + Transp.: ${fmtMoeda(subtotalTransp)}`}
+                          <tr key={`${item.id}_subtotal`} style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047', borderLeft: '6px solid #43a047' }}>
+                            <td colSpan={3} style={{ padding: '6px 8px 6px 28px', fontSize: '11px', color: '#a5d6a7', fontWeight: 'bold' }}>
+                              📊 Resumo do lote · {diasDobras.length} turno(s){diasTransp.length > 0 ? ` + 🚗 transp.` : ''}
+                              {!audit.temCampoEstruturado && <span style={{ fontSize: '9px', color: '#81c784', marginLeft: 4 }}>(legado)</span>}
                             </td>
-                            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
-                              +{fmtMoeda(subtotalDobras + subtotalTransp)}
+                            <td style={{ padding: '6px 8px', fontSize: '11px', color: '#e8f5e9' }}>
+                              {audit.descSaidas > 0 && <span>−{fmtMoeda(audit.descSaidas)} descontos</span>}
+                              {audit.abatEsp    > 0 && <span style={{ marginLeft: 6 }}>−{fmtMoeda(audit.abatEsp)} adto.esp.</span>}
                             </td>
-                            <td colSpan={2} />
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#ffffff', fontSize: '14px' }}>
+                              📱 {fmtMoeda(audit.liquido)}
+                            </td>
+                            <td colSpan={2} style={{ padding: '6px 8px', fontSize: '10px', color: '#a5d6a7', textAlign: 'center' }}>
+                              {item.formaPagamento || 'PIX'}
+                            </td>
                           </tr>
                         );
                       }
@@ -1653,6 +1705,9 @@ export const Extrato: React.FC = () => {
                       const totalGrupo  = totalDobras + totalTransp;
                       const bgMae = !item.pago ? '#fffde7' : i % 2 === 0 ? '#f0fdf4' : '#f9fbe7';
 
+                      // ── Auditoria: opção B (campo estruturado) ou A (parsear obs) ──
+                      const audit = extrairAuditoria(raw, totalGrupo);
+
                       const rows: React.ReactElement[] = [];
 
                       // ── Linha-mãe (cabeçalho expansível) ─────────────────────────────
@@ -1699,6 +1754,9 @@ export const Extrato: React.FC = () => {
                               {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
                               {diasTransp.length > 0 && ` · Transp. ${fmtMoeda(totalTransp)}`}
                             </div>
+                            {item.formaPagamento && !audit.temCampoEstruturado && audit.descSaidas === 0 && (
+                              <div style={{ fontSize: '9px', color: '#bbb', marginTop: '1px' }}>(obs s/ desc estruturado)</div>
+                            )}
                           </td>
                           <td style={s.tdC}>
                             {item.formaPagamento ? (
@@ -1709,10 +1767,22 @@ export const Extrato: React.FC = () => {
                               </span>
                             ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
                           </td>
+                          {/* Col. Dobras: sempre mostra bruto das dobras */}
                           <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{totalDobras > 0 ? fmtMoeda(totalDobras) : '—'}</td>
+                          {/* Col. Transp.: bruto do transporte */}
                           <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
-                          <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '13px' }}>
-                            +{fmtMoeda(totalGrupo)}
+                          {/* Col. Total/PIX: valor líquido efetivo + breakdown em subscript */}
+                          <td style={{ ...s.tdR, fontWeight: 'bold', fontSize: '13px' }}>
+                            <div style={{ color: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32' }}>
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(audit.liquido)}
+                            </div>
+                            {(audit.descSaidas > 0 || audit.abatEsp > 0) && (
+                              <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.3', marginTop: '2px' }}>
+                                bruto {fmtMoeda(totalGrupo)}
+                                {audit.descSaidas > 0 && <span style={{ color: '#c62828' }}> −{fmtMoeda(audit.descSaidas)}</span>}
+                                {audit.abatEsp    > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)}</span>}
+                              </div>
+                            )}
                           </td>
                           <td style={s.tdC}>
                             <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
@@ -1765,7 +1835,7 @@ export const Extrato: React.FC = () => {
                                 {fmtMoeda(R(d.valor))}
                               </td>
                               <td style={s.tdR}>—</td>
-                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#558b2f', fontSize: '12px' }}>
                                 +{fmtMoeda(R(d.valor))}
                               </td>
                               <td style={s.tdC}>
@@ -1829,18 +1899,42 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
-                        // Linha de subtotal do grupo
+                        // ── Linha de subtotal do grupo (fundo verde escuro, PIX líquido em destaque) ──
                         rows.push(
                           <tr key={`${item.id}_subtotal`}
-                            style={{ backgroundColor: '#c8e6c9', borderBottom: '2px solid #81c784', borderLeft: '6px solid #43a047' }}>
-                            <td colSpan={7} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
-                              📊 Subtotal do lote · {diasDobras.length} turno(s) + {diasTransp.length} transp.
-                              {totalTransp > 0 && ` · Dobras: ${fmtMoeda(totalDobras)} · Transp.: ${fmtMoeda(totalTransp)}`}
+                            style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047', borderLeft: '6px solid #43a047' }}>
+                            <td colSpan={6} style={{ padding: '6px 8px 6px 28px', fontSize: '11px', color: '#a5d6a7', fontWeight: 'bold' }}>
+                              📊 Subtotal lote · {diasDobras.length} turno(s){diasTransp.length > 0 ? ` + 🚗 transp.` : ''}
+                              {totalTransp > 0 && (
+                                <span style={{ fontWeight: 'normal', color: '#c8e6c9', marginLeft: '6px' }}>
+                                  dobras: {fmtMoeda(totalDobras)} · transp.: {fmtMoeda(totalTransp)}
+                                </span>
+                              )}
+                              {(audit.descSaidas > 0 || audit.abatEsp > 0) && (
+                                <span style={{ display: 'block', fontWeight: 'normal', color: '#ffcdd2', fontSize: '10px', marginTop: '2px' }}>
+                                  bruto {fmtMoeda(totalGrupo)}
+                                  {audit.descSaidas > 0 && <> · desc.saídas <span style={{ color: '#ef9a9a' }}>−{fmtMoeda(audit.descSaidas)}</span></>}
+                                  {audit.abatEsp    > 0 && <> · abat.esp. <span style={{ color: '#ce93d8' }}>−{fmtMoeda(audit.abatEsp)}</span></>}
+                                </span>
+                              )}
                             </td>
-                            <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1b5e20', fontSize: '11px' }}>{fmtMoeda(totalDobras)}</td>
-                            <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1b5e20', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
-                            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
-                              +{fmtMoeda(totalDobras + totalTransp)}
+                            <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                              {item.formaPagamento ? (
+                                <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32',
+                                  color: 'white' }}>
+                                  {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px' }}>
+                              {fmtMoeda(totalDobras)}
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c8e6c9', fontSize: '11px' }}>
+                              {totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: 'white', fontSize: '14px' }}>
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(audit.liquido)}
                             </td>
                             <td colSpan={2} />
                           </tr>

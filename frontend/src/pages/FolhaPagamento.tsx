@@ -2061,6 +2061,16 @@ export default function FolhaPagamento() {
 
                   // Envia todos os turnos de uma vez (backend itera e salva 1 registro por turno)
                   // Transporte é enviado como lote separado (logo abaixo) com o mesmo pagamentoId
+
+                  // ── Campos estruturados para auditoria do PIX (Opção B) ──────────────
+                  // Calculados aqui e enviados no payload para evitar dependência do campo obs
+                  const valorBrutoDobras  = diasParaPagar.reduce((s, d) => s + d.valor, 0);
+                  const valorTranspSaldo  = (inclTransporte && fr.transporteSaldo > 0) ? fr.transporteSaldo : 0;
+                  const valorBrutoLote    = valorBrutoDobras + valorTranspSaldo + caixinhaChecked;
+                  const valorDescSaidas   = totalDebito;   // consumo interno + desconto transporte
+                  const valorAbatEsp      = vlAbate;        // abatimento adiantamento especial
+                  const valorLiquido      = Math.max(0, valorBrutoLote - valorDescSaidas - valorAbatEsp);
+
                   const payload = {
                     colaboradorId: fr.id, mes: mesAno,
                     semana: fech.dataFechamento, unitId,
@@ -2068,7 +2078,13 @@ export default function FolhaPagamento() {
                     dataPagamento: dataLocalFreelancer,
                     formaPagamento: formaFreelancer,
                     dias: diasParaPagar,
-                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''}`,
+                    // ── Campos estruturados de auditoria ──
+                    valorBruto:      valorBrutoLote,    // dobras + transporte + caixinha
+                    valorDescSaidas: valorDescSaidas,   // total descontos (consumo/transp)
+                    valorAbatEsp:    valorAbatEsp,       // abatimento adto. especial
+                    valorLiquido:    valorLiquido,       // PIX/Dinheiro efetivamente enviado
+                    // ── Obs legível (mantido para compatibilidade) ──
+                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''} - Líquido: R$${fmt(valorLiquido)}`,
                   };
                   const resp = await fetch(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
@@ -2089,6 +2105,11 @@ export default function FolhaPagamento() {
                       dataPagamento: dataLocalFreelancer,
                       formaPagamento: formaFreelancer,
                       pagamentoId: pagamentoIdGerado,
+                      // Referência ao lote principal para auditoria
+                      valorBruto:      valorBrutoLote,
+                      valorDescSaidas: valorDescSaidas,
+                      valorAbatEsp:    valorAbatEsp,
+                      valorLiquido:    valorLiquido,
                       dias: [{
                         data: fech.dataFechamento,
                         turno: 'Transporte',
