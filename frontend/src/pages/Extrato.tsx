@@ -97,7 +97,9 @@ const hoje = () => new Date().toISOString().split('T')[0];
 const extrairAuditoria = (raw: any, totalBruto: number): {
   bruto: number; descSaidas: number; abatEsp: number; liquido: number; temCampoEstruturado: boolean;
 } => {
-  // Opção B — campo estruturado (novos registros)
+  // Opção B — campo estruturado (novos registros).
+  // raw pode ser o granularesAgrupados (que propaga valorLiquido do refComAudit)
+  // ou um registro individual da API com os campos diretos.
   if (raw?.valorLiquido !== undefined && raw.valorLiquido !== null) {
     return {
       bruto:      R(raw.valorBruto)      || totalBruto,
@@ -107,14 +109,15 @@ const extrairAuditoria = (raw: any, totalBruto: number): {
       temCampoEstruturado: true,
     };
   }
-  // Opção A — parsear obs (registros legados)
-  const obs: string = raw?.obs || '';
+  // Opção A — parsear obs (registros legados).
+  // Tenta obsAudit (campo propagado do registro individual) e depois obs genérico.
+  const obs: string = raw?.obsAudit || raw?.obs || '';
   const matchDesc   = obs.match(/Desc\. sa[íi]das:\s*R\$\s*([\d.,]+)/i);
   const matchAbat   = obs.match(/Abat\. adto\.esp\.:\s*R\$\s*([\d.,]+)/i);
   const matchLiq    = obs.match(/L[íi]quido:\s*R\$\s*([\d.,]+)/i);
-  const descSaidas  = matchDesc  ? R(matchDesc[1].replace(',', '.'))  : 0;
-  const abatEsp     = matchAbat  ? R(matchAbat[1].replace(',', '.'))  : 0;
-  const liquido     = matchLiq   ? R(matchLiq[1].replace(',', '.'))   : Math.max(0, totalBruto - descSaidas - abatEsp);
+  const descSaidas  = matchDesc  ? R(matchDesc[1].replace(/\./g, '').replace(',', '.')) : 0;
+  const abatEsp     = matchAbat  ? R(matchAbat[1].replace(/\./g, '').replace(',', '.')) : 0;
+  const liquido     = matchLiq   ? R(matchLiq[1].replace(/\./g, '').replace(',', '.'))  : Math.max(0, totalBruto - descSaidas - abatEsp);
   return { bruto: totalBruto, descSaidas, abatEsp, liquido, temCampoEstruturado: false };
 };
 
@@ -236,6 +239,14 @@ export const Extrato: React.FC = () => {
           // Turnos: só dobras (Dia/Noite) — transporte tem tipoCodigo diferente
           const diasDobras = dias.filter(d => !d.tipoCodigo || d.tipoCodigo === 'freelancer-dia' || d.tipoCodigo === 'freelancer-noite');
           const diasTransp = dias.filter(d => d.tipoCodigo === 'transporte-freelancer');
+
+          // ── Campos de auditoria: busca no registro de referência (Opção B) ──
+          // O ref pode ser uma dobra individual que recebeu os campos estruturados do POST.
+          // Fallback: obs do primeiro registro com obs que contenha "Desc. saídas" ou "Líquido"
+          const refComAudit = dias.find((d: any) => d.valorLiquido !== undefined && d.valorLiquido !== null)
+            || dias.find((d: any) => /L[íi]quido/i.test(d.obs || '') || /Desc\. sa/i.test(d.obs || ''))
+            || ref;
+
           return {
             id: `grp__${ref.colaboradorId}__${ref.semana}__${ref.pagamentoId || 'legado'}`,
             colaboradorId: ref.colaboradorId,
@@ -251,6 +262,12 @@ export const Extrato: React.FC = () => {
             formaPagamento: ref.formaPagamento || 'PIX',
             unitId: ref.unitId,
             confiabilidade,
+            // ── Campos de auditoria propagados do registro individual ──────────
+            valorLiquido:    refComAudit.valorLiquido    ?? null,
+            valorDescSaidas: refComAudit.valorDescSaidas ?? null,
+            valorAbatEsp:    refComAudit.valorAbatEsp    ?? null,
+            obsAudit:        refComAudit.obs             || '',
+            // ─────────────────────────────────────────────────────────────────
             obs: diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')
               + (diasTransp.length > 0 ? ` + Transp. R$${diasTransp.reduce((s: number,d: any)=>s+R(d.valor),0).toFixed(2)}` : ''),
             tipo: 'freelancer-dia-grupo',

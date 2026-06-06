@@ -75,6 +75,7 @@ export default function Auditoria() {
   const [filtroEvento, setFiltroEvento] = useState('');
   const [filtroUsuario, setFiltroUsuario] = useState('');
   const [filtroEntidade, setFiltroEntidade] = useState('');
+  const [filtroColaborador, setFiltroColaborador] = useState('');
   const [logs, setLogs] = useState<LogItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -113,6 +114,15 @@ export default function Auditoria() {
   };
 
   useEffect(() => { buscar(); }, [tabela, dataIni, dataFim]);
+
+  // Filtro local por nome de colaborador (busca no entidadeId e nos valoresDepois/Antes)
+  const logsFiltrados = filtroColaborador.trim() === '' ? logs : logs.filter(l => {
+    const q = filtroColaborador.trim().toLowerCase();
+    const entidade = (l.entidadeId || l.colaboradorId || '').toLowerCase();
+    const depois = JSON.stringify(l.valoresDepois || '').toLowerCase();
+    const antes  = JSON.stringify(l.valoresAntes  || '').toLowerCase();
+    return entidade.includes(q) || depois.includes(q) || antes.includes(q);
+  });
 
   const exportarCSV = () => {
     const linhas = [['Data/Hora', 'Tabela', 'Evento', 'Entidade', 'Usuário', 'Email', 'Unidade', 'Observação', 'Antes', 'Depois']];
@@ -209,7 +219,13 @@ export default function Auditoria() {
               <label style={{ fontSize: 11, color: '#666' }}>Entidade ID</label>
               <input type="text" placeholder="col-xxxx, saida-xxxx..." value={filtroEntidade}
                 onChange={e => setFiltroEntidade(e.target.value)}
-                style={{ padding: 6, border: '1px solid #ccc', borderRadius: 4, display: 'block', width: 220 }} />
+                style={{ padding: 6, border: '1px solid #ccc', borderRadius: 4, display: 'block', width: 200 }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: '#666' }}>Colaborador (nome)</label>
+              <input type="text" placeholder="ex: daniela, mirela..." value={filtroColaborador}
+                onChange={e => setFiltroColaborador(e.target.value)}
+                style={{ padding: 6, border: '1px solid #ccc', borderRadius: 4, display: 'block', width: 180 }} />
             </div>
             <button onClick={buscar} disabled={loading}
               style={{ padding: '8px 16px', backgroundColor: tabelaCfg.cor, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
@@ -224,7 +240,10 @@ export default function Auditoria() {
 
         <div style={{ backgroundColor: 'white', padding: 16, borderRadius: 8, border: '1px solid #e0e0e0' }}>
           <div style={{ marginBottom: 10, fontSize: 13, color: '#666' }}>
-            📋 {logs.length} registro{logs.length !== 1 ? 's' : ''}
+            📋 {logsFiltrados.length} registro{logsFiltrados.length !== 1 ? 's' : ''}
+            {filtroColaborador.trim() !== '' && logs.length !== logsFiltrados.length && (
+              <span style={{ color: '#e65100' }}> (filtrado de {logs.length})</span>
+            )}
             {total > logs.length && ` de ${total} (limite 500)`}
             {' • '}
             <span style={{ color: tabelaCfg.cor, fontWeight: 600 }}>{tabelaCfg.label}</span>
@@ -248,10 +267,23 @@ export default function Auditoria() {
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map((l, i) => {
+                  {logsFiltrados.map((l, i) => {
                     const meta = EVENTOS_LABEL[l.evento] || { icon: '✏️', label: l.evento, cor: '#666' };
                     const diffs = calcDiff(l.valoresAntes, l.valoresDepois);
                     const exp = !!expandido[l.id];
+                    // Campos chave extraídos do valoresDepois/Antes para mostrar no Detalhe sem expandir
+                    const dep = l.valoresDepois || {};
+                    const ant = l.valoresAntes  || {};
+                    const nomeColab = dep.nomeColaborador || dep.colaborador || dep.nome
+                                   || ant.nomeColaborador || ant.colaborador || ant.nome || '';
+                    const vlLiquido = dep.valorLiquido   ?? ant.valorLiquido;
+                    const vlBruto   = dep.valorBruto     ?? ant.valorBruto;
+                    const vlDesc    = dep.valorDescSaidas ?? ant.valorDescSaidas;
+                    const vlAbat    = dep.valorAbatEsp   ?? ant.valorAbatEsp;
+                    const semana    = dep.semana || ant.semana || '';
+                    const forma     = dep.formaPagamento || ant.formaPagamento || '';
+                    const obsLog    = dep.obs || ant.obs || l.observacao || '';
+                    const fmtR = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
                     return (
                       <>
                         <tr key={l.id} style={{ borderBottom: '1px solid #eee', backgroundColor: i % 2 === 0 ? '#fafafa' : 'white' }}>
@@ -261,22 +293,71 @@ export default function Auditoria() {
                           <td style={{ padding: '6px 8px' }}>
                             <span style={{ color: meta.cor, fontWeight: 600 }}>{meta.icon} {meta.label}</span>
                           </td>
-                          <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 11 }}>
-                            {l.entidadeId || l.colaboradorId || l.escalaId || '—'}
+                          <td style={{ padding: '6px 8px', fontSize: 11 }}>
+                            {/* Mostra nome do colaborador se disponível, ID técnico abaixo */}
+                            {nomeColab && (
+                              <div style={{ fontWeight: 700, color: '#1565c0', fontSize: 12 }}>👤 {nomeColab}</div>
+                            )}
+                            <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#999', marginTop: nomeColab ? 2 : 0 }}>
+                              {l.entidadeId || l.colaboradorId || l.escalaId || '—'}
+                            </div>
+                            {semana && (
+                              <div style={{ fontSize: 10, color: '#888' }}>sem. {semana.substring(0, 10)}</div>
+                            )}
                           </td>
                           <td style={{ padding: '6px 8px' }}>
                             <div>{l.usuarioNome || '—'}</div>
                             <div style={{ fontSize: 10, color: '#888' }}>{l.usuarioEmail || ''}</div>
                           </td>
                           <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 11 }}>{l.unitId || '—'}</td>
-                          <td style={{ padding: '6px 8px' }}>
+                          <td style={{ padding: '6px 8px', minWidth: 200 }}>
+                            {/* Para evento "pago": exibe resumo financeiro imediato */}
+                            {l.evento === 'pago' && (
+                              <div style={{ marginBottom: diffs.length > 0 ? 6 : 0 }}>
+                                {forma && (
+                                  <span style={{ padding: '1px 7px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                    backgroundColor: forma === 'PIX' ? '#e3f2fd' : '#e8f5e9',
+                                    color: forma === 'PIX' ? '#1565c0' : '#2e7d32', marginRight: 6 }}>
+                                    {forma === 'PIX' ? '📱 PIX' : forma === 'Dinheiro' ? '💵 Dinheiro' : forma}
+                                  </span>
+                                )}
+                                {vlLiquido != null ? (
+                                  <span style={{ fontWeight: 700, color: '#1b5e20', fontSize: 14 }}>
+                                    R$ {fmtR(Number(vlLiquido))}
+                                  </span>
+                                ) : vlBruto != null ? (
+                                  <span style={{ fontWeight: 700, color: '#2e7d32', fontSize: 14 }}>
+                                    R$ {fmtR(Number(vlBruto))}
+                                  </span>
+                                ) : null}
+                                {vlLiquido != null && vlBruto != null && Number(vlBruto) !== Number(vlLiquido) && (
+                                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                                    bruto R${fmtR(Number(vlBruto))}
+                                    {vlDesc != null && Number(vlDesc) > 0 && (
+                                      <span style={{ color: '#c62828' }}> −R${fmtR(Number(vlDesc))} desc.</span>
+                                    )}
+                                    {vlAbat != null && Number(vlAbat) > 0 && (
+                                      <span style={{ color: '#7b1fa2' }}> −R${fmtR(Number(vlAbat))} adto.esp.</span>
+                                    )}
+                                  </div>
+                                )}
+                                {/* Fallback: obs legado com "Líquido" */}
+                                {vlLiquido == null && /L[íi]quido|Desc\. sa/i.test(obsLog) && (
+                                  <div style={{ fontSize: 10, color: '#555', fontStyle: 'italic', marginTop: 3 }}>
+                                    📝 {obsLog.slice(0, 130)}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {diffs.length > 0 && (
                               <button onClick={() => setExpandido(prev => ({ ...prev, [l.id]: !prev[l.id] }))}
-                                style={{ background: 'none', border: '1px solid #ccc', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
-                                {exp ? '▼' : '▶'} {diffs.length} alteração{diffs.length > 1 ? 'ões' : ''}
+                                style={{ background: 'none', border: '1px solid #bbb', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                                {exp ? '▼' : '▶'} {diffs.length} campo{diffs.length > 1 ? 's' : ''} alterado{diffs.length > 1 ? 's' : ''}
                               </button>
                             )}
-                            {l.observacao && <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginLeft: 4 }}>"{l.observacao}"</span>}
+                            {l.evento !== 'pago' && l.observacao && (
+                              <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginLeft: 4 }}>"{l.observacao}"</span>
+                            )}
                           </td>
                         </tr>
                         {exp && diffs.length > 0 && (
