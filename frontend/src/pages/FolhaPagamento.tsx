@@ -3290,13 +3290,21 @@ export default function FolhaPagamento() {
         </div>
 
         {/* Abas */}
-        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <button style={s.tab(aba === 'clt')} onClick={() => setAba('clt')}>🧾 Colaboradores CLT</button>
           <button style={s.tab(aba === 'dobras')} onClick={() => setAba('dobras')}>
             📅 Dobras Semanais CLT
           </button>
-          <button style={s.tab(aba === 'freelancers')} onClick={() => setAba('freelancers')}>
-            🎯 Freelancers {fechamentosFreelancer.length > 0 ? `(${fechamentosFreelancer.length} semana${fechamentosFreelancer.length > 1 ? 's' : ''})` : ''}
+          {/* Freelancers agora têm módulo dedicado — botão de atalho */}
+          <button
+            onClick={() => navigate('/modulos/freelancer-pagamento')}
+            style={{
+              padding: '10px 18px', border: '2px solid #2e7d32', cursor: 'pointer',
+              fontWeight: 'bold', borderRadius: '4px 4px 0 0',
+              backgroundColor: '#e8f5e9', color: '#2e7d32', fontSize: '13px',
+            }}
+            title="Abre o módulo dedicado de pagamento de Freelancers com auditoria completa">
+            🎯 Freelancers ↗
           </button>
         </div>
 

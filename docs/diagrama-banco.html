@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRES — Diagrama do Banco de Dados</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+  /* ── Header ── */
+  .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 14px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .header h1 { font-size: 18px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #94a3b8; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+  .leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #cbd5e1; }
+  .leg-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Layout ── */
+  .layout { display: flex; height: calc(100vh - 57px); }
+  .sidebar { width: 240px; flex-shrink: 0; background: #1e293b; border-right: 1px solid #334155; overflow-y: auto; padding: 12px 0; }
+  .main { flex: 1; overflow: auto; padding: 24px; }
+
+  /* ── Sidebar ── */
+  .sidebar-section { padding: 0 12px 8px; }
+  .sidebar-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64748b; padding: 8px 0 4px; }
+  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: #cbd5e1; transition: all .15s; margin-bottom: 2px; }
+  .sidebar-item:hover { background: #334155; color: #f1f5f9; }
+  .sidebar-item.active { background: #1e40af; color: white; }
+  .sidebar-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .sidebar-badge { margin-left: auto; font-size: 10px; background: #334155; color: #94a3b8; padding: 1px 6px; border-radius: 8px; }
+
+  /* ── Canvas area ── */
+  #canvas-wrap { position: relative; min-width: 1600px; min-height: 900px; }
+  svg#lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+
+  /* ── Tables ── */
+  .tbl { position: absolute; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.08); min-width: 220px; transition: box-shadow .2s, transform .2s; cursor: default; }
+  .tbl:hover { box-shadow: 0 8px 32px rgba(0,0,0,.7); transform: translateY(-2px); z-index: 100; }
+  .tbl-head { padding: 10px 14px; display: flex; align-items: center; gap: 8px; }
+  .tbl-head .icon { font-size: 16px; }
+  .tbl-head .name { font-size: 13px; font-weight: 700; color: white; }
+  .tbl-head .pk { font-size: 10px; color: rgba(255,255,255,.6); margin-left: auto; background: rgba(0,0,0,.25); padding: 2px 7px; border-radius: 10px; }
+  .tbl-body { background: #1e293b; padding: 8px 0; }
+  .tbl-field { display: flex; align-items: center; gap: 8px; padding: 4px 14px; font-size: 11px; color: #94a3b8; transition: background .1s; }
+  .tbl-field:hover { background: #334155; }
+  .tbl-field.fk { color: #93c5fd; }
+  .tbl-field.key { color: #fbbf24; }
+  .tbl-field.audit { color: #a78bfa; }
+  .tbl-field.money { color: #34d399; }
+  .field-icon { font-size: 10px; width: 14px; flex-shrink: 0; }
+  .tbl-sep { border: none; border-top: 1px solid #334155; margin: 4px 14px; }
+  .tbl-footer { background: #0f172a; padding: 6px 14px; font-size: 10px; color: #64748b; border-top: 1px solid #334155; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tbl-tag { background: #1e293b; border: 1px solid #334155; padding: 1px 6px; border-radius: 6px; font-size: 10px; }
+
+  /* ── Colors by domain ── */
+  .c-colabs  { background: linear-gradient(135deg,#1d4ed8,#2563eb); }
+  .c-folha   { background: linear-gradient(135deg,#065f46,#059669); }
+  .c-saidas  { background: linear-gradient(135deg,#7c2d12,#dc2626); }
+  .c-escala  { background: linear-gradient(135deg,#6d28d9,#7c3aed); }
+  .c-motoboy { background: linear-gradient(135deg,#92400e,#d97706); }
+  .c-caixa   { background: linear-gradient(135deg,#164e63,#0891b2); }
+  .c-admin   { background: linear-gradient(135deg,#374151,#6b7280); }
+  .c-log     { background: linear-gradient(135deg,#1e3a3a,#0d6060); }
+  .c-legado  { background: linear-gradient(135deg,#1f2937,#374151); opacity:.7; }
+
+  /* ── Connections popup ── */
+  .tooltip { position: fixed; background: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 12px 14px; font-size: 12px; color: #e2e8f0; pointer-events: none; opacity: 0; transition: opacity .15s; max-width: 280px; z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.6); }
+  .tooltip.visible { opacity: 1; }
+  .tooltip .t-title { font-weight: 700; font-size: 13px; color: #f1f5f9; margin-bottom: 8px; border-bottom: 1px solid #334155; padding-bottom: 6px; }
+  .tooltip .t-row { display: flex; gap: 8px; margin-bottom: 4px; align-items: flex-start; }
+  .tooltip .t-label { color: #64748b; min-width: 70px; font-size: 11px; flex-shrink: 0; }
+  .tooltip .t-val { color: #cbd5e1; font-size: 11px; }
+  .tooltip .t-badge { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 10px; font-weight: 700; margin-top: 2px; }
+
+  /* ── SVG lines ── */
+  .link-main { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-dasharray: none; marker-end: url(#arr-blue); }
+  .link-log  { stroke: #8b5cf6; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; marker-end: url(#arr-purple); }
+  .link-soft { stroke: #f59e0b; stroke-width: 1.5; fill: none; stroke-dasharray: 3 3; marker-end: url(#arr-amber); }
+
+  /* ── Info panel bottom ── */
+  .info-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #1e293b; border-top: 1px solid #334155; padding: 8px 24px; display: flex; gap: 24px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
+  .info-bar span { color: #94a3b8; }
+  .info-bar strong { color: #e2e8f0; }
+
+  /* ── Filter bar ── */
+  .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .filter-btn { padding: 5px 12px; border: 1px solid #334155; background: #1e293b; color: #94a3b8; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all .15s; }
+  .filter-btn:hover, .filter-btn.active { background: #1e40af; border-color: #3b82f6; color: white; }
+  .filter-btn.all { border-color: #475569; }
+
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .layout { height: auto; flex-direction: column; }
+    .main { padding: 12px; }
+    #canvas-wrap { min-width: 1200px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🗄️ GRES — Diagrama do Banco de Dados</h1>
+    <div class="subtitle">DynamoDB · 19 tabelas · AWS Lambda · Atualizado 06/2026</div>
+  </div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#2563eb"></div> Colaboradores</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#059669"></div> Folha/Pagamento</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#dc2626"></div> Saídas</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#7c3aed"></div> Escala</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#d97706"></div> Motoboys</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#0891b2"></div> Caixa/Fin.</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#6b7280"></div> Admin</div>
+    <div class="leg-item" style="opacity:.6"><div class="leg-dot" style="background:#374151"></div> Legado</div>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">🧑 Colaboradores</div>
+      <div class="sidebar-item active" onclick="focusTable('colaboradores')">
+        <div class="sidebar-dot" style="background:#2563eb"></div> colaboradores <div class="sidebar-badge">LOG</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">💰 Pagamento</div>
+      <div class="sidebar-item" onclick="focusTable('folha-pagamento')">
+        <div class="sidebar-dot" style="background:#059669"></div> folha-pagamento <div class="sidebar-badge">LOG</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">🧾 Saídas</div>
+      <div class="sidebar-item" onclick="focusTable('saidas')">
+        <div class="sidebar-dot" style="background:#dc2626"></div> saidas <div class="sidebar-badge">LOG</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">📅 Escala</div>
+      <div class="sidebar-item" onclick="focusTable('escalas')">
+        <div class="sidebar-dot" style="background:#7c3aed"></div> escalas <div class="sidebar-badge">LOG</div>
+      </div>
+      <div class="sidebar-item" onclick="focusTable('funcoes-escala')">
+        <div class="sidebar-dot" style="background:#7c3aed"></div> funcoes-escala
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">🏍 Motoboys</div>
+      <div class="sidebar-item" onclick="focusTable('controle-motoboy')">
+        <div class="sidebar-dot" style="background:#d97706"></div> controle-motoboy <div class="sidebar-badge">LOG</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">💳 Financeiro</div>
+      <div class="sidebar-item" onclick="focusTable('caixa')">
+        <div class="sidebar-dot" style="background:#0891b2"></div> caixa <span style="color:#ef4444;font-size:10px;margin-left:4px">⚠ sem log</span>
+      </div>
+      <div class="sidebar-item" onclick="focusTable('despesas')">
+        <div class="sidebar-dot" style="background:#0891b2"></div> despesas <span style="color:#ef4444;font-size:10px;margin-left:4px">⚠ sem log</span>
+      </div>
+      <div class="sidebar-item" onclick="focusTable('fornecedores')">
+        <div class="sidebar-dot" style="background:#0891b2"></div> fornecedores
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">🔐 Admin</div>
+      <div class="sidebar-item" onclick="focusTable('usuarios')">
+        <div class="sidebar-dot" style="background:#6b7280"></div> usuarios <span style="color:#ef4444;font-size:10px;margin-left:4px">⚠ sem log</span>
+      </div>
+      <div class="sidebar-item" onclick="focusTable('unidades')">
+        <div class="sidebar-dot" style="background:#6b7280"></div> unidades
+      </div>
+      <div class="sidebar-item" onclick="focusTable('vagas')">
+        <div class="sidebar-dot" style="background:#6b7280"></div> vagas (soft del)
+      </div>
+      <div class="sidebar-item" onclick="focusTable('candidatos')">
+        <div class="sidebar-dot" style="background:#6b7280"></div> candidatos
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title" style="opacity:.5">📦 Legado</div>
+      <div class="sidebar-item" style="opacity:.5" onclick="focusTable('freelancers-leg')">
+        <div class="sidebar-dot" style="background:#374151"></div> freelancers
+      </div>
+      <div class="sidebar-item" style="opacity:.5" onclick="focusTable('motoboys-leg')">
+        <div class="sidebar-dot" style="background:#374151"></div> motoboys
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main canvas -->
+  <main class="main">
+    <div class="filter-bar">
+      <button class="filter-btn all active" onclick="filterDomain('all')">Todos</button>
+      <button class="filter-btn" onclick="filterDomain('colabs')">🧑 Colaboradores</button>
+      <button class="filter-btn" onclick="filterDomain('pagamento')">💰 Pagamento</button>
+      <button class="filter-btn" onclick="filterDomain('saidas')">🧾 Saídas</button>
+      <button class="filter-btn" onclick="filterDomain('escala')">📅 Escala</button>
+      <button class="filter-btn" onclick="filterDomain('motoboy')">🏍 Motoboys</button>
+      <button class="filter-btn" onclick="filterDomain('financeiro')">💳 Financeiro</button>
+      <button class="filter-btn" onclick="filterDomain('admin')">🔐 Admin</button>
+      <button class="filter-btn" onclick="filterDomain('logs')">📋 Só Logs</button>
+    </div>
+
+    <div id="canvas-wrap">
+      <!-- SVG connection lines -->
+      <svg id="lines">
+        <defs>
+          <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#3b82f6"/>
+          </marker>
+          <marker id="arr-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#8b5cf6"/>
+          </marker>
+          <marker id="arr-amber" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#f59e0b"/>
+          </marker>
+        </defs>
+      </svg>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: COLABORADORES                                    -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-colaboradores -->
+      <div class="tbl" id="tbl-colaboradores" data-domain="colabs"
+           style="left:40px; top:40px;"
+           onmouseenter="showTooltip(event,'colaboradores')" onmouseleave="hideTooltip()">
+        <div class="tbl-head c-colabs">
+          <span class="icon">🧑</span>
+          <span class="name">colaboradores</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (col-xxxx)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nome, cpf, cargo</div>
+          <div class="tbl-field"><span class="field-icon"> </span>tipoContrato (CLT|Freelancer)</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>salario, valorDia, valorNoite</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valorTransporte, periculosidade</div>
+          <div class="tbl-field"><span class="field-icon"> </span>isMotoboy, tipoAcordo, acordo{}</div>
+          <div class="tbl-field"><span class="field-icon"> </span>chavePix, telefone, celular</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId (→ unidades.id)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>ativo, adtoEspecialAberto</div>
+          <div class="tbl-field audit"><span class="field-icon">📝</span>responsavelId, updatedAt</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ log</span>
+          <span class="tbl-tag" style="color:#f87171">❌ sem soft-delete</span>
+          <span class="tbl-tag">scan completo</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-colaboradores-log -->
+      <div class="tbl" id="tbl-colaboradores-log" data-domain="logs"
+           style="left:40px; top:460px;">
+        <div class="tbl-head c-log">
+          <span class="icon">📋</span>
+          <span class="name">colaboradores-log</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (log-colab-{id}-{ts}-{r4})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>entidadeId → colaboradores.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>evento: criado|alterado|desativado…</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresAntes{}, valoresDepois{}</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>usuarioId, usuarioNome, userAgent</div>
+          <div class="tbl-field"><span class="field-icon"> </span>unitId, timestamp</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag">eventos: criado · alterado · reativado · desativado · transferido · remuneracao_alt · cargo_alt · contrato_alt</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: FOLHA DE PAGAMENTO                              -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-folha-pagamento -->
+      <div class="tbl" id="tbl-folha-pagamento" data-domain="pagamento"
+           style="left:340px; top:40px;">
+        <div class="tbl-head c-folha">
+          <span class="icon">💰</span>
+          <span class="name">folha-pagamento</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (folha-{colabId}-{data}-{turno})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>colaboradorId → colaboradores.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>tipo: freelancer-dia | CLT</div>
+          <div class="tbl-field"><span class="field-icon"> </span>tipoCodigo, turno, data, mes, semana</div>
+          <div class="tbl-field key"><span class="field-icon">🔗</span>pagamentoId (amarra lote)</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valor (dobra individual)</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valorBruto ⭐ Opção B</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valorDescSaidas ⭐ Opção B</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valorAbatEsp ⭐ Opção B</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valorLiquido ⭐ Opção B</div>
+          <div class="tbl-field"><span class="field-icon"> </span>pago, dataPagamento, formaPagamento</div>
+          <div class="tbl-field"><span class="field-icon"> </span>confiabilidade: real|recalculado|legado</div>
+          <div class="tbl-field"><span class="field-icon"> </span>logPagamentos[] (CLT acumula parcelas)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>pagoAdiantamento, pagoVariavel (CLT)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>responsavelId/Nome/Email</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>obs, updatedAt</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ log</span>
+          <span class="tbl-tag" style="color:#fbbf24">⭐ Opção B requer P1.2 fix</span>
+          <span class="tbl-tag">scan completo</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-folha-pagamento-log -->
+      <div class="tbl" id="tbl-folha-pagamento-log" data-domain="logs"
+           style="left:340px; top:560px;">
+        <div class="tbl-head c-log">
+          <span class="icon">📋</span>
+          <span class="name">folha-pagamento-log</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (log-folha-{pgtoId}-{ts}-{r4})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>entidadeId → pagamentoId do lote</div>
+          <div class="tbl-field"><span class="field-icon"> </span>evento: pago | desfeito | criado</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresAntes: null ⚠️ P2.8</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresDepois: {dias[], ids[]}</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>usuarioId, usuarioNome, userAgent</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">⚠ valoresAntes sempre null</span>
+          <span class="tbl-tag">1 log por lote (não por turno)</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: SAÍDAS                                          -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-saidas -->
+      <div class="tbl" id="tbl-saidas" data-domain="saidas"
+           style="left:660px; top:40px;">
+        <div class="tbl-head c-saidas">
+          <span class="icon">🧾</span>
+          <span class="name">saidas</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (saida-{timestamp}) ⚠ sem rand</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>colaboradorId → colaboradores.id</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>pagamentoIdLigado → folha.pagamentoId ⭐</div>
+          <div class="tbl-field"><span class="field-icon"> </span>tipo: Desconto Transporte | Consumo Interno</div>
+          <div class="tbl-field"><span class="field-icon"> </span>      Adiantamento Transporte | A receber…</div>
+          <div class="tbl-field"><span class="field-icon"> </span>      Desconto Adiantamento Especial</div>
+          <div class="tbl-field"><span class="field-icon"> </span>origem, referencia, descricao</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valor, pago, dataPagamento</div>
+          <div class="tbl-field"><span class="field-icon"> </span>formaPagamento, viagens, caixinha</div>
+          <div class="tbl-field"><span class="field-icon"> </span>excedeAdto (flag transporte excedeu)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>responsavelId/Nome, unitId</div>
+          <div class="tbl-field"><span class="field-icon"> </span>obs, createdAt, timestamp</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ log (criado·alt·del)</span>
+          <span class="tbl-tag" style="color:#f87171">❌ sem soft-delete</span>
+          <span class="tbl-tag" style="color:#fbbf24">⭐ pagamentoIdLigado — P1.1 fix OK</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-saidas-log -->
+      <div class="tbl" id="tbl-saidas-log" data-domain="logs"
+           style="left:660px; top:490px;">
+        <div class="tbl-head c-log">
+          <span class="icon">📋</span>
+          <span class="name">saidas-log</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (log-saidas-{id}-{ts}-{r4})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>entidadeId → saidas.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>evento: criado | alterado | deletado</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresAntes{}, valoresDepois{}</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>usuarioId, usuarioNome, userAgent</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ diff completo (antes+depois)</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: ESCALAS                                         -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-escalas -->
+      <div class="tbl" id="tbl-escalas" data-domain="escala"
+           style="left:980px; top:40px;">
+        <div class="tbl-head c-escala">
+          <span class="icon">📅</span>
+          <span class="name">escalas</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>colaboradorId → colaboradores.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>data (AAAA-MM-DD)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>turno: Dia|Noite|DiaNoite|Folga</div>
+          <div class="tbl-field"><span class="field-icon"> </span>presenca: presente|falta|falta_just.</div>
+          <div class="tbl-field"><span class="field-icon"> </span>presencaNoite, observacao</div>
+          <div class="tbl-field"><span class="field-icon"> </span>excluido (soft delete ✅)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>responsavelId, updatedAt</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ log</span>
+          <span class="tbl-tag" style="color:#34d399">✅ soft delete</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-escalas-log -->
+      <div class="tbl" id="tbl-escalas-log" data-domain="logs"
+           style="left:980px; top:420px;">
+        <div class="tbl-head c-log">
+          <span class="icon">📋</span>
+          <span class="name">escalas-log</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (log-escalas-{id}-{ts}-{r4})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>entidadeId → escalas.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>evento: criado|confirmado|desconf.|alt.|del.</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresAntes{}, valoresDepois{}</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>usuarioId, usuarioNome, userAgent</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ diff completo</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-funcoes-escala -->
+      <div class="tbl" id="tbl-funcoes-escala" data-domain="escala"
+           style="left:980px; top:620px;">
+        <div class="tbl-head c-escala">
+          <span class="icon">🏷️</span>
+          <span class="name">funcoes-escala</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (func-xxxx)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nome, area, cor</div>
+          <div class="tbl-field"><span class="field-icon"> </span>horasDia, horasNoite</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: MOTOBOYS                                        -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-controle-motoboy -->
+      <div class="tbl" id="tbl-controle-motoboy" data-domain="motoboy"
+           style="left:1300px; top:40px;">
+        <div class="tbl-head c-motoboy">
+          <span class="icon">🏍</span>
+          <span class="name">controle-motoboy</span>
+          <span class="pk">PK: motoboyId+data</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>motoboyId → colaboradores.id</div>
+          <div class="tbl-field key"><span class="field-icon">🔑</span>data (AAAA-MM-DD)</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>entDia, entNoite (entregas)</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>caixinhaDia, caixinhaNoite</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>vlVariavel, variavel</div>
+          <div class="tbl-field"><span class="field-icon"> </span>pgto (valor pago no dia)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ log (1 por POST mensal)</span>
+          <span class="tbl-tag" style="color:#f87171">⚠ valoresAntes null P2.9</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-controle-motoboy-log (implied by logAlteracaoGenerica) -->
+      <div class="tbl" id="tbl-controle-motoboy-log" data-domain="logs"
+           style="left:1300px; top:340px;">
+        <div class="tbl-head c-log">
+          <span class="icon">📋</span>
+          <span class="name">controle-motoboy-log</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (log-controle-motoboy-{…})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>entidadeId → motoboyId_mes</div>
+          <div class="tbl-field"><span class="field-icon"> </span>evento: alterado</div>
+          <div class="tbl-field"><span class="field-icon"> </span>valoresAntes: null ⚠️</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>usuarioId, usuarioNome, userAgent</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">⚠ valoresAntes sempre null</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: FINANCEIRO / CAIXA                              -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-caixa -->
+      <div class="tbl" id="tbl-caixa" data-domain="financeiro"
+           style="left:40px; top:730px;">
+        <div class="tbl-head c-caixa">
+          <span class="icon">💳</span>
+          <span class="name">caixa</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>tipo: abertura|fechamento|sangria|receb.</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valor, saldoAbertura, saldoFechamento</div>
+          <div class="tbl-field"><span class="field-icon"> </span>data, turno</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>responsavelId, unitId</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log ⚠ P2.6</span>
+          <span class="tbl-tag" style="color:#f87171">❌ sem soft-delete</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-despesas -->
+      <div class="tbl" id="tbl-despesas" data-domain="financeiro"
+           style="left:280px; top:730px;">
+        <div class="tbl-head c-caixa">
+          <span class="icon">📄</span>
+          <span class="name">despesas</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (despesa-{timestamp})</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>fornecedorId → fornecedores.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>descricao, categoria</div>
+          <div class="tbl-field money"><span class="field-icon">💲</span>valor, dataPagamento</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nfUrl (R2 storage)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>responsavelId, unitId</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log ⚠ P2.7</span>
+          <span class="tbl-tag" style="color:#f87171">❌ sem soft-delete</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-fornecedores -->
+      <div class="tbl" id="tbl-fornecedores" data-domain="financeiro"
+           style="left:520px; top:730px;">
+        <div class="tbl-head c-caixa">
+          <span class="icon">🏪</span>
+          <span class="name">fornecedores</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nome, cnpj, contato</div>
+          <div class="tbl-field"><span class="field-icon"> </span>categoria, observacoes</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- DOMAIN: ADMIN                                           -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-usuarios -->
+      <div class="tbl" id="tbl-usuarios" data-domain="admin"
+           style="left:760px; top:730px;">
+        <div class="tbl-head c-admin">
+          <span class="icon">👤</span>
+          <span class="name">usuarios</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (usr-xxxx)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>email, nome, cpf, celular</div>
+          <div class="tbl-field"><span class="field-icon"> </span>senha (texto puro ⚠ P1.4)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>perfil: admin|gerente|operador</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>unitId → unidades.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>ativo, permissoes[]</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log ⚠ P2.5</span>
+          <span class="tbl-tag" style="color:#ef4444">🚨 senha texto puro P1.4</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-unidades -->
+      <div class="tbl" id="tbl-unidades" data-domain="admin"
+           style="left:1000px; top:730px;">
+        <div class="tbl-head c-admin">
+          <span class="icon">🏢</span>
+          <span class="name">unidades</span>
+          <span class="pk">PK: id (CNPJ)</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id (CNPJ 14 chars)</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nome, endereco, telefone</div>
+          <div class="tbl-field"><span class="field-icon"> </span>ativo, configuracoes{}</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log</span>
+          <span class="tbl-tag">referenciada por todas as tabelas via unitId</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-vagas -->
+      <div class="tbl" id="tbl-vagas" data-domain="admin"
+           style="left:1210px; top:730px;">
+        <div class="tbl-head c-admin">
+          <span class="icon">📋</span>
+          <span class="name">vagas</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>titulo, descricao, requisitos</div>
+          <div class="tbl-field"><span class="field-icon"> </span>area, turno, salario</div>
+          <div class="tbl-field"><span class="field-icon"> </span>excluido (soft delete ✅)</div>
+          <div class="tbl-field audit"><span class="field-icon">🔐</span>unitId → unidades.id</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#34d399">✅ soft delete</span>
+          <span class="tbl-tag" style="color:#f87171">❌ sem log</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-candidatos -->
+      <div class="tbl" id="tbl-candidatos" data-domain="admin"
+           style="left:1210px; top:900px;">
+        <div class="tbl-head c-admin">
+          <span class="icon">🙋</span>
+          <span class="name">candidatos</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field key"><span class="field-icon">🔑</span>id</div>
+          <div class="tbl-field fk"><span class="field-icon">🔗</span>vagaId → vagas.id</div>
+          <div class="tbl-field"><span class="field-icon"> </span>nome, email, telefone, cpf</div>
+          <div class="tbl-field"><span class="field-icon"> </span>status: recebido|entrevista|contratado</div>
+          <div class="tbl-field"><span class="field-icon"> </span>curriculoUrl, observacoes</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">❌ sem log</span>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- LEGADO                                                  -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+
+      <!-- gres-prod-freelancers (legado) -->
+      <div class="tbl" id="tbl-freelancers-leg" data-domain="legado"
+           style="left:40px; top:950px; opacity:.55;">
+        <div class="tbl-head c-legado">
+          <span class="icon">📦</span>
+          <span class="name">freelancers (legado)</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field" style="color:#666"><span class="field-icon">⚠</span>Migrado → colaboradores (isMotoboy)</div>
+          <div class="tbl-field" style="color:#666"><span class="field-icon"> </span>Não deve ser usado em novos flows</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">LEGADO — migrado para colaboradores</span>
+        </div>
+      </div>
+
+      <!-- gres-prod-motoboys (legado) -->
+      <div class="tbl" id="tbl-motoboys-leg" data-domain="legado"
+           style="left:280px; top:950px; opacity:.55;">
+        <div class="tbl-head c-legado">
+          <span class="icon">📦</span>
+          <span class="name">motoboys (legado)</span>
+          <span class="pk">PK: id</span>
+        </div>
+        <div class="tbl-body">
+          <div class="tbl-field" style="color:#666"><span class="field-icon">⚠</span>Migrado → colaboradores (isMotoboy=true)</div>
+          <div class="tbl-field" style="color:#666"><span class="field-icon"> </span>Não deve ser usado em novos flows</div>
+        </div>
+        <div class="tbl-footer">
+          <span class="tbl-tag" style="color:#f87171">LEGADO — migrado para colaboradores</span>
+        </div>
+      </div>
+
+    </div><!-- /canvas-wrap -->
+  </main>
+</div>
+
+<!-- Tooltip -->
+<div class="tooltip" id="tooltip"></div>
+
+<!-- Info bar -->
+<div class="info-bar">
+  <span>📊 <strong>19 tabelas</strong> DynamoDB</span>
+  <span>🔗 <strong>Conexões:</strong> 5 tabelas com log automático · 9 tabelas sem log</span>
+  <span>⭐ <strong>Opção B:</strong> valorBruto/Desc/Abat/Liquido nos itens granulares (P1.2 fix aplicado)</span>
+  <span>🚨 <strong>P1 crítico:</strong> JWT sem assinatura · senha texto puro (usuários)</span>
+  <span style="margin-left:auto">Arraste as tabelas · Hover para detalhes</span>
+</div>
+
+<script>
+// ── Table metadata for tooltips ───────────────────────────────────────
+const TABLE_META = {
+  'colaboradores': {
+    title: '🧑 gres-prod-colaboradores',
+    desc: 'Fonte única de verdade para colaboradores CLT, Freelancers e Motoboys (isMotoboy=true).',
+    fks: ['unitId → unidades', 'referenciado por: folha-pagamento, saidas, escalas, controle-motoboy'],
+    status: ['✅ Log de auditoria (8 eventos)', '❌ DELETE físico — sem soft delete', '⚠️ Scan completo em GET /colaboradores'],
+    eventos: 'criado · alterado · reativado · desativado · transferido · remuneracao_alt · cargo_alt · contrato_alt',
+  },
+  'folha-pagamento': {
+    title: '💰 gres-prod-folha-pagamento',
+    desc: 'Pagamentos freelancer (granulares por dia/turno) e CLT (semanal). Novo modelo: 1 registro por dia/turno com pagamentoId amarrando o lote.',
+    fks: ['colaboradorId → colaboradores.id', 'unitId → unidades.id'],
+    status: ['✅ Log por lote (não por turno)', '⭐ valorBruto/Desc/Abat/Liquido — P1.2 fix aplicado', '⚠️ valoresAntes=null no log (P2.8)', '⚠️ Scan completo em GET /folha-pagamento'],
+    eventos: 'pago · desfeito · criado · alterado',
+  },
+  'saidas': {
+    title: '🧾 gres-prod-saidas',
+    desc: 'Saídas financeiras: consumo, descontos, adiantamentos. pagamentoIdLigado amarra saídas auto-geradas (Desconto Transporte, Desc. Adtmt. Especial) ao lote.',
+    fks: ['colaboradorId → colaboradores.id', 'pagamentoIdLigado → folha-pagamento.pagamentoId ⭐', 'unitId → unidades.id'],
+    status: ['✅ Log completo (antes+depois)', '⭐ pagamentoIdLigado — P1.1 fix aplicado', '❌ DELETE físico — sem soft delete (P3.13)', '⚠️ ID sem rand — colisão possível (P3.12)'],
+    eventos: 'criado · alterado · deletado',
+  },
+  'escalas': {
+    title: '📅 gres-prod-escalas',
+    desc: 'Escalas de presença por colaborador/dia. Base do cálculo de dobras e transporte para freelancers.',
+    fks: ['colaboradorId → colaboradores.id', 'unitId → unidades.id'],
+    status: ['✅ Log completo (antes+depois)', '✅ Soft delete (excluido=true)'],
+    eventos: 'criado · confirmado · desconfirmado · alterado · deletado',
+  },
+  'controle-motoboy': {
+    title: '🏍 gres-prod-controle-motoboy',
+    desc: 'Lançamentos diários de entregas e caixinha por motoboy. PK composta: motoboyId + data.',
+    fks: ['motoboyId → colaboradores.id', 'unitId → unidades.id'],
+    status: ['✅ Log (1 entrada por POST mensal)', '⚠️ valoresAntes=null — P2.9', '⚠️ Scan completo'],
+    eventos: 'alterado',
+  },
+  'usuarios': {
+    title: '👤 gres-prod-usuarios',
+    desc: 'Usuários do sistema. JWT é Base64 simples (sem assinatura). Senha armazenada em texto puro.',
+    fks: ['unitId → unidades.id'],
+    status: ['❌ Sem log de auditoria — P2.5', '🚨 JWT sem assinatura criptográfica — P1.4', '🚨 Senha em texto puro — P1.4'],
+    eventos: 'nenhum',
+  },
+  'caixa': {
+    title: '💳 gres-prod-caixa',
+    desc: 'Movimentos de caixa: abertura, fechamento, sangria, recebimento.',
+    fks: ['responsavelId → usuarios.id', 'unitId → unidades.id'],
+    status: ['❌ Sem log de auditoria — P2.6', '❌ Sem soft delete'],
+    eventos: 'nenhum',
+  },
+  'despesas': {
+    title: '📄 gres-prod-despesas',
+    desc: 'Despesas operacionais com upload de NF (R2 storage).',
+    fks: ['fornecedorId → fornecedores.id', 'unitId → unidades.id'],
+    status: ['❌ Sem log de auditoria — P2.7', '❌ Sem soft delete'],
+    eventos: 'nenhum',
+  },
+};
+
+// ── Tooltip ───────────────────────────────────────────────────────────
+function showTooltip(event, tableKey) {
+  const meta = TABLE_META[tableKey];
+  if (!meta) return;
+  const t = document.getElementById('tooltip');
+  let html = `<div class="t-title">${meta.title}</div>`;
+  html += `<div class="t-row"><span class="t-label">Descrição</span><span class="t-val">${meta.desc}</span></div>`;
+  if (meta.fks && meta.fks.length) {
+    html += `<div class="t-row"><span class="t-label">Referências</span><div>`;
+    meta.fks.forEach(fk => { html += `<div class="t-val" style="font-size:10px;color:#93c5fd">🔗 ${fk}</div>`; });
+    html += `</div></div>`;
+  }
+  if (meta.status && meta.status.length) {
+    html += `<div class="t-row"><span class="t-label">Status</span><div>`;
+    meta.status.forEach(s => { html += `<div class="t-val" style="font-size:10px">${s}</div>`; });
+    html += `</div></div>`;
+  }
+  if (meta.eventos) {
+    html += `<div class="t-row"><span class="t-label">Eventos log</span><span class="t-val" style="font-size:10px;color:#a78bfa">${meta.eventos}</span></div>`;
+  }
+  t.innerHTML = html;
+  t.classList.add('visible');
+  moveTooltip(event);
+}
+function hideTooltip() {
+  document.getElementById('tooltip').classList.remove('visible');
+}
+function moveTooltip(e) {
+  const t = document.getElementById('tooltip');
+  const x = Math.min(e.clientX + 16, window.innerWidth - 300);
+  const y = Math.min(e.clientY + 12, window.innerHeight - 220);
+  t.style.left = x + 'px'; t.style.top = y + 'px';
+}
+document.addEventListener('mousemove', moveTooltip);
+
+// ── Filter by domain ─────────────────────────────────────────────────
+function filterDomain(domain) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  document.querySelectorAll('.tbl').forEach(tbl => {
+    const d = tbl.dataset.domain;
+    if (domain === 'all') {
+      tbl.style.display = '';
+    } else if (domain === 'logs') {
+      tbl.style.display = d === 'logs' ? '' : 'none';
+    } else {
+      const map = {
+        colabs: ['colabs'], pagamento: ['pagamento'], saidas: ['saidas'],
+        escala: ['escala'], motoboy: ['motoboy'], financeiro: ['financeiro'], admin: ['admin'],
+      };
+      tbl.style.display = (map[domain] || []).includes(d) ? '' : 'none';
+    }
+  });
+  drawLines();
+}
+
+// ── Sidebar focus ────────────────────────────────────────────────────
+function focusTable(id) {
+  const el = document.getElementById(`tbl-${id}`);
+  if (!el) return;
+  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+  event.target.closest('.sidebar-item').classList.add('active');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.style.outline = '3px solid #3b82f6';
+  setTimeout(() => { el.style.outline = ''; }, 2000);
+}
+
+// ── Drag to move tables ──────────────────────────────────────────────
+let dragging = null, ox = 0, oy = 0;
+document.querySelectorAll('.tbl').forEach(el => {
+  el.addEventListener('mousedown', e => {
+    if (e.target.closest('a')) return;
+    dragging = el;
+    const rect = el.getBoundingClientRect();
+    const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
+    ox = e.clientX - (rect.left - wrap.left + document.querySelector('.main').scrollLeft);
+    oy = e.clientY - (rect.top  - wrap.top  + document.querySelector('.main').scrollTop);
+    el.style.zIndex = 999;
+    e.preventDefault();
+  });
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
+  const main = document.querySelector('.main');
+  const x = e.clientX - wrap.left + main.scrollLeft - ox;
+  const y = e.clientY - wrap.top  + main.scrollTop  - oy;
+  dragging.style.left = Math.max(0, x) + 'px';
+  dragging.style.top  = Math.max(0, y) + 'px';
+  drawLines();
+});
+document.addEventListener('mouseup', () => {
+  if (dragging) { dragging.style.zIndex = ''; dragging = null; }
+});
+
+// ── Draw connection lines ─────────────────────────────────────────────
+const CONNECTIONS = [
+  // Main FK connections
+  { from:'folha-pagamento', to:'colaboradores',     type:'main', label:'colaboradorId' },
+  { from:'saidas',          to:'colaboradores',     type:'main', label:'colaboradorId' },
+  { from:'escalas',         to:'colaboradores',     type:'main', label:'colaboradorId' },
+  { from:'controle-motoboy',to:'colaboradores',     type:'main', label:'motoboyId' },
+  { from:'saidas',          to:'folha-pagamento',   type:'soft', label:'pagamentoIdLigado' },
+  { from:'despesas',        to:'fornecedores',      type:'main', label:'fornecedorId' },
+  { from:'candidatos',      to:'vagas',             type:'main', label:'vagaId' },
+  // Log connections
+  { from:'colaboradores-log',   to:'colaboradores',     type:'log', label:'entidadeId' },
+  { from:'folha-pagamento-log', to:'folha-pagamento',   type:'log', label:'entidadeId' },
+  { from:'saidas-log',          to:'saidas',            type:'log', label:'entidadeId' },
+  { from:'escalas-log',         to:'escalas',           type:'log', label:'entidadeId' },
+  { from:'controle-motoboy-log',to:'controle-motoboy',  type:'log', label:'entidadeId' },
+];
+
+function getCenter(id) {
+  const el = document.getElementById(`tbl-${id}`);
+  if (!el || el.style.display === 'none') return null;
+  const wrap = document.getElementById('canvas-wrap');
+  const wRect = wrap.getBoundingClientRect();
+  const eRect = el.getBoundingClientRect();
+  return {
+    x: eRect.left - wRect.left + eRect.width / 2,
+    y: eRect.top  - wRect.top  + eRect.height / 2,
+    l: eRect.left - wRect.left,
+    r: eRect.left - wRect.left + eRect.width,
+    t: eRect.top  - wRect.top,
+    b: eRect.top  - wRect.top  + eRect.height,
+  };
+}
+
+function drawLines() {
+  const svg = document.getElementById('lines');
+  svg.innerHTML = `<defs>
+    <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#3b82f6"/></marker>
+    <marker id="arr-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#8b5cf6"/></marker>
+    <marker id="arr-amber" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#f59e0b"/></marker>
+  </defs>`;
+
+  CONNECTIONS.forEach(conn => {
+    const a = getCenter(conn.from);
+    const b = getCenter(conn.to);
+    if (!a || !b) return;
+
+    // Pick exit/entry sides
+    let x1, y1, x2, y2;
+    if (Math.abs(a.x - b.x) > Math.abs(a.y - b.y)) {
+      x1 = a.x < b.x ? a.r : a.l; y1 = a.y;
+      x2 = a.x < b.x ? b.l : b.r; y2 = b.y;
+    } else {
+      x1 = a.x; y1 = a.y < b.y ? a.b : a.t;
+      x2 = b.x; y2 = a.y < b.y ? b.t : b.b;
+    }
+
+    const cx = (x1 + x2) / 2;
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`);
+    path.setAttribute('class',
+      conn.type === 'log'  ? 'link-log' :
+      conn.type === 'soft' ? 'link-soft' : 'link-main');
+    svg.appendChild(path);
+  });
+}
+
+// Initial draw after layout
+requestAnimationFrame(() => { requestAnimationFrame(drawLines); });
+window.addEventListener('resize', drawLines);
+document.querySelector('.main').addEventListener('scroll', drawLines);
+
+// Expand canvas height dynamically
+function resizeCanvas() {
+  let maxBottom = 0;
+  document.querySelectorAll('.tbl').forEach(el => {
+    const bot = el.offsetTop + el.offsetHeight + 60;
+    if (bot > maxBottom) maxBottom = bot;
+  });
+  document.getElementById('canvas-wrap').style.minHeight = maxBottom + 'px';
+}
+requestAnimationFrame(resizeCanvas);
+</script>
+</body>
+</html>

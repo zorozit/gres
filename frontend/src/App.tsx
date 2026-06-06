@@ -17,6 +17,7 @@ import { PermissoesConfig } from './pages/PermissoesConfig';
 import Auditoria from './pages/Auditoria';
 import Feriados from './pages/Feriados';
 import FolhaPagamento from './pages/FolhaPagamento';
+import FreelancerPagamento from './pages/FreelancerPagamento';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
@@ -64,6 +65,9 @@ function App() {
 
             <Route path="/modulos/folha-pagamento"
               element={<ProtectedRoute moduloId="folha-pagamento"><FolhaPagamento /></ProtectedRoute>} />
+
+            <Route path="/modulos/freelancer-pagamento"
+              element={<ProtectedRoute moduloId="folha-pagamento"><FreelancerPagamento /></ProtectedRoute>} />
 
             <Route path="/modulos/extrato"
               element={<ProtectedRoute moduloId="extrato"><Extrato /></ProtectedRoute>} />
