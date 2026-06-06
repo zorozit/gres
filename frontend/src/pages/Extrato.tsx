@@ -49,6 +49,7 @@ interface ExtratoItem {
   diasPagos?: { data: string; turno: string; valor: number }[];
   // Conta-corrente
   pagamentoId?: string;           // amarra turnos do mesmo ato de pagamento
+  pagamentoIdLigado?: string;      // para saídas auto-geradas: referencia o lote de pagamento
   confiabilidade?: 'real' | 'recalculado' | 'legado'; // qualidade do dado
   transacaoBancariaId?: string;   // reservado para conciliação bancária (fase 3 MVP)
   raw?: any;
@@ -449,6 +450,7 @@ export const Extrato: React.FC = () => {
             unitId: saida.unitId,
             formaPagamento: saida.formaPagamento,
             logPagamentos: saida.logPagamentos || [],
+            pagamentoIdLigado: saida.pagamentoIdLigado || null,
             raw: saida,
           });
         }
@@ -1728,43 +1730,57 @@ export const Extrato: React.FC = () => {
                       // ── Auditoria: opção B (campo estruturado) ou A (parsear obs legado) ──
                       const audit = extrairAuditoria(raw, totalGrupo);
 
-                      // ── Saídas do período — filtro por colaborador + intervalo da semana ──
-                      // Intervalo: [semana - 7 dias, semana]. Inclui saídas de débito (descontos).
+                      // ── Intervalo exato da semana ──────────────────────────────────
                       const semanaFim  = item.semana || '';
                       const semanaIniD = semanaFim ? new Date(semanaFim + 'T00:00:00') : null;
                       if (semanaIniD) semanaIniD.setDate(semanaIniD.getDate() - 7);
                       const semanaIni  = semanaIniD ? semanaIniD.toISOString().split('T')[0] : '';
+                      const pgtoId     = item.pagamentoId || '';
 
-                      const saidasPeriodo = items.filter(s =>
-                        s.origem === 'saida' &&
-                        s.tipo === 'debito' &&
-                        s.colaboradorId === item.colaboradorId &&
-                        (s.dataPagamento ?? '') >= semanaIni &&
-                        (s.dataPagamento ?? '') <= semanaFim
-                      );
+                      // ── Saídas de CONSUMO do período (descontos do PIX) ─────────────
+                      // EXCLUI: 'Desconto Transporte' (conta separada, não desconta o PIX)
+                      // EXCLUI: 'Desconto Adiantamento Especial' (tratado separadamente em abatPeriodo)
+                      // PRIORIDADE: filtra por pagamentoIdLigado quando disponível (mais preciso)
+                      //             fallback: intervalo de datas da semana
+                      const EXCLUIR_DO_PIX = new Set(['Desconto Transporte', 'Desconto Adiantamento Especial']);
+                      const saidasPeriodo = items.filter(s => {
+                        if (s.origem !== 'saida' || s.tipo !== 'debito') return false;
+                        if (s.colaboradorId !== item.colaboradorId) return false;
+                        if (EXCLUIR_DO_PIX.has(s.tipoSaida || '')) return false;
+                        // Filtro por pagamentoIdLigado (preciso) ou por datas (fallback)
+                        if (pgtoId && s.pagamentoIdLigado) {
+                          return s.pagamentoIdLigado === pgtoId;
+                        }
+                        return (s.dataPagamento ?? '') >= semanaIni &&
+                               (s.dataPagamento ?? '') <= semanaFim;
+                      });
                       const totalSaidasPeriodo = saidasPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
 
-                      // ── Abatimento especial: saídas de crédito do tipo Adiantamento Especial no período ──
-                      const abatPeriodo = items.filter(s =>
-                        s.origem === 'saida' &&
-                        s.tipo === 'debito' &&
-                        s.colaboradorId === item.colaboradorId &&
-                        (s.tipoSaida === 'Desconto Adiantamento Especial' || s.tipoSaida === 'Adiantamento Especial') &&
-                        (s.dataPagamento ?? '') >= semanaIni &&
-                        (s.dataPagamento ?? '') <= semanaFim
-                      );
+                      // ── Abatimento adiantamento especial do período ─────────────────
+                      const abatPeriodo = items.filter(s => {
+                        if (s.origem !== 'saida' || s.tipo !== 'debito') return false;
+                        if (s.colaboradorId !== item.colaboradorId) return false;
+                        if (s.tipoSaida !== 'Desconto Adiantamento Especial') return false;
+                        if (pgtoId && s.pagamentoIdLigado) {
+                          return s.pagamentoIdLigado === pgtoId;
+                        }
+                        return (s.dataPagamento ?? '') >= semanaIni &&
+                               (s.dataPagamento ?? '') <= semanaFim;
+                      });
                       const totalAbatPeriodo = abatPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
 
-                      // ── Valores definitivos ──
-                      // Saídas reais prevalecem sobre dado gravado no obs (dado real > histórico)
+                      // ── Valores definitivos ─────────────────────────────────────────
+                      // 1. Liquidez: usa dado estruturado (audit.liquido) se confiável
+                      // 2. Senão: reconstrói bruto − consumo − abat
+                      const abatEfetivo = audit.abatEsp > 0 ? audit.abatEsp : totalAbatPeriodo;
                       const descEfetiva = totalSaidasPeriodo > 0 ? totalSaidasPeriodo
                         : (audit.descSaidas > 0 ? audit.descSaidas : 0);
-                      // Abat: usa dado estruturado ou o que veio do período
-                      const abatEfetivo = audit.abatEsp > 0 ? audit.abatEsp : totalAbatPeriodo;
-                      // Líquido: bruto − descontos − abat
-                      const liquidoEfetivo = descEfetiva > 0 || abatEfetivo > 0
-                        ? Math.max(0, totalGrupo - descEfetiva - abatEfetivo)
-                        : (audit.liquido > 0 && audit.liquido < totalGrupo ? audit.liquido : totalGrupo);
+                      // Se temos dado estruturado confiável (gravado no POST), usa direto
+                      const liquidoEfetivo = audit.temCampoEstruturado && audit.liquido > 0
+                        ? audit.liquido
+                        : (descEfetiva > 0 || abatEfetivo > 0
+                          ? Math.max(0, totalGrupo - descEfetiva - abatEfetivo)
+                          : totalGrupo);
 
                       const rows: React.ReactElement[] = [];
 
@@ -2003,6 +2019,75 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
+                        // ── [3b] Log de Pagamento PIX — registro real do que foi pago ───
+                        // Mostra cada entrada do logPagamentos: data · valor · forma
+                        // Responde: "cadê o histórico do PIX de R$619?"
+                        {
+                          const logs: PagamentoLog[] = Array.isArray(item.logPagamentos) ? item.logPagamentos : [];
+                          if (logs.length > 0) {
+                            logs.forEach((log, idx) => {
+                              const dataLog = log.data
+                                ? new Date(log.data + (log.data.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                : '—';
+                              const formaLog = log.forma || (log as any).tipo || 'PIX';
+                              const valorLog = log.valor ?? (log as any).value ?? 0;
+                              const valorPix = log.valorPix ?? (formaLog === 'PIX' ? valorLog : 0);
+                              const valorDin = log.valorDinheiro ?? (formaLog === 'Dinheiro' ? valorLog : 0);
+                              const isMisto = formaLog === 'Misto' || (valorPix > 0 && valorDin > 0);
+                              rows.push(
+                                <tr key={`${item.id}_logpix_${idx}`}
+                                  style={{ backgroundColor: '#e3f2fd', borderBottom: '1px dashed #90caf9', borderLeft: '6px solid #1565c0' }}>
+                                  <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                    ↳ {item.nomeColaborador}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
+                                      📱 pgto.
+                                    </span>
+                                  </td>
+                                  <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                    {dataLog}
+                                  </td>
+                                  <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                    {item.semana ? fmtDataBR(item.semana) : '—'}
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: '11px', color: '#0d47a1' }}>
+                                    <strong>
+                                      {formaLog === 'PIX' ? '📱 PIX' : formaLog === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'} — registro de pagamento
+                                    </strong>
+                                    {isMisto && (valorPix > 0 || valorDin > 0) && (
+                                      <div style={{ fontSize: '10px', color: '#1565c0', marginTop: '2px' }}>
+                                        {valorPix > 0 && <span>📱 PIX {fmtMoeda(valorPix)}</span>}
+                                        {valorPix > 0 && valorDin > 0 && <span style={{ margin: '0 4px', color: '#90caf9' }}>·</span>}
+                                        {valorDin > 0 && <span>💵 Din. {fmtMoeda(valorDin)}</span>}
+                                      </div>
+                                    )}
+                                    {log.obs && (
+                                      <div style={{ color: '#90caf9', fontSize: '10px', fontStyle: 'italic', marginTop: '2px' }}>📝 {log.obs}</div>
+                                    )}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#1565c0', color: 'white' }}>
+                                      {formaLog === 'PIX' ? '📱 PIX' : formaLog === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                                    </span>
+                                  </td>
+                                  <td style={s.tdR}>—</td>
+                                  <td style={s.tdR}>—</td>
+                                  <td style={{ ...s.tdR, fontWeight: 'bold', color: '#1565c0', fontSize: '12px' }}>
+                                    📱 {fmtMoeda(valorLog)}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#1565c0', color: 'white' }}>
+                                      ✅ Pago
+                                    </span>
+                                  </td>
+                                  <td />
+                                </tr>
+                              );
+                            });
+                          }
+                        }
+
                         // ── [4] Subtotal do lote (fundo verde escuro) ───────────────────
                         // Equação completa: bruto + transp. − descontos − abat. = LÍQUIDO
                         rows.push(
@@ -2065,6 +2150,49 @@ export const Extrato: React.FC = () => {
                                       {fmtMoeda(liquidoEfetivo)}
                                     </td>
                                   </tr>
+                                  {/* Log real de pagamento — confirma o valor PIX registrado */}
+                                  {Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0 && (() => {
+                                    const logs = item.logPagamentos!;
+                                    const totalPago = logs.reduce((acc, l) => acc + (l.valor ?? (l as any).value ?? 0), 0);
+                                    const diff = Math.abs(totalPago - liquidoEfetivo);
+                                    const temDivergencia = diff > 0.01;
+                                    return (
+                                      <>
+                                        <tr>
+                                          <td colSpan={2} style={{ borderTop: '1px dashed #1565c0', paddingTop: '4px', paddingBottom: '2px' }} />
+                                        </tr>
+                                        {logs.map((log, idx) => {
+                                          const dataLog = log.data
+                                            ? new Date(log.data + (log.data.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                            : '—';
+                                          const formaLog = log.forma || (log as any).tipo || 'PIX';
+                                          const valorLog = log.valor ?? (log as any).value ?? 0;
+                                          return (
+                                            <tr key={`sl_${idx}`}>
+                                              <td style={{ color: '#90caf9', fontSize: '10px', paddingRight: '8px' }}>
+                                                {formaLog === 'PIX' ? '📱' : formaLog === 'Dinheiro' ? '💵' : '🔄'} Pago em {dataLog}
+                                              </td>
+                                              <td style={{ color: '#90caf9', fontSize: '10px', textAlign: 'right', fontWeight: 'bold' }}>
+                                                {fmtMoeda(valorLog)}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                        {logs.length > 1 && (
+                                          <tr>
+                                            <td style={{ color: '#64b5f6', fontSize: '10px', fontWeight: 'bold' }}>= Total pago</td>
+                                            <td style={{ color: '#64b5f6', fontSize: '10px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(totalPago)}</td>
+                                          </tr>
+                                        )}
+                                        {temDivergencia && (
+                                          <tr>
+                                            <td style={{ color: '#ffcc02', fontSize: '10px', fontWeight: 'bold' }}>⚠️ Divergência</td>
+                                            <td style={{ color: '#ffcc02', fontSize: '10px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(diff)}</td>
+                                          </tr>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </tbody>
                               </table>
                             </td>
