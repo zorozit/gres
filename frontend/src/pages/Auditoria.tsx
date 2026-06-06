@@ -311,51 +311,75 @@ export default function Auditoria() {
                           </td>
                           <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 11 }}>{l.unitId || '—'}</td>
                           <td style={{ padding: '6px 8px', minWidth: 200 }}>
-                            {/* Para evento "pago": exibe resumo financeiro imediato */}
-                            {l.evento === 'pago' && (
-                              <div style={{ marginBottom: diffs.length > 0 ? 6 : 0 }}>
-                                {forma && (
-                                  <span style={{ padding: '1px 7px', borderRadius: 6, fontSize: 10, fontWeight: 700,
-                                    backgroundColor: forma === 'PIX' ? '#e3f2fd' : '#e8f5e9',
-                                    color: forma === 'PIX' ? '#1565c0' : '#2e7d32', marginRight: 6 }}>
-                                    {forma === 'PIX' ? '📱 PIX' : forma === 'Dinheiro' ? '💵 Dinheiro' : forma}
-                                  </span>
-                                )}
-                                {vlLiquido != null ? (
-                                  <span style={{ fontWeight: 700, color: '#1b5e20', fontSize: 14 }}>
-                                    R$ {fmtR(Number(vlLiquido))}
-                                  </span>
-                                ) : vlBruto != null ? (
-                                  <span style={{ fontWeight: 700, color: '#2e7d32', fontSize: 14 }}>
-                                    R$ {fmtR(Number(vlBruto))}
-                                  </span>
-                                ) : null}
-                                {vlLiquido != null && vlBruto != null && Number(vlBruto) !== Number(vlLiquido) && (
-                                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                                    bruto R${fmtR(Number(vlBruto))}
-                                    {vlDesc != null && Number(vlDesc) > 0 && (
-                                      <span style={{ color: '#c62828' }}> −R${fmtR(Number(vlDesc))} desc.</span>
-                                    )}
-                                    {vlAbat != null && Number(vlAbat) > 0 && (
-                                      <span style={{ color: '#7b1fa2' }}> −R${fmtR(Number(vlAbat))} adto.esp.</span>
-                                    )}
-                                  </div>
-                                )}
-                                {/* Fallback: obs legado com "Líquido" */}
-                                {vlLiquido == null && /L[íi]quido|Desc\. sa/i.test(obsLog) && (
-                                  <div style={{ fontSize: 10, color: '#555', fontStyle: 'italic', marginTop: 3 }}>
-                                    📝 {obsLog.slice(0, 130)}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                            {/* Detecta pagamento: evento 'pago' explícito OU evento 'alterado' com pagoVariavel=true nos valoresDepois */}
+                            {(() => {
+                              const ehPagamento = l.evento === 'pago'
+                                || (l.evento === 'alterado' && (
+                                  dep.pagoVariavel === true || dep.pagoVariavel === 'True' ||
+                                  dep.pago === true || dep.pago === 'True' ||
+                                  (dep.logPagamentos && dep.logPagamentos !== (ant.logPagamentos || null))
+                                ));
+                              if (!ehPagamento) return null;
+                              // Extrai forma de pagamento — pode estar no logPagamentos mais recente
+                              const logPgtos: any[] = Array.isArray(dep.logPagamentos) ? dep.logPagamentos
+                                : (typeof dep.logPagamentos === 'string' ? JSON.parse(dep.logPagamentos) : []);
+                              const ultimoPgto = logPgtos[logPgtos.length - 1];
+                              const formaEfetiva = forma || ultimoPgto?.tipo || '';
+                              // Valor: tenta vlLiquido, depois saldoFinal do antes (pagamento = bruto - saldo)
+                              const vlPago = vlLiquido != null ? Number(vlLiquido)
+                                : (ultimoPgto?.value != null ? Number(ultimoPgto.value) : null);
+                              return (
+                                <div style={{ marginBottom: diffs.length > 0 ? 6 : 0 }}>
+                                  {formaEfetiva && (
+                                    <span style={{ padding: '1px 7px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                      backgroundColor: formaEfetiva === 'PIX' ? '#e3f2fd' : formaEfetiva === 'Adiantamento' ? '#fff8e1' : '#e8f5e9',
+                                      color: formaEfetiva === 'PIX' ? '#1565c0' : formaEfetiva === 'Adiantamento' ? '#f57f17' : '#2e7d32', marginRight: 6 }}>
+                                      {formaEfetiva === 'PIX' ? '📱 PIX' : formaEfetiva === 'Dinheiro' ? '💵 Dinheiro' : formaEfetiva === 'Adiantamento' ? '⏩ Adto.' : formaEfetiva}
+                                    </span>
+                                  )}
+                                  {vlPago != null ? (
+                                    <span style={{ fontWeight: 700, color: '#1b5e20', fontSize: 14 }}>
+                                      R$ {fmtR(vlPago)}
+                                    </span>
+                                  ) : vlBruto != null ? (
+                                    <span style={{ fontWeight: 700, color: '#2e7d32', fontSize: 14 }}>
+                                      R$ {fmtR(Number(vlBruto))}
+                                    </span>
+                                  ) : null}
+                                  {/* Breakdown: bruto → descontos → líquido */}
+                                  {vlPago != null && vlBruto != null && Number(vlBruto) !== vlPago && (
+                                    <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                                      bruto R${fmtR(Number(vlBruto))}
+                                      {vlDesc != null && Number(vlDesc) > 0 && (
+                                        <span style={{ color: '#c62828' }}> −R${fmtR(Number(vlDesc))} desc.</span>
+                                      )}
+                                      {vlAbat != null && Number(vlAbat) > 0 && (
+                                        <span style={{ color: '#7b1fa2' }}> −R${fmtR(Number(vlAbat))} adto.esp.</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {/* Fallback: obs legado com "Líquido" */}
+                                  {vlPago == null && /L[íi]quido|Desc\. sa/i.test(obsLog) && (
+                                    <div style={{ fontSize: 10, color: '#555', fontStyle: 'italic', marginTop: 3 }}>
+                                      📝 {obsLog.slice(0, 130)}
+                                    </div>
+                                  )}
+                                  {/* Saldo devedor após pagamento (se houver) */}
+                                  {dep.saldoFinal != null && Number(dep.saldoFinal) > 0 && (
+                                    <div style={{ fontSize: 10, color: '#e65100', marginTop: 2 }}>
+                                      saldo restante R${fmtR(Number(dep.saldoFinal))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {diffs.length > 0 && (
                               <button onClick={() => setExpandido(prev => ({ ...prev, [l.id]: !prev[l.id] }))}
                                 style={{ background: 'none', border: '1px solid #bbb', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
                                 {exp ? '▼' : '▶'} {diffs.length} campo{diffs.length > 1 ? 's' : ''} alterado{diffs.length > 1 ? 's' : ''}
                               </button>
                             )}
-                            {l.evento !== 'pago' && l.observacao && (
+                            {l.evento !== 'pago' && l.evento !== 'alterado' && l.observacao && (
                               <span style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginLeft: 4 }}>"{l.observacao}"</span>
                             )}
                           </td>

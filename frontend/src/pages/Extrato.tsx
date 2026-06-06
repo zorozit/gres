@@ -1744,8 +1744,15 @@ export const Extrato: React.FC = () => {
                         (s.dataPagamento ?? '') <= semanaFim
                       );
                       const totalSaidasPeriodo = saidasPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
-                      // Verificar se as saídas do período batem com o desconto do obs
-                      const divergencia = Math.abs(totalSaidasPeriodo - audit.descSaidas) > 0.05;
+                      // Verificar divergência: dado gravado no obs vs saídas reais registradas
+                      const divergencia = totalSaidasPeriodo > 0 && audit.descSaidas > 0 && Math.abs(totalSaidasPeriodo - audit.descSaidas) > 0.05;
+                      // Dado efetivo: se há saídas reais registradas, elas prevalecem sobre o gravado no obs
+                      // (dado real > dado histórico potencialmente desatualizado)
+                      const descEfetivaGlobal = totalSaidasPeriodo > 0 ? totalSaidasPeriodo
+                        : (audit.descSaidas > 0 ? audit.descSaidas : 0);
+                      const liquidoEfetivoGlobal = descEfetivaGlobal > 0
+                        ? Math.max(0, totalGrupo - descEfetivaGlobal - audit.abatEsp)
+                        : (audit.liquido > 0 && audit.liquido < totalGrupo ? audit.liquido : totalGrupo);
 
                       const rows: React.ReactElement[] = [];
 
@@ -1813,22 +1820,21 @@ export const Extrato: React.FC = () => {
                           {/* Col. Total/PIX: valor líquido efetivo + breakdown conectado com saídas */}
                           <td style={{ ...s.tdR, fontWeight: 'bold', fontSize: '13px' }}>
                             <div style={{ color: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32' }}>
-                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(audit.liquido)}
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivoGlobal)}
                             </div>
-                            {/* Breakdown: usa audit.descSaidas do obs OU totalSaidasPeriodo como fallback */}
+                            {/* Breakdown: usa saídas reais do período ou audit.descSaidas como fallback */}
                             {(() => {
-                              const descEfetiva = audit.descSaidas > 0 ? audit.descSaidas : (totalSaidasPeriodo > 0 ? totalSaidasPeriodo : 0);
-                              if (descEfetiva === 0 && audit.abatEsp === 0) return null;
+                              if (descEfetivaGlobal === 0 && audit.abatEsp === 0) return null;
                               return (
                                 <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.4', marginTop: '2px' }}>
                                   bruto {fmtMoeda(totalGrupo)}
-                                  {descEfetiva > 0 && (
+                                  {descEfetivaGlobal > 0 && (
                                     <span style={{ color: '#c62828' }}>
-                                      {' '}−{fmtMoeda(descEfetiva)} saídas
-                                      {audit.descSaidas === 0 && totalSaidasPeriodo > 0 &&
+                                      {' '}−{fmtMoeda(descEfetivaGlobal)} saídas
+                                      {totalSaidasPeriodo > 0 &&
                                         <span style={{ color: '#e57373', fontStyle: 'italic' }}> ({saidasPeriodo.length})</span>}
-                                      {divergencia && audit.descSaidas > 0 &&
-                                        <span style={{ color: '#ff9800' }} title={`Saídas do período: ${fmtMoeda(totalSaidasPeriodo)}`}> ⚠️</span>}
+                                      {divergencia &&
+                                        <span style={{ color: '#ff9800' }} title={`Obs gravado: ${fmtMoeda(audit.descSaidas)} — usando saídas reais: ${fmtMoeda(totalSaidasPeriodo)}`}> ⚠️</span>}
                                     </span>
                                   )}
                                   {audit.abatEsp > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)} adto.esp.</span>}
@@ -1952,11 +1958,9 @@ export const Extrato: React.FC = () => {
                         });
 
                         // ── Linha de subtotal do grupo (fundo verde escuro, PIX líquido em destaque) ──
-                        // Usa descSaidas do audit (obs) ou totalSaidasPeriodo como confirmação
-                        const descEfetivaSubtotal = audit.descSaidas > 0 ? audit.descSaidas : totalSaidasPeriodo;
-                        const liquidoEfetivoSubtotal = audit.liquido > 0 && audit.liquido < totalGrupo
-                          ? audit.liquido
-                          : (descEfetivaSubtotal > 0 ? Math.max(0, totalGrupo - descEfetivaSubtotal - audit.abatEsp) : audit.liquido);
+                        // Usa saídas reais (totalSaidasPeriodo) se existirem — dado real prevalece sobre obs gravado
+                        const descEfetivaSubtotal = descEfetivaGlobal;
+                        const liquidoEfetivoSubtotal = liquidoEfetivoGlobal;
                         rows.push(
                           <tr key={`${item.id}_subtotal`}
                             style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047', borderLeft: '6px solid #43a047' }}>
@@ -1974,12 +1978,12 @@ export const Extrato: React.FC = () => {
                                   <>
                                     {' · '}
                                     <span style={{ color: '#ef9a9a' }}>−{fmtMoeda(descEfetivaSubtotal)} saídas</span>
-                                    {audit.descSaidas === 0 && totalSaidasPeriodo > 0 && (
+                                    {totalSaidasPeriodo > 0 && (
                                       <span style={{ color: '#ffccbc', fontStyle: 'italic' }}> ({saidasPeriodo.length} lançamentos)</span>
                                     )}
-                                    {divergencia && audit.descSaidas > 0 && (
-                                      <span style={{ color: '#ffeb3b' }} title={`Saídas registradas no período: ${fmtMoeda(totalSaidasPeriodo)} — Desc. no obs: ${fmtMoeda(audit.descSaidas)}`}>
-                                        {' '}⚠️ divergência
+                                    {divergencia && (
+                                      <span style={{ color: '#ffeb3b' }} title={`Obs gravado: ${fmtMoeda(audit.descSaidas)} — usando saídas reais: ${fmtMoeda(totalSaidasPeriodo)}`}>
+                                        {' '}⚠️
                                       </span>
                                     )}
                                   </>
