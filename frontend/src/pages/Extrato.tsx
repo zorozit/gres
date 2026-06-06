@@ -459,7 +459,24 @@ export const Extrato: React.FC = () => {
       if (rS?.ok)     { const d = await rS.json();     processarSaidas(Array.isArray(d) ? d : [], false); }
       if (rSPend?.ok) { const d = await rSPend.json(); processarSaidas(Array.isArray(d) ? d : [], true);  }
 
-      allItems.sort((a, b) => {
+      // ── Suprimir da lista geral saídas que pertencem a um lote granular ─────
+      // Saídas com pagamentoIdLigado apontando para um pagamentoId de folha granular
+      // já são exibidas como sub-linhas dentro do grupo expandido → não devem duplicar
+      // na lista geral. Isso elimina os "Desconto Transporte" e "Desconto Adtamt. Especial"
+      // que apareciam soltos na lista quando já estavam rastreados dentro do lote.
+      const pgtoIdsGranulares = new Set(
+        allItems
+          .filter(it => it.origem === 'folha' && it.semana && it.pagamentoId)
+          .map(it => it.pagamentoId!)
+      );
+      const allItemsFiltrados = allItems.filter(it => {
+        if (it.origem !== 'saida') return true;              // folhas: sempre exibir
+        const ligado = (it as any).pagamentoIdLigado as string | null | undefined;
+        if (!ligado) return true;                            // sem vínculo: exibir normalmente
+        return !pgtoIdsGranulares.has(ligado);               // ligado a granular ativo: suprimir
+      });
+
+      allItemsFiltrados.sort((a, b) => {
         const nc = (a.nomeColaborador || '').localeCompare(b.nomeColaborador || '');
         if (nc !== 0) return nc;
         const dA = a.dataPagamento || a.semana || a.mes || '';
@@ -467,7 +484,7 @@ export const Extrato: React.FC = () => {
         return dB.localeCompare(dA);
       });
 
-      setItems(allItems);
+      setItems(allItemsFiltrados);
       setItemsExcluidos(excluidosList);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -1827,12 +1844,16 @@ export const Extrato: React.FC = () => {
                               {saidasPeriodo.length > 0 && (
                                 <span style={{ color: '#c62828', marginLeft: 4 }}>+ {saidasPeriodo.length} desc.</span>
                               )}
+                              {abatPeriodo.length > 0 && (
+                                <span style={{ color: '#7b1fa2', marginLeft: 4 }}>⏩ adto.esp.</span>
+                              )}
                               <span style={{ marginLeft: '6px', fontWeight: 'normal', color: '#888', fontSize: '10px' }}>
                                 {expandido ? '▼ recolher' : '▶ ver linha a linha'}
                               </span>
                             </div>
                             <div style={{ color: '#555', fontSize: '10px', marginTop: '2px' }}>
-                              {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
+                              {/* Dias únicos trabalhados — sem duplicar DiaNoite */}
+                              {Array.from(new Set(diasDobras.map((d: any) => d.data).filter(Boolean))).sort().map((dt: any) => `${dt.substring(8)}/${dt.substring(5,7)}`).join(' · ')}
                               {diasTransp.length > 0 && ` · 🚗 ${fmtMoeda(totalTransp)}`}
                             </div>
                           </td>
@@ -1922,46 +1943,104 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
-                        // ── [2] Transporte — crédito ────────────────────────────────────
-                        diasTransp.forEach((d: any) => {
-                          const dataFormatada = d.dataPagamento ? fmtDataBR(d.dataPagamento)
-                            : (d.data ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—');
-                          rows.push(
-                            <tr key={`${item.id}_transp_${d.id || d.data}`}
-                              style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
-                              <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
-                                ↳ {item.nomeColaborador}
-                              </td>
-                              <td style={s.tdC}>
-                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>🚗 transp.</span>
-                              </td>
-                              <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
-                                {dataFormatada}
-                              </td>
-                              <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
-                                {item.semana ? fmtDataBR(item.semana) : '—'}
-                              </td>
-                              <td style={{ ...s.td, fontSize: '11px', color: '#1b5e20' }}>
-                                🚗 <strong>Transporte</strong> — crédito semanal
-                              </td>
-                              <td style={s.tdC}>
-                                <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
-                                  {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento || '—'}
-                                </span>
-                              </td>
-                              <td style={s.tdR}>—</td>
-                              <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(R(d.valor))}</td>
-                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
-                              <td style={s.tdC}>
-                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                                  backgroundColor: d.pago ? '#e8f5e9' : '#fff9c4', color: d.pago ? '#2e7d32' : '#f57f17' }}>
-                                  {d.pago ? '✅ Pago' : '⏳ Pend.'}
-                                </span>
-                              </td>
-                              <td />
-                            </tr>
-                          );
-                        });
+                        // ── [2] Transporte — dia a dia (ou crédito semanal se não granular) ─
+                        // Se diasTransp tem 1 item consolidado e diasDobras tem dias individuais,
+                        // desdobrar o transporte por dia único trabalhado para rastrear qual dia
+                        // o colaborador compareceu e recebeu transporte.
+                        {
+                          // Dias únicos trabalhados (sem duplicar DiaNoite do mesmo dia)
+                          const diasUnicos: string[] = Array.from(
+                            new Set(diasDobras.map((d: any) => d.data).filter(Boolean))
+                          ).sort() as string[];
+                          // Valor unitário: do registro transporte se existir, senão divide total
+                          const vtUnit = diasTransp.length === 1 && diasUnicos.length > 0
+                            ? R(diasTransp[0].valor) / diasUnicos.length  // proporcional
+                            : (diasTransp.length > 0 ? R(diasTransp[0].valor) : 0);
+                          // Se temos dias únicos E um registro consolidado de transporte → expandir dia a dia
+                          const usarDiaADia = diasUnicos.length > 0 && diasTransp.length === 1;
+
+                          if (usarDiaADia) {
+                            diasUnicos.forEach((data: string) => {
+                              const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                              rows.push(
+                                <tr key={`${item.id}_transp_dia_${data}`}
+                                  style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
+                                  <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                    ↳ {item.nomeColaborador}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>🚗 transp.</span>
+                                  </td>
+                                  <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                    {dataFormatada}
+                                  </td>
+                                  <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                    {item.semana ? fmtDataBR(item.semana) : '—'}
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: '11px', color: '#1b5e20' }}>
+                                    🚗 <strong>Transporte</strong> — {dataFormatada}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                      {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento || '—'}
+                                    </span>
+                                  </td>
+                                  <td style={s.tdR}>—</td>
+                                  <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(vtUnit)}</td>
+                                  <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(vtUnit)}</td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                      backgroundColor: diasTransp[0].pago ? '#e8f5e9' : '#fff9c4', color: diasTransp[0].pago ? '#2e7d32' : '#f57f17' }}>
+                                      {diasTransp[0].pago ? '✅ Pago' : '⏳ Pend.'}
+                                    </span>
+                                  </td>
+                                  <td />
+                                </tr>
+                              );
+                            });
+                          } else {
+                            // Fallback: exibir como crédito semanal consolidado (comportamento anterior)
+                            diasTransp.forEach((d: any) => {
+                              const dataFormatada = d.dataPagamento ? fmtDataBR(d.dataPagamento)
+                                : (d.data ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—');
+                              rows.push(
+                                <tr key={`${item.id}_transp_${d.id || d.data}`}
+                                  style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
+                                  <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                    ↳ {item.nomeColaborador}
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}>🚗 transp.</span>
+                                  </td>
+                                  <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                    {dataFormatada}
+                                  </td>
+                                  <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                    {item.semana ? fmtDataBR(item.semana) : '—'}
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: '11px', color: '#1b5e20' }}>
+                                    🚗 <strong>Transporte</strong> — crédito semanal
+                                  </td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                      {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento || '—'}
+                                    </span>
+                                  </td>
+                                  <td style={s.tdR}>—</td>
+                                  <td style={{ ...s.tdR, color: '#2e7d32', fontWeight: 'bold' }}>{fmtMoeda(R(d.valor))}</td>
+                                  <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
+                                  <td style={s.tdC}>
+                                    <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                      backgroundColor: d.pago ? '#e8f5e9' : '#fff9c4', color: d.pago ? '#2e7d32' : '#f57f17' }}>
+                                      {d.pago ? '✅ Pago' : '⏳ Pend.'}
+                                    </span>
+                                  </td>
+                                  <td />
+                                </tr>
+                              );
+                            });
+                          } // fim else fallback
+                        } // fim bloco [2] Transporte
 
                         // ── [3] Descontos (saídas débito do período) — integrados ao grupo ──
                         // Cada desconto aparece como sub-linha vermelha dentro do grupo expandido
@@ -2019,7 +2098,58 @@ export const Extrato: React.FC = () => {
                           );
                         });
 
-                        // ── [3b] Log de Pagamento PIX — registro real do que foi pago ───
+                        // ── [3b] Desconto Adiantamento Especial — sub-linha roxa integrada ──
+                        // abatPeriodo: saídas tipo 'Desconto Adiantamento Especial' vinculadas ao lote
+                        // Aparecem separadas de saidasPeriodo (consumo), com cor roxa distinta
+                        abatPeriodo.forEach((saida) => {
+                          const dataFormatada = saida.dataPagamento ? fmtDataBR(saida.dataPagamento) : '—';
+                          rows.push(
+                            <tr key={`${item.id}_abat_${saida.id}`}
+                              style={{ backgroundColor: '#f3e5f5', borderBottom: '1px dashed #ce93d8', borderLeft: '6px solid #9c27b0' }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', fontSize: '11px' }} colSpan={2}>
+                                ↳ {item.nomeColaborador}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#9c27b0', color: 'white', fontWeight: 'bold' }}>
+                                  ⏩ adto.esp.
+                                </span>
+                              </td>
+                              <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {dataFormatada}
+                              </td>
+                              <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                {item.semana ? fmtDataBR(item.semana) : '—'}
+                              </td>
+                              <td style={{ ...s.td, fontSize: '11px' }}>
+                                <div style={{ color: '#6a1b9a', fontWeight: 'bold' }}>
+                                  {saida.descricao || 'Abatimento Adiantamento Especial'}
+                                </div>
+                                {saida.obs && (
+                                  <div style={{ color: '#ab47bc', fontSize: '10px', fontStyle: 'italic' }}>📝 {saida.obs}</div>
+                                )}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                  {saida.formaPagamento === 'PIX' ? '📱 PIX' : saida.formaPagamento || '—'}
+                                </span>
+                              </td>
+                              <td style={s.tdR}>—</td>
+                              <td style={s.tdR}>—</td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#6a1b9a' }}>
+                                −{fmtMoeda(R(saida.valor))}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: saida.pago ? '#e8f5e9' : '#fff9c4', color: saida.pago ? '#2e7d32' : '#f57f17' }}>
+                                  {saida.pago ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        });
+
+                        // ── [3c] Log de Pagamento PIX — registro real do que foi pago ───
                         // Mostra cada entrada do logPagamentos: data · valor · forma
                         // Responde: "cadê o histórico do PIX de R$619?"
                         {
@@ -2106,12 +2236,27 @@ export const Extrato: React.FC = () => {
                                       <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(R(d.valor))}</td>
                                     </tr>
                                   ))}
-                                  {diasTransp.map((d: any, idx: number) => (
-                                    <tr key={`t${idx}`}>
-                                      <td style={{ color: '#c8e6c9', fontSize: '10px', paddingRight: '8px' }}>🚗 Transporte</td>
-                                      <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(R(d.valor))}</td>
-                                    </tr>
-                                  ))}
+                                  {diasTransp.length === 1 && diasDobras.length > 0
+                                    ? (() => {
+                                        // Transporte dia a dia no subtotal
+                                        const duSub: string[] = Array.from(new Set(diasDobras.map((d: any) => d.data).filter(Boolean))).sort() as string[];
+                                        const vtS = duSub.length > 0 ? R(diasTransp[0].valor) / duSub.length : 0;
+                                        return duSub.map((data: string) => (
+                                          <tr key={`ts_${data}`}>
+                                            <td style={{ color: '#c8e6c9', fontSize: '10px', paddingRight: '8px' }}>
+                                              🚗 Transp. {new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                                            </td>
+                                            <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(vtS)}</td>
+                                          </tr>
+                                        ));
+                                      })()
+                                    : diasTransp.map((d: any, idx: number) => (
+                                        <tr key={`t${idx}`}>
+                                          <td style={{ color: '#c8e6c9', fontSize: '10px', paddingRight: '8px' }}>🚗 Transporte</td>
+                                          <td style={{ color: '#a5d6a7', fontSize: '10px', textAlign: 'right' }}>+{fmtMoeda(R(d.valor))}</td>
+                                        </tr>
+                                      ))
+                                  }
                                   <tr>
                                     <td colSpan={2} style={{ borderTop: '1px solid #388e3c', paddingTop: '3px' }} />
                                   </tr>
@@ -2133,7 +2278,7 @@ export const Extrato: React.FC = () => {
                                       <td style={{ color: '#ef9a9a', fontSize: '10px', textAlign: 'right' }}>−{fmtMoeda(audit.descSaidas)}</td>
                                     </tr>
                                   )}
-                                  {abatEfetivo > 0 && descEfetiva === 0 && (
+                                  {abatEfetivo > 0 && (
                                     <tr>
                                       <td style={{ color: '#ce93d8', fontSize: '10px' }}>⏩ Abat. adto.esp.</td>
                                       <td style={{ color: '#ce93d8', fontSize: '10px', textAlign: 'right' }}>−{fmtMoeda(abatEfetivo)}</td>
