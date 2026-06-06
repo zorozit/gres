@@ -121,6 +121,8 @@ export const Extrato: React.FC = () => {
   const [filtroOrigem,      setFiltroOrigem]      = useState<'todos'|'folha'|'saida'>('todos');
 
   const [viewMode, setViewMode] = useState<'resumo'|'detalhado'|'excluidos'>('resumo');
+  // Controle de expansão das linhas granulares na tabela Detalhada
+  const [expandidosDetalhado, setExpandidosDetalhado] = useState<Set<string>>(new Set());
 
   const token = () => localStorage.getItem('auth_token');
 
@@ -1049,6 +1051,13 @@ export const Extrato: React.FC = () => {
      MODAL — Analítico por colaborador (com edição inline)
   ══════════════════════════════════════════════════════════════════════════ */
   const ModalColaborador = ({ colabId, onClose }: { colabId: string; onClose: () => void }) => {
+    const [expandidos, setExpandidos] = React.useState<Set<string>>(new Set());
+    const toggleExpandido = (id: string) => setExpandidos(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
     const colabItems = items.filter(i => i.colaboradorId === colabId).sort((a, b) => {
       const dA = a.dataPagamento || a.semana || a.mes || '';
       const dB = b.dataPagamento || b.semana || b.mes || '';
@@ -1165,14 +1174,165 @@ export const Extrato: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {colabItems.map((item, i) => {
+                  {colabItems.flatMap((item, i) => {
                     const conta = contaDoItem(item);
                     const contaCfg = conta === 'transporte' ? { lbl: '🚗', tip: 'Transporte', bg: '#e8f5e9', fg: '#2e7d32' }
                                   : conta === 'especial'   ? { lbl: '💰', tip: 'Adto. Especial', bg: '#f3e5f5', fg: '#7b1fa2' }
                                   :                          { lbl: '💼', tip: 'Semana', bg: '#e3f2fd', fg: '#1565c0' };
-                    // Para folha: limpar obs duplicada (turnos já vêm na descrição principal)
                     const showObs = item.origem === 'saida' && item.obs && item.obs !== item.descricao;
-                    return (
+
+                    // ── Folha granular freelancer: linha-mãe expansível + sub-linhas por turno ──
+                    const raw = (item as any).raw;
+                    const diasDobras: any[] = raw?.diasDobras || [];
+                    const diasTransp: any[] = raw?.diasTransp || [];
+                    const ehFolhaGranular = item.origem === 'folha' && item.semana && diasDobras.length > 0;
+                    const expandido = expandidos.has(item.id);
+
+                    if (ehFolhaGranular) {
+                      const totalDobras = diasDobras.reduce((s: number, d: any) => s + R(d.valor), 0);
+                      const totalTransp = diasTransp.reduce((s: number, d: any) => s + R(d.valor), 0);
+                      const totalGrupo = totalDobras + totalTransp;
+                      const bgMae = !item.pago ? '#fffde7' : '#f0fdf4';
+
+                      const rows: React.ReactElement[] = [];
+
+                      // Linha-mãe (cabeçalho expansível)
+                      rows.push(
+                        <tr key={item.id} style={{ backgroundColor: bgMae, borderBottom: expandido ? 'none' : '1px solid #e0e0e0', borderLeft: '3px solid #43a047' }}>
+                          <td style={{ padding: '6px 8px' }}>
+                            <button onClick={() => toggleExpandido(item.id)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', padding: '0 4px', color: '#1b5e20', fontWeight: 'bold' }}
+                              title={expandido ? 'Recolher turnos' : 'Ver turnos detalhados'}>
+                              {expandido ? '▼' : '▶'}
+                            </button>
+                            <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>💰 Folha</span>
+                          </td>
+                          <td style={{ padding: '6px 8px' }}>
+                            <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>💼 Semana</span>
+                          </td>
+                          <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                            {item.dataPagamento ? fmtDataBR(item.dataPagamento) : (item.mes || '—')}
+                            {item.semana && <div style={{ color: '#999', fontSize: '10px' }}>sem. {fmtDataBR(item.semana)}</div>}
+                          </td>
+                          <td style={{ padding: '6px 8px', maxWidth: '240px' }}>
+                            <div style={{ fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
+                              Dobras semanais — {diasDobras.length} turno(s)
+                              {diasTransp.length > 0 && ` + 🚗 Transporte`}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
+                              {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
+                              {diasTransp.length > 0 && ` · Transp. ${fmtMoeda(totalTransp)}`}
+                            </div>
+                            {item.formaPagamento && (
+                              <div style={{ fontSize: '10px', color: '#1565c0', marginTop: '1px' }}>
+                                📱 {item.formaPagamento}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32', fontSize: '13px' }}>
+                            +{fmtMoeda(totalGrupo)}
+                          </td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                            <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
+                              backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4',
+                              color: item.pago ? '#2e7d32' : '#f57f17' }}>
+                              {item.pago ? '✅ Pago' : '⏳ Pendente'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                            <button onClick={() => setDetalheItem(item)}
+                              style={{ ...s.btn('#1976d2'), padding: '3px 7px', fontSize: '11px' }} title="Ver detalhes">📋</button>
+                          </td>
+                        </tr>
+                      );
+
+                      // Sub-linhas — visíveis quando expandido
+                      if (expandido) {
+                        // Créditos: 1 linha por turno
+                        for (const d of diasDobras) {
+                          const turnoLabel = d.turno === 'Dia' ? '☀️ Dia' : d.turno === 'Noite' ? '🌙 Noite' : d.turno || '?';
+                          const isPagoTurno = d.pago === true;
+                          rows.push(
+                            <tr key={`${item.id}_turno_${d.id || d.data}_${d.turno}`}
+                              style={{ backgroundColor: isPagoTurno ? '#f9fbe7' : '#fffde7', borderBottom: '1px dashed #e0e0e0', borderLeft: '6px solid #a5d6a7' }}>
+                              <td style={{ padding: '4px 8px', paddingLeft: '28px' }}>
+                                <span style={{ fontSize: '10px', color: '#888' }}>↳ turno</span>
+                              </td>
+                              <td style={{ padding: '4px 8px' }}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#e3f2fd', color: '#1565c0' }}>💼 Semana</span>
+                              </td>
+                              <td style={{ padding: '4px 8px', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {d.data ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—'}
+                              </td>
+                              <td style={{ padding: '4px 8px', maxWidth: '240px', fontSize: '11px', color: '#333' }}>
+                                <strong>{turnoLabel}</strong> — dobra individual
+                              </td>
+                              <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
+                                +{fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: isPagoTurno ? '#e8f5e9' : '#fff9c4',
+                                  color: isPagoTurno ? '#2e7d32' : '#f57f17' }}>
+                                  {isPagoTurno ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        }
+                        // Créditos: transporte
+                        for (const d of diasTransp) {
+                          rows.push(
+                            <tr key={`${item.id}_transp_${d.id || d.data}`}
+                              style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #c8e6c9', borderLeft: '6px solid #81c784' }}>
+                              <td style={{ padding: '4px 8px', paddingLeft: '28px' }}>
+                                <span style={{ fontSize: '10px', color: '#888' }}>↳ transp.</span>
+                              </td>
+                              <td style={{ padding: '4px 8px' }}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>🚗 Transporte</span>
+                              </td>
+                              <td style={{ padding: '4px 8px', fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {d.dataPagamento ? fmtDataBR(d.dataPagamento) : fmtDataBR(d.data || '')}
+                              </td>
+                              <td style={{ padding: '4px 8px', maxWidth: '240px', fontSize: '11px', color: '#333' }}>
+                                🚗 Transporte saldo semana
+                              </td>
+                              <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
+                                +{fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: d.pago ? '#e8f5e9' : '#fff9c4', color: d.pago ? '#2e7d32' : '#f57f17' }}>
+                                  {d.pago ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        }
+                        // Linha de subtotal do grupo
+                        const subtotalDobras = diasDobras.reduce((s: number, d: any) => s + R(d.valor), 0);
+                        const subtotalTransp = diasTransp.reduce((s: number, d: any) => s + R(d.valor), 0);
+                        rows.push(
+                          <tr key={`${item.id}_subtotal`} style={{ backgroundColor: '#c8e6c9', borderBottom: '2px solid #81c784', borderLeft: '6px solid #43a047' }}>
+                            <td colSpan={4} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
+                              Subtotal do lote de pagamento
+                              {subtotalTransp > 0 && ` · Dobras: ${fmtMoeda(subtotalDobras)} + Transp.: ${fmtMoeda(subtotalTransp)}`}
+                            </td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                              +{fmtMoeda(subtotalDobras + subtotalTransp)}
+                            </td>
+                            <td colSpan={2} />
+                          </tr>
+                        );
+                      }
+
+                      return rows;
+                    }
+
+                    // ── Linha normal (saída ou folha CLT) ──
+                    return [
                     <tr key={item.id} style={{
                       backgroundColor: !item.pago ? '#fffde7' : i % 2 === 0 ? '#f9f9f9' : 'white',
                       borderBottom: '1px solid #eee',
@@ -1230,7 +1390,8 @@ export const Extrato: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  );})}
+                    ];
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
@@ -1466,7 +1627,7 @@ export const Extrato: React.FC = () => {
                     <th style={s.th}>Colaborador</th>
                     <th style={s.thC}>Contrato</th>
                     <th style={s.thC}>Origem</th>
-                    <th style={s.thC}>Data</th>
+                    <th style={s.thC}>Data Pgto</th>
                     <th style={s.thC}>Semana</th>
                     <th style={s.th}>Descrição / Tipo</th>
                     <th style={s.thC}>Forma</th>
@@ -1478,74 +1639,283 @@ export const Extrato: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredItems.map((item, i) => (
-                    <tr key={item.id}
-                      style={{ backgroundColor: !item.pago ? '#fffde7' : i % 2 === 0 ? '#fafafa' : 'white', borderLeft: !item.pago ? '3px solid #f9a825' : '3px solid transparent' }}
-                      onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
-                      onMouseLeave={e => (e.currentTarget.style.backgroundColor = !item.pago ? '#fffde7' : i % 2 === 0 ? '#fafafa' : 'white')}>
-                      <td style={{ ...s.td, fontWeight: 'bold' }}>{item.nomeColaborador}</td>
-                      <td style={s.tdC}>
-                        <span style={item.tipoContrato === 'CLT' ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff3e0','#e65100')}>
-                          {item.tipoContrato || '—'}
-                        </span>
-                      </td>
-                      <td style={s.tdC}>
-                        <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold',
-                          backgroundColor: item.origem === 'folha' ? '#e8f5e9' : '#fff3e0',
-                          color: item.origem === 'folha' ? '#2e7d32' : '#e65100' }}>
-                          {item.origem === 'folha' ? '💰 Folha' : '📤 Saída'}
-                        </span>
-                      </td>
-                      <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>
-                        {item.dataPagamento ? fmtDataBR(item.dataPagamento) : (item.mes || '—')}
-                      </td>
-                      <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
-                        {item.semana ? fmtDataBR(item.semana) : '—'}
-                      </td>
-                      <td style={{ ...s.td, maxWidth: '200px', fontSize: '11px' }}>
-                        <div style={{ color: '#333' }}>{item.descricao}</div>
-                        {item.tipoSaida && <div style={{ color: '#888', fontSize: '10px' }}>{item.tipoSaida}</div>}
-                        {item.obs && <div style={{ color: '#aaa', fontSize: '10px', fontStyle: 'italic' }}>📝 {item.obs}</div>}
-                      </td>
-                      {/* Coluna Forma de Pagamento */}
-                      <td style={s.tdC}>
-                        {item.formaPagamento ? (
-                          <span style={{
-                            padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
-                            backgroundColor: item.formaPagamento === 'PIX' ? '#e3f2fd' : item.formaPagamento === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
-                            color: item.formaPagamento === 'PIX' ? '#1565c0' : item.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100',
-                          }}>
-                            {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                  {filteredItems.flatMap((item, i) => {
+                    // ── Detecção de folha granular (freelancer com turnos individuais) ──
+                    const raw = (item as any).raw;
+                    const diasDobras: any[] = raw?.diasDobras || [];
+                    const diasTransp: any[]  = raw?.diasTransp  || [];
+                    const ehFolhaGranular = item.origem === 'folha' && item.semana && diasDobras.length > 0;
+                    const expandido = expandidosDetalhado.has(item.id);
+
+                    if (ehFolhaGranular) {
+                      const totalDobras = diasDobras.reduce((acc: number, d: any) => acc + R(d.valor), 0);
+                      const totalTransp = diasTransp.reduce((acc: number, d: any) => acc + R(d.valor), 0);
+                      const totalGrupo  = totalDobras + totalTransp;
+                      const bgMae = !item.pago ? '#fffde7' : i % 2 === 0 ? '#f0fdf4' : '#f9fbe7';
+
+                      const rows: React.ReactElement[] = [];
+
+                      // ── Linha-mãe (cabeçalho expansível) ─────────────────────────────
+                      rows.push(
+                        <tr key={item.id}
+                          style={{ backgroundColor: bgMae, borderLeft: '3px solid #43a047', borderBottom: expandido ? 'none' : '1px solid #c8e6c9' }}>
+                          <td style={{ ...s.td, fontWeight: 'bold' }}>
+                            <button
+                              onClick={() => setExpandidosDetalhado(prev => {
+                                const next = new Set(prev);
+                                if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                                return next;
+                              })}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', marginRight: '4px', color: '#1b5e20', fontWeight: 'bold', padding: '0 2px' }}
+                              title={expandido ? 'Recolher turnos' : 'Ver turnos linha a linha'}>
+                              {expandido ? '▼' : '▶'}
+                            </button>
+                            {item.nomeColaborador}
+                          </td>
+                          <td style={s.tdC}>
+                            <span style={item.tipoContrato === 'CLT' ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff3e0','#e65100')}>
+                              {item.tipoContrato || '—'}
+                            </span>
+                          </td>
+                          <td style={s.tdC}>
+                            <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>
+                              💰 Folha
+                            </span>
+                          </td>
+                          <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>
+                            {item.dataPagamento ? fmtDataBR(item.dataPagamento) : (item.mes || '—')}
+                          </td>
+                          <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                            {item.semana ? fmtDataBR(item.semana) : '—'}
+                          </td>
+                          <td style={{ ...s.td, maxWidth: '200px', fontSize: '11px' }}>
+                            <div style={{ color: '#1b5e20', fontWeight: 'bold' }}>
+                              {diasDobras.length} turno(s){diasTransp.length > 0 ? ` + 🚗 Transporte` : ''}
+                              <span style={{ marginLeft: '6px', fontWeight: 'normal', color: '#666', fontSize: '10px' }}>
+                                {expandido ? '(clique ▼ p/ recolher)' : '(clique ▶ p/ detalhar)'}
+                              </span>
+                            </div>
+                            <div style={{ color: '#555', fontSize: '10px', marginTop: '2px' }}>
+                              {diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')}
+                              {diasTransp.length > 0 && ` · Transp. ${fmtMoeda(totalTransp)}`}
+                            </div>
+                          </td>
+                          <td style={s.tdC}>
+                            {item.formaPagamento ? (
+                              <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                                backgroundColor: item.formaPagamento === 'PIX' ? '#e3f2fd' : item.formaPagamento === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
+                                color: item.formaPagamento === 'PIX' ? '#1565c0' : item.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                                {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                              </span>
+                            ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                          </td>
+                          <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{totalDobras > 0 ? fmtMoeda(totalDobras) : '—'}</td>
+                          <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
+                          <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '13px' }}>
+                            +{fmtMoeda(totalGrupo)}
+                          </td>
+                          <td style={s.tdC}>
+                            <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
+                              {item.pago ? '✅ Pago' : '⏳ Pend.'}
+                            </span>
+                          </td>
+                          <td style={s.tdC}>
+                            <button onClick={() => setDetalheItem(item)}
+                              style={{ ...s.btn('#1976d2'), padding: '3px 7px', fontSize: '11px' }} title="Ver detalhes">📋</button>
+                          </td>
+                        </tr>
+                      );
+
+                      // ── Sub-linhas detalhadas (visíveis quando expandido) ─────────────
+                      if (expandido) {
+                        // Uma linha por turno (dobra)
+                        diasDobras.forEach((d: any) => {
+                          const turnoLabel = d.turno === 'Dia' ? '☀️ Dia' : d.turno === 'Noite' ? '🌙 Noite' : (d.turno || '?');
+                          const isPagoTurno = d.pago === true;
+                          const dataFormatada = d.data
+                            ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+                            : '—';
+                          rows.push(
+                            <tr key={`${item.id}_turno_${d.id || d.data}_${d.turno}`}
+                              style={{ backgroundColor: isPagoTurno ? '#f9fbe7' : '#fffde7', borderBottom: '1px dashed #e0e0e0', borderLeft: '6px solid #a5d6a7' }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', color: '#555', fontStyle: 'italic', fontSize: '11px' }} colSpan={2}>
+                                ↳ <strong>{item.nomeColaborador}</strong>
+                              </td>
+                              <td style={{ ...s.tdC }}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#f1f8e9', color: '#558b2f' }}>↳ turno</span>
+                              </td>
+                              <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {dataFormatada}
+                              </td>
+                              <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                {item.semana ? fmtDataBR(item.semana) : '—'}
+                              </td>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#2e7d32' }}>
+                                <strong>{turnoLabel}</strong> — dobra individual
+                              </td>
+                              <td style={s.tdC}>
+                                {item.formaPagamento ? (
+                                  <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold',
+                                    backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                    {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento}
+                                  </span>
+                                ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                              </td>
+                              <td style={{ ...s.tdR, color: '#2e7d32', fontSize: '11px', fontWeight: 'bold' }}>
+                                {fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={s.tdR}>—</td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
+                                +{fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: isPagoTurno ? '#e8f5e9' : '#fff9c4',
+                                  color: isPagoTurno ? '#2e7d32' : '#f57f17' }}>
+                                  {isPagoTurno ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        });
+
+                        // Uma linha por transporte
+                        diasTransp.forEach((d: any) => {
+                          const dataFormatada = d.dataPagamento
+                            ? fmtDataBR(d.dataPagamento)
+                            : (d.data ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—');
+                          rows.push(
+                            <tr key={`${item.id}_transp_${d.id || d.data}`}
+                              style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #c8e6c9', borderLeft: '6px solid #81c784' }}>
+                              <td style={{ ...s.td, paddingLeft: '28px', color: '#555', fontStyle: 'italic', fontSize: '11px' }} colSpan={2}>
+                                ↳ <strong>{item.nomeColaborador}</strong>
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '1px 5px', borderRadius: '6px', fontSize: '10px', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>↳ transp.</span>
+                              </td>
+                              <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' as const }}>
+                                {dataFormatada}
+                              </td>
+                              <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                                {item.semana ? fmtDataBR(item.semana) : '—'}
+                              </td>
+                              <td style={{ ...s.td, fontSize: '11px', color: '#2e7d32' }}>
+                                🚗 <strong>Transporte</strong> — crédito semanal
+                              </td>
+                              <td style={s.tdC}>
+                                {item.formaPagamento ? (
+                                  <span style={{ padding: '2px 5px', borderRadius: '6px', fontSize: '9px', fontWeight: 'bold',
+                                    backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                                    {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento}
+                                  </span>
+                                ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                              </td>
+                              <td style={s.tdR}>—</td>
+                              <td style={{ ...s.tdR, color: '#2e7d32', fontSize: '11px', fontWeight: 'bold' }}>
+                                {fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32', fontSize: '12px' }}>
+                                +{fmtMoeda(R(d.valor))}
+                              </td>
+                              <td style={s.tdC}>
+                                <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  backgroundColor: d.pago ? '#e8f5e9' : '#fff9c4', color: d.pago ? '#2e7d32' : '#f57f17' }}>
+                                  {d.pago ? '✅ Pago' : '⏳ Pend.'}
+                                </span>
+                              </td>
+                              <td />
+                            </tr>
+                          );
+                        });
+
+                        // Linha de subtotal do grupo
+                        rows.push(
+                          <tr key={`${item.id}_subtotal`}
+                            style={{ backgroundColor: '#c8e6c9', borderBottom: '2px solid #81c784', borderLeft: '6px solid #43a047' }}>
+                            <td colSpan={7} style={{ padding: '5px 8px 5px 28px', fontSize: '11px', color: '#1b5e20', fontWeight: 'bold' }}>
+                              📊 Subtotal do lote · {diasDobras.length} turno(s) + {diasTransp.length} transp.
+                              {totalTransp > 0 && ` · Dobras: ${fmtMoeda(totalDobras)} · Transp.: ${fmtMoeda(totalTransp)}`}
+                            </td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1b5e20', fontSize: '11px' }}>{fmtMoeda(totalDobras)}</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', color: '#1b5e20', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
+                              +{fmtMoeda(totalDobras + totalTransp)}
+                            </td>
+                            <td colSpan={2} />
+                          </tr>
+                        );
+                      }
+
+                      return rows;
+                    }
+
+                    // ── Linha normal (saída ou folha CLT sem turnos granulares) ──────────
+                    return [(
+                      <tr key={item.id}
+                        style={{ backgroundColor: !item.pago ? '#fffde7' : i % 2 === 0 ? '#fafafa' : 'white', borderLeft: !item.pago ? '3px solid #f9a825' : '3px solid transparent', borderBottom: '1px solid #eee' }}
+                        onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
+                        onMouseLeave={e => (e.currentTarget.style.backgroundColor = !item.pago ? '#fffde7' : i % 2 === 0 ? '#fafafa' : 'white')}>
+                        <td style={{ ...s.td, fontWeight: 'bold' }}>{item.nomeColaborador}</td>
+                        <td style={s.tdC}>
+                          <span style={item.tipoContrato === 'CLT' ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff3e0','#e65100')}>
+                            {item.tipoContrato || '—'}
                           </span>
-                        ) : (
-                          <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>
-                        )}
-                        {(item.logPagamentos || []).length > 1 && (
-                          <div style={{ fontSize: '9px', color: '#9e9e9e', marginTop: '2px' }}>{item.logPagamentos!.length} pgtos</div>
-                        )}
-                      </td>
-                      <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{item.valorBruto ? fmtMoeda(item.valorBruto) : '—'}</td>
-                      <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{item.valorTransporte ? fmtMoeda(item.valorTransporte) : '—'}</td>
-                      <td style={{ ...s.tdR, fontWeight: 'bold', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
-                        {item.tipo === 'debito' ? '−' : '+'}{fmtMoeda(item.valor)}
-                      </td>
-                      <td style={s.tdC}>
-                        <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
-                          {item.pago ? '✅ Pago' : '⏳ Pend.'}
-                        </span>
-                      </td>
-                      <td style={s.tdC}>
-                        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                          <button onClick={() => setDetalheItem(item)}
-                            style={{ ...s.btn('#1976d2'), padding: '3px 7px', fontSize: '11px' }} title="Ver detalhes">📋</button>
-                          {item.origem === 'saida' && (
-                            <button onClick={() => abrirEdicao(item)}
-                              style={{ ...s.btn('#f57c00'), padding: '3px 7px', fontSize: '11px' }} title="Editar lançamento">✏️</button>
+                        </td>
+                        <td style={s.tdC}>
+                          <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold',
+                            backgroundColor: item.origem === 'folha' ? '#e8f5e9' : '#fff3e0',
+                            color: item.origem === 'folha' ? '#2e7d32' : '#e65100' }}>
+                            {item.origem === 'folha' ? '💰 Folha' : '📤 Saída'}
+                          </span>
+                        </td>
+                        <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>
+                          {item.dataPagamento ? fmtDataBR(item.dataPagamento) : (item.mes || '—')}
+                        </td>
+                        <td style={{ ...s.tdC, fontSize: '11px', color: '#666' }}>
+                          {item.semana ? fmtDataBR(item.semana) : '—'}
+                        </td>
+                        <td style={{ ...s.td, maxWidth: '200px', fontSize: '11px' }}>
+                          <div style={{ color: '#333' }}>{item.descricao}</div>
+                          {item.tipoSaida && <div style={{ color: '#888', fontSize: '10px' }}>{item.tipoSaida}</div>}
+                          {item.obs && <div style={{ color: '#aaa', fontSize: '10px', fontStyle: 'italic' }}>📝 {item.obs}</div>}
+                        </td>
+                        {/* Forma de Pagamento */}
+                        <td style={s.tdC}>
+                          {item.formaPagamento ? (
+                            <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                              backgroundColor: item.formaPagamento === 'PIX' ? '#e3f2fd' : item.formaPagamento === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
+                              color: item.formaPagamento === 'PIX' ? '#1565c0' : item.formaPagamento === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                              {item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 $' : '🔄 Misto'}
+                            </span>
+                          ) : <span style={{ color: '#ccc', fontSize: '10px' }}>—</span>}
+                          {(item.logPagamentos || []).length > 1 && (
+                            <div style={{ fontSize: '9px', color: '#9e9e9e', marginTop: '2px' }}>{item.logPagamentos!.length} pgtos</div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{item.valorBruto ? fmtMoeda(item.valorBruto) : '—'}</td>
+                        <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{item.valorTransporte ? fmtMoeda(item.valorTransporte) : '—'}</td>
+                        <td style={{ ...s.tdR, fontWeight: 'bold', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', fontSize: '13px' }}>
+                          {item.tipo === 'debito' ? '−' : '+'}{fmtMoeda(item.valor)}
+                        </td>
+                        <td style={s.tdC}>
+                          <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
+                            {item.pago ? '✅ Pago' : '⏳ Pend.'}
+                          </span>
+                        </td>
+                        <td style={s.tdC}>
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                            <button onClick={() => setDetalheItem(item)}
+                              style={{ ...s.btn('#1976d2'), padding: '3px 7px', fontSize: '11px' }} title="Ver detalhes">📋</button>
+                            {item.origem === 'saida' && (
+                              <button onClick={() => abrirEdicao(item)}
+                                style={{ ...s.btn('#f57c00'), padding: '3px 7px', fontSize: '11px' }} title="Editar lançamento">✏️</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )];
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={{ backgroundColor: '#0d47a1', color: 'white', fontWeight: 'bold' }}>
