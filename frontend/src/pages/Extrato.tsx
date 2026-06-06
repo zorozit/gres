@@ -111,13 +111,16 @@ const extrairAuditoria = (raw: any, totalBruto: number): {
   }
   // Opção A — parsear obs (registros legados).
   // Tenta obsAudit (campo propagado do registro individual) e depois obs genérico.
+  // IMPORTANTE: usar [$] em vez de \$ para capturar o símbolo $ literal em JS regex.
+  // /R\$/ trata \$ como âncora de fim de linha e não captura o valor numérico.
   const obs: string = raw?.obsAudit || raw?.obs || '';
-  const matchDesc   = obs.match(/Desc\. sa[íi]das:\s*R\$\s*([\d.,]+)/i);
-  const matchAbat   = obs.match(/Abat\. adto\.esp\.:\s*R\$\s*([\d.,]+)/i);
-  const matchLiq    = obs.match(/L[íi]quido:\s*R\$\s*([\d.,]+)/i);
-  const descSaidas  = matchDesc  ? R(matchDesc[1].replace(/\./g, '').replace(',', '.')) : 0;
-  const abatEsp     = matchAbat  ? R(matchAbat[1].replace(/\./g, '').replace(',', '.')) : 0;
-  const liquido     = matchLiq   ? R(matchLiq[1].replace(/\./g, '').replace(',', '.'))  : Math.max(0, totalBruto - descSaidas - abatEsp);
+  const matchDesc   = obs.match(/Desc\. sa[íi]das:\s*R[$]\s*([\d.,]+)/i);
+  const matchAbat   = obs.match(/Abat\. adto\.esp\.:\s*R[$]\s*([\d.,]+)/i);
+  const matchLiq    = obs.match(/L[íi]quido:\s*R[$]\s*([\d.,]+)/i);
+  const pBR = (s: string) => R(s.replace(/\./g, '').replace(',', '.'));
+  const descSaidas  = matchDesc  ? pBR(matchDesc[1]) : 0;
+  const abatEsp     = matchAbat  ? pBR(matchAbat[1]) : 0;
+  const liquido     = matchLiq   ? pBR(matchLiq[1])  : Math.max(0, totalBruto - descSaidas - abatEsp);
   return { bruto: totalBruto, descSaidas, abatEsp, liquido, temCampoEstruturado: false };
 };
 
@@ -1725,6 +1728,25 @@ export const Extrato: React.FC = () => {
                       // ── Auditoria: opção B (campo estruturado) ou A (parsear obs) ──
                       const audit = extrairAuditoria(raw, totalGrupo);
 
+                      // ── Saídas do período da semana — conexão com o PIX líquido ──────
+                      // Calcula a data de início da semana (semana - 7 dias) para filtrar
+                      // as saídas de débito desse colaborador que caem nesse intervalo.
+                      const semanaFim   = item.semana || '';  // ex: "2026-05-31"
+                      const semanaIniD  = semanaFim ? new Date(semanaFim + 'T00:00:00') : null;
+                      if (semanaIniD) semanaIniD.setDate(semanaIniD.getDate() - 7);
+                      const semanaIni   = semanaIniD ? semanaIniD.toISOString().split('T')[0] : '';
+                      // Saídas do período: filtrar allItems (já carregados) por colaborador + data + débito
+                      const saidasPeriodo = items.filter(s =>
+                        s.origem === 'saida' &&
+                        s.tipo === 'debito' &&
+                        s.colaboradorId === item.colaboradorId &&
+                        (s.dataPagamento ?? '') >= semanaIni &&
+                        (s.dataPagamento ?? '') <= semanaFim
+                      );
+                      const totalSaidasPeriodo = saidasPeriodo.reduce((acc, s) => acc + R(s.valor), 0);
+                      // Verificar se as saídas do período batem com o desconto do obs
+                      const divergencia = Math.abs(totalSaidasPeriodo - audit.descSaidas) > 0.05;
+
                       const rows: React.ReactElement[] = [];
 
                       // ── Linha-mãe (cabeçalho expansível) ─────────────────────────────
@@ -1788,18 +1810,31 @@ export const Extrato: React.FC = () => {
                           <td style={{ ...s.tdR, color: '#1976d2', fontSize: '11px' }}>{totalDobras > 0 ? fmtMoeda(totalDobras) : '—'}</td>
                           {/* Col. Transp.: bruto do transporte */}
                           <td style={{ ...s.tdR, color: '#1565c0', fontSize: '11px' }}>{totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}</td>
-                          {/* Col. Total/PIX: valor líquido efetivo + breakdown em subscript */}
+                          {/* Col. Total/PIX: valor líquido efetivo + breakdown conectado com saídas */}
                           <td style={{ ...s.tdR, fontWeight: 'bold', fontSize: '13px' }}>
                             <div style={{ color: item.formaPagamento === 'PIX' ? '#1565c0' : '#2e7d32' }}>
                               {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(audit.liquido)}
                             </div>
-                            {(audit.descSaidas > 0 || audit.abatEsp > 0) && (
-                              <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.3', marginTop: '2px' }}>
-                                bruto {fmtMoeda(totalGrupo)}
-                                {audit.descSaidas > 0 && <span style={{ color: '#c62828' }}> −{fmtMoeda(audit.descSaidas)}</span>}
-                                {audit.abatEsp    > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)}</span>}
-                              </div>
-                            )}
+                            {/* Breakdown: usa audit.descSaidas do obs OU totalSaidasPeriodo como fallback */}
+                            {(() => {
+                              const descEfetiva = audit.descSaidas > 0 ? audit.descSaidas : (totalSaidasPeriodo > 0 ? totalSaidasPeriodo : 0);
+                              if (descEfetiva === 0 && audit.abatEsp === 0) return null;
+                              return (
+                                <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.4', marginTop: '2px' }}>
+                                  bruto {fmtMoeda(totalGrupo)}
+                                  {descEfetiva > 0 && (
+                                    <span style={{ color: '#c62828' }}>
+                                      {' '}−{fmtMoeda(descEfetiva)} saídas
+                                      {audit.descSaidas === 0 && totalSaidasPeriodo > 0 &&
+                                        <span style={{ color: '#e57373', fontStyle: 'italic' }}> ({saidasPeriodo.length})</span>}
+                                      {divergencia && audit.descSaidas > 0 &&
+                                        <span style={{ color: '#ff9800' }} title={`Saídas do período: ${fmtMoeda(totalSaidasPeriodo)}`}> ⚠️</span>}
+                                    </span>
+                                  )}
+                                  {audit.abatEsp > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(audit.abatEsp)} adto.esp.</span>}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td style={s.tdC}>
                             <span style={item.pago ? s.badge('#e8f5e9','#2e7d32') : s.badge('#fff9c4','#f57f17')}>
@@ -1917,6 +1952,11 @@ export const Extrato: React.FC = () => {
                         });
 
                         // ── Linha de subtotal do grupo (fundo verde escuro, PIX líquido em destaque) ──
+                        // Usa descSaidas do audit (obs) ou totalSaidasPeriodo como confirmação
+                        const descEfetivaSubtotal = audit.descSaidas > 0 ? audit.descSaidas : totalSaidasPeriodo;
+                        const liquidoEfetivoSubtotal = audit.liquido > 0 && audit.liquido < totalGrupo
+                          ? audit.liquido
+                          : (descEfetivaSubtotal > 0 ? Math.max(0, totalGrupo - descEfetivaSubtotal - audit.abatEsp) : audit.liquido);
                         rows.push(
                           <tr key={`${item.id}_subtotal`}
                             style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047', borderLeft: '6px solid #43a047' }}>
@@ -1927,13 +1967,27 @@ export const Extrato: React.FC = () => {
                                   dobras: {fmtMoeda(totalDobras)} · transp.: {fmtMoeda(totalTransp)}
                                 </span>
                               )}
-                              {(audit.descSaidas > 0 || audit.abatEsp > 0) && (
-                                <span style={{ display: 'block', fontWeight: 'normal', color: '#ffcdd2', fontSize: '10px', marginTop: '2px' }}>
-                                  bruto {fmtMoeda(totalGrupo)}
-                                  {audit.descSaidas > 0 && <> · desc.saídas <span style={{ color: '#ef9a9a' }}>−{fmtMoeda(audit.descSaidas)}</span></>}
-                                  {audit.abatEsp    > 0 && <> · abat.esp. <span style={{ color: '#ce93d8' }}>−{fmtMoeda(audit.abatEsp)}</span></>}
-                                </span>
-                              )}
+                              {/* Breakdown completo: descontos + saídas do período */}
+                              <span style={{ display: 'block', fontWeight: 'normal', color: '#ffcdd2', fontSize: '10px', marginTop: '3px', lineHeight: '1.5' }}>
+                                bruto {fmtMoeda(totalGrupo)}
+                                {descEfetivaSubtotal > 0 && (
+                                  <>
+                                    {' · '}
+                                    <span style={{ color: '#ef9a9a' }}>−{fmtMoeda(descEfetivaSubtotal)} saídas</span>
+                                    {audit.descSaidas === 0 && totalSaidasPeriodo > 0 && (
+                                      <span style={{ color: '#ffccbc', fontStyle: 'italic' }}> ({saidasPeriodo.length} lançamentos)</span>
+                                    )}
+                                    {divergencia && audit.descSaidas > 0 && (
+                                      <span style={{ color: '#ffeb3b' }} title={`Saídas registradas no período: ${fmtMoeda(totalSaidasPeriodo)} — Desc. no obs: ${fmtMoeda(audit.descSaidas)}`}>
+                                        {' '}⚠️ divergência
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                                {audit.abatEsp > 0 && <> · <span style={{ color: '#ce93d8' }}>−{fmtMoeda(audit.abatEsp)} adto.esp.</span></>}
+                                {' → '}
+                                <span style={{ color: 'white', fontWeight: 'bold' }}>líquido {fmtMoeda(liquidoEfetivoSubtotal)}</span>
+                              </span>
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                               {item.formaPagamento ? (
@@ -1951,7 +2005,7 @@ export const Extrato: React.FC = () => {
                               {totalTransp > 0 ? fmtMoeda(totalTransp) : '—'}
                             </td>
                             <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: 'white', fontSize: '14px' }}>
-                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(audit.liquido)}
+                              {item.formaPagamento === 'PIX' ? '📱 ' : ''}{fmtMoeda(liquidoEfetivoSubtotal)}
                             </td>
                             <td colSpan={2} />
                           </tr>
