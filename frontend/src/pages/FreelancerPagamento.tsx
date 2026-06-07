@@ -880,14 +880,22 @@ export default function FreelancerPagamento() {
                           );
                           const diasPagosNovos = folhasDB.filter((f:any)=>
                             f.colaboradorId===fr.id && f.mes===mesAno && f.data>=(fr.periodoInicio||fech.dataInicioBase) && f.data<=(fr.periodoFim||fech.dataFechamento) && f.pago===true && f.tipo==='freelancer-dia'
-                          );
-                          const frDataPgto = diasPagosNovos.length>0 ? diasPagosNovos.sort((a:any,b:any)=>(b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento : frFolhaSalva?.dataPagamento;
+                          ).sort((a:any,b:any)=>(b.dataPagamento||'').localeCompare(a.dataPagamento||''));
+                          const frDataPgto = diasPagosNovos.length>0 ? diasPagosNovos[0]?.dataPagamento : frFolhaSalva?.dataPagamento;
                           const frForma    = diasPagosNovos.length>0 ? diasPagosNovos[0]?.formaPagamento : frFolhaSalva?.formaPagamento;
                           const diasJaPagesSemana = (fr.diasJaPagosDetalhe||[]).length;
                           const frIsPago = diasJaPagesSemana>0 || frFolhaSalva?.pago || fr.pago || false;
                           const pagoParcial = frIsPago && fr.dobras>0;
                           const pagoCompleto = diasJaPagesSemana>0 && fr.dobras===0;
                           const semDetalhe  = frFolhaSalva?.pago && diasJaPagesSemana===0 && (frFolhaSalva?.diasPagos?.length||0)===0;
+                          /* ── composição do pagamento (campos estruturados do backend) ── */
+                          const compReg = diasPagosNovos.length>0 ? diasPagosNovos[0] : frFolhaSalva;
+                          const compBruto   = R(compReg?.valorBruto);
+                          const compDesc    = R(compReg?.valorDescSaidas);
+                          const compAbat    = R(compReg?.valorAbatEsp);
+                          const compLiq     = R(compReg?.valorLiquido);
+                          const compObs     = compReg?.obs || '';
+                          const temComp     = compLiq > 0 || compBruto > 0;
                           return (
                             <tr key={fr.id} style={{backgroundColor:fi%2===0?'#fafafa':'white'}}>
                               <td style={{...s.td,fontWeight:'bold'}}>
@@ -924,13 +932,51 @@ export default function FreelancerPagamento() {
                                 {fmtMoeda(fr.totalLiquido)}
                                 {fr.totalLiquido===0 && fr.totalJaPago>0 && <div style={{fontSize:'9px',color:'#2e7d32',fontWeight:'normal'}}>quitado</div>}
                               </td>
-                              <td style={{...s.td,textAlign:'center'}}>
-                                {semDetalhe ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}}>⚠️ Pago*</span>
-                                  : pagoParcial ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
-                                  : pagoCompleto ? <span style={s.badge('#e8f5e9','#2e7d32')}>✅ Pago</span>
-                                  : <span style={s.badge('#fff9c4','#f57f17')}>⏳ Pend.</span>}
-                                {frIsPago && frDataPgto && <div style={{fontSize:'9px',color:'#666',marginTop:'2px'}}>{frDataPgto}</div>}
-                                {frIsPago && frForma && <div style={{fontSize:'9px',marginTop:'2px',fontWeight:'bold',color:frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100'}}>{frForma==='PIX'?'📱 PIX':frForma==='Dinheiro'?'💵 Dinheiro':'🔄 Misto'}</div>}
+                              <td style={{...s.td,textAlign:'left',minWidth:'160px'}}>
+                                {/* ── Badge de status ── */}
+                                <div style={{marginBottom:'4px'}}>
+                                  {semDetalhe
+                                    ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}} title="Pago sem detalhe analítico">⚠️ Pago*</span>
+                                    : pagoParcial
+                                    ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
+                                    : pagoCompleto
+                                    ? <span style={s.badge('#e8f5e9','#2e7d32')}>✅ Pago</span>
+                                    : <span style={s.badge('#fff9c4','#f57f17')}>⏳ Pendente</span>}
+                                </div>
+                                {/* ── Composição do pagamento (quando pago) ── */}
+                                {frIsPago && (
+                                  <div style={{fontSize:'10px',lineHeight:'1.65',borderTop:'1px solid #e0e0e0',paddingTop:'4px'}}>
+                                    {frDataPgto && <div style={{color:'#555',marginBottom:'2px'}}>📅 {frDataPgto}</div>}
+                                    {frForma && <div style={{fontWeight:'bold',marginBottom:'3px',color:frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100'}}>
+                                      {frForma==='PIX'?'📱 PIX':frForma==='Dinheiro'?'💵 Dinheiro':'🔄 Misto'}
+                                    </div>}
+                                    {temComp ? (
+                                      <div style={{backgroundColor:'#f9f9f9',borderRadius:'4px',padding:'4px 6px',border:'1px solid #e8e8e8'}}>
+                                        {compBruto>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
+                                          <span style={{color:'#1976d2'}}>💰 Bruto:</span>
+                                          <span style={{fontWeight:'bold',color:'#1976d2'}}>{fmtMoeda(compBruto)}</span>
+                                        </div>}
+                                        {compDesc>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
+                                          <span style={{color:'#c62828'}}>➖ Descontos:</span>
+                                          <span style={{fontWeight:'bold',color:'#c62828'}}>-{fmtMoeda(compDesc)}</span>
+                                        </div>}
+                                        {compAbat>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
+                                          <span style={{color:'#7c3aed'}}>➖ Abat. esp.:</span>
+                                          <span style={{fontWeight:'bold',color:'#7c3aed'}}>-{fmtMoeda(compAbat)}</span>
+                                        </div>}
+                                        <div style={{display:'flex',justifyContent:'space-between',gap:'8px',borderTop:'1px solid #ddd',marginTop:'3px',paddingTop:'3px'}}>
+                                          <span style={{color:'#2e7d32',fontWeight:'bold'}}>✔ Pago:</span>
+                                          <span style={{fontWeight:'bold',color:'#2e7d32',fontSize:'11px'}}>{fmtMoeda(compLiq)}</span>
+                                        </div>
+                                      </div>
+                                    ) : compObs ? (
+                                      <div style={{color:'#666',fontStyle:'italic',fontSize:'9px',maxWidth:'180px',whiteSpace:'normal'}} title={compObs}>
+                                        {compObs.length>80 ? compObs.substring(0,80)+'…' : compObs}
+                                      </div>
+                                    ) : null}
+                                    {semDetalhe && <div style={{color:'#e65100',fontSize:'9px',marginTop:'2px'}}>* sem detalhe de dias</div>}
+                                  </div>
+                                )}
                               </td>
                               <td style={s.td}>
                                 <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
