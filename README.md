@@ -430,6 +430,11 @@ gres/
 
 | Commit | Descrição |
 |--------|-----------|
+| (07/06) | **Fix permissões menu**: `freelancer-pagamento` e `motoboy-auditoria` adicionados ao `TODOS_MODULOS` em `PermissoesConfig.tsx` — módulos agora aparecem no menu para admin/gerente após re-salvar permissões |
+| `5f712ef` | **fix(modal-detalhe)**: reescrita completa do modal `📋 Ver` em FreelancerPagamento — turnos com valores, transporte por dia, separação de Desconto Adto. Especial, resumo final |
+| `870cf30` | **feat(freelancer-pagamento)**: colunas Líquido+Status no padrão Extrato — valor líquido em cor da forma + equação subscript bruto/desc/adto/líquido |
+| `6f98916` | **fix(carregarDados)**: vars locais antes de setState + fix imports TypeScript no FreelancerPagamento |
+| `c2aaba5` | **feat(folha-pagamento)**: aba Freelancers com colunas Líquido+Status no padrão Extrato (compBrutoFP/compDescFP/compAbatFP/compLiqFP) |
 | `ff3bef1` | **Extrato: integridade do laço de pagamento** — suprimir lista geral, transporte dia a dia, sub-linha adto. especial |
 | `fbb9b95` | **Extrato: log PIX real + EXCLUIR_DO_PIX + pagamentoIdLigado preciso** |
 | `4b7a900` | **Extrato linha a linha integrado + Auditoria com usuário real** — ...auditoriaCampos() no payload folha |
