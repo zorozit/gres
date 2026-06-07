@@ -64,12 +64,12 @@ function App() {
               {/* Redirect legado */}
               <Route path="/dashboard" element={<Navigate to="/modulos/dashboard" replace />} />
 
-              {/* ── Tela de módulos (galeria) — sem AppLayout, tem layout próprio ── */}
+              {/* ── Tela de módulos (galeria de boas-vindas) — dentro do AppLayout ── */}
               <Route
                 path="/modulos"
                 element={
                   <ProtectedRoute>
-                    <Modules />
+                    <AppLayout><Modules /></AppLayout>
                   </ProtectedRoute>
                 }
               />
