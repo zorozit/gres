@@ -1,1191 +1,989 @@
 /**
  * FreelancerPagamento.tsx
  *
- * Módulo dedicado ao pagamento e auditoria de Freelancers.
- * Separado da FolhaPagamento (que agora trata apenas CLT).
- *
- * Visão em dois modos:
- *  - "Pagar" (default): grade de fechamentos semanais com ação de confirmar pagamento
- *  - "Auditoria": tabela estilo Extrato com grupos expansíveis + sub-linhas de turnos,
- *                 descontos, adiantamento especial e log de PIX
+ * Módulo standalone de pagamento de Freelancers.
+ * Replica FIELMENTE a lógica da aba "Freelancers" da FolhaPagamento:
+ *  - mesmo fetch (folha + escalas + saídas + meses anteriores + hist. especial)
+ *  - mesmo calcularFechamentosFreelancer
+ *  - mesmo modal de confirmação de pagamento (checklist + forma + data)
+ *  - mesmo detalhe de semana
+ *  - filtro de período customizado
  *
  * Rota: /modulos/freelancer-pagamento
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 
-/* ─── Helpers ───────────────────────────────────────────────────────────── */
-const R = (v: any): number => {
-  const n = parseFloat(String(v ?? 0).replace(',', '.'));
-  return isNaN(n) ? 0 : n;
-};
-const fmtMoeda = (v: number) =>
-  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const fmtDataBR = (iso: string): string => {
-  if (!iso) return '—';
-  try {
-    return new Date(iso.length === 10 ? iso + 'T12:00:00' : iso)
-      .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch { return iso; }
-};
-const fmtDiaMes = (iso: string): string => {
-  if (!iso || iso.length < 10) return iso;
-  return `${iso.substring(8, 10)}/${iso.substring(5, 7)}`;
-};
-const fmtDiaSemana = (iso: string): string => {
-  if (!iso) return '';
-  try {
-    return new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short' });
-  } catch { return ''; }
-};
+/* ─── Helpers (idênticos à FolhaPagamento) ────────────────────────────────── */
+const R = (v: any): number => { const n = parseFloat(String(v ?? 0).replace(',', '.')); return isNaN(n) ? 0 : n; };
+const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
+const isMigradoReg  = (r: any) => r.migrado   === true || r.migrado   === 'True' || r.migrado   === 'true';
+const isEstornadoReg = (r: any) => r.estornado === true || r.estornado === 'True' || r.estornado === 'true';
 
-/* ─── extrairAuditoria: Opção B (campo estruturado) ou A (regex no obs) ── */
-const extrairAuditoria = (raw: any, totalBruto: number): {
-  bruto: number; descSaidas: number; abatEsp: number; liquido: number; temCampoEstruturado: boolean;
-} => {
-  if (raw?.valorLiquido !== undefined && raw.valorLiquido !== null) {
-    return {
-      bruto:      R(raw.valorBruto)      || totalBruto,
-      descSaidas: R(raw.valorDescSaidas) || 0,
-      abatEsp:    R(raw.valorAbatEsp)    || 0,
-      liquido:    R(raw.valorLiquido),
-      temCampoEstruturado: true,
-    };
+function semanasFechamento(ano: number, mes: number): { inicio: Date; fim: Date }[] {
+  const semanas: { inicio: Date; fim: Date }[] = [];
+  const primeiro = new Date(ano, mes - 1, 1);
+  const ultimo   = new Date(ano, mes, 0);
+  let cur = new Date(primeiro);
+  while (cur <= ultimo) {
+    const inicio = new Date(cur);
+    const fim    = new Date(cur);
+    while (fim.getDay() !== 0 && fim < ultimo) fim.setDate(fim.getDate() + 1);
+    semanas.push({ inicio, fim: new Date(Math.min(fim.getTime(), ultimo.getTime())) });
+    cur = new Date(fim); cur.setDate(cur.getDate() + 1);
   }
-  const obs: string = raw?.obsAudit || raw?.obs || '';
-  const matchDesc = obs.match(/Desc\. sa[íi]das:\s*R[$]\s*([\d.,]+)/i);
-  const matchAbat = obs.match(/Abat\. adto\.esp\.:\s*R[$]\s*([\d.,]+)/i);
-  const matchLiq  = obs.match(/L[íi]quido:\s*R[$]\s*([\d.,]+)/i);
-  const pBR = (s: string) => R(s.replace(/\./g, '').replace(',', '.'));
-  const descSaidas = matchDesc ? pBR(matchDesc[1]) : 0;
-  const abatEsp    = matchAbat ? pBR(matchAbat[1]) : 0;
-  const liquido    = matchLiq  ? pBR(matchLiq[1])  : Math.max(0, totalBruto - descSaidas - abatEsp);
-  return { bruto: totalBruto, descSaidas, abatEsp, liquido, temCampoEstruturado: false };
-};
-
-/* ─── Interfaces ─────────────────────────────────────────────────────────── */
-interface PagamentoLog {
-  id: string;
-  data: string;
-  valor: number;
-  forma: 'PIX' | 'Dinheiro' | 'Misto';
-  valorPix?: number;
-  valorDinheiro?: number;
-  tipo: 'Adiantamento' | 'Variável' | 'Outro';
-  obs?: string;
+  return semanas;
 }
-
-interface GrupoFreelancer {
-  /** id do grupo: grp__{colabId}__{semana}__{pagamentoId} */
-  id: string;
-  colaboradorId: string;
-  nomeColaborador: string;
-  chavePix?: string;
-  telefone?: string;
-  semana: string;                     // YYYY-MM-DD fim de semana
-  semanaLabel: string;                // "19/05 – 25/05"
-  mes: string;
-  pagamentoId: string | null;
-  pago: boolean;
-  pagoParcial: boolean;
-  diasDobras: any[];                  // registros individuais Dia/Noite
-  diasTransp: any[];                  // registros transporte-freelancer
-  totalDobras: number;
-  totalTransp: number;
-  totalGrupo: number;
-  dataPagamento: string | null;
-  formaPagamento: string;
-  confiabilidade: 'real' | 'recalculado' | 'legado';
-  // Campos Opção B (propagados do POST)
-  valorLiquido: number | null;
-  valorDescSaidas: number | null;
-  valorAbatEsp: number | null;
-  obsAudit: string;
-  logPagamentos: PagamentoLog[];
-  raw: any;
-}
+function fmtDataISO(d: Date) { return d.toISOString().split('T')[0]; }
 
 /* ─── Component ──────────────────────────────────────────────────────────── */
-const FreelancerPagamento: React.FC = () => {
-  const navigate = useNavigate();
+export default function FreelancerPagamento() {
+  const navigate  = useNavigate();
   const { activeUnit } = useUnit();
-  const { user } = useAuth();
-  const unitId   = activeUnit?.id || (user as any)?.unitId || localStorage.getItem('unit_id') || '';
-  const apiUrl   = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
-  const token    = () => localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
-  const auth     = { headers: { Authorization: `Bearer ${token()}` } };
+  const { user, email: authEmail } = useAuth() as any;
+  const unitId  = activeUnit?.id || (user as any)?.unitId || localStorage.getItem('unit_id') || '';
+  const apiUrl  = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
+  const token   = () => localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
+  const responsavelEmail = authEmail || (user as any)?.email || localStorage.getItem('user_email') || 'sistema';
+  const responsavelId    = localStorage.getItem('user_id') || '';
+  const responsavelNome  = (user as any)?.nome || (user as any)?.name || responsavelEmail;
+  const auditoriaCampos  = () => ({ responsavelId, responsavelNome, responsavelEmail });
 
-  /* ── State ── */
+  /* ── Estado ── */
   const hoje = new Date();
-  const [mesAno, setMesAno]       = useState(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`);
-  const [aba, setAba]             = useState<'pagar' | 'auditoria'>('pagar');
-  const [loading, setLoading]     = useState(false);
-  const [grupos, setGrupos]       = useState<GrupoFreelancer[]>([]);
-  const [saidasAll, setSaidasAll] = useState<any[]>([]);
-  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
-  const [filtroPago, setFiltroPago] = useState<'todos' | 'pago' | 'pendente'>('todos');
-  const [filtroColab, setFiltroColab] = useState('');
-  const [debugInfo, setDebugInfo]   = useState<any>(null);
+  const [mesAno,    setMesAno]    = useState(`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`);
+  const [periodoIni, setPeriodoIni] = useState('');
+  const [periodoFim, setPeriodoFim] = useState('');
+  const periodoCustomAtivo = !!(periodoIni && periodoFim);
+  const [loading,   setLoading]   = useState(false);
+  const [salvando,  setSalvando]  = useState(false);
 
-  /* ── Helpers de semana ── */
-  const semanasFechamento = (ano: number, mes: number): { inicio: Date; fim: Date }[] => {
-    const semanas: { inicio: Date; fim: Date }[] = [];
-    const primeiro = new Date(ano, mes - 1, 1);
-    const ultimo   = new Date(ano, mes, 0);
-    let cur = new Date(primeiro);
-    while (cur <= ultimo) {
-      const inicio = new Date(cur);
-      const fim    = new Date(cur);
-      while (fim.getDay() !== 0 && fim < ultimo) fim.setDate(fim.getDate() + 1);
-      semanas.push({ inicio, fim: new Date(Math.min(fim.getTime(), ultimo.getTime())) });
-      cur = new Date(fim);
-      cur.setDate(cur.getDate() + 1);
-    }
-    return semanas;
+  const [freelancers,         setFreelancers]         = useState<any[]>([]);
+  const [escalas,             setEscalas]             = useState<any[]>([]);
+  const [folhasDB,            setFolhasDB]            = useState<any[]>([]);
+  const [saidasPeriodo,       setSaidasPeriodo]       = useState<any[]>([]);
+  const [saidasMesCompleto,   setSaidasMesCompleto]   = useState<any[]>([]);
+  const [saidasPendentesAnt,  setSaidasPendentesAnt]  = useState<any[]>([]);
+  const [saldosEspeciais,     setSaldosEspeciais]     = useState<Record<string,number>>({});
+  const [fechamentos,         setFechamentos]         = useState<any[]>([]);
+  const [editFechamento, setEditFechamento] = useState<Record<string, any>>({});
+
+  /* modal pagamento */
+  const [modalPgto,      setModalPgto]      = useState<{fr: any; fech: any} | null>(null);
+  const [checkItems,     setCheckItems]     = useState<any[]>([]);
+  const [dataLocalPgto,  setDataLocalPgto]  = useState(hoje.toISOString().split('T')[0]);
+  const [formaPgto,      setFormaPgto]      = useState<'PIX'|'Dinheiro'|'Misto'>('PIX');
+  const [formaPix,       setFormaPix]       = useState('');
+  const [formaDin,       setFormaDin]       = useState('');
+  const [abaterEsp,      setAbaterEsp]      = useState(false);
+  const [vlAbat,         setVlAbat]         = useState('');
+
+  /* detalhe */
+  const [detalhe, setDetalhe] = useState<{fr: any; fech: any; escsSemana: any[]; saidasSemana: any[]} | null>(null);
+
+  /* ── helpers de mês ── */
+  const mesesNoRange = (iniIso: string, fimIso: string): string[] => {
+    const [ai,mi] = iniIso.split('-').map(Number); const [af,mf] = fimIso.split('-').map(Number);
+    const out: string[] = []; let y=ai, m=mi;
+    while (y < af || (y===af && m<=mf)) { out.push(`${y}-${String(m).padStart(2,'0')}`); m++; if(m>12){m=1;y++;} }
+    return out;
   };
-  const isoDate = (d: Date) => d.toISOString().split('T')[0];
 
-  /* ── Fetch ── */
-  const carregar = useCallback(async () => {
+  /* ═══════════════════════════════════════════════════════════════════════════
+     FETCH — idêntico ao carregarDados() da FolhaPagamento, mas só freelancers
+  ═══════════════════════════════════════════════════════════════════════════ */
+  const carregarDados = async () => {
     if (!unitId) return;
     setLoading(true);
-    setExpandidos(new Set());
     try {
       const [ano, mes] = mesAno.split('-').map(Number);
-      const dataInicio = `${mesAno}-01`;
-      const dataFim    = new Date(ano, mes, 0).toISOString().split('T')[0];
+      const mesalIni = `${mesAno}-01`;
+      const mesalFim = new Date(ano, mes, 0).toISOString().split('T')[0];
+      const dataInicio = periodoCustomAtivo ? periodoIni : mesalIni;
+      const dataFim    = periodoCustomAtivo ? periodoFim : mesalFim;
 
-      /* Mês anterior para saídas pendentes */
-      const mesAnt = mes === 1
-        ? `${ano - 1}-12`
-        : `${ano}-${String(mes - 1).padStart(2, '0')}`;
-      const dataInicioAnt = `${mesAnt}-01`;
-      const dataFimAnt    = new Date(ano, mes - 1, 0).toISOString().split('T')[0];
+      const mesAnterior = (() => {
+        const d = new Date(ano, mes-2, 1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      })();
+      const mesesAlvo = periodoCustomAtivo ? mesesNoRange(periodoIni, periodoFim) : [mesAnterior, mesAno];
 
-      /* ── Fetches paralelos ── */
-      const [rFolha, rEscalas, rColabs, rSaidas, rSaidasAnt] = await Promise.all([
-        fetch(`${apiUrl}/folha-pagamento?mes=${mesAno}&unitId=${unitId}`, auth).catch(() => null),
-        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, auth).catch(() => null),
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth).catch(() => null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(() => null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicioAnt}&dataFim=${dataFimAnt}`, auth).catch(() => null),
+      const [aIni, mIni] = dataInicio.split('-').map(Number);
+      const prevDate = new Date(aIni, mIni-4, 1);
+      const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}-01`;
+      const histDate = new Date(aIni, mIni-25, 1);
+      const histIni  = `${histDate.getFullYear()}-${String(histDate.getMonth()+1).padStart(2,'0')}-01`;
+
+      const auth = { headers: { Authorization: `Bearer ${token()}` } };
+
+      const folhaFetches  = mesesAlvo.map(mm => fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
+      const escalaFetches = mesesAlvo.map(mm => fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
+      const rSMes = periodoCustomAtivo
+        ? fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null)
+        : null;
+
+      const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
+        Promise.all(folhaFetches),
+        Promise.all(escalaFetches),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(()=>null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(()=>null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histIni}&dataFim=${dataFim}`, auth).catch(()=>null),
+        rSMes || Promise.resolve(null),
       ]);
 
-      const rawFolha:   any[] = (rFolha   && rFolha.ok)   ? await rFolha.json()   : [];
-      const rawEscalas: any[] = (rEscalas && rEscalas.ok) ? await rEscalas.json() : [];
-      const rawColabs:  any[] = (rColabs  && rColabs.ok)  ? await rColabs.json()  : [];
-      const rawSaidas:  any[] = (rSaidas  && rSaidas.ok)  ? await rSaidas.json()  : [];
-      const rawSaidasAnt: any[] = (rSaidasAnt && rSaidasAnt.ok) ? await rSaidasAnt.json() : [];
+      const dC = await rC.json();
+      const todosColabs: any[] = (Array.isArray(dC) ? dC : []).filter((c:any) => c.ativo !== false);
+      setFreelancers(todosColabs.filter((c:any) => c.tipoContrato === 'Freelancer'));
 
-      setSaidasAll([...rawSaidas, ...rawSaidasAnt]);
+      /* escalas */
+      const escalasAcc: any[] = [];
+      for (const r of esRs) { if (!r?.ok) continue; try { const d = await r.json(); if (Array.isArray(d)) escalasAcc.push(...d); } catch{} }
+      setEscalas(escalasAcc);
 
-      /* ── Filtros base ── */
-      const isMigrado   = (i: any) => i.migrado   === true || i.migrado   === 'True'   || i.migrado   === 'true';
-      const isEstornado = (i: any) => i.estornado === true || i.estornado === 'True'   || i.estornado === 'true';
+      /* folhasDB */
+      const folhasAcc: any[] = [];
+      for (const r of foRs) { if (!r?.ok) continue; try { const d = await r.json(); if (Array.isArray(d)) folhasAcc.push(...d); } catch{} }
+      setFolhasDB(folhasAcc);
 
-      /* ── Registros granulares JÁ SALVOS no DB ── */
-      const granulares = rawFolha.filter(i =>
-        i.tipo === 'freelancer-dia' && i.data && !isEstornado(i) && !isMigrado(i)
-      );
+      /* saídas — salvar em variáveis locais antes para passar ao calcular */
+      let saidasPer: any[] = [];
+      let saidasMesComp: any[] = [];
+      let saidasPendAnt: any[] = [];
+      if (rS?.ok) { const d = await rS.json(); saidasPer = Array.isArray(d)?d:[]; setSaidasPeriodo(saidasPer); } else setSaidasPeriodo([]);
+      if (rSMesResult?.ok) { const d = await rSMesResult.json(); saidasMesComp = Array.isArray(d)?d:[]; setSaidasMesCompleto(saidasMesComp); } else setSaidasMesCompleto([]);
+      if (rSPend?.ok) { const d = await rSPend.json(); saidasPendAnt = (Array.isArray(d)?d:[]).filter((s:any)=>s.pago===false); setSaidasPendentesAnt(saidasPendAnt); } else setSaidasPendentesAnt([]);
 
-      /* ── Index: colabId → Set<"data-turno"> já pago ── */
-      const turnosPagosPorColab: Record<string, Set<string>> = {};
-      for (const reg of granulares) {
-        if (!reg.colaboradorId || !reg.data) continue;
-        const cid = reg.colaboradorId;
-        if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Set();
-        if (reg.pago) {
-          const turnos = reg.turno === 'DiaNoite'
-            ? ['Dia', 'Noite']
-            : [reg.turno || 'Dia'];
-          for (const t of turnos) turnosPagosPorColab[cid].add(`${reg.data}-${t}`);
+      /* saldos especiais */
+      let saldos: Record<string,number> = {};
+      if (rSHist?.ok) {
+        const hist: any[] = await rSHist.json();
+        for (const s of hist) {
+          const tipo = s.tipo||s.origem||s.referencia||''; const cid = s.colaboradorId||s.colabId; if (!cid) continue;
+          if (tipo==='Adiantamento Especial') saldos[cid]=(saldos[cid]||0)+(parseFloat(s.valor)||0);
+          else if (tipo==='Desconto Adiantamento Especial') saldos[cid]=(saldos[cid]||0)-(parseFloat(s.valor)||0);
         }
+        Object.keys(saldos).forEach(k => { if (saldos[k]<=0) delete saldos[k]; });
       }
-
-      /* ── Index: colabId → Set<"data-turno"> pendente (salvo no DB mas não pago) ── */
-      const turnosPendentesPorColab: Record<string, Set<string>> = {};
-      for (const reg of granulares) {
-        if (!reg.colaboradorId || !reg.data || reg.pago) continue;
-        const cid = reg.colaboradorId;
-        if (!turnosPendentesPorColab[cid]) turnosPendentesPorColab[cid] = new Set();
-        const turnos = reg.turno === 'DiaNoite'
-          ? ['Dia', 'Noite']
-          : [reg.turno || 'Dia'];
-        for (const t of turnos) turnosPendentesPorColab[cid].add(`${reg.data}-${t}`);
-      }
-
-      /* ── Freelancers: colaboradores com tipoContrato = 'freelancer' ── */
-      const freelancersColabs = rawColabs.filter((c: any) =>
-        (c.tipoContrato || '').toLowerCase() === 'freelancer'
+      setSaldosEspeciais(saldos);
+      calcularFechamentos(
+        todosColabs.filter((c:any)=>c.tipoContrato==='Freelancer'),
+        escalasAcc, folhasAcc,
+        saidasPer,
+        saidasPendAnt,
+        saldos
       );
-      /* DEBUG — aparece no console do navegador (F12 → Console) */
-      const dbg = {
-        mesAno,
-        totalColabs: rawColabs.length,
-        totalFreelancers: freelancersColabs.length,
-        freelancers: freelancersColabs.map((c: any) => ({ id: c.id, nome: c.nome, tipoContrato: c.tipoContrato })),
-        totalEscalas: rawEscalas.length,
-        totalFolhaDB: rawFolha.length,
-        granulares: granulares.length,
-        escalasDatas: rawEscalas.filter((e: any) =>
-          freelancersColabs.some((f: any) => f.id === e.colaboradorId)
-        ).slice(0, 8).map((e: any) => ({ data: e.data, colab: e.colaboradorId, presenca: e.presenca, turno: e.turno })),
-      };
-      console.log('[FreelancerPagamento] debug fetch', dbg);
-      setDebugInfo(dbg);
-
-      /* ── Calcular semanas do mês ── */
-      const semanas = semanasFechamento(ano, mes);
-
-      /* ── Para cada freelancer × semana, gerar grupo a partir das escalas ── */
-      const result: GrupoFreelancer[] = [];
-
-      for (const colab of freelancersColabs) {
-        const cid = colab.id;
-        const isTurnoPago   = (data: string, turno: string) =>
-          (turnosPagosPorColab[cid]   || new Set()).has(`${data}-${turno}`);
-        const isTurnoPendDB = (data: string, turno: string) =>
-          (turnosPendentesPorColab[cid] || new Set()).has(`${data}-${turno}`);
-
-        for (const { inicio, fim } of semanas) {
-          const isoIni = isoDate(inicio);
-          const isoFim = isoDate(fim);
-
-          /* Escalas desta semana para este freelancer */
-          const escsSemana = rawEscalas.filter((e: any) =>
-            e.colaboradorId === cid &&
-            e.data >= isoIni && e.data <= isoFim
-          );
-
-          /* Turnos confirmados (presença = 'presente') */
-          const turnosPresentes: { data: string; turno: string; valor: number }[] = [];
-          for (const esc of escsSemana) {
-            const vDia   = parseFloat(colab.valorDia   || '0') || 0;
-            const vNoite = parseFloat(colab.valorNoite || '0') || 0;
-
-            if (esc.turno === 'DiaNoite') {
-              const pDia   = esc.presenca       === 'presente';
-              const pNoite = esc.presencaNoite  === 'presente';
-              if (pDia)   turnosPresentes.push({ data: esc.data, turno: 'Dia',   valor: vDia   || 120 });
-              if (pNoite) turnosPresentes.push({ data: esc.data, turno: 'Noite', valor: vNoite || 120 });
-            } else if (esc.turno === 'Noite') {
-              const p = esc.presencaNoite === 'presente' || esc.presenca === 'presente';
-              if (p) turnosPresentes.push({ data: esc.data, turno: 'Noite', valor: vNoite || 120 });
-            } else {
-              /* Dia ou genérico */
-              if (esc.presenca === 'presente') {
-                turnosPresentes.push({ data: esc.data, turno: esc.turno || 'Dia', valor: vDia || 120 });
-              }
-            }
-          }
-
-          /* Turno pendentes = confirmados e NÃO pagos */
-          const turnosPendentes = turnosPresentes.filter(t => !isTurnoPago(t.data, t.turno));
-
-          /* Registros do DB para esta semana (para campos Opção B e pagamentoId) */
-          const regsSemana = granulares.filter((r: any) =>
-            r.colaboradorId === cid &&
-            r.data >= isoIni && r.data <= isoFim
-          );
-          const regsPagos = regsSemana.filter((r: any) => r.pago);
-          const regsPendentes = regsSemana.filter((r: any) => !r.pago);
-
-          /* Transporte: soma registros com tipoCodigo = 'transporte-freelancer' */
-          const diasTranspDB = granulares.filter((r: any) =>
-            r.colaboradorId === cid &&
-            r.data >= isoIni && r.data <= isoFim &&
-            r.tipoCodigo === 'transporte-freelancer'
-          );
-          const totalTransp = diasTranspDB.reduce((s: number, d: any) => s + (parseFloat(d.valor) || 0), 0);
-
-          /* Montar diasDobras: prioridade DB, fallback escalas */
-          let diasDobrasFinais: any[];
-          if (regsSemana.filter((r: any) => r.tipoCodigo !== 'transporte-freelancer').length > 0) {
-            /* DB tem dados → usar DB */
-            diasDobrasFinais = regsSemana.filter((r: any) => r.tipoCodigo !== 'transporte-freelancer');
-          } else {
-            /* Sem dados no DB → usar escalas calculadas */
-            diasDobrasFinais = turnosPresentes.map(t => ({
-              id: `esc_${cid}_${t.data}_${t.turno}`,
-              colaboradorId: cid,
-              nomeColaborador: colab.nome,
-              data: t.data,
-              turno: t.turno,
-              valor: t.valor,
-              pago: false,
-              semana: isoFim,
-              confiabilidade: 'estimado',
-              _deEscala: true,
-            }));
-          }
-
-          /* Pular semanas sem dados (nem DB nem escalas confirmadas) */
-          if (diasDobrasFinais.length === 0 && diasTranspDB.length === 0) continue;
-
-          /* Status de pagamento */
-          const algumPago  = regsPagos.length > 0 || turnosPresentes.some(t => isTurnoPago(t.data, t.turno));
-          const todosPagos = turnosPendentes.length === 0 && !turnosPendentes.some(t => isTurnoPendDB(t.data, t.turno));
-          const pago = todosPagos && algumPago && diasDobrasFinais.length > 0;
-          const pagoParcial = algumPago && !todosPagos;
-
-          /* Valores */
-          const totalDobras = diasDobrasFinais
-            .filter((d: any) => d.tipoCodigo !== 'transporte-freelancer')
-            .reduce((s: number, d: any) => s + (parseFloat(d.valor) || 0), 0);
-          const totalGrupo = totalDobras + totalTransp;
-
-          /* Campos Opção B: pegar do registro com valorLiquido */
-          const refComAudit = [...regsPagos, ...regsPendentes].find((r: any) =>
-            r.valorLiquido !== undefined && r.valorLiquido !== null
-          ) || regsPagos[0] || regsPendentes[0] || null;
-
-          /* pagamentoId do lote */
-          const refPgtoId = regsPagos[0]?.pagamentoId || regsPendentes[0]?.pagamentoId || null;
-          const dataPgto  = regsPagos[0]?.dataPagamento || null;
-
-          /* Semana label */
-          const semLabel = `${fmtDiaMes(isoIni)} – ${fmtDiaMes(isoFim)}`;
-          const confiab: 'real' | 'recalculado' | 'legado' =
-            regsSemana.some((r: any) => r.reconstituido) ? 'recalculado'
-            : regsSemana.length > 0 ? 'real'
-            : 'legado';
-
-          result.push({
-            id: `grp__${cid}__${isoFim}`,
-            colaboradorId: cid,
-            nomeColaborador: colab.nome || cid,
-            chavePix: colab.chavePix,
-            telefone: colab.telefone || colab.celular,
-            semana: isoFim,
-            semanaLabel: semLabel,
-            mes: mesAno,
-            pagamentoId: refPgtoId,
-            pago,
-            pagoParcial,
-            diasDobras: diasDobrasFinais,
-            diasTransp: diasTranspDB,
-            totalDobras,
-            totalTransp,
-            totalGrupo,
-            dataPagamento: dataPgto,
-            formaPagamento: refComAudit?.formaPagamento || colab.formaPagamento || 'PIX',
-            confiabilidade: confiab,
-            valorLiquido:    refComAudit?.valorLiquido    ?? null,
-            valorDescSaidas: refComAudit?.valorDescSaidas ?? null,
-            valorAbatEsp:    refComAudit?.valorAbatEsp    ?? null,
-            obsAudit:        refComAudit?.obs             || '',
-            logPagamentos:   refComAudit?.logPagamentos   || [],
-            raw: {
-              diasDobras: diasDobrasFinais,
-              diasTransp: diasTranspDB,
-              valorLiquido:    refComAudit?.valorLiquido    ?? null,
-              valorDescSaidas: refComAudit?.valorDescSaidas ?? null,
-              valorAbatEsp:    refComAudit?.valorAbatEsp    ?? null,
-              obsAudit:        refComAudit?.obs             || '',
-            },
-          } as GrupoFreelancer);
-        }
-      }
-
-      /* ── Grupos do DB com pagamentoId explícito (lotes granulares processados) ── */
-      /* Mesclar: se já existe grupo da escala para mesma semana+colab, atualizar com dados do DB */
-      const grpPorChave: Record<string, GrupoFreelancer> = {};
-      for (const g of result) grpPorChave[g.id] = g;
-
-      /* Adicionar grupos do DB que não vieram de escalas (freelancers sem tipoContrato='freelancer' no colab) */
-      const grpMap: Record<string, any[]> = {};
-      for (const reg of granulares) {
-        const semFim = reg.semana || reg.data?.substring(0, 10) || '';
-        const key = reg.pagamentoId
-          ? `pgto__${reg.pagamentoId}`
-          : `sem__${reg.colaboradorId}__${semFim}`;
-        if (!grpMap[key]) grpMap[key] = [];
-        grpMap[key].push(reg);
-      }
-
-      for (const [, dias] of Object.entries(grpMap)) {
-        const ref = dias[0];
-        const cid = ref.colaboradorId;
-        const semFim = ref.semana || ref.data?.substring(0, 10) || '';
-        const grpKey = `grp__${cid}__${semFim}`;
-
-        /* Se já existe grupo calculado das escalas, pular (já tem os dados) */
-        if (grpPorChave[grpKey]) continue;
-        /* Se o colaborador é freelancer mas a semana caiu fora do mês atual, incluir */
-
-        const pagos = dias.filter(d => d.pago === true);
-        const pends = dias.filter(d => d.pago !== true);
-        const algumPago  = pagos.length > 0;
-        const todosPagos = pends.length === 0;
-        const diasDobras = dias.filter(d =>
-          !d.tipoCodigo || d.tipoCodigo === 'freelancer-dia' || d.tipoCodigo === 'freelancer-noite'
-        );
-        const diasTransp = dias.filter(d => d.tipoCodigo === 'transporte-freelancer');
-        const totalDobras = diasDobras.reduce((s, d) => s + (parseFloat(d.valor) || 0), 0);
-        const totalTransp = diasTransp.reduce((s, d) => s + (parseFloat(d.valor) || 0), 0);
-        const totalGrupo  = totalDobras + totalTransp;
-        const refComAudit = dias.find((d: any) => d.valorLiquido !== undefined && d.valorLiquido !== null)
-          || dias.find((d: any) => /L[íi]quido/i.test(d.obs || ''))
-          || ref;
-
-        const semFimD = semFim ? new Date(semFim + 'T12:00:00') : null;
-        const semIniD = semFimD ? new Date(semFimD) : null;
-        if (semIniD) semIniD.setDate(semIniD.getDate() - 6);
-        const semLabel = semIniD
-          ? `${fmtDiaMes(semIniD.toISOString().split('T')[0])} – ${fmtDiaMes(semFim)}`
-          : semFim;
-
-        /* Buscar nome no colab */
-        const colab = rawColabs.find((c: any) => c.id === cid);
-
-        result.push({
-          id: grpKey,
-          colaboradorId: cid,
-          nomeColaborador: colab?.nome || ref.nomeColaborador || cid,
-          chavePix: colab?.chavePix || ref.chavePix,
-          telefone: colab?.telefone || colab?.celular || ref.telefone,
-          semana: semFim,
-          semanaLabel: semLabel,
-          mes: ref.mes || mesAno,
-          pagamentoId: ref.pagamentoId || null,
-          pago: todosPagos && algumPago,
-          pagoParcial: algumPago && !todosPagos,
-          diasDobras,
-          diasTransp,
-          totalDobras,
-          totalTransp,
-          totalGrupo,
-          dataPagamento: pagos[0]?.dataPagamento || null,
-          formaPagamento: ref.formaPagamento || 'PIX',
-          confiabilidade: dias.some((d: any) => d.reconstituido) ? 'recalculado' : 'real',
-          valorLiquido:    refComAudit.valorLiquido    ?? null,
-          valorDescSaidas: refComAudit.valorDescSaidas ?? null,
-          valorAbatEsp:    refComAudit.valorAbatEsp    ?? null,
-          obsAudit:        refComAudit.obs             || '',
-          logPagamentos:   ref.logPagamentos           || [],
-          raw: {
-            diasDobras, diasTransp,
-            valorLiquido: refComAudit.valorLiquido ?? null,
-            valorDescSaidas: refComAudit.valorDescSaidas ?? null,
-            valorAbatEsp: refComAudit.valorAbatEsp ?? null,
-            obsAudit: refComAudit.obs || '',
-          },
-        } as GrupoFreelancer);
-      }
-
-      result.sort((a, b) => {
-        const nc = a.nomeColaborador.localeCompare(b.nomeColaborador);
-        return nc !== 0 ? nc : (b.semana || '').localeCompare(a.semana || '');
-      });
-      setGrupos(result);
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error('[FreelancerPagamento] fetch error', e); }
     finally { setLoading(false); }
-  }, [mesAno, unitId]);
-
-  useEffect(() => { carregar(); }, [carregar]);
-
-  /* ── Toggle expand ── */
-  const toggleExp = (id: string) =>
-    setExpandidos(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  /* ── Filtrar grupos ── */
-  const gruposFiltrados = grupos.filter(g => {
-    if (filtroPago === 'pago'     && !g.pago)  return false;
-    if (filtroPago === 'pendente' && g.pago)   return false;
-    if (filtroColab && !g.nomeColaborador.toLowerCase().includes(filtroColab.toLowerCase())) return false;
-    return true;
-  });
-
-  /* ── Saídas de consumo ligadas a um grupo ── */
-  const EXCLUIR_DO_PIX = new Set(['Desconto Transporte', 'Desconto Adiantamento Especial']);
-  const saidasDoGrupo = (g: GrupoFreelancer) => {
-    const semFim = g.semana || '';
-    const semFimD = semFim ? new Date(semFim + 'T12:00:00') : null;
-    const semIniD = semFimD ? new Date(semFimD) : null;
-    if (semIniD) semIniD.setDate(semIniD.getDate() - 7);
-    const semIni = semIniD ? semIniD.toISOString().split('T')[0] : '';
-    return saidasAll.filter(s => {
-      if (s.colaboradorId !== g.colaboradorId) return false;
-      if (EXCLUIR_DO_PIX.has(s.tipo || s.origem || '')) return false;
-      if (g.pagamentoId && s.pagamentoIdLigado) return s.pagamentoIdLigado === g.pagamentoId;
-      return (s.dataPagamento ?? '') >= semIni && (s.dataPagamento ?? '') <= semFim;
-    });
-  };
-  const abatDoGrupo = (g: GrupoFreelancer) => {
-    const semFim = g.semana || '';
-    const semFimD = semFim ? new Date(semFim + 'T12:00:00') : null;
-    const semIniD = semFimD ? new Date(semFimD) : null;
-    if (semIniD) semIniD.setDate(semIniD.getDate() - 7);
-    const semIni = semIniD ? semIniD.toISOString().split('T')[0] : '';
-    return saidasAll.filter(s => {
-      if (s.colaboradorId !== g.colaboradorId) return false;
-      if ((s.tipo || s.origem || '') !== 'Desconto Adiantamento Especial') return false;
-      if (g.pagamentoId && s.pagamentoIdLigado) return s.pagamentoIdLigado === g.pagamentoId;
-      return (s.dataPagamento ?? '') >= semIni && (s.dataPagamento ?? '') <= semFim;
-    });
   };
 
-  /* ── Styles ── */
+  useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno, periodoIni, periodoFim]);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     calcularFechamentos — cópia fiel de calcularFechamentosFreelancer da FolhaPagamento
+  ═══════════════════════════════════════════════════════════════════════════ */
+  const calcularFechamentos = (
+    frs: any[],
+    escs: any[],
+    fDB: any[],
+    saidasPer: any[],
+    saidasPendAnt: any[],
+    saldos: Record<string,number>
+  ) => {
+    if (!frs.length) { setFechamentos([]); return; }
+
+    let semanas: { inicio: Date; fim: Date }[];
+    if (periodoCustomAtivo) {
+      semanas = [{ inicio: new Date(periodoIni+'T00:00:00'), fim: new Date(periodoFim+'T00:00:00') }];
+    } else {
+      const [ano, mes] = mesAno.split('-').map(Number);
+      semanas = semanasFechamento(ano, mes);
+    }
+
+    /* index dias já pagos */
+    const diasPagosPorColab: Record<string, Set<string>> = {};
+    const turnosPagosPorColab: Record<string, Map<string,{valor:number;dataPagamento:string;forma:string}>> = {};
+    for (const reg of fDB) {
+      if (!reg.colaboradorId || !reg.pago) continue;
+      if (isMigradoReg(reg) || isEstornadoReg(reg)) continue;
+      const cid = reg.colaboradorId;
+      if (!diasPagosPorColab[cid]) diasPagosPorColab[cid] = new Set();
+      if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Map();
+      if (typeof reg.id==='string' && reg.id.startsWith('folha-') && reg.data && reg.turno) {
+        diasPagosPorColab[cid].add(reg.data);
+        turnosPagosPorColab[cid].set(`${reg.data}-${reg.turno}`,{valor:R(reg.valor),dataPagamento:reg.dataPagamento||'',forma:reg.formaPagamento||'PIX'});
+        continue;
+      }
+      if (Array.isArray(reg.diasPagos)) {
+        for (const dp of reg.diasPagos) {
+          if (!dp?.data) continue;
+          diasPagosPorColab[cid].add(dp.data);
+          const turnos = (dp.turno==='DiaNoite'||dp.turno==='DN')?['Dia','Noite']:[dp.turno||'Dia'];
+          for (const t of turnos) turnosPagosPorColab[cid].set(`${dp.data}-${t}`,{valor:R(dp.valor)/turnos.length,dataPagamento:reg.dataPagamento||'',forma:reg.formaPagamento||'PIX'});
+        }
+      }
+    }
+
+    /* adiantamentos de transporte por colab */
+    const calcTransporteAdiantado = (frId: string, isoIni: string, isoFim: string, saidasUsadas: any[]): number => {
+      return saidasUsadas.filter((s:any) => {
+        const t = s.tipo||s.origem||s.referencia||'';
+        return s.colaboradorId===frId && t==='Adiantamento Transporte' && (s.dataPagamento||s.data||'')>=isoIni && (s.dataPagamento||s.data||'')<=isoFim;
+      }).reduce((acc:number,s:any)=>acc+R(s.valor),0);
+    };
+
+    const result: any[] = semanas.map(({inicio,fim}) => {
+      const isoInicioBase = fmtDataISO(inicio);
+      const isoFimBase    = fmtDataISO(fim);
+      const efBase = periodoCustomAtivo ? {} : (editFechamento[isoFimBase]||{});
+      const isoInicio = (efBase as any).dataIniCustom || isoInicioBase;
+      const isoFim2   = (efBase as any).dataFimCustom || isoFimBase;
+      const [iniD,iniM] = isoInicio.split('-').slice(1).map(Number);
+      const [fimD,fimM] = isoFim2.split('-').slice(1).map(Number);
+      const semLabel = periodoCustomAtivo
+        ? `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} - ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')} (período custom)`
+        : `${String(iniD).padStart(2,'0')}/${String(iniM).padStart(2,'0')} - ${String(fimD).padStart(2,'0')}/${String(fimM).padStart(2,'0')}`;
+
+      /* saídas do mês inteiro para cálculo de transporte adiantado */
+      const [ano2,mes2] = mesAno.split('-').map(Number);
+      const mesIni2 = `${mesAno}-01`;
+      const mesFim2 = new Date(ano2,mes2,0).toISOString().split('T')[0];
+      const saidasTranspMes = periodoCustomAtivo ? saidasPer : (saidasMesCompleto.length>0?saidasMesCompleto:saidasPer);
+
+      const frList = frs.map((fr:any) => {
+        const cid = fr.id;
+        const vDia   = R(fr.valorDia);
+        const vNoite = R(fr.valorNoite);
+        const vDobra = R(fr.valorDobra) || 120;
+        const usaTurno = vDia>0 || vNoite>0;
+
+        /* is turno pago */
+        const isTurnoPago = (data:string, turno:string) => (turnosPagosPorColab[cid]||new Map()).has(`${data}-${turno}`);
+
+        /* escalas desta semana */
+        const escsSemana = escs.filter((e:any) => e.colaboradorId===cid && e.data>=isoInicio && e.data<=isoFim2);
+
+        /* expandir em unidades de turno */
+        type TU = {data:string;turno:string;valor:number};
+        const turnosUnidade: TU[] = [];
+        for (const esc of escsSemana) {
+          if (esc.turno==='DiaNoite') {
+            const pD = esc.presenca==='presente', pN = esc.presencaNoite==='presente';
+            if (pD) turnosUnidade.push({data:esc.data, turno:'Dia',   valor:usaTurno?vDia:vDobra});
+            if (pN) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+          } else if (esc.turno==='Noite') {
+            const p = esc.presencaNoite==='presente'||esc.presenca==='presente';
+            if (p) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+          } else {
+            if (esc.presenca==='presente') turnosUnidade.push({data:esc.data, turno:esc.turno||'Dia', valor:usaTurno?vDia:vDobra});
+          }
+        }
+        const escPendentes  = turnosUnidade.filter(u => !isTurnoPago(u.data,u.turno));
+        const escJaPagas    = turnosUnidade.filter(u =>  isTurnoPago(u.data,u.turno));
+
+        /* diasPagos = pendentes; diasJaPagosDetalhe = já pagos */
+        const diasPagos: {data:string;turno:string;valor:number}[] = escPendentes.map(u=>({data:u.data,turno:u.turno,valor:u.valor}));
+        const diasJaPagosDetalhe: {data:string;turno:string;valor:number}[] = escJaPagas.map(u=>({
+          data:u.data, turno:u.turno,
+          valor: turnosPagosPorColab[cid]?.get(`${u.data}-${u.turno}`)?.valor ?? u.valor,
+        }));
+
+        const total       = diasPagos.reduce((s,d)=>s+d.valor,0);
+        const totalJaPago = diasJaPagosDetalhe.reduce((s,d)=>s+d.valor,0);
+        const totalBrutoPeriodo = total + totalJaPago;
+        const dobras      = diasPagos.length;
+        const diasCodigo  = [...new Set(diasPagos.map(d=>d.data))].sort().map(d=>{
+          const dd=new Date(d+'T12:00:00'); return `${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()]} ${d.substring(8,10)}/${d.substring(5,7)}`;
+        }).join(', ');
+        const diasTrabalhados = new Set(escPendentes.map(u=>u.data)).size;
+
+        /* transporte */
+        const valorTransp = R(fr.valorTransporte);
+        const transpAdtMes   = calcTransporteAdiantado(cid, mesIni2, mesFim2, saidasTranspMes);
+        /* calcular quanto já foi "consumido" em semanas anteriores desta semana */
+        const semAntsDB = fDB.filter((f:any)=>
+          f.colaboradorId===cid && f.tipo==='freelancer-dia' && f.pago &&
+          !isMigradoReg(f) && !isEstornadoReg(f) &&
+          f.data >= isoInicio && f.data < isoFim2
+        );
+        const diasAntsUnicos = new Set(semAntsDB.map((f:any)=>f.data)).size;
+        const transpSemsAnt  = 0; // simplificado: mês inteiro já cobre
+        void diasAntsUnicos; void transpSemsAnt;
+        const transp          = valorTransp>0 ? diasTrabalhados * valorTransp : 0;
+        const transp_adt      = Math.min(transpAdtMes, transp);
+        const transp_saldo    = Math.max(0, transp - transp_adt);
+
+        /* saídas desconto da semana */
+        const TIPOS_DESC = new Set(['A pagar','A receber','Consumo Interno','Desconto Adiantamento Especial']);
+        const saidasDescFr = saidasPer.filter((s:any) => {
+          const t = s.tipo||s.origem||s.referencia||'';
+          const dt = s.dataPagamento||s.data||'';
+          return s.colaboradorId===cid && TIPOS_DESC.has(t) && dt>=isoInicio && dt<=isoFim2;
+        });
+        const saidasDesconto = saidasDescFr.reduce((s:number,x:any)=>s+R(x.valor),0);
+        const saidasDetalhe  = saidasDescFr.map((s:any)=>({descricao:s.descricao||s.tipo||'Desconto',valor:R(s.valor),data:s.dataPagamento||s.data||''}));
+
+        /* pendentes anteriores */
+        const pendentesAnteriores = saidasPendAnt.filter((s:any)=>s.colaboradorId===cid);
+
+        /* saldo especial */
+        const saldoEspecialAberto = saldos[cid] || 0;
+
+        /* total líquido */
+        const totalLiquido = Math.max(0, total + transp_saldo - saidasDesconto);
+
+        /* pago? */
+        const pago = diasJaPagosDetalhe.length>0 && dobras===0;
+        const pagoParcial = diasJaPagosDetalhe.length>0 && dobras>0;
+
+        if (dobras===0 && diasJaPagosDetalhe.length===0) return null;
+
+        return {
+          id: cid, nome: fr.nome, chavePix: fr.chavePix, telefone: fr.telefone||fr.celular,
+          valorDia: vDia, valorNoite: vNoite, valorDobra: vDobra, valorTransporte: valorTransp,
+          dobras, diasCodigo, diasTrabalhados,
+          total, totalJaPago, totalBrutoPeriodo,
+          diasPagos, diasJaPagosDetalhe,
+          totalTransporte: transp_saldo,
+          transporteAdiantado: transp_adt, transporteAdiantadoMes: transpAdtMes, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
+          saidasDesconto, saidasDetalhe,
+          totalLiquido, pago, pagoParcial,
+          pendentesAnteriores, saldoEspecialAberto,
+          periodoInicio: isoInicio, periodoFim: isoFim2,
+          caixinhaTotal: 0, caixinhaDetalhe: [],
+          isMotoboy: false,
+        };
+      }).filter(Boolean);
+
+      if (!frList.length) return null;
+      const totalSemana = frList.reduce((s:number,f:any)=>s+f.totalLiquido,0);
+      return {
+        semanaLabel: semLabel,
+        dataFechamento: isoFimBase,
+        dataFechamentoBase: isoFimBase,
+        dataInicioBase: isoInicio,
+        dataFimEfetivo: isoFim2,
+        freelancers: frList,
+        totalSemana,
+        totalCaixinha: 0, totalTransporte: 0, totalCombustivel: 0, totalExtra: 0, totalDesconto: 0, totalSaidasDesconto: 0, totalLiquido: totalSemana,
+      };
+    }).filter(Boolean);
+
+    setFechamentos(result);
+  };
+
+  /* recalcular quando deps mudam */
+  useEffect(() => {
+    if (freelancers.length>0) {
+      calcularFechamentos(freelancers, escalas, folhasDB, saidasPeriodo, saidasPendentesAnt, saldosEspeciais);
+    }
+  }, [freelancers, escalas, mesAno, periodoIni, periodoFim, saidasPendentesAnt, folhasDB, saidasPeriodo, editFechamento]);
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     Modal de Pagamento — cópia fiel do modal da FolhaPagamento
+  ═══════════════════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    if (!modalPgto) return;
+    const {fr, fech} = modalPgto;
+    setFormaPgto('PIX'); setFormaPix(''); setFormaDin(''); setCheckItems([]);
+    setAbaterEsp(fr.saldoEspecialAberto>0); setVlAbat('');
+    setDataLocalPgto(new Date().toISOString().split('T')[0]);
+
+    const buildChecklist = (saidasFrescas: any[]) => {
+      const TIPOS_DESC = ['A pagar','A receber','Consumo Interno','Desconto Adiantamento Especial'];
+      const TIPOS_CAIX = ['Caixinha'];
+      const saidaData = (s:any) => s.dataPagamento||s.data||'';
+      const rangeIni = fech.dataInicioBase;
+      const rangeFim = fech.dataFimEfetivo||fech.dataFechamentoBase;
+      const descFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_DESC.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
+      const caixFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
+      const obsValor = (fr.valorDia>0||fr.valorNoite>0) ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite` : `R$${fmt(fr.valorDobra)}/dobra`;
+      const totalTransp = fr.diasTrabalhados * R(fr.valorTransporte);
+      const transpAdto  = Math.min(fr.transporteAdiantado, totalTransp);
+      const transpLabel = totalTransp>0
+        ? (fr.transporteAdiantado>0
+           ? `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransp)}${transpAdto>0?` — coberto pelo adto (R$${fmt(transpAdto)}) — saldo: R$${fmt(fr.transporteSaldo)}`:''}` 
+           : `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransp)}`)
+        : '';
+      const items: any[] = [
+        { key:'dobras', label:`Dobras (${fr.dobras}× ${obsValor})`, valor:fr.total, tipo:'credito', checked:true },
+        ...(totalTransp>0?[{key:'transporte',label:transpLabel,valor:fr.transporteSaldo,tipo:'credito',checked:fr.transporteSaldo>0}]:[]),
+        ...caixFr.map((d:any,i:number)=>({key:`caix_${i}`,label:`🪙 Caixinha: ${d.descricao||'Gorjeta'} (${saidaData(d)})`,valor:R(d.valor),tipo:'credito',checked:true})),
+        ...descFr.map((d:any,i:number)=>({key:`desc_${i}`,label:`🔴 Desconto: ${d.descricao||d.tipo||'Desconto'} (${saidaData(d)})`,valor:R(d.valor),tipo:'debito',checked:true})),
+        ...(fr.pendentesAnteriores||[]).map((p:any,i:number)=>({
+          key:`pend_${i}`,
+          label:`⏳ Pendente anterior: [${p.tipo||p.origem}] ${p.descricao||''} (${(p.dataPagamento||p.data||'').substring(0,10)})`,
+          valor:R(p.valor),tipo:'debito',checked:false,
+        })),
+      ];
+      setCheckItems(items);
+    };
+
+    const [ano3,mes3] = mesAno.split('-').map(Number);
+    const dI3 = `${mesAno}-01`, dF3 = new Date(ano3,mes3,0).toISOString().split('T')[0];
+    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dI3}&dataFim=${dF3}`,{headers:{Authorization:`Bearer ${token()}`}})
+      .then(r=>r.ok?r.json():[]).then(buildChecklist).catch(()=>buildChecklist(saidasPeriodo));
+  }, [modalPgto]);
+
+  const totalSelecionado = checkItems.reduce((s,it)=>it.checked?(it.tipo==='credito'?s+it.valor:s-it.valor):s, 0);
+  const vlAbateN = abaterEsp ? (parseFloat(vlAbat)||0) : 0;
+  const totalDesembolsar = Math.max(0, totalSelecionado - vlAbateN);
+  const toggleItem = (key:string) => setCheckItems(prev=>prev.map(it=>it.key===key?{...it,checked:!it.checked}:it));
+
+  const confirmarPagamento = async () => {
+    if (!modalPgto) return;
+    const {fr, fech} = modalPgto;
+    setModalPgto(null); setSalvando(true);
+    try {
+      const creditoItems = checkItems.filter(it=>it.checked&&it.tipo==='credito');
+      const debitoItems  = checkItems.filter(it=>it.checked&&it.tipo==='debito');
+      const totalCredito = creditoItems.reduce((s:number,it:any)=>s+it.valor,0);
+      const totalDebito  = debitoItems.reduce((s:number,it:any)=>s+it.valor,0);
+      const vlAbate      = abaterEsp?(parseFloat(vlAbat)||0):0;
+      const inclTransp   = checkItems.find(it=>it.key==='transporte')?.checked??false;
+      const inclDobras   = checkItems.find(it=>it.key==='dobras')?.checked??false;
+      const caixinhaChecked = checkItems.filter(it=>it.checked&&it.key.startsWith('caix_')).reduce((s:number,it:any)=>s+it.valor,0);
+      void totalCredito; void totalDebito;
+
+      const diasParaPagar: {data:string;turno:string;valor:number;tipoCodigo:string}[] = [];
+      if (inclDobras && fr.diasPagos) {
+        for (const dp of fr.diasPagos) {
+          const turno = dp.turno||'Dia';
+          if (turno==='DiaNoite'||turno==='DN') {
+            diasParaPagar.push({data:dp.data,turno:'Dia',  valor:R(fr.valorDia)||dp.valor/2,tipoCodigo:'freelancer-dia'});
+            diasParaPagar.push({data:dp.data,turno:'Noite',valor:R(fr.valorNoite)||dp.valor/2,tipoCodigo:'freelancer-noite'});
+          } else {
+            diasParaPagar.push({data:dp.data,turno,valor:dp.valor,tipoCodigo:turno==='Dia'?'freelancer-dia':'freelancer-noite'});
+          }
+        }
+      }
+
+      const valorBrutoDobras  = diasParaPagar.reduce((s:number,d:any)=>s+d.valor,0);
+      const valorTranspSaldo  = (inclTransp&&fr.transporteSaldo>0)?fr.transporteSaldo:0;
+      const valorBrutoLote    = valorBrutoDobras + valorTranspSaldo + caixinhaChecked;
+      const valorDescSaidas   = totalDebito;
+      const valorAbatEsp2     = vlAbate;
+      const valorLiquido      = Math.max(0, valorBrutoLote - valorDescSaidas - valorAbatEsp2);
+      const obsLabel = (fr.valorDia>0||fr.valorNoite>0)?`D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`:`R$${fmt(fr.valorDobra)}/dobra`;
+
+      const payload = {
+        colaboradorId:fr.id, mes:mesAno, semana:fech.dataFechamento, unitId, pago:true,
+        dataPagamento:dataLocalPgto, formaPagamento:formaPgto, dias:diasParaPagar,
+        ...auditoriaCampos(),
+        valorBruto:valorBrutoLote, valorDescSaidas, valorAbatEsp:valorAbatEsp2, valorLiquido,
+        obs:`Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaPgto}${fr.transporteAdiantado>0?` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}`:''}${caixinhaChecked>0?` - Caixinha: +R$${fmt(caixinhaChecked)}`:''}${totalDebito>0?` - Desc. saídas: R$${fmt(totalDebito)}`:''}${vlAbate>0?` - Abat. adto.esp.: R$${fmt(vlAbate)}`:''} - Líquido: R$${fmt(valorLiquido)}`,
+      };
+      const resp = await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify(payload)});
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const respData = await resp.json();
+      const pagamentoIdGerado: string = respData.pagamentoId||'';
+
+      if (inclTransp && fr.transporteSaldo>0) {
+        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:true,
+          dataPagamento:dataLocalPgto,formaPagamento:formaPgto,pagamentoId:pagamentoIdGerado,
+          ...auditoriaCampos(),valorBruto:valorBrutoLote,valorDescSaidas,valorAbatEsp:valorAbatEsp2,valorLiquido,
+          dias:[{data:fech.dataFechamento,turno:'Transporte',valor:fr.transporteSaldo,tipoCodigo:'transporte-freelancer'}],
+          obs:`Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length||0} dias - R$${fmt(fr.transporteSaldo)}`,
+        })});
+      }
+
+      /* Desconto Transporte automático por dia */
+      if (R(fr.valorTransporte)>0 && inclDobras && fr.diasPagos?.length>0) {
+        const diasUnicos = Array.from(new Set(fr.diasPagos.map((dp:any)=>dp.data))).sort() as string[];
+        let saldoDisp = R(fr.transporteAdiantado);
+        for (const data of diasUnicos) {
+          const excede = saldoDisp < R(fr.valorTransporte);
+          await fetch(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+            unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
+            tipo:'Desconto Transporte',origem:'Desconto Transporte',referencia:'Desconto Transporte',
+            descricao:`Transporte do dia ${data} (consumo do adto.)`,valor:R(fr.valorTransporte),
+            dataPagamento:data,data,pago:true,excedeAdto:excede,pagamentoIdLigado:pagamentoIdGerado,
+            obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}`,
+            updatedAt:new Date().toISOString(),
+          })});
+          saldoDisp = Math.max(0, saldoDisp - R(fr.valorTransporte));
+        }
+      }
+
+      /* Abatimento especial automático */
+      if (abaterEsp && vlAbate>0) {
+        await fetch(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
+          tipo:'Desconto Adiantamento Especial',origem:'Desconto Adiantamento Especial',referencia:'Desconto Adiantamento Especial',
+          descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`,valor:vlAbate,
+          dataPagamento:dataLocalPgto,data:dataLocalPgto,pago:true,
+          obs:`Abatido no pagamento da semana ${fech.semanaLabel}`,updatedAt:new Date().toISOString(),
+        })});
+      }
+
+      await carregarDados();
+    } catch(err) { alert('Erro ao salvar pagamento: '+err); }
+    finally { setSalvando(false); }
+  };
+
+  /* desfazer pagamento */
+  const desfazerPagamento = async (fr: any, fech: any) => {
+    if (!window.confirm(`Desfazer pagamento de ${fr.nome} — semana ${fech.semanaLabel}?`)) return;
+    setSalvando(true);
+    try {
+      const diasPagosNovos = folhasDB.filter((f:any)=>
+        f.colaboradorId===fr.id && f.tipo==='freelancer-dia' &&
+        f.data>=fech.dataInicioBase && f.data<=fech.dataFechamento && f.pago
+      );
+      if (diasPagosNovos.length>0) {
+        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,
+          dias:diasPagosNovos.map((d:any)=>({data:d.data,turno:d.turno,valor:d.valor})),
+        })});
+      } else {
+        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[],
+        })});
+      }
+      await carregarDados();
+    } catch(err){ alert('Erro: '+err); }
+    finally{ setSalvando(false); }
+  };
+
+  /* ─── Styles ── */
   const s = {
-    card:  { backgroundColor: 'white', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,.06)' },
-    th:    { backgroundColor: '#1565c0', color: 'white', padding: '9px 8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'left' as const },
-    thC:   { backgroundColor: '#1565c0', color: 'white', padding: '9px 8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'center' as const },
-    thR:   { backgroundColor: '#1565c0', color: 'white', padding: '9px 8px', fontSize: '12px', whiteSpace: 'nowrap' as const, textAlign: 'right' as const },
-    td:    { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const },
-    tdC:   { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'center' as const },
-    tdR:   { padding: '8px', borderBottom: '1px solid #f0f0f0', fontSize: '12px', verticalAlign: 'middle' as const, textAlign: 'right' as const },
-    tab:   (a: boolean) => ({
-      padding: '10px 18px', border: 'none', cursor: 'pointer', fontWeight: 'bold' as const,
-      borderRadius: '4px 4px 0 0',
-      backgroundColor: a ? '#1976d2' : '#e0e0e0',
-      color: a ? 'white' : '#333',
-    }),
-    input: { padding: '8px 10px', border: '1px solid #ccc', borderRadius: '6px', fontSize: '13px' },
-    select:{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: '6px', fontSize: '13px' },
-    btn:   (bg: string) => ({ padding: '7px 14px', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold' as const, cursor: 'pointer', backgroundColor: bg, color: 'white' }),
+    card:  { backgroundColor:'white', border:'1px solid #e0e0e0', borderRadius:'8px', padding:'16px', boxShadow:'0 2px 4px rgba(0,0,0,.06)' },
+    th:    { backgroundColor:'#c2185b', color:'white', padding:'8px 10px', fontSize:'12px', whiteSpace:'nowrap' as const, textAlign:'left' as const },
+    td:    { padding:'8px 10px', borderBottom:'1px solid #fce4ec', fontSize:'12px', verticalAlign:'middle' as const },
+    input: { padding:'7px 10px', border:'1px solid #ccc', borderRadius:'6px', fontSize:'13px', width:'100%', boxSizing:'border-box' as const },
+    label: { display:'block' as const, fontSize:'11px', fontWeight:'bold' as const, color:'#666', marginBottom:'3px' },
+    btn:   (bg:string) => ({ padding:'8px 14px', border:'none', borderRadius:'6px', fontSize:'12px', fontWeight:'bold' as const, cursor:'pointer', backgroundColor:bg, color:'white' }),
+    badge: (bg:string,cl:string) => ({ padding:'3px 10px', borderRadius:'10px', fontSize:'11px', fontWeight:'bold' as const, backgroundColor:bg, color:cl }),
   };
 
-  /* ── Totais ── */
-  const totalGrupos   = gruposFiltrados.length;
-  const totalBruto    = gruposFiltrados.reduce((s, g) => s + g.totalGrupo, 0);
-  const totalPendente = gruposFiltrados.filter(g => !g.pago).reduce((s, g) => s + g.totalGrupo, 0);
-  const qtdPago       = gruposFiltrados.filter(g => g.pago).length;
-  const qtdPendente   = gruposFiltrados.filter(g => !g.pago).length;
+  /* totais */
+  const totalFreelancerMes = fechamentos.reduce((s:number,f:any)=>s+(f?.totalLiquido||0),0);
 
-  /* ═══════════════════════════════════════════════════════════════════════ */
-  /* RENDER                                                                  */
-  /* ═══════════════════════════════════════════════════════════════════════ */
+  /* ═══════════════════════════════════════════════════════════════════════════
+     RENDER
+  ═══════════════════════════════════════════════════════════════════════════ */
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight:'100vh', backgroundColor:'#f5f5f5', display:'flex', flexDirection:'column' }}>
       <Header title="Pagamento de Freelancers" />
-      <main style={{ flex: 1, maxWidth: '1400px', margin: '0 auto', padding: '20px 16px', width: '100%' }}>
-
-        {/* ── Cabeçalho ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/modulos')}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1976d2', fontSize: '20px' }} title="Voltar">←</button>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '20px', color: '#1565c0' }}>🎯 Pagamento de Freelancers</h2>
-            <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
-              Auditoria, descontos e confirmação de pagamento PIX/Dinheiro
+      {/* Modal pagamento */}
+      {modalPgto && (() => {
+        const {fr, fech} = modalPgto;
+        const totalTranspSemana = fr.diasTrabalhados * R(fr.valorTransporte);
+        return (
+          <div style={{position:'fixed',inset:0,backgroundColor:'rgba(0,0,0,.55)',zIndex:10002,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setModalPgto(null)}>
+            <div style={{...s.card,maxWidth:'520px',width:'96%',maxHeight:'92vh',overflowY:'auto',padding:'24px'}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}}>
+                <h3 style={{margin:0,color:'#c2185b'}}>✅ Confirmar Pagamento Freelancer</h3>
+                <button onClick={()=>setModalPgto(null)} style={{background:'none',border:'none',fontSize:'20px',cursor:'pointer'}}>✕</button>
+              </div>
+              <div style={{backgroundColor:'#fce4ec',borderRadius:'6px',padding:'10px 14px',marginBottom:'14px',fontSize:'13px'}}>
+                <div style={{fontWeight:'bold',color:'#880e4f',fontSize:'15px'}}>{fr.nome}</div>
+                <div style={{color:'#c2185b',marginTop:'2px'}}>Semana {fech.semanaLabel}</div>
+                {fr.chavePix && <div style={{marginTop:'4px',fontSize:'12px',color:'#666'}}>💳 PIX: <strong>{fr.chavePix}</strong>
+                  <button onClick={()=>navigator.clipboard.writeText(fr.chavePix)} style={{marginLeft:'8px',padding:'1px 6px',fontSize:'10px',border:'none',borderRadius:'3px',backgroundColor:'#43a047',color:'white',cursor:'pointer'}}>📋</button></div>}
+              </div>
+              {(fr.transporteAdiantadoMes>0 || fr.totalTransporte>0) && (
+                <div style={{backgroundColor:'#e8f5e9',border:'1px solid #a5d6a7',borderLeft:'4px solid #388e3c',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',fontSize:'12px'}}>
+                  <div style={{fontWeight:'bold',color:'#2e7d32',fontSize:'13px',marginBottom:'6px'}}>🚗 Conta Transporte (saldo separado)</div>
+                  <div style={{color:'#1b5e20',lineHeight:'1.7',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 14px'}}>
+                    <div>📥 Adiantado no mês: <strong>{fmtMoeda(fr.transporteAdiantadoMes)}</strong></div>
+                    <div>🚗 Transp. desta semana: <strong>{fmtMoeda(totalTranspSemana)}</strong></div>
+                    <div>💰 Disponível: <strong style={{color:fr.transporteAdiantado>0?'#388e3c':'#c62828'}}>{fmtMoeda(fr.transporteAdiantado)}</strong></div>
+                    <div>🟢 Saldo a pagar: <strong>{fmtMoeda(fr.transporteSaldo)}</strong></div>
+                  </div>
+                </div>
+              )}
+              {/* checklist */}
+              <div style={{marginBottom:'14px'}}>
+                <div style={{fontSize:'12px',fontWeight:'bold',color:'#444',marginBottom:'8px'}}>☑️ Selecione os itens:</div>
+                <div style={{border:'1px solid #e0e0e0',borderRadius:'6px',overflow:'hidden'}}>
+                  {checkItems.map((item,i)=>(
+                    <label key={item.key} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 12px',cursor:'pointer',
+                      backgroundColor:item.checked?(item.tipo==='debito'?'#fff3e0':'#f1f8e9'):'#f9f9f9',
+                      borderBottom:i<checkItems.length-1?'1px solid #eee':'none'}}>
+                      <input type="checkbox" checked={item.checked} onChange={()=>toggleItem(item.key)} style={{width:'16px',height:'16px',cursor:'pointer',accentColor:item.tipo==='credito'?'#43a047':'#e65100'}} />
+                      <span style={{flex:1,fontSize:'12px',color:'#333'}}>{item.label}</span>
+                      <span style={{fontWeight:'bold',fontSize:'13px',minWidth:'80px',textAlign:'right',color:item.tipo==='credito'?'#2e7d32':'#c62828',opacity:item.checked?1:0.35}}>
+                        {item.tipo==='credito'?'+':'-'}{fmtMoeda(item.valor)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {/* total */}
+              <div style={{backgroundColor:totalSelecionado>=0?'#e8f5e9':'#ffebee',borderRadius:'6px',padding:'10px 14px',marginBottom:'14px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:'13px',fontWeight:'bold',color:'#444'}}>{vlAbateN>0?'🧾 Subtotal bruto:':'💰 Total a pagar:'}</span>
+                  <span style={{fontSize:vlAbateN>0?'15px':'20px',fontWeight:'bold',color:totalSelecionado>=0?'#2e7d32':'#c62828'}}>{fmtMoeda(Math.max(0,totalSelecionado))}</span>
+                </div>
+                {vlAbateN>0 && <>
+                  <div style={{display:'flex',justifyContent:'space-between',marginTop:'4px'}}>
+                    <span style={{fontSize:'12px',color:'#7c3aed'}}>➖ Abatimento adto. especial:</span>
+                    <span style={{fontSize:'13px',fontWeight:'bold',color:'#7c3aed'}}>-{fmtMoeda(vlAbateN)}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginTop:'6px',borderTop:'1px solid #c3d9c3',paddingTop:'6px'}}>
+                    <span style={{fontSize:'13px',fontWeight:'bold',color:'#444'}}>💰 A desembolsar:</span>
+                    <span style={{fontSize:'20px',fontWeight:'bold',color:'#2e7d32'}}>{fmtMoeda(totalDesembolsar)}</span>
+                  </div>
+                </>}
+              </div>
+              {/* abatimento especial */}
+              {(fr.saldoEspecialAberto||0)>0 && (
+                <div style={{backgroundColor:'#f3e8ff',border:'1px solid #d8b4fe',borderRadius:'8px',padding:'12px 14px',marginBottom:'14px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}}>
+                    <input type="checkbox" id="abaterCheck" checked={abaterEsp} onChange={e=>{setAbaterEsp(e.target.checked);if(!e.target.checked)setVlAbat('');}} style={{width:'16px',height:'16px',accentColor:'#7c3aed',cursor:'pointer'}} />
+                    <label htmlFor="abaterCheck" style={{fontWeight:700,color:'#5b21b6',fontSize:'13px',cursor:'pointer'}}>➖ Abater Adiantamento Especial em aberto</label>
+                    <span style={{marginLeft:'auto',fontSize:'12px',color:'#7c3aed',fontWeight:700}}>Saldo: {fmtMoeda(fr.saldoEspecialAberto)}</span>
+                  </div>
+                  {abaterEsp && <div>
+                    <label style={{...s.label,fontSize:'11px',color:'#5b21b6'}}>Valor a abater (R$)</label>
+                    <input type="number" step="0.01" min="0.01" max={fr.saldoEspecialAberto} value={vlAbat} placeholder={`máx. ${fmtMoeda(fr.saldoEspecialAberto)}`} onChange={e=>setVlAbat(e.target.value)} style={{...s.input,fontSize:'12px',borderColor:'#a78bfa'}} />
+                    <div style={{fontSize:'11px',color:'#6d28d9',marginTop:'4px'}}>Saldo restante: <strong>{fmtMoeda(Math.max(0,fr.saldoEspecialAberto-(parseFloat(vlAbat)||0)))}</strong></div>
+                  </div>}
+                </div>
+              )}
+              {/* forma */}
+              <div style={{marginBottom:'14px'}}>
+                <label style={s.label}>💳 Forma de pagamento</label>
+                <div style={{display:'flex',gap:'8px',marginBottom:'8px'}}>
+                  {(['PIX','Dinheiro','Misto'] as const).map(f=>(
+                    <button key={f} onClick={()=>setFormaPgto(f)} style={{flex:1,padding:'8px 6px',border:`2px solid ${formaPgto===f?'#c2185b':'#e0e0e0'}`,borderRadius:'6px',background:formaPgto===f?'#fce4ec':'white',fontWeight:formaPgto===f?700:400,cursor:'pointer',fontSize:'12px',color:formaPgto===f?'#880e4f':'#555'}}>
+                      {f==='PIX'?'📱 PIX':f==='Dinheiro'?'💵 Dinheiro':'🔄 Misto'}
+                    </button>
+                  ))}
+                </div>
+                {formaPgto==='Misto' && <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+                  <div><label style={{...s.label,fontSize:'11px'}}>Valor PIX (R$)</label><input type="number" step="0.01" min="0" value={formaPix} placeholder="0,00" onChange={e=>setFormaPix(e.target.value)} style={{...s.input,fontSize:'12px',padding:'6px'}} /></div>
+                  <div><label style={{...s.label,fontSize:'11px'}}>Valor Dinheiro (R$)</label><input type="number" step="0.01" min="0" value={formaDin} placeholder="0,00" onChange={e=>setFormaDin(e.target.value)} style={{...s.input,fontSize:'12px',padding:'6px'}} /></div>
+                </div>}
+              </div>
+              {/* data */}
+              <div style={{marginBottom:'16px'}}>
+                <label style={s.label}>Data do pagamento</label>
+                <input type="date" value={dataLocalPgto} onChange={e=>setDataLocalPgto(e.target.value)} style={s.input} />
+              </div>
+              {totalSelecionado<0 && <div style={{backgroundColor:'#fff3e0',border:'1px solid #ff9800',borderRadius:'6px',padding:'10px 14px',marginBottom:'10px',fontSize:'12px',color:'#e65100'}}>
+                ⚠️ <strong>Saldo negativo: {fmtMoeda(Math.abs(totalSelecionado))}</strong> a favor do restaurante. Os descontos excedem o valor a pagar.
+              </div>}
+              <div style={{display:'flex',gap:'10px'}}>
+                <button disabled={salvando} onClick={confirmarPagamento} style={{...s.btn('#43a047'),flex:1}}>
+                  {salvando?'⏳ Salvando...':`✅ Confirmar ${fmtMoeda(totalDesembolsar)}`}
+                </button>
+                <button onClick={()=>setModalPgto(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
+              </div>
             </div>
           </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <input type="month" value={mesAno} onChange={e => setMesAno(e.target.value)}
-              style={{ ...s.input, fontWeight: 'bold', color: '#1565c0' }} />
-            <button onClick={() => navigate('/modulos/extrato')}
-              style={{ ...s.btn('#455a64') }}>📊 Extrato completo</button>
-            <button onClick={() => navigate('/modulos/folha-pagamento')}
-              style={{ ...s.btn('#1976d2') }}>🧾 Folha CLT</button>
+        );
+      })()}
+
+      {/* Modal detalhe */}
+      {detalhe && (
+        <div style={{position:'fixed',inset:0,backgroundColor:'rgba(0,0,0,.55)',zIndex:10001,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setDetalhe(null)}>
+          <div style={{...s.card,maxWidth:'680px',width:'96%',maxHeight:'88vh',overflowY:'auto',padding:'20px'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}}>
+              <h3 style={{margin:0,color:'#c2185b'}}>📋 Detalhamento — {detalhe.fr.nome}</h3>
+              <button onClick={()=>setDetalhe(null)} style={{background:'none',border:'none',fontSize:'20px',cursor:'pointer'}}>✕</button>
+            </div>
+            <div style={{marginBottom:'10px',fontSize:'12px',color:'#666'}}>Semana <strong>{detalhe.fech.semanaLabel}</strong></div>
+            <div style={{marginBottom:'16px'}}>
+              <strong style={{fontSize:'12px',color:'#444'}}>📅 Escalas do período ({detalhe.escsSemana.length})</strong>
+              <table style={{width:'100%',borderCollapse:'collapse',marginTop:'6px',fontSize:'11px'}}>
+                <thead><tr>{['Data','Turno','Presença','Presença Noite'].map(h=><th key={h} style={{...s.th,fontSize:'11px',padding:'5px 8px'}}>{h}</th>)}</tr></thead>
+                <tbody>{detalhe.escsSemana.map((e:any,i:number)=>(
+                  <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
+                    <td style={{...s.td,padding:'5px 8px'}}>{e.data}</td>
+                    <td style={{...s.td,padding:'5px 8px'}}>{e.turno}</td>
+                    <td style={{...s.td,padding:'5px 8px',color:e.presenca==='presente'?'#2e7d32':'#c62828'}}>{e.presenca||'—'}</td>
+                    <td style={{...s.td,padding:'5px 8px',color:e.presencaNoite==='presente'?'#2e7d32':'#c62828'}}>{e.presencaNoite||'—'}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            {detalhe.saidasSemana.length>0 && <div>
+              <strong style={{fontSize:'12px',color:'#444'}}>💸 Saídas do período ({detalhe.saidasSemana.length})</strong>
+              <table style={{width:'100%',borderCollapse:'collapse',marginTop:'6px',fontSize:'11px'}}>
+                <thead><tr>{['Tipo','Descrição','Valor','Data'].map(h=><th key={h} style={{...s.th,fontSize:'11px',padding:'5px 8px'}}>{h}</th>)}</tr></thead>
+                <tbody>{detalhe.saidasSemana.map((s2:any,i:number)=>(
+                  <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
+                    <td style={{...s.td,padding:'5px 8px'}}>{s2.tipo||s2.origem||'—'}</td>
+                    <td style={{...s.td,padding:'5px 8px'}}>{s2.descricao||'—'}</td>
+                    <td style={{...s.td,padding:'5px 8px',color:'#c62828',fontWeight:'bold'}}>-{fmtMoeda(R(s2.valor))}</td>
+                    <td style={{...s.td,padding:'5px 8px'}}>{s2.dataPagamento||s2.data||'—'}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>}
+          </div>
+        </div>
+      )}
+
+      <main style={{flex:1,maxWidth:'1500px',margin:'0 auto',padding:'20px 16px',width:'100%'}}>
+        {/* Cabeçalho */}
+        <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'16px',flexWrap:'wrap'}}>
+          <button onClick={()=>navigate('/modulos')} style={{background:'none',border:'none',cursor:'pointer',color:'#c2185b',fontSize:'20px'}} title="Voltar">←</button>
+          <div>
+            <h2 style={{margin:0,fontSize:'20px',color:'#880e4f'}}>🎯 Pagamento de Freelancers</h2>
+            <div style={{fontSize:'12px',color:'#888',marginTop:'2px'}}>Auditoria, descontos e confirmação de pagamento</div>
+          </div>
+          <div style={{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+            <button onClick={()=>navigate('/modulos/extrato')} style={s.btn('#00838f')}>📋 Extrato</button>
+            <button onClick={()=>navigate('/modulos/folha-pagamento')} style={s.btn('#1976d2')}>🧾 Folha CLT</button>
           </div>
         </div>
 
-        {/* ── KPIs ── */}
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        {/* Filtros */}
+        <div style={{...s.card,marginBottom:'16px',display:'flex',gap:'14px',flexWrap:'wrap',alignItems:'flex-end'}}>
+          <div>
+            <label style={s.label}>Mês / Ano</label>
+            <input type="month" value={mesAno} onChange={e=>setMesAno(e.target.value)} disabled={periodoCustomAtivo}
+              style={{...s.input,width:'150px',opacity:periodoCustomAtivo?0.5:1}} />
+          </div>
+          <div style={{borderLeft:'1px solid #e0e0e0',paddingLeft:'14px'}}>
+            <label style={{...s.label,color:periodoCustomAtivo?'#7b1fa2':'#666'}}>
+              Período customizado {periodoCustomAtivo && <span style={{fontSize:'10px',backgroundColor:'#f3e5f5',color:'#7b1fa2',padding:'1px 6px',borderRadius:'8px',marginLeft:'6px'}}>ativo</span>}
+            </label>
+            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+              <input type="date" value={periodoIni} onChange={e=>setPeriodoIni(e.target.value)}
+                style={{...s.input,width:'140px',borderColor:periodoCustomAtivo?'#ab47bc':undefined}} />
+              <span style={{fontSize:'12px',color:'#888'}}>até</span>
+              <input type="date" value={periodoFim} onChange={e=>setPeriodoFim(e.target.value)}
+                style={{...s.input,width:'140px',borderColor:periodoCustomAtivo?'#ab47bc':undefined}} />
+              {periodoCustomAtivo && <button onClick={()=>{setPeriodoIni('');setPeriodoFim('');}}
+                style={{padding:'6px 10px',fontSize:'11px',border:'1px solid #ab47bc',backgroundColor:'#fff',color:'#7b1fa2',borderRadius:'4px',cursor:'pointer'}}>✕ limpar</button>}
+            </div>
+          </div>
+          <button onClick={carregarDados} style={s.btn('#c2185b')}>🔄 Atualizar</button>
+        </div>
+
+        {periodoCustomAtivo && <div style={{marginBottom:'12px',padding:'8px 12px',backgroundColor:'#fff3e0',borderRadius:'6px',borderLeft:'3px solid #fb8c00',fontSize:'12px',color:'#5d4037'}}>
+          ⚠️ <strong>Período customizado ativo</strong> ({periodoIni} a {periodoFim})
+        </div>}
+
+        {/* KPIs */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'12px',marginBottom:'18px'}}>
           {[
-            { label: 'Grupos / Semanas', val: totalGrupos, cor: '#1976d2' },
-            { label: 'Total Bruto', val: fmtMoeda(totalBruto), cor: '#2e7d32' },
-            { label: 'A Pagar', val: fmtMoeda(totalPendente), cor: '#e65100' },
-            { label: '✅ Pagos', val: qtdPago, cor: '#00897b' },
-            { label: '⏳ Pendentes', val: qtdPendente, cor: '#f57f17' },
-          ].map(c => (
-            <div key={c.label} style={{ ...s.card, borderLeft: `4px solid ${c.cor}`, minWidth: '140px', flex: '1' }}>
-              <div style={{ fontSize: '11px', color: '#666' }}>{c.label}</div>
-              <div style={{ fontSize: '18px', fontWeight: 'bold', color: c.cor }}>{c.val}</div>
+            {label:'Freelancers ativos',val:freelancers.length,cor:'#c2185b'},
+            {label:'Semanas com escala',val:fechamentos.length,cor:'#1976d2'},
+            {label:'Total Líquido Mês',val:fmtMoeda(totalFreelancerMes),cor:'#2e7d32'},
+          ].map(c=>(
+            <div key={c.label} style={{...s.card,borderLeft:`4px solid ${c.cor}`}}>
+              <div style={{fontSize:'11px',color:'#666'}}>{c.label}</div>
+              <div style={{fontSize:'18px',fontWeight:'bold',color:c.cor}}>{c.val}</div>
             </div>
           ))}
         </div>
 
-        {/* ── Filtros ── */}
-        <div style={{ ...s.card, marginBottom: '0', borderRadius: '8px 8px 0 0', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end', padding: '10px 14px' }}>
-          <div>
-            <div style={{ fontSize: '11px', color: '#888', marginBottom: '3px' }}>Buscar colaborador</div>
-            <input placeholder="Nome..." value={filtroColab} onChange={e => setFiltroColab(e.target.value)}
-              style={{ ...s.input, width: '200px' }} />
+        {loading ? (
+          <div style={{...s.card,textAlign:'center',padding:'40px',color:'#999'}}>Carregando...</div>
+        ) : freelancers.length===0 ? (
+          <div style={{...s.card,textAlign:'center',padding:'40px',color:'#999'}}>
+            <p>Nenhum freelancer cadastrado nesta unidade.</p>
+            <p style={{fontSize:'13px'}}>Cadastre colaboradores com <strong>Tipo de Contrato = Freelancer</strong> em <strong>Gestão de Colaboradores</strong>.</p>
           </div>
-          <div>
-            <div style={{ fontSize: '11px', color: '#888', marginBottom: '3px' }}>Status</div>
-            <select value={filtroPago} onChange={e => setFiltroPago(e.target.value as any)} style={s.select}>
-              <option value="todos">Todos</option>
-              <option value="pendente">⏳ Pendentes</option>
-              <option value="pago">✅ Pagos</option>
-            </select>
+        ) : fechamentos.length===0 ? (
+          <div style={{...s.card,textAlign:'center',padding:'40px',color:'#999'}}>
+            <p>Nenhuma escala de freelancer lançada em {mesAno}.</p>
+            <p style={{fontSize:'13px'}}>Lance as escalas na aba <strong>Gestão de Escalas → Editar Turno</strong> e marque a presença como <strong>"Presente"</strong>.</p>
           </div>
-          <button onClick={carregar} style={{ ...s.btn('#1976d2'), marginBottom: '1px' }}>🔄 Atualizar</button>
-          {filtroColab && (
-            <button onClick={() => setFiltroColab('')}
-              style={{ ...s.btn('#757575'), marginBottom: '1px' }}>✕ Limpar</button>
-          )}
-        </div>
+        ) : (
+          <>
+            {/* Info transporte */}
+            <div style={{backgroundColor:'#e3f2fd',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',fontSize:'12px',color:'#1565c0',borderLeft:'4px solid #1976d2'}}>
+              <strong>ℹ️ Como funciona o pagamento semanal de freelancers:</strong>
+              <ul style={{margin:'6px 0 0 16px',padding:0,lineHeight:'1.8'}}>
+                <li><strong>Transporte calculado</strong>: dias com presença confirmada × valor/dia do cadastro.</li>
+                <li><strong>🚗 Adiantamento de Transporte</strong>: lance em <strong>Saídas → Novo Registro → Adiantamento Transporte</strong>. O sistema abate automaticamente do saldo da semana.</li>
+                <li><strong>🔴 Descontos automáticos</strong>: lançamentos tipo <em>A receber / Consumo Interno</em> em Saídas são descontados do líquido da semana.</li>
+              </ul>
+            </div>
 
-        {/* ── Abas ── */}
-        <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #e0e0e0', paddingTop: '4px' }}>
-          <button style={s.tab(aba === 'pagar')}     onClick={() => setAba('pagar')}>💸 Pagamentos por Semana</button>
-          <button style={s.tab(aba === 'auditoria')} onClick={() => setAba('auditoria')}>🔍 Auditoria Detalhada</button>
-        </div>
-
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {/* ABA PAGAMENTOS POR SEMANA                                        */}
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {aba === 'pagar' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', overflowX: 'auto' }}>
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
-            ) : gruposFiltrados.length === 0 ? (
-              <div style={{ padding: '24px' }}>
-                <div style={{ textAlign: 'center', marginBottom: '20px', color: '#999' }}>
-                  <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎯</div>
-                  <p style={{ fontSize: '15px', fontWeight: 'bold' }}>Nenhum registro de freelancer em {mesAno}.</p>
+            {/* Pendências de meses anteriores */}
+            {(() => {
+              const comPend = freelancers.map((fr:any)=>({fr,pends:saidasPendentesAnt.filter((s:any)=>s.colaboradorId===fr.id)})).filter(x=>x.pends.length>0);
+              if (!comPend.length) return null;
+              return (
+                <div style={{...s.card,marginBottom:'16px',borderLeft:'4px solid #f9a825',backgroundColor:'#fffde7'}}>
+                  <h4 style={{margin:'0 0 10px',color:'#f57f17',fontSize:'14px'}}>⏳ Pendências de meses anteriores a descontar</h4>
+                  {comPend.map(({fr,pends}:any)=>(
+                    <div key={fr.id} style={{marginBottom:'8px',paddingBottom:'8px',borderBottom:'1px solid #fff176'}}>
+                      <div style={{fontWeight:'bold',color:'#5d4037',fontSize:'12px',marginBottom:'4px'}}>👤 {fr.nome} ({pends.length} item(s) · {fmtMoeda(pends.reduce((s:number,p:any)=>s+R(p.valor),0))})</div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
+                        {pends.map((p:any,i:number)=>(
+                          <div key={i} style={{backgroundColor:'#fff8e1',borderRadius:'6px',padding:'3px 10px',fontSize:'11px',border:'1px solid #ffe082'}}>
+                            <span style={{color:'#e65100',fontWeight:'bold'}}>{p.tipo||p.origem||'Saída'}</span>
+                            {' '}{p.descricao||'-'}{' '}
+                            <span style={{color:'#c62828',fontWeight:'bold'}}>-{fmtMoeda(R(p.valor))}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {/* ── Painel de diagnóstico ── */}
-                {debugInfo && (
-                  <div style={{ maxWidth: '700px', margin: '0 auto', backgroundColor: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '16px', fontSize: '12px' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#495057', fontSize: '13px' }}>🔍 Diagnóstico da busca</div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <tbody>
-                        <tr style={{ borderBottom: '1px solid #e9ecef' }}>
-                          <td style={{ padding: '5px 8px', color: '#666', width: '200px' }}>Colaboradores no sistema</td>
-                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalColabs > 0 ? '#2e7d32' : '#c62828' }}>{debugInfo.totalColabs}</td>
-                        </tr>
-                        <tr style={{ borderBottom: '1px solid #e9ecef', backgroundColor: debugInfo.totalFreelancers === 0 ? '#ffebee' : 'transparent' }}>
-                          <td style={{ padding: '5px 8px', color: '#666' }}>Freelancers (tipoContrato='Freelancer')</td>
-                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalFreelancers > 0 ? '#2e7d32' : '#c62828' }}>
-                            {debugInfo.totalFreelancers}
-                            {debugInfo.totalFreelancers === 0 && <span style={{ color: '#c62828', marginLeft: '8px' }}>⚠️ Nenhum colaborador com Tipo = Freelancer</span>}
-                          </td>
-                        </tr>
-                        {debugInfo.freelancers.length > 0 && (
-                          <tr style={{ borderBottom: '1px solid #e9ecef' }}>
-                            <td style={{ padding: '5px 8px', color: '#666' }}>Nomes dos freelancers</td>
-                            <td style={{ padding: '5px 8px', color: '#1565c0' }}>{debugInfo.freelancers.map((f: any) => f.nome).join(', ')}</td>
-                          </tr>
-                        )}
-                        <tr style={{ borderBottom: '1px solid #e9ecef', backgroundColor: debugInfo.totalEscalas === 0 ? '#ffebee' : 'transparent' }}>
-                          <td style={{ padding: '5px 8px', color: '#666' }}>Escalas em {mesAno}</td>
-                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalEscalas > 0 ? '#2e7d32' : '#c62828' }}>
-                            {debugInfo.totalEscalas}
-                            {debugInfo.totalEscalas === 0 && <span style={{ color: '#c62828', marginLeft: '8px' }}>⚠️ Nenhuma escala neste mês</span>}
-                          </td>
-                        </tr>
-                        <tr style={{ borderBottom: '1px solid #e9ecef' }}>
-                          <td style={{ padding: '5px 8px', color: '#666' }}>Registros folha DB (freelancer-dia)</td>
-                          <td style={{ padding: '5px 8px' }}>{debugInfo.granulares} de {debugInfo.totalFolhaDB} totais</td>
-                        </tr>
-                        {debugInfo.escalasDatas.length > 0 && (
-                          <tr>
-                            <td style={{ padding: '5px 8px', color: '#666', verticalAlign: 'top' }}>Escalas dos freelancers</td>
-                            <td style={{ padding: '5px 8px' }}>
-                              {debugInfo.escalasDatas.map((e: any, i: number) => (
-                                <span key={i} style={{ display: 'inline-block', margin: '2px', padding: '2px 6px', borderRadius: '4px',
-                                  backgroundColor: e.presenca === 'presente' ? '#e8f5e9' : '#ffebee',
-                                  color: e.presenca === 'presente' ? '#2e7d32' : '#c62828' }}>
-                                  {e.data} {e.turno} {e.presenca || 'sem presença'}
-                                </span>
-                              ))}
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                    <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#fff3e0', borderRadius: '6px', fontSize: '11px', color: '#e65100' }}>
-                      <strong>O que verificar:</strong><br/>
-                      {debugInfo.totalFreelancers === 0 && <div>① Ir em <strong>Colaboradores</strong> → editar o freelancer → alterar <strong>Tipo de Contrato para "Freelancer"</strong></div>}
-                      {debugInfo.totalFreelancers > 0 && debugInfo.totalEscalas === 0 && <div>① As escalas deste mês não foram encontradas. Verifique o mês selecionado ou vá em <strong>Gestão de Escalas</strong>.</div>}
-                      {debugInfo.totalFreelancers > 0 && debugInfo.totalEscalas > 0 && debugInfo.escalasDatas.length === 0 && <div>① Escalas existem mas <strong>nenhuma está vinculada aos freelancers</strong> cadastrados. Verifique se o colaborador nas escalas é o mesmo do cadastro.</div>}
-                      {debugInfo.totalFreelancers > 0 && debugInfo.escalasDatas.length > 0 && debugInfo.escalasDatas.every((e: any) => e.presenca !== 'presente') && <div>① Escalas encontradas mas <strong>nenhuma presença = "Presente"</strong>. Confirme as presenças em Gestão de Escalas.</div>}
+              );
+            })()}
+
+            {/* Fechamentos por semana */}
+            {fechamentos.map((fech:any) => {
+              const key = fech.dataFechamentoBase;
+              const efRaw = editFechamento[key]||{combustivel:'0',extra:'0',desconto:'0',obs:''};
+              const ef: any = periodoCustomAtivo ? {...efRaw,dataIniCustom:'',dataFimCustom:''} : efRaw;
+              const updateEf = (campo:string,val:string) => setEditFechamento(prev=>({...prev,[key]:{...(prev[key]||efRaw),[campo]:val}}));
+              const periodoAjustado = !!(ef.dataIniCustom||ef.dataFimCustom);
+              return (
+                <div key={key} style={{...s.card,marginBottom:'16px',borderTop:`3px solid ${periodoAjustado?'#7b1fa2':'#c2185b'}`}}>
+                  {/* Cabeçalho semana */}
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'12px',flexWrap:'wrap',gap:'8px'}}>
+                    <div>
+                      <h4 style={{margin:'0 0 6px',color:periodoAjustado?'#7b1fa2':'#c2185b',fontSize:'15px'}}>
+                        📅 Semana {fech.semanaLabel}
+                        {periodoAjustado && <span style={{fontSize:'11px',marginLeft:'8px',backgroundColor:'#f3e5f5',color:'#7b1fa2',padding:'1px 6px',borderRadius:'8px'}}>período ajustado</span>}
+                      </h4>
+                      {!periodoCustomAtivo && (
+                        <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+                          <span style={{fontSize:'12px',color:'#888'}}>Período:</span>
+                          <input type="date" value={ef.dataIniCustom||fech.dataInicioBase} onChange={e=>updateEf('dataIniCustom',e.target.value)}
+                            style={{padding:'3px 6px',border:`1px solid ${periodoAjustado?'#ab47bc':'#ccc'}`,borderRadius:'4px',fontSize:'12px'}} />
+                          <span style={{fontSize:'12px',color:'#888'}}>até</span>
+                          <input type="date" value={ef.dataFimCustom||fech.dataFimEfetivo||fech.dataFechamentoBase} onChange={e=>updateEf('dataFimCustom',e.target.value)}
+                            style={{padding:'3px 6px',border:`1px solid ${periodoAjustado?'#ab47bc':'#ccc'}`,borderRadius:'4px',fontSize:'12px'}} />
+                          {periodoAjustado && <button onClick={()=>setEditFechamento(prev=>({...prev,[key]:{...ef,dataIniCustom:'',dataFimCustom:''}}))}
+                            style={{padding:'2px 8px',fontSize:'11px',border:'none',borderRadius:'4px',backgroundColor:'#f3e5f5',color:'#7b1fa2',cursor:'pointer'}}>↩ restaurar</button>}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{fontSize:'13px',color:'#c2185b',fontWeight:'bold'}}>
+                      Total semana: {fmtMoeda(fech.totalLiquido)}
                     </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Colaborador</th>
-                    <th style={s.thC}>Semana</th>
-                    <th style={s.thC}>Turnos</th>
-                    <th style={s.thC}>Dias</th>
-                    <th style={s.thR}>Bruto Dobras</th>
-                    <th style={s.thR}>Transporte</th>
-                    <th style={s.thR}>Descontos</th>
-                    <th style={s.thR}>💳 Líquido PIX</th>
-                    <th style={s.thC}>Forma</th>
-                    <th style={s.thC}>Status</th>
-                    <th style={s.thC}>Data Pag.</th>
-                    <th style={s.thC}>PIX</th>
-                    <th style={s.thC}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gruposFiltrados.map((g, i) => {
-                    const audit = extrairAuditoria(g.raw, g.totalGrupo);
-                    const descGrupo = saidasDoGrupo(g).reduce((s, x) => s + R(x.valor), 0);
-                    const abatGrupo = abatDoGrupo(g).reduce((s, x) => s + R(x.valor), 0);
-                    const liquidoEfetivo = audit.temCampoEstruturado && audit.liquido > 0
-                      ? audit.liquido
-                      : (descGrupo > 0 || abatGrupo > 0
-                        ? Math.max(0, g.totalGrupo - descGrupo - abatGrupo)
-                        : g.totalGrupo);
-                    const diasUnicos = Array.from(new Set(g.diasDobras.map((d: any) => d.data).filter(Boolean))).sort() as string[];
-                    const bgRow = g.pago ? (i % 2 === 0 ? '#f0fdf4' : '#f9fbe7') : '#fffde7';
-                    return (
-                      <tr key={g.id} style={{ backgroundColor: bgRow, borderLeft: `3px solid ${g.pago ? '#43a047' : '#ffa000'}` }}>
-                        <td style={{ ...s.td, fontWeight: 'bold', minWidth: '150px' }}>
-                          <div>{g.nomeColaborador}</div>
-                          {g.chavePix && (
-                            <div style={{ fontSize: '10px', color: '#1976d2', marginTop: '2px' }}>
-                              📱 {g.chavePix}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ ...s.tdC, whiteSpace: 'nowrap' }}>
-                          <div style={{ fontWeight: 'bold', color: '#1565c0' }}>{g.semanaLabel}</div>
-                          <div style={{ fontSize: '10px', color: '#888' }}>{g.mes}</div>
-                        </td>
-                        <td style={s.tdC}>{g.diasDobras.length}</td>
-                        <td style={{ ...s.tdC, fontSize: '11px', maxWidth: '100px' }}>
-                          {diasUnicos.map(d => (
-                            <span key={d} style={{ display: 'inline-block', margin: '1px', backgroundColor: '#e3f2fd', color: '#1565c0', padding: '1px 5px', borderRadius: '6px', fontSize: '10px' }}>
-                              {fmtDiaSemana(d)} {fmtDiaMes(d)}
-                            </span>
+
+                  {/* Tabela freelancers da semana */}
+                  <div style={{overflowX:'auto'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:'12px'}}>
+                      <thead>
+                        <tr>
+                          {['Freelancer','PIX / Tel','Dias (código)','Dobras','Valor/Dobra','Total Dobras','Transp.','Desconto','Líquido','Status','Ações'].map(h=>(
+                            <th key={h} style={s.th}>{h}</th>
                           ))}
-                        </td>
-                        <td style={{ ...s.tdR, fontWeight: 'bold' }}>{fmtMoeda(g.totalDobras)}</td>
-                        <td style={{ ...s.tdR, color: '#2e7d32' }}>
-                          {g.totalTransp > 0 ? `+${fmtMoeda(g.totalTransp)}` : '—'}
-                        </td>
-                        <td style={{ ...s.tdR, color: '#c62828' }}>
-                          {(descGrupo + abatGrupo) > 0 ? `−${fmtMoeda(descGrupo + abatGrupo)}` : '—'}
-                        </td>
-                        <td style={{ ...s.tdR }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1b5e20' }}>
-                            {g.formaPagamento === 'PIX' ? '📱 ' : '💵 '}{fmtMoeda(liquidoEfetivo)}
-                          </div>
-                          {!audit.temCampoEstruturado && (
-                            <div style={{ fontSize: '9px', color: '#9e9e9e', fontStyle: 'italic' }}>legado / estimado</div>
-                          )}
-                        </td>
-                        <td style={s.tdC}>
-                          <span style={{ padding: '2px 7px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold',
-                            backgroundColor: g.formaPagamento === 'PIX' ? '#e3f2fd' : '#f3e5f5',
-                            color: g.formaPagamento === 'PIX' ? '#1565c0' : '#7b1fa2' }}>
-                            {g.formaPagamento === 'PIX' ? '📱 PIX' : g.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : g.formaPagamento}
-                          </span>
-                        </td>
-                        <td style={s.tdC}>
-                          <span style={{ padding: '3px 10px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                            backgroundColor: g.pago ? '#e8f5e9' : '#fff9c4',
-                            color: g.pago ? '#2e7d32' : '#f57f17' }}>
-                            {g.pago ? '✅ Pago' : g.pagoParcial ? '⚡ Parcial' : '⏳ Pendente'}
-                          </span>
-                        </td>
-                        <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>
-                          {g.dataPagamento ? fmtDataBR(g.dataPagamento) : '—'}
-                        </td>
-                        <td style={{ ...s.tdC, fontSize: '11px', color: '#1565c0' }}>
-                          {g.chavePix || '—'}
-                        </td>
-                        <td style={s.tdC}>
-                          <button onClick={() => { setAba('auditoria'); setTimeout(() => setExpandidos(new Set([g.id])), 100); }}
-                            style={{ ...s.btn('#1565c0'), padding: '4px 8px', fontSize: '11px' }}
-                            title="Ver detalhes de auditoria">🔍</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{ backgroundColor: '#1b5e20' }}>
-                    <td colSpan={4} style={{ padding: '10px 8px', color: 'white', fontWeight: 'bold', fontSize: '12px' }}>
-                      TOTAIS ({totalGrupos} grupos)
-                    </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', color: 'white', fontWeight: 'bold' }}>
-                      {fmtMoeda(gruposFiltrados.reduce((s, g) => s + g.totalDobras, 0))}
-                    </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', color: '#a5d6a7', fontWeight: 'bold' }}>
-                      +{fmtMoeda(gruposFiltrados.reduce((s, g) => s + g.totalTransp, 0))}
-                    </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', color: '#ef9a9a', fontWeight: 'bold' }}>
-                      —
-                    </td>
-                    <td style={{ padding: '10px 8px', textAlign: 'right', color: '#a5d6a7', fontWeight: 'bold', fontSize: '14px' }}>
-                      {fmtMoeda(totalBruto)}
-                    </td>
-                    <td colSpan={5} style={{ padding: '10px 8px', color: '#aaa' }}>
-                      {qtdPago} pagos · {qtdPendente} pendentes · A pagar: {fmtMoeda(totalPendente)}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            )}
-          </div>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fech.freelancers.map((fr:any, fi:number) => {
+                          const frFolhaSalva = folhasDB.find((f:any)=>
+                            f.colaboradorId===fr.id && f.mes===mesAno && f.semana===fech.dataFechamento && !isMigradoReg(f) && !isEstornadoReg(f)
+                          );
+                          const diasPagosNovos = folhasDB.filter((f:any)=>
+                            f.colaboradorId===fr.id && f.mes===mesAno && f.data>=(fr.periodoInicio||fech.dataInicioBase) && f.data<=(fr.periodoFim||fech.dataFechamento) && f.pago===true && f.tipo==='freelancer-dia'
+                          );
+                          const frDataPgto = diasPagosNovos.length>0 ? diasPagosNovos.sort((a:any,b:any)=>(b.dataPagamento||'').localeCompare(a.dataPagamento||''))[0]?.dataPagamento : frFolhaSalva?.dataPagamento;
+                          const frForma    = diasPagosNovos.length>0 ? diasPagosNovos[0]?.formaPagamento : frFolhaSalva?.formaPagamento;
+                          const diasJaPagesSemana = (fr.diasJaPagosDetalhe||[]).length;
+                          const frIsPago = diasJaPagesSemana>0 || frFolhaSalva?.pago || fr.pago || false;
+                          const pagoParcial = frIsPago && fr.dobras>0;
+                          const pagoCompleto = diasJaPagesSemana>0 && fr.dobras===0;
+                          const semDetalhe  = frFolhaSalva?.pago && diasJaPagesSemana===0 && (frFolhaSalva?.diasPagos?.length||0)===0;
+                          return (
+                            <tr key={fr.id} style={{backgroundColor:fi%2===0?'#fafafa':'white'}}>
+                              <td style={{...s.td,fontWeight:'bold'}}>
+                                {fr.nome}
+                                {(fr.saldoEspecialAberto||0)>0 && <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'bold',marginTop:'2px'}}>🟣 Adto. esp.: {fmtMoeda(fr.saldoEspecialAberto)}</div>}
+                                {(fr.diasJaPagosDetalhe?.length||0)>0 && <div style={{fontSize:'10px',color:'#1565c0',marginTop:'2px'}}>✅ {fr.diasJaPagosDetalhe.length} dia(s) já pago(s): {fmtMoeda(fr.totalJaPago)}</div>}
+                              </td>
+                              <td style={{...s.td,fontSize:'11px'}}>
+                                {fr.chavePix && <div>💳 {fr.chavePix}</div>}
+                                {fr.telefone && <div>📱 {fr.telefone}</div>}
+                              </td>
+                              <td style={{...s.td,fontSize:'11px',color:'#555',maxWidth:'200px'}}>{fr.diasCodigo||'-'}</td>
+                              <td style={{...s.td,textAlign:'center',fontWeight:'bold',color:'#2e7d32'}}>
+                                {fr.dobras}
+                                {fr.totalJaPago>0 && fr.dobras===0 && <div style={{fontSize:'9px',color:'#1565c0',fontWeight:'normal'}}>tudo pago</div>}
+                              </td>
+                              <td style={{...s.td,textAlign:'right'}}>
+                                {(fr.valorDia>0||fr.valorNoite>0)
+                                  ? <><span style={{color:'#e65100'}}>☀️{fmt(fr.valorDia)}</span><br/><span style={{color:'#3949ab'}}>🌙{fmt(fr.valorNoite)}</span></>
+                                  : <>R$ {fmt(fr.valorDobra)}</>}
+                              </td>
+                              <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:'#1976d2',fontSize:'13px'}}>
+                                {fmtMoeda(fr.totalBrutoPeriodo??fr.total)}
+                                {fr.totalJaPago>0 && <div style={{fontSize:'9px',color:'#2e7d32'}}>✓ {fmtMoeda(fr.totalJaPago)} pago</div>}
+                              </td>
+                              <td style={{...s.td,textAlign:'right',fontSize:'11px',color:fr.totalTransporte>0?'#1565c0':'#aaa'}}>
+                                {fr.totalTransporte>0 ? `📦 ${fmtMoeda(fr.totalTransporte)}` : '-'}
+                                {fr.transporteAdiantado>0 && <div style={{color:'#e65100',fontSize:'10px'}}>✔ {fmtMoeda(fr.transporteAdiantado)} pago</div>}
+                              </td>
+                              <td style={{...s.td,textAlign:'right',color:fr.saidasDesconto>0?'#c62828':'#aaa',fontSize:'12px'}}>
+                                {fr.saidasDesconto>0 ? <span title={fr.saidasDetalhe.map((d:any)=>`${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>-{fmtMoeda(fr.saidasDesconto)}</span> : '-'}
+                              </td>
+                              <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:fr.totalLiquido>0?'#1b5e20':'#888',fontSize:'13px'}}>
+                                {fmtMoeda(fr.totalLiquido)}
+                                {fr.totalLiquido===0 && fr.totalJaPago>0 && <div style={{fontSize:'9px',color:'#2e7d32',fontWeight:'normal'}}>quitado</div>}
+                              </td>
+                              <td style={{...s.td,textAlign:'center'}}>
+                                {semDetalhe ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}}>⚠️ Pago*</span>
+                                  : pagoParcial ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
+                                  : pagoCompleto ? <span style={s.badge('#e8f5e9','#2e7d32')}>✅ Pago</span>
+                                  : <span style={s.badge('#fff9c4','#f57f17')}>⏳ Pend.</span>}
+                                {frIsPago && frDataPgto && <div style={{fontSize:'9px',color:'#666',marginTop:'2px'}}>{frDataPgto}</div>}
+                                {frIsPago && frForma && <div style={{fontSize:'9px',marginTop:'2px',fontWeight:'bold',color:frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100'}}>{frForma==='PIX'?'📱 PIX':frForma==='Dinheiro'?'💵 Dinheiro':'🔄 Misto'}</div>}
+                              </td>
+                              <td style={s.td}>
+                                <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
+                                  <button onClick={()=>{
+                                    const isoIni=fr.periodoInicio||fech.dataInicioBase;
+                                    const isoFimDet=fr.periodoFim||fech.dataFechamento;
+                                    const escsSemana=escalas.filter((e:any)=>e.colaboradorId===fr.id&&e.data>=isoIni&&e.data<=isoFimDet);
+                                    const saidasSemana=saidasPeriodo.filter((s2:any)=>{const cid=s2.colaboradorId||s2.colabId;if(cid!==fr.id)return false;const dt=s2.dataPagamento||s2.data||'';return dt>=isoIni&&dt<=isoFimDet;});
+                                    setDetalhe({fr,fech,escsSemana,saidasSemana});
+                                  }} style={{...s.btn('#c2185b'),padding:'3px 8px',fontSize:'11px'}}>📋 Ver</button>
+                                  {semDetalhe && <button disabled={salvando} onClick={async()=>{
+                                    if(!window.confirm(`Reabrir pagamento de ${fr.nome}?`)) return;
+                                    setSalvando(true);
+                                    try {
+                                      await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[]})});
+                                      await carregarDados();
+                                      setTimeout(()=>setModalPgto({fr,fech}),300);
+                                    } catch(err){alert('Erro: '+err);} finally{setSalvando(false);}
+                                  }} style={{...s.btn('#e65100'),padding:'3px 8px',fontSize:'11px'}}>🔧 Corrigir</button>}
+                                  <button disabled={salvando} onClick={()=>{
+                                    if (!frIsPago||pagoParcial) { setModalPgto({fr,fech}); return; }
+                                    desfazerPagamento(fr, fech);
+                                  }} style={{...s.btn(pagoParcial?'#43a047':frIsPago?'#e53935':'#43a047'),padding:'3px 8px',fontSize:'11px'}}
+                                    title={pagoParcial?'Pagar dias pendentes':frIsPago?'Desfazer pagamento':'Pagar esta semana'}>
+                                    {pagoParcial?'✅ Pagar pend.':frIsPago?'↩ Desfazer':'✅ Pagar'}
+                                  </button>
+                                  {fr.chavePix && <button onClick={()=>navigator.clipboard.writeText(fr.chavePix)} style={{...s.btn('#1565c0'),padding:'3px 8px',fontSize:'11px'}}>💳 PIX</button>}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{backgroundColor:'#880e4f'}}>
+                          <td colSpan={4} style={{padding:'8px 10px',color:'white',fontWeight:'bold',fontSize:'12px'}}>TOTAL DA SEMANA</td>
+                          <td colSpan={1} />
+                          <td style={{padding:'8px 10px',textAlign:'right',color:'white',fontWeight:'bold'}}>{fmtMoeda(fech.freelancers.reduce((s:number,f:any)=>s+(f.totalBrutoPeriodo??f.total),0))}</td>
+                          <td style={{padding:'8px 10px',textAlign:'right',color:'#f8bbd0'}}>{fmtMoeda(fech.freelancers.reduce((s:number,f:any)=>s+f.totalTransporte,0))}</td>
+                          <td style={{padding:'8px 10px',textAlign:'right',color:'#f48fb1'}}>{fmtMoeda(fech.freelancers.reduce((s:number,f:any)=>s+f.saidasDesconto,0)>0?fech.freelancers.reduce((s:number,f:any)=>s+f.saidasDesconto,0):0)}</td>
+                          <td style={{padding:'8px 10px',textAlign:'right',color:'#a5d6a7',fontSize:'14px',fontWeight:'bold'}}>{fmtMoeda(fech.totalLiquido)}</td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </>
         )}
-
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {/* ABA AUDITORIA DETALHADA — grupos expansíveis estilo Extrato      */}
-        {/* ════════════════════════════════════════════════════════════════ */}
-        {aba === 'auditoria' && (
-          <div style={{ ...s.card, borderRadius: '0 8px 8px 8px', overflowX: 'auto' }}>
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
-            ) : gruposFiltrados.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>Nenhum registro encontrado.</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>▶</th>
-                    <th style={s.th}>Colaborador</th>
-                    <th style={s.thC}>Semana</th>
-                    <th style={s.thC}>Turnos / Dias</th>
-                    <th style={s.thR}>Bruto</th>
-                    <th style={s.thR}>Desc.</th>
-                    <th style={s.thR}>Abat. Esp.</th>
-                    <th style={s.thR}>💳 Líquido</th>
-                    <th style={s.thC}>Status</th>
-                    <th style={s.thC}>Confiab.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gruposFiltrados.flatMap(g => {
-                    const exp = expandidos.has(g.id);
-                    const audit = extrairAuditoria(g.raw, g.totalGrupo);
-                    const saidasG = saidasDoGrupo(g);
-                    const abatG   = abatDoGrupo(g);
-                    const descTotal = saidasG.reduce((s, x) => s + R(x.valor), 0);
-                    const abatTotal = abatG.reduce((s, x) => s + R(x.valor), 0);
-                    const liquidoEfetivo = audit.temCampoEstruturado && audit.liquido > 0
-                      ? audit.liquido
-                      : (descTotal > 0 || abatTotal > 0
-                        ? Math.max(0, g.totalGrupo - descTotal - abatTotal)
-                        : g.totalGrupo);
-                    const diasUnicos = Array.from(new Set(g.diasDobras.map((d: any) => d.data).filter(Boolean))).sort() as string[];
-                    const bgMae = g.pago ? '#f0fdf4' : '#fffde7';
-                    const rows: React.ReactElement[] = [];
-
-                    /* ── Linha-mãe ── */
-                    rows.push(
-                      <tr key={g.id} style={{ backgroundColor: bgMae, borderLeft: '3px solid #43a047', borderBottom: exp ? 'none' : '1px solid #c8e6c9' }}>
-                        <td style={{ ...s.td, width: '32px', textAlign: 'center' }}>
-                          <button onClick={() => toggleExp(g.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#1b5e20', fontWeight: 'bold', padding: '0 2px' }}
-                            title={exp ? 'Recolher' : 'Ver linha a linha'}>
-                            {exp ? '▼' : '▶'}
-                          </button>
-                        </td>
-                        <td style={{ ...s.td, fontWeight: 'bold', minWidth: '150px' }}>
-                          <div>{g.nomeColaborador}</div>
-                          {g.chavePix && (
-                            <div style={{ fontSize: '10px', color: '#1976d2' }}>📱 {g.chavePix}</div>
-                          )}
-                        </td>
-                        <td style={{ ...s.tdC, whiteSpace: 'nowrap' }}>
-                          <div style={{ fontWeight: 'bold', color: '#1565c0' }}>{g.semanaLabel}</div>
-                          {g.dataPagamento && (
-                            <div style={{ fontSize: '10px', color: '#666' }}>pago em {fmtDataBR(g.dataPagamento)}</div>
-                          )}
-                        </td>
-                        <td style={{ ...s.tdC, maxWidth: '160px' }}>
-                          <div style={{ fontWeight: 'bold', color: '#1b5e20', marginBottom: '4px' }}>
-                            {g.diasDobras.length} turno(s)
-                            {g.diasTransp.length > 0 && <span style={{ color: '#2e7d32', marginLeft: 4 }}>+ 🚗</span>}
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', justifyContent: 'center' }}>
-                            {diasUnicos.map(d => (
-                              <span key={d} style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '1px 5px', borderRadius: '6px', fontSize: '10px', whiteSpace: 'nowrap' }}>
-                                {fmtDiaSemana(d)} {fmtDiaMes(d)}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td style={{ ...s.tdR, fontWeight: 'bold' }}>
-                          {fmtMoeda(g.totalGrupo)}
-                          {audit.descSaidas > 0 && (
-                            <div style={{ fontSize: '10px', color: '#c62828' }}>desc.obs: −{fmtMoeda(audit.descSaidas)}</div>
-                          )}
-                        </td>
-                        <td style={{ ...s.tdR, color: '#c62828' }}>
-                          {descTotal > 0 ? `−${fmtMoeda(descTotal)}` : '—'}
-                        </td>
-                        <td style={{ ...s.tdR, color: '#7b1fa2' }}>
-                          {abatTotal > 0 ? `−${fmtMoeda(abatTotal)}` : '—'}
-                        </td>
-                        <td style={{ ...s.tdR }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#1b5e20' }}>
-                            {g.formaPagamento === 'PIX' ? '📱 ' : '💵 '}{fmtMoeda(liquidoEfetivo)}
-                          </div>
-                          {!audit.temCampoEstruturado && (
-                            <div style={{ fontSize: '9px', color: '#9e9e9e', fontStyle: 'italic' }}>estimado (legado)</div>
-                          )}
-                        </td>
-                        <td style={s.tdC}>
-                          <span style={{ padding: '3px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                            backgroundColor: g.pago ? '#e8f5e9' : '#fff9c4',
-                            color: g.pago ? '#2e7d32' : '#f57f17' }}>
-                            {g.pago ? '✅ Pago' : '⏳ Pendente'}
-                          </span>
-                        </td>
-                        <td style={s.tdC}>
-                          <span style={{ padding: '2px 6px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold',
-                            backgroundColor: g.confiabilidade === 'real' ? '#e8f5e9' : g.confiabilidade === 'recalculado' ? '#fff8e1' : '#f3e5f5',
-                            color: g.confiabilidade === 'real' ? '#2e7d32' : g.confiabilidade === 'recalculado' ? '#f57f17' : '#7b1fa2' }}>
-                            {g.confiabilidade === 'real' ? '✅ real' : g.confiabilidade === 'recalculado' ? '🔄 reconst.' : '📜 legado'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-
-                    if (!exp) return rows;
-
-                    /* ── [1] Sub-linhas: Turnos individuais (verde claro) ── */
-                    for (const d of g.diasDobras) {
-                      const turnoLabel = d.turno === 'Dia' ? '☀️ Dia' : d.turno === 'Noite' ? '🌙 Noite' : d.turno || '?';
-                      const diaBR = d.data
-                        ? new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })
-                        : '—';
-                      rows.push(
-                        <tr key={`${g.id}_t_${d.id || d.data}_${d.turno}`}
-                          style={{ backgroundColor: d.pago ? '#f1f8e9' : '#fffde7', borderBottom: '1px dashed #dcedc8', borderLeft: '6px solid #81c784' }}>
-                          <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#555' }}>
-                            ↳ <span style={{ color: '#888', marginRight: 4 }}>turno</span>
-                            <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#f1f8e9', color: '#2e7d32', fontWeight: 'bold' }}>
-                              {turnoLabel}
-                            </span>
-                          </td>
-                          <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>{diaBR}</td>
-                          <td style={{ ...s.tdC, fontSize: '11px' }}>
-                            {d.pago
-                              ? <span style={{ color: '#388e3c' }}>✅ pago {d.dataPagamento ? fmtDiaMes(d.dataPagamento) : ''}</span>
-                              : <span style={{ color: '#f57f17' }}>⏳ pendente</span>}
-                          </td>
-                          <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
-                          <td colSpan={2} style={s.tdC} />
-                        </tr>
-                      );
-                    }
-
-                    /* ── [2] Transporte dia a dia (verde médio) ── */
-                    const vtUnit = g.diasTransp.length === 1 && diasUnicos.length > 0
-                      ? R(g.diasTransp[0].valor) / diasUnicos.length
-                      : (g.diasTransp.length > 0 ? R(g.diasTransp[0].valor) : 0);
-                    const usarDiaADia = g.diasTransp.length === 1 && diasUnicos.length > 0;
-
-                    if (usarDiaADia) {
-                      diasUnicos.forEach(data => {
-                        const diaBR = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-                        rows.push(
-                          <tr key={`${g.id}_tr_${data}`}
-                            style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
-                            <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#2e7d32' }}>
-                              ↳ <span style={{ marginRight: 4 }}>🚗</span>
-                              <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20', fontWeight: 'bold' }}>
-                                Transporte
-                              </span>
-                            </td>
-                            <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>{diaBR}</td>
-                            <td style={{ ...s.tdC, fontSize: '11px', color: '#555' }}>
-                              {fmtDiaMes(data)} · vale-transporte
-                            </td>
-                            <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(vtUnit)}</td>
-                            <td colSpan={2} style={s.tdC} />
-                          </tr>
-                        );
-                      });
-                    } else {
-                      g.diasTransp.forEach(d => {
-                        rows.push(
-                          <tr key={`${g.id}_tc_${d.id || d.data}`}
-                            style={{ backgroundColor: '#e8f5e9', borderBottom: '1px dashed #a5d6a7', borderLeft: '6px solid #66bb6a' }}>
-                            <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#2e7d32' }}>
-                              ↳ 🚗 <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#c8e6c9', color: '#1b5e20', fontWeight: 'bold' }}>Transporte</span>
-                            </td>
-                            <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px' }}>{d.data ? fmtDiaMes(d.data) : '—'}</td>
-                            <td style={{ ...s.tdC, fontSize: '11px' }}>Vale-transporte consolidado</td>
-                            <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(d.valor))}</td>
-                            <td colSpan={2} style={s.tdC} />
-                          </tr>
-                        );
-                      });
-                    }
-
-                    /* ── [3] Descontos de consumo (vermelho) ── */
-                    saidasG.forEach(saida => {
-                      rows.push(
-                        <tr key={`${g.id}_desc_${saida.id}`}
-                          style={{ backgroundColor: '#fff8f8', borderBottom: '1px dashed #ffcdd2', borderLeft: '6px solid #ef9a9a' }}>
-                          <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#c62828' }}>
-                            ↳ <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#ffebee', color: '#c62828', fontWeight: 'bold' }}>📉 desc.</span>
-                          </td>
-                          <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>
-                            {saida.dataPagamento ? fmtDataBR(saida.dataPagamento) : '—'}
-                          </td>
-                          <td style={{ ...s.td, fontSize: '11px' }}>
-                            <div style={{ color: '#c62828', fontWeight: 'bold' }}>{saida.descricao || saida.tipo || 'Desconto'}</div>
-                            {saida.obs && <div style={{ color: '#999', fontSize: '10px', fontStyle: 'italic' }}>📝 {saida.obs}</div>}
-                          </td>
-                          <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#c62828' }}>
-                            −{fmtMoeda(R(saida.valor))}
-                          </td>
-                          <td style={s.tdC}>
-                            <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '8px',
-                              backgroundColor: saida.pago ? '#e8f5e9' : '#fff9c4',
-                              color: saida.pago ? '#2e7d32' : '#f57f17' }}>
-                              {saida.pago ? '✅' : '⏳'}
-                            </span>
-                          </td>
-                          <td style={s.tdC} />
-                        </tr>
-                      );
-                    });
-
-                    /* ── [3b] Abatimento Adiantamento Especial (roxo) ── */
-                    abatG.forEach(saida => {
-                      rows.push(
-                        <tr key={`${g.id}_abat_${saida.id}`}
-                          style={{ backgroundColor: '#f3e5f5', borderBottom: '1px dashed #ce93d8', borderLeft: '6px solid #9c27b0' }}>
-                          <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#6a1b9a' }}>
-                            ↳ <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#9c27b0', color: 'white', fontWeight: 'bold' }}>⏩ adto.esp.</span>
-                          </td>
-                          <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>
-                            {saida.dataPagamento ? fmtDataBR(saida.dataPagamento) : '—'}
-                          </td>
-                          <td style={{ ...s.td, fontSize: '11px' }}>
-                            <div style={{ color: '#6a1b9a', fontWeight: 'bold' }}>{saida.descricao || 'Abatimento Adiantamento Especial'}</div>
-                            {saida.obs && <div style={{ color: '#ab47bc', fontSize: '10px', fontStyle: 'italic' }}>📝 {saida.obs}</div>}
-                          </td>
-                          <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#6a1b9a' }}>
-                            −{fmtMoeda(R(saida.valor))}
-                          </td>
-                          <td style={s.tdC}>
-                            <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '8px',
-                              backgroundColor: saida.pago ? '#e8f5e9' : '#fff9c4',
-                              color: saida.pago ? '#2e7d32' : '#f57f17' }}>
-                              {saida.pago ? '✅' : '⏳'}
-                            </span>
-                          </td>
-                          <td style={s.tdC} />
-                        </tr>
-                      );
-                    });
-
-                    /* ── [3c] Log de Pagamento PIX (azul royal) ── */
-                    const logs: PagamentoLog[] = Array.isArray(g.logPagamentos) ? g.logPagamentos : [];
-                    logs.forEach((log, idx) => {
-                      const dataLog = log.data
-                        ? new Date(log.data.length === 10 ? log.data + 'T12:00:00' : log.data)
-                            .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-                        : '—';
-                      const valorLog = log.valor ?? (log as any).value ?? 0;
-                      rows.push(
-                        <tr key={`${g.id}_pix_${idx}`}
-                          style={{ backgroundColor: '#e3f2fd', borderBottom: '1px dashed #90caf9', borderLeft: '6px solid #1565c0' }}>
-                          <td colSpan={2} style={{ ...s.td, paddingLeft: '28px', fontSize: '11px', color: '#1565c0' }}>
-                            ↳ <span style={{ padding: '1px 5px', borderRadius: '5px', fontSize: '10px', backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>📱 pgto.</span>
-                          </td>
-                          <td style={{ ...s.tdC, fontFamily: 'monospace', fontSize: '11px', whiteSpace: 'nowrap' }}>{dataLog}</td>
-                          <td style={{ ...s.td, fontSize: '11px', color: '#1565c0' }}>
-                            {log.forma === 'Misto'
-                              ? `📱 PIX ${fmtMoeda(log.valorPix || 0)} + 💵 Dinheiro ${fmtMoeda(log.valorDinheiro || 0)}`
-                              : log.forma === 'Dinheiro'
-                              ? '💵 Dinheiro — registro de pagamento'
-                              : '📱 PIX — registro de pagamento'}
-                          </td>
-                          <td colSpan={4} style={{ ...s.tdR, fontWeight: 'bold', color: '#1565c0' }}>
-                            📱 {fmtMoeda(valorLog)}
-                          </td>
-                          <td colSpan={2} style={s.tdC} />
-                        </tr>
-                      );
-                    });
-
-                    /* ── [4] Subtotal (fundo verde escuro) ── */
-                    const abatEfetivo = audit.abatEsp > 0 ? audit.abatEsp : abatTotal;
-                    const descEfetiva = descTotal > 0 ? descTotal : (audit.descSaidas > 0 ? audit.descSaidas : 0);
-                    rows.push(
-                      <tr key={`${g.id}_sub`}
-                        style={{ backgroundColor: '#1b5e20', borderBottom: '2px solid #43a047' }}>
-                        <td colSpan={10} style={{ padding: '0' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', color: 'white' }}>
-                            <tbody>
-                              <tr>
-                                <td style={{ padding: '6px 14px', width: '50%' }}>
-                                  {/* Turnos */}
-                                  {g.diasDobras.map((d: any, i: number) => {
-                                    const t = d.turno === 'Dia' ? '☀️' : '🌙';
-                                    return (
-                                      <span key={i} style={{ marginRight: '8px', color: '#a5d6a7' }}>
-                                        {t} {fmtDiaMes(d.data)} +{fmtMoeda(R(d.valor))}
-                                      </span>
-                                    );
-                                  })}
-                                  {/* Transporte */}
-                                  {usarDiaADia
-                                    ? diasUnicos.map(data => (
-                                        <span key={`ts_${data}`} style={{ marginRight: '8px', color: '#80cbc4' }}>
-                                          🚗 {fmtDiaMes(data)} +{fmtMoeda(vtUnit)}
-                                        </span>
-                                      ))
-                                    : g.diasTransp.map((d: any, i: number) => (
-                                        <span key={i} style={{ marginRight: '8px', color: '#80cbc4' }}>
-                                          🚗 +{fmtMoeda(R(d.valor))}
-                                        </span>
-                                      ))
-                                  }
-                                </td>
-                                <td style={{ padding: '6px 14px', textAlign: 'right', width: '50%' }}>
-                                  <span style={{ color: '#a5d6a7' }}>= Bruto </span>
-                                  <strong>{fmtMoeda(g.totalGrupo)}</strong>
-                                  {descEfetiva > 0 && (
-                                    <span style={{ marginLeft: '12px', color: '#ef9a9a' }}>
-                                      📉 Descontos −{fmtMoeda(descEfetiva)}
-                                    </span>
-                                  )}
-                                  {abatEfetivo > 0 && (
-                                    <span style={{ marginLeft: '12px', color: '#ce93d8' }}>
-                                      ⏩ Adto.esp. −{fmtMoeda(abatEfetivo)}
-                                    </span>
-                                  )}
-                                  {logs.length > 0 ? (
-                                    <>
-                                      <span style={{ marginLeft: '12px', borderLeft: '1px dashed #1976d2', paddingLeft: '12px', color: '#90caf9' }}>
-                                        📱 Pago: {fmtMoeda(logs.reduce((s, l) => s + R(l.valor ?? (l as any).value ?? 0), 0))}
-                                      </span>
-                                      {Math.abs(logs.reduce((s, l) => s + R(l.valor ?? (l as any).value ?? 0), 0) - liquidoEfetivo) > 0.01 && (
-                                        <span style={{ marginLeft: '8px', color: '#ffcc02', fontWeight: 'bold' }}>
-                                          ⚠️ Divergência {fmtMoeda(Math.abs(logs.reduce((s, l) => s + R(l.valor ?? (l as any).value ?? 0), 0) - liquidoEfetivo))}
-                                        </span>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <span style={{ marginLeft: '12px', color: '#90caf9', fontWeight: 'bold', fontSize: '13px' }}>
-                                      {g.formaPagamento === 'PIX' ? '📱' : '💵'} Líquido: {fmtMoeda(liquidoEfetivo)}
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
-                    );
-
-                    return rows;
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-
       </main>
       <Footer />
     </div>
   );
-};
-
-export default FreelancerPagamento;
+}
