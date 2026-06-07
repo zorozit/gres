@@ -1,0 +1,31 @@
+/* ═══════════════════════════════════════════════════════════════
+   AppLayout.css — estrutura de grade sidebar + conteúdo
+   ═══════════════════════════════════════════════════════════════ */
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f0f2f5;
+}
+
+/* Área de conteúdo — ocupa o restante depois da sidebar */
+.app-layout-content {
+  flex: 1;
+  min-width: 0;                   /* evita overflow em flex */
+  margin-left: var(--sidebar-width, 228px);
+  transition: margin-left 0.22s ease;
+  overflow-x: hidden;
+}
+
+/* Quando sidebar está compacta */
+.app-layout:has(.sidebar--compact) .app-layout-content {
+  margin-left: var(--sidebar-compact-width, 56px);
+}
+
+/* ── Mobile: sem margem (sidebar está sobreposta) ── */
+@media (max-width: 768px) {
+  .app-layout-content {
+    margin-left: 0 !important;
+    padding-top: 56px;  /* espaço para o botão hamburguer */
+  }
+}

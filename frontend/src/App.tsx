@@ -3,6 +3,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { UnitProvider } from './contexts/UnitContext';
 import { PermissoesProvider } from './contexts/PermissoesContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AppLayout } from './components/AppLayout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Modules } from './pages/Modules';
@@ -31,93 +32,126 @@ import Fornecedores from './pages/Fornecedores';
 import { UpdateBanner } from './components/UpdateBanner';
 import './App.css';
 
+// Helper: envolve children em ProtectedRoute + AppLayout
+function Protected({
+  moduloId,
+  children,
+}: {
+  moduloId?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <ProtectedRoute moduloId={moduloId}>
+      <AppLayout>{children}</AppLayout>
+    </ProtectedRoute>
+  );
+}
+
 function App() {
   return (
     <Router>
       <AuthProvider>
         <PermissoesProvider>
-        <UnitProvider>
-          <UpdateBanner />
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/dashboard" element={<Navigate to="/modulos/dashboard" replace />} />
+          <UnitProvider>
+            <UpdateBanner />
+            <Routes>
+              {/* ── Rotas públicas ── */}
+              <Route path="/login" element={<Login />} />
 
-            {/* Tela de módulos — qualquer autenticado */}
-            <Route path="/modulos" element={<ProtectedRoute><Modules /></ProtectedRoute>} />
+              {/* Formulário público de vagas — sem autenticação */}
+              <Route path="/vaga/:vagaId" element={<FormularioVaga />} />
 
-            {/* Cada rota verifica permissão pelo moduloId salvo */}
-            <Route path="/modulos/dashboard"
-              element={<ProtectedRoute moduloId="dashboard"><Dashboard /></ProtectedRoute>} />
+              {/* Redirect legado */}
+              <Route path="/dashboard" element={<Navigate to="/modulos/dashboard" replace />} />
 
-            <Route path="/modulos/caixa"
-              element={<ProtectedRoute moduloId="caixa"><Caixa /></ProtectedRoute>} />
+              {/* ── Tela de módulos (galeria) — sem AppLayout, tem layout próprio ── */}
+              <Route
+                path="/modulos"
+                element={
+                  <ProtectedRoute>
+                    <Modules />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route path="/modulos/escalas"
-              element={<ProtectedRoute moduloId="escalas"><Escalas /></ProtectedRoute>} />
+              {/* ── Rotas protegidas com sidebar ── */}
 
-            <Route path="/modulos/saidas"
-              element={<ProtectedRoute moduloId="saidas"><Saidas /></ProtectedRoute>} />
+              {/* Operacional */}
+              <Route path="/modulos/dashboard"
+                element={<Protected moduloId="dashboard"><Dashboard /></Protected>} />
 
-            <Route path="/modulos/motoboys"
-              element={<ProtectedRoute moduloId="motoboys"><Motoboys /></ProtectedRoute>} />
+              <Route path="/modulos/caixa"
+                element={<Protected moduloId="caixa"><Caixa /></Protected>} />
 
-            <Route path="/modulos/colaboradores"
-              element={<ProtectedRoute moduloId="colaboradores"><Colaboradores /></ProtectedRoute>} />
+              <Route path="/modulos/escalas"
+                element={<Protected moduloId="escalas"><Escalas /></Protected>} />
 
-            <Route path="/modulos/folha-pagamento"
-              element={<ProtectedRoute moduloId="folha-pagamento"><FolhaPagamento /></ProtectedRoute>} />
+              <Route path="/modulos/saidas"
+                element={<Protected moduloId="saidas"><Saidas /></Protected>} />
 
-            <Route path="/modulos/freelancer-pagamento"
-              element={<ProtectedRoute moduloId="folha-pagamento"><FreelancerPagamento /></ProtectedRoute>} />
+              <Route path="/modulos/motoboys"
+                element={<Protected moduloId="motoboys"><Motoboys /></Protected>} />
 
-            <Route path="/modulos/motoboy-auditoria"
-              element={<ProtectedRoute moduloId="folha-pagamento"><MotoboyAuditoria /></ProtectedRoute>} />
+              <Route path="/modulos/colaboradores"
+                element={<Protected moduloId="colaboradores"><Colaboradores /></Protected>} />
 
-            <Route path="/modulos/extrato"
-              element={<ProtectedRoute moduloId="extrato"><Extrato /></ProtectedRoute>} />
+              {/* Folha & Pagamento */}
+              <Route path="/modulos/folha-pagamento"
+                element={<Protected moduloId="folha-pagamento"><FolhaPagamento /></Protected>} />
 
-            <Route path="/modulos/adiantamentos-saldos"
-              element={<ProtectedRoute moduloId="adiantamentos-saldos"><AdiantamentosSaldos /></ProtectedRoute>} />
+              <Route path="/modulos/freelancer-pagamento"
+                element={<Protected moduloId="freelancer-pagamento"><FreelancerPagamento /></Protected>} />
 
-            <Route path="/modulos/fechamento-dinheiro"
-              element={<ProtectedRoute moduloId="fechamento-dinheiro"><FechamentoCaixaDinheiro /></ProtectedRoute>} />
+              <Route path="/modulos/adiantamentos-saldos"
+                element={<Protected moduloId="adiantamentos-saldos"><AdiantamentosSaldos /></Protected>} />
 
-            <Route path="/modulos/importacoes-contabeis"
-              element={<ProtectedRoute moduloId="importacoes-contabeis"><ImportacoesContabeis /></ProtectedRoute>} />
+              <Route path="/modulos/fechamento-dinheiro"
+                element={<Protected moduloId="fechamento-dinheiro"><FechamentoCaixaDinheiro /></Protected>} />
 
-            <Route path="/modulos/unidades"
-              element={<ProtectedRoute moduloId="unidades"><Unidades /></ProtectedRoute>} />
+              {/* Auditoria & Extrato */}
+              <Route path="/modulos/extrato"
+                element={<Protected moduloId="extrato"><Extrato /></Protected>} />
 
-            <Route path="/modulos/usuarios"
-              element={<ProtectedRoute moduloId="usuarios"><Usuarios /></ProtectedRoute>} />
+              <Route path="/modulos/motoboy-auditoria"
+                element={<Protected moduloId="motoboy-auditoria"><MotoboyAuditoria /></Protected>} />
 
-            <Route path="/modulos/permissoes"
-              element={<ProtectedRoute moduloId="permissoes"><PermissoesConfig /></ProtectedRoute>} />
+              <Route path="/modulos/auditoria"
+                element={<Protected moduloId="auditoria"><Auditoria /></Protected>} />
 
-            <Route path="/modulos/auditoria"
-              element={<ProtectedRoute moduloId="auditoria"><Auditoria /></ProtectedRoute>} />
+              <Route path="/modulos/conciliacao-bancaria"
+                element={<Protected moduloId="conciliacao-bancaria"><ConciliacaoBancaria /></Protected>} />
 
-            <Route path="/modulos/feriados"
-              element={<ProtectedRoute moduloId="feriados"><Feriados /></ProtectedRoute>} />
+              {/* Financeiro */}
+              <Route path="/modulos/despesas"
+                element={<Protected moduloId="despesas"><Despesas /></Protected>} />
 
-            <Route path="/modulos/vagas"
-              element={<ProtectedRoute moduloId="vagas"><Vagas /></ProtectedRoute>} />
+              <Route path="/modulos/fornecedores"
+                element={<Protected moduloId="fornecedores"><Fornecedores /></Protected>} />
 
-            <Route path="/modulos/conciliacao-bancaria"
-              element={<ProtectedRoute moduloId="conciliacao-bancaria"><ConciliacaoBancaria /></ProtectedRoute>} />
+              <Route path="/modulos/importacoes-contabeis"
+                element={<Protected moduloId="importacoes-contabeis"><ImportacoesContabeis /></Protected>} />
 
-            <Route path="/modulos/despesas"
-              element={<ProtectedRoute moduloId="despesas"><Despesas /></ProtectedRoute>} />
+              {/* RH & Pessoas */}
+              <Route path="/modulos/vagas"
+                element={<Protected moduloId="vagas"><Vagas /></Protected>} />
 
-            <Route path="/modulos/fornecedores"
-              element={<ProtectedRoute moduloId="fornecedores"><Fornecedores /></ProtectedRoute>} />
+              <Route path="/modulos/feriados"
+                element={<Protected moduloId="feriados"><Feriados /></Protected>} />
 
-            {/* Formulário público de vagas — sem autenticação, link por vagaId */}
-            <Route path="/vaga/:vagaId" element={<FormularioVaga />} />
+              {/* Administração */}
+              <Route path="/modulos/unidades"
+                element={<Protected moduloId="unidades"><Unidades /></Protected>} />
 
-            <Route path="/" element={<Navigate to="/modulos" replace />} />
-          </Routes>
-        </UnitProvider>
+              <Route path="/modulos/usuarios"
+                element={<Protected moduloId="usuarios"><Usuarios /></Protected>} />
+
+              <Route path="/modulos/permissoes"
+                element={<Protected moduloId="permissoes"><PermissoesConfig /></Protected>} />
+
+              {/* Fallback */}
+              <Route path="/" element={<Navigate to="/modulos" replace />} />
+            </Routes>
+          </UnitProvider>
         </PermissoesProvider>
       </AuthProvider>
     </Router>
