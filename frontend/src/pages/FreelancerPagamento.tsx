@@ -894,7 +894,6 @@ export default function FreelancerPagamento() {
                           const compDesc    = R(compReg?.valorDescSaidas);
                           const compAbat    = R(compReg?.valorAbatEsp);
                           const compLiq     = R(compReg?.valorLiquido);
-                          const compObs     = compReg?.obs || '';
                           const temComp     = compLiq > 0 || compBruto > 0;
                           return (
                             <tr key={fr.id} style={{backgroundColor:fi%2===0?'#fafafa':'white'}}>
@@ -928,55 +927,60 @@ export default function FreelancerPagamento() {
                               <td style={{...s.td,textAlign:'right',color:fr.saidasDesconto>0?'#c62828':'#aaa',fontSize:'12px'}}>
                                 {fr.saidasDesconto>0 ? <span title={fr.saidasDetalhe.map((d:any)=>`${d.descricao}: R$${fmt(d.valor)}`).join(' | ')}>-{fmtMoeda(fr.saidasDesconto)}</span> : '-'}
                               </td>
-                              <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:fr.totalLiquido>0?'#1b5e20':'#888',fontSize:'13px'}}>
-                                {fmtMoeda(fr.totalLiquido)}
-                                {fr.totalLiquido===0 && fr.totalJaPago>0 && <div style={{fontSize:'9px',color:'#2e7d32',fontWeight:'normal'}}>quitado</div>}
+                              {/* ── Líquido: valor em destaque + equação (padrão Extrato) ── */}
+                              <td style={{...s.td,textAlign:'right',fontWeight:'bold',fontSize:'13px'}}>
+                                {frIsPago && temComp ? (
+                                  <>
+                                    {/* valor pago em destaque na cor da forma */}
+                                    <div style={{
+                                      color: frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100',
+                                      fontSize:'14px', fontWeight:'bold'
+                                    }}>
+                                      {frForma==='PIX'?'📱 ':frForma==='Dinheiro'?'💵 ':'🔄 '}{fmtMoeda(compLiq)}
+                                    </div>
+                                    {/* equação resumida em subscript cinza */}
+                                    {(compDesc>0||compAbat>0) && (
+                                      <div style={{fontSize:'9px',color:'#888',fontWeight:'normal',lineHeight:'1.5',marginTop:'2px'}}>
+                                        bruto {fmtMoeda(compBruto)}
+                                        {compDesc>0 && <span style={{color:'#c62828'}}> −{fmtMoeda(compDesc)}</span>}
+                                        {compAbat>0 && <span style={{color:'#7b1fa2'}}> −{fmtMoeda(compAbat)} adto.</span>}
+                                        {' = '}<span style={{color:'#1b5e20',fontWeight:'bold'}}>{fmtMoeda(compLiq)}</span>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <div style={{color:fr.totalLiquido>0?'#1b5e20':'#888'}}>
+                                      {fmtMoeda(fr.totalLiquido)}
+                                    </div>
+                                    {fr.totalLiquido===0 && fr.totalJaPago>0 && (
+                                      <div style={{fontSize:'9px',color:'#2e7d32',fontWeight:'normal'}}>quitado</div>
+                                    )}
+                                  </>
+                                )}
                               </td>
-                              <td style={{...s.td,textAlign:'left',minWidth:'160px'}}>
-                                {/* ── Badge de status ── */}
-                                <div style={{marginBottom:'4px'}}>
-                                  {semDetalhe
-                                    ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}} title="Pago sem detalhe analítico">⚠️ Pago*</span>
-                                    : pagoParcial
-                                    ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
-                                    : pagoCompleto
-                                    ? <span style={s.badge('#e8f5e9','#2e7d32')}>✅ Pago</span>
-                                    : <span style={s.badge('#fff9c4','#f57f17')}>⏳ Pendente</span>}
-                                </div>
-                                {/* ── Composição do pagamento (quando pago) ── */}
-                                {frIsPago && (
-                                  <div style={{fontSize:'10px',lineHeight:'1.65',borderTop:'1px solid #e0e0e0',paddingTop:'4px'}}>
-                                    {frDataPgto && <div style={{color:'#555',marginBottom:'2px'}}>📅 {frDataPgto}</div>}
-                                    {frForma && <div style={{fontWeight:'bold',marginBottom:'3px',color:frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100'}}>
-                                      {frForma==='PIX'?'📱 PIX':frForma==='Dinheiro'?'💵 Dinheiro':'🔄 Misto'}
-                                    </div>}
-                                    {temComp ? (
-                                      <div style={{backgroundColor:'#f9f9f9',borderRadius:'4px',padding:'4px 6px',border:'1px solid #e8e8e8'}}>
-                                        {compBruto>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
-                                          <span style={{color:'#1976d2'}}>💰 Bruto:</span>
-                                          <span style={{fontWeight:'bold',color:'#1976d2'}}>{fmtMoeda(compBruto)}</span>
-                                        </div>}
-                                        {compDesc>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
-                                          <span style={{color:'#c62828'}}>➖ Descontos:</span>
-                                          <span style={{fontWeight:'bold',color:'#c62828'}}>-{fmtMoeda(compDesc)}</span>
-                                        </div>}
-                                        {compAbat>0 && <div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}>
-                                          <span style={{color:'#7c3aed'}}>➖ Abat. esp.:</span>
-                                          <span style={{fontWeight:'bold',color:'#7c3aed'}}>-{fmtMoeda(compAbat)}</span>
-                                        </div>}
-                                        <div style={{display:'flex',justifyContent:'space-between',gap:'8px',borderTop:'1px solid #ddd',marginTop:'3px',paddingTop:'3px'}}>
-                                          <span style={{color:'#2e7d32',fontWeight:'bold'}}>✔ Pago:</span>
-                                          <span style={{fontWeight:'bold',color:'#2e7d32',fontSize:'11px'}}>{fmtMoeda(compLiq)}</span>
-                                        </div>
-                                      </div>
-                                    ) : compObs ? (
-                                      <div style={{color:'#666',fontStyle:'italic',fontSize:'9px',maxWidth:'180px',whiteSpace:'normal'}} title={compObs}>
-                                        {compObs.length>80 ? compObs.substring(0,80)+'…' : compObs}
-                                      </div>
-                                    ) : null}
-                                    {semDetalhe && <div style={{color:'#e65100',fontSize:'9px',marginTop:'2px'}}>* sem detalhe de dias</div>}
+                              {/* ── Status: badge simples + data + forma (padrão Extrato) ── */}
+                              <td style={{...s.td,textAlign:'center'}}>
+                                {semDetalhe
+                                  ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}} title="Pago sem detalhe analítico — reabra e repague">⚠️ Pago*</span>
+                                  : pagoParcial
+                                  ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
+                                  : pagoCompleto
+                                  ? <span style={s.badge('#e8f5e9','#2e7d32')}>✅ Pago</span>
+                                  : <span style={s.badge('#fff9c4','#f57f17')}>⏳ Pend.</span>}
+                                {frIsPago && frDataPgto && (
+                                  <div style={{fontSize:'9px',color:'#555',marginTop:'3px'}}>📅 {frDataPgto}</div>
+                                )}
+                                {frIsPago && frForma && (
+                                  <div style={{marginTop:'3px'}}>
+                                    <span style={{padding:'2px 6px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',
+                                      backgroundColor:frForma==='PIX'?'#e3f2fd':frForma==='Dinheiro'?'#e8f5e9':'#fff3e0',
+                                      color:frForma==='PIX'?'#1565c0':frForma==='Dinheiro'?'#2e7d32':'#e65100'}}>
+                                      {frForma==='PIX'?'📱 PIX':frForma==='Dinheiro'?'💵 Din.':'🔄 Misto'}
+                                    </span>
                                   </div>
                                 )}
+                                {semDetalhe && <div style={{fontSize:'9px',color:'#e65100',marginTop:'2px'}}>* sem detalhe</div>}
                               </td>
                               <td style={s.td}>
                                 <div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>

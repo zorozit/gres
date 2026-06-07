@@ -4578,7 +4578,6 @@ export default function FolhaPagamento() {
                               const compDescFP   = parseFloat(compRegFP?.valorDescSaidas) || 0;
                               const compAbatFP   = parseFloat(compRegFP?.valorAbatEsp)    || 0;
                               const compLiqFP    = parseFloat(compRegFP?.valorLiquido)    || 0;
-                              const compObsFP    = compRegFP?.obs || '';
                               const temCompFP    = compLiqFP > 0 || compBrutoFP > 0;
 
                               // Status inteligente
@@ -4692,69 +4691,63 @@ export default function FolhaPagamento() {
                                     </span>
                                   ) : '-'}
                                 </td>
-                                <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: fr.totalLiquido > 0 ? '#1b5e20' : '#888', fontSize: '13px' }}>
-                                  {fmtMoeda(fr.totalLiquido)}
-                                  {fr.totalLiquido === 0 && (fr as any).totalJaPago > 0 && (
-                                    <div style={{ fontSize: '9px', color: '#2e7d32', fontWeight: 'normal' }}>quitado</div>
+                                {/* ── Líquido: valor em destaque + equação (padrão Extrato) ── */}
+                                <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', fontSize: '13px' }}>
+                                  {frIsPago && temCompFP ? (
+                                    <>
+                                      {/* valor pago em destaque na cor da forma */}
+                                      <div style={{
+                                        color: frForma === 'PIX' ? '#1565c0' : frForma === 'Dinheiro' ? '#2e7d32' : '#e65100',
+                                        fontSize: '14px', fontWeight: 'bold'
+                                      }}>
+                                        {frForma === 'PIX' ? '📱 ' : frForma === 'Dinheiro' ? '💵 ' : '🔄 '}{fmtMoeda(compLiqFP)}
+                                      </div>
+                                      {/* equação resumida em subscript cinza */}
+                                      {(compDescFP > 0 || compAbatFP > 0) && (
+                                        <div style={{ fontSize: '9px', color: '#888', fontWeight: 'normal', lineHeight: '1.5', marginTop: '2px' }}>
+                                          bruto {fmtMoeda(compBrutoFP)}
+                                          {compDescFP > 0 && <span style={{ color: '#c62828' }}> −{fmtMoeda(compDescFP)}</span>}
+                                          {compAbatFP > 0 && <span style={{ color: '#7b1fa2' }}> −{fmtMoeda(compAbatFP)} adto.</span>}
+                                          {' = '}<span style={{ color: '#1b5e20', fontWeight: 'bold' }}>{fmtMoeda(compLiqFP)}</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div style={{ color: fr.totalLiquido > 0 ? '#1b5e20' : '#888' }}>
+                                        {fmtMoeda(fr.totalLiquido)}
+                                      </div>
+                                      {fr.totalLiquido === 0 && (fr as any).totalJaPago > 0 && (
+                                        <div style={{ fontSize: '9px', color: '#2e7d32', fontWeight: 'normal' }}>quitado</div>
+                                      )}
+                                    </>
                                   )}
                                 </td>
-                                <td style={{ ...s.td, textAlign: 'left', minWidth: '160px' }}>
-                                  {/* ── Badge de status ── */}
-                                  <div style={{ marginBottom: '4px' }}>
-                                    {semDetalheDias ? (
-                                      <span style={{ ...s.badge('#fff3e0','#e65100'), fontSize:'9px' }} title="Pago mas sem registro analítico de dias. Reabra e repague para corrigir.">⚠️ Pago*</span>
-                                    ) : pagoParcial ? (
-                                      <span style={{ ...s.badge('#fff9c4','#f57f17'), fontSize:'9px' }} title="Pagamento parcial — ainda há dias pendentes nesta semana">🟡 Parcial</span>
-                                    ) : pagoCompleto ? (
-                                      <span style={s.badge('#e8f5e9', '#2e7d32')}>✅ Pago</span>
-                                    ) : (
-                                      <span style={s.badge('#fff9c4', '#f57f17')}>⏳ Pendente</span>
-                                    )}
-                                  </div>
-                                  {/* ── Composição do pagamento (quando pago) ── */}
-                                  {frIsPago && (
-                                    <div style={{ fontSize: '10px', lineHeight: '1.65', borderTop: '1px solid #e0e0e0', paddingTop: '4px' }}>
-                                      {frDataPgto && <div style={{ color: '#555', marginBottom: '2px' }}>📅 {frDataPgto}</div>}
-                                      {frForma && (
-                                        <div style={{ fontWeight: 'bold', marginBottom: '3px',
-                                          color: frForma === 'PIX' ? '#1565c0' : frForma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
-                                          {frForma === 'PIX' ? '📱 PIX' : frForma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
-                                        </div>
-                                      )}
-                                      {temCompFP ? (
-                                        <div style={{ backgroundColor: '#f9f9f9', borderRadius: '4px', padding: '4px 6px', border: '1px solid #e8e8e8' }}>
-                                          {compBrutoFP > 0 && (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                              <span style={{ color: '#1976d2' }}>💰 Bruto:</span>
-                                              <span style={{ fontWeight: 'bold', color: '#1976d2' }}>{fmtMoeda(compBrutoFP)}</span>
-                                            </div>
-                                          )}
-                                          {compDescFP > 0 && (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                              <span style={{ color: '#c62828' }}>➖ Descontos:</span>
-                                              <span style={{ fontWeight: 'bold', color: '#c62828' }}>-{fmtMoeda(compDescFP)}</span>
-                                            </div>
-                                          )}
-                                          {compAbatFP > 0 && (
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                                              <span style={{ color: '#7c3aed' }}>➖ Abat. esp.:</span>
-                                              <span style={{ fontWeight: 'bold', color: '#7c3aed' }}>-{fmtMoeda(compAbatFP)}</span>
-                                            </div>
-                                          )}
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', borderTop: '1px solid #ddd', marginTop: '3px', paddingTop: '3px' }}>
-                                            <span style={{ color: '#2e7d32', fontWeight: 'bold' }}>✔ Pago:</span>
-                                            <span style={{ fontWeight: 'bold', color: '#2e7d32', fontSize: '11px' }}>{fmtMoeda(compLiqFP)}</span>
-                                          </div>
-                                        </div>
-                                      ) : compObsFP ? (
-                                        <div style={{ color: '#666', fontStyle: 'italic', fontSize: '9px', maxWidth: '180px', whiteSpace: 'normal' }} title={compObsFP}>
-                                          {compObsFP.length > 80 ? compObsFP.substring(0, 80) + '…' : compObsFP}
-                                        </div>
-                                      ) : null}
-                                      {semDetalheDias && (
-                                        <div style={{ fontSize: '9px', color: '#e65100', marginTop: '2px' }}>* sem detalhe de dias</div>
-                                      )}
+                                {/* ── Status: badge simples + data + forma (padrão Extrato) ── */}
+                                <td style={{ ...s.td, textAlign: 'center' }}>
+                                  {semDetalheDias ? (
+                                    <span style={{ ...s.badge('#fff3e0','#e65100'), fontSize:'9px' }} title="Pago mas sem registro analítico de dias. Reabra e repague para corrigir.">⚠️ Pago*</span>
+                                  ) : pagoParcial ? (
+                                    <span style={{ ...s.badge('#fff9c4','#f57f17'), fontSize:'9px' }} title="Pagamento parcial — ainda há dias pendentes nesta semana">🟡 Parcial</span>
+                                  ) : pagoCompleto ? (
+                                    <span style={s.badge('#e8f5e9', '#2e7d32')}>✅ Pago</span>
+                                  ) : (
+                                    <span style={s.badge('#fff9c4', '#f57f17')}>⏳ Pend.</span>
+                                  )}
+                                  {frIsPago && frDataPgto && (
+                                    <div style={{ fontSize: '9px', color: '#555', marginTop: '3px' }}>📅 {frDataPgto}</div>
+                                  )}
+                                  {frIsPago && frForma && (
+                                    <div style={{ marginTop: '3px' }}>
+                                      <span style={{ padding: '2px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                                        backgroundColor: frForma === 'PIX' ? '#e3f2fd' : frForma === 'Dinheiro' ? '#e8f5e9' : '#fff3e0',
+                                        color: frForma === 'PIX' ? '#1565c0' : frForma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
+                                        {frForma === 'PIX' ? '📱 PIX' : frForma === 'Dinheiro' ? '💵 Din.' : '🔄 Misto'}
+                                      </span>
                                     </div>
+                                  )}
+                                  {semDetalheDias && (
+                                    <div style={{ fontSize: '9px', color: '#e65100', marginTop: '2px' }}>* sem detalhe</div>
                                   )}
                                 </td>
                                 <td style={s.td}>
