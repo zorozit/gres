@@ -117,7 +117,7 @@ const FreelancerPagamento: React.FC = () => {
   const { user } = useAuth();
   const unitId   = activeUnit?.id || (user as any)?.unitId || localStorage.getItem('unit_id') || '';
   const apiUrl   = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
-  const token    = () => localStorage.getItem('token') || '';
+  const token    = () => localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
   const auth     = { headers: { Authorization: `Bearer ${token()}` } };
 
   /* ── State ── */
@@ -131,61 +131,292 @@ const FreelancerPagamento: React.FC = () => {
   const [filtroPago, setFiltroPago] = useState<'todos' | 'pago' | 'pendente'>('todos');
   const [filtroColab, setFiltroColab] = useState('');
 
+  /* ── Helpers de semana ── */
+  const semanasFechamento = (ano: number, mes: number): { inicio: Date; fim: Date }[] => {
+    const semanas: { inicio: Date; fim: Date }[] = [];
+    const primeiro = new Date(ano, mes - 1, 1);
+    const ultimo   = new Date(ano, mes, 0);
+    let cur = new Date(primeiro);
+    while (cur <= ultimo) {
+      const inicio = new Date(cur);
+      const fim    = new Date(cur);
+      while (fim.getDay() !== 0 && fim < ultimo) fim.setDate(fim.getDate() + 1);
+      semanas.push({ inicio, fim: new Date(Math.min(fim.getTime(), ultimo.getTime())) });
+      cur = new Date(fim);
+      cur.setDate(cur.getDate() + 1);
+    }
+    return semanas;
+  };
+  const isoDate = (d: Date) => d.toISOString().split('T')[0];
+
   /* ── Fetch ── */
   const carregar = useCallback(async () => {
     if (!unitId) return;
     setLoading(true);
     setExpandidos(new Set());
     try {
-      const [rF, rS] = await Promise.all([
-        fetch(`${apiUrl}/folha-pagamento?mes=${mesAno}&unitId=${unitId}`, auth),
-        fetch(`${apiUrl}/saidas?mes=${mesAno}&unitId=${unitId}`, auth),
+      const [ano, mes] = mesAno.split('-').map(Number);
+      const dataInicio = `${mesAno}-01`;
+      const dataFim    = new Date(ano, mes, 0).toISOString().split('T')[0];
+
+      /* Mês anterior para saídas pendentes */
+      const mesAnt = mes === 1
+        ? `${ano - 1}-12`
+        : `${ano}-${String(mes - 1).padStart(2, '0')}`;
+      const dataInicioAnt = `${mesAnt}-01`;
+      const dataFimAnt    = new Date(ano, mes - 1, 0).toISOString().split('T')[0];
+
+      /* ── Fetches paralelos ── */
+      const [rFolha, rEscalas, rColabs, rSaidas, rSaidasAnt] = await Promise.all([
+        fetch(`${apiUrl}/folha-pagamento?mes=${mesAno}&unitId=${unitId}`, auth).catch(() => null),
+        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, auth).catch(() => null),
+        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(() => null),
+        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicioAnt}&dataFim=${dataFimAnt}`, auth).catch(() => null),
       ]);
-      const rawFolha: any[] = rF.ok ? (await rF.json()) : [];
-      const rawSaidas: any[] = rS.ok ? (await rS.json()) : [];
 
-      setSaidasAll(rawSaidas);
+      const rawFolha:   any[] = (rFolha   && rFolha.ok)   ? await rFolha.json()   : [];
+      const rawEscalas: any[] = (rEscalas && rEscalas.ok) ? await rEscalas.json() : [];
+      const rawColabs:  any[] = (rColabs  && rColabs.ok)  ? await rColabs.json()  : [];
+      const rawSaidas:  any[] = (rSaidas  && rSaidas.ok)  ? await rSaidas.json()  : [];
+      const rawSaidasAnt: any[] = (rSaidasAnt && rSaidasAnt.ok) ? await rSaidasAnt.json() : [];
 
-      /* ── Agrupamento granular ── */
+      setSaidasAll([...rawSaidas, ...rawSaidasAnt]);
+
+      /* ── Filtros base ── */
       const isMigrado   = (i: any) => i.migrado   === true || i.migrado   === 'True'   || i.migrado   === 'true';
       const isEstornado = (i: any) => i.estornado === true || i.estornado === 'True'   || i.estornado === 'true';
+
+      /* ── Registros granulares JÁ SALVOS no DB ── */
       const granulares = rawFolha.filter(i =>
         i.tipo === 'freelancer-dia' && i.data && !isEstornado(i) && !isMigrado(i)
       );
 
-      /* Agrupar por pagamentoId (lote) ou fallback colabId+semana */
-      const grpMap: Record<string, any[]> = {};
-      for (const g of granulares) {
-        const key = g.pagamentoId
-          ? `pgto__${g.pagamentoId}`
-          : `sem__${g.colaboradorId}__${g.semana || g.data?.substring(0, 7)}`;
-        if (!grpMap[key]) grpMap[key] = [];
-        grpMap[key].push(g);
+      /* ── Index: colabId → Set<"data-turno"> já pago ── */
+      const turnosPagosPorColab: Record<string, Set<string>> = {};
+      for (const reg of granulares) {
+        if (!reg.colaboradorId || !reg.data) continue;
+        const cid = reg.colaboradorId;
+        if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Set();
+        if (reg.pago) {
+          const turnos = reg.turno === 'DiaNoite'
+            ? ['Dia', 'Noite']
+            : [reg.turno || 'Dia'];
+          for (const t of turnos) turnosPagosPorColab[cid].add(`${reg.data}-${t}`);
+        }
       }
 
-      const result: GrupoFreelancer[] = Object.values(grpMap).map(dias => {
+      /* ── Index: colabId → Set<"data-turno"> pendente (salvo no DB mas não pago) ── */
+      const turnosPendentesPorColab: Record<string, Set<string>> = {};
+      for (const reg of granulares) {
+        if (!reg.colaboradorId || !reg.data || reg.pago) continue;
+        const cid = reg.colaboradorId;
+        if (!turnosPendentesPorColab[cid]) turnosPendentesPorColab[cid] = new Set();
+        const turnos = reg.turno === 'DiaNoite'
+          ? ['Dia', 'Noite']
+          : [reg.turno || 'Dia'];
+        for (const t of turnos) turnosPendentesPorColab[cid].add(`${reg.data}-${t}`);
+      }
+
+      /* ── Freelancers: colaboradores com tipoContrato = 'freelancer' ── */
+      const freelancersColabs = rawColabs.filter((c: any) =>
+        (c.tipoContrato || '').toLowerCase() === 'freelancer'
+      );
+
+      /* ── Calcular semanas do mês ── */
+      const semanas = semanasFechamento(ano, mes);
+
+      /* ── Para cada freelancer × semana, gerar grupo a partir das escalas ── */
+      const result: GrupoFreelancer[] = [];
+
+      for (const colab of freelancersColabs) {
+        const cid = colab.id;
+        const isTurnoPago   = (data: string, turno: string) =>
+          (turnosPagosPorColab[cid]   || new Set()).has(`${data}-${turno}`);
+        const isTurnoPendDB = (data: string, turno: string) =>
+          (turnosPendentesPorColab[cid] || new Set()).has(`${data}-${turno}`);
+
+        for (const { inicio, fim } of semanas) {
+          const isoIni = isoDate(inicio);
+          const isoFim = isoDate(fim);
+
+          /* Escalas desta semana para este freelancer */
+          const escsSemana = rawEscalas.filter((e: any) =>
+            e.colaboradorId === cid &&
+            e.data >= isoIni && e.data <= isoFim
+          );
+
+          /* Turnos confirmados (presença = 'presente') */
+          const turnosPresentes: { data: string; turno: string; valor: number }[] = [];
+          for (const esc of escsSemana) {
+            const vDia   = parseFloat(colab.valorDia   || '0') || 0;
+            const vNoite = parseFloat(colab.valorNoite || '0') || 0;
+
+            if (esc.turno === 'DiaNoite') {
+              const pDia   = esc.presenca       === 'presente';
+              const pNoite = esc.presencaNoite  === 'presente';
+              if (pDia)   turnosPresentes.push({ data: esc.data, turno: 'Dia',   valor: vDia   || 120 });
+              if (pNoite) turnosPresentes.push({ data: esc.data, turno: 'Noite', valor: vNoite || 120 });
+            } else if (esc.turno === 'Noite') {
+              const p = esc.presencaNoite === 'presente' || esc.presenca === 'presente';
+              if (p) turnosPresentes.push({ data: esc.data, turno: 'Noite', valor: vNoite || 120 });
+            } else {
+              /* Dia ou genérico */
+              if (esc.presenca === 'presente') {
+                turnosPresentes.push({ data: esc.data, turno: esc.turno || 'Dia', valor: vDia || 120 });
+              }
+            }
+          }
+
+          /* Turno pendentes = confirmados e NÃO pagos */
+          const turnosPendentes = turnosPresentes.filter(t => !isTurnoPago(t.data, t.turno));
+
+          /* Registros do DB para esta semana (para campos Opção B e pagamentoId) */
+          const regsSemana = granulares.filter((r: any) =>
+            r.colaboradorId === cid &&
+            r.data >= isoIni && r.data <= isoFim
+          );
+          const regsPagos = regsSemana.filter((r: any) => r.pago);
+          const regsPendentes = regsSemana.filter((r: any) => !r.pago);
+
+          /* Transporte: soma registros com tipoCodigo = 'transporte-freelancer' */
+          const diasTranspDB = granulares.filter((r: any) =>
+            r.colaboradorId === cid &&
+            r.data >= isoIni && r.data <= isoFim &&
+            r.tipoCodigo === 'transporte-freelancer'
+          );
+          const totalTransp = diasTranspDB.reduce((s: number, d: any) => s + (parseFloat(d.valor) || 0), 0);
+
+          /* Montar diasDobras: prioridade DB, fallback escalas */
+          let diasDobrasFinais: any[];
+          if (regsSemana.filter((r: any) => r.tipoCodigo !== 'transporte-freelancer').length > 0) {
+            /* DB tem dados → usar DB */
+            diasDobrasFinais = regsSemana.filter((r: any) => r.tipoCodigo !== 'transporte-freelancer');
+          } else {
+            /* Sem dados no DB → usar escalas calculadas */
+            diasDobrasFinais = turnosPresentes.map(t => ({
+              id: `esc_${cid}_${t.data}_${t.turno}`,
+              colaboradorId: cid,
+              nomeColaborador: colab.nome,
+              data: t.data,
+              turno: t.turno,
+              valor: t.valor,
+              pago: false,
+              semana: isoFim,
+              confiabilidade: 'estimado',
+              _deEscala: true,
+            }));
+          }
+
+          /* Pular semanas sem dados (nem DB nem escalas confirmadas) */
+          if (diasDobrasFinais.length === 0 && diasTranspDB.length === 0) continue;
+
+          /* Status de pagamento */
+          const algumPago  = regsPagos.length > 0 || turnosPresentes.some(t => isTurnoPago(t.data, t.turno));
+          const todosPagos = turnosPendentes.length === 0 && !turnosPendentes.some(t => isTurnoPendDB(t.data, t.turno));
+          const pago = todosPagos && algumPago && diasDobrasFinais.length > 0;
+          const pagoParcial = algumPago && !todosPagos;
+
+          /* Valores */
+          const totalDobras = diasDobrasFinais
+            .filter((d: any) => d.tipoCodigo !== 'transporte-freelancer')
+            .reduce((s: number, d: any) => s + (parseFloat(d.valor) || 0), 0);
+          const totalGrupo = totalDobras + totalTransp;
+
+          /* Campos Opção B: pegar do registro com valorLiquido */
+          const refComAudit = [...regsPagos, ...regsPendentes].find((r: any) =>
+            r.valorLiquido !== undefined && r.valorLiquido !== null
+          ) || regsPagos[0] || regsPendentes[0] || null;
+
+          /* pagamentoId do lote */
+          const refPgtoId = regsPagos[0]?.pagamentoId || regsPendentes[0]?.pagamentoId || null;
+          const dataPgto  = regsPagos[0]?.dataPagamento || null;
+
+          /* Semana label */
+          const semLabel = `${fmtDiaMes(isoIni)} – ${fmtDiaMes(isoFim)}`;
+          const confiab: 'real' | 'recalculado' | 'legado' =
+            regsSemana.some((r: any) => r.reconstituido) ? 'recalculado'
+            : regsSemana.length > 0 ? 'real'
+            : 'legado';
+
+          result.push({
+            id: `grp__${cid}__${isoFim}`,
+            colaboradorId: cid,
+            nomeColaborador: colab.nome || cid,
+            chavePix: colab.chavePix,
+            telefone: colab.telefone || colab.celular,
+            semana: isoFim,
+            semanaLabel: semLabel,
+            mes: mesAno,
+            pagamentoId: refPgtoId,
+            pago,
+            pagoParcial,
+            diasDobras: diasDobrasFinais,
+            diasTransp: diasTranspDB,
+            totalDobras,
+            totalTransp,
+            totalGrupo,
+            dataPagamento: dataPgto,
+            formaPagamento: refComAudit?.formaPagamento || colab.formaPagamento || 'PIX',
+            confiabilidade: confiab,
+            valorLiquido:    refComAudit?.valorLiquido    ?? null,
+            valorDescSaidas: refComAudit?.valorDescSaidas ?? null,
+            valorAbatEsp:    refComAudit?.valorAbatEsp    ?? null,
+            obsAudit:        refComAudit?.obs             || '',
+            logPagamentos:   refComAudit?.logPagamentos   || [],
+            raw: {
+              diasDobras: diasDobrasFinais,
+              diasTransp: diasTranspDB,
+              valorLiquido:    refComAudit?.valorLiquido    ?? null,
+              valorDescSaidas: refComAudit?.valorDescSaidas ?? null,
+              valorAbatEsp:    refComAudit?.valorAbatEsp    ?? null,
+              obsAudit:        refComAudit?.obs             || '',
+            },
+          } as GrupoFreelancer);
+        }
+      }
+
+      /* ── Grupos do DB com pagamentoId explícito (lotes granulares processados) ── */
+      /* Mesclar: se já existe grupo da escala para mesma semana+colab, atualizar com dados do DB */
+      const grpPorChave: Record<string, GrupoFreelancer> = {};
+      for (const g of result) grpPorChave[g.id] = g;
+
+      /* Adicionar grupos do DB que não vieram de escalas (freelancers sem tipoContrato='freelancer' no colab) */
+      const grpMap: Record<string, any[]> = {};
+      for (const reg of granulares) {
+        const semFim = reg.semana || reg.data?.substring(0, 10) || '';
+        const key = reg.pagamentoId
+          ? `pgto__${reg.pagamentoId}`
+          : `sem__${reg.colaboradorId}__${semFim}`;
+        if (!grpMap[key]) grpMap[key] = [];
+        grpMap[key].push(reg);
+      }
+
+      for (const [, dias] of Object.entries(grpMap)) {
+        const ref = dias[0];
+        const cid = ref.colaboradorId;
+        const semFim = ref.semana || ref.data?.substring(0, 10) || '';
+        const grpKey = `grp__${cid}__${semFim}`;
+
+        /* Se já existe grupo calculado das escalas, pular (já tem os dados) */
+        if (grpPorChave[grpKey]) continue;
+        /* Se o colaborador é freelancer mas a semana caiu fora do mês atual, incluir */
+
         const pagos = dias.filter(d => d.pago === true);
         const pends = dias.filter(d => d.pago !== true);
         const algumPago  = pagos.length > 0;
         const todosPagos = pends.length === 0;
-        const ref = pagos[0] || dias[0];
         const diasDobras = dias.filter(d =>
           !d.tipoCodigo || d.tipoCodigo === 'freelancer-dia' || d.tipoCodigo === 'freelancer-noite'
         );
         const diasTransp = dias.filter(d => d.tipoCodigo === 'transporte-freelancer');
-        const totalDobras = diasDobras.reduce((s, d) => s + R(d.valor), 0);
-        const totalTransp = diasTransp.reduce((s, d) => s + R(d.valor), 0);
+        const totalDobras = diasDobras.reduce((s, d) => s + (parseFloat(d.valor) || 0), 0);
+        const totalTransp = diasTransp.reduce((s, d) => s + (parseFloat(d.valor) || 0), 0);
         const totalGrupo  = totalDobras + totalTransp;
-        const temRecalc   = dias.some(d => d.reconstituido === true || d.reconstituido === 'True');
-        const confiab: 'real' | 'recalculado' | 'legado' = temRecalc
-          ? 'recalculado'
-          : (dias.every(d => d.confiabilidade === 'real') ? 'real' : 'legado');
         const refComAudit = dias.find((d: any) => d.valorLiquido !== undefined && d.valorLiquido !== null)
           || dias.find((d: any) => /L[íi]quido/i.test(d.obs || ''))
           || ref;
 
-        /* Semana label */
-        const semFim = ref.semana || ref.data?.substring(0, 10) || '';
         const semFimD = semFim ? new Date(semFim + 'T12:00:00') : null;
         const semIniD = semFimD ? new Date(semFimD) : null;
         if (semIniD) semIniD.setDate(semIniD.getDate() - 6);
@@ -193,12 +424,15 @@ const FreelancerPagamento: React.FC = () => {
           ? `${fmtDiaMes(semIniD.toISOString().split('T')[0])} – ${fmtDiaMes(semFim)}`
           : semFim;
 
-        return {
-          id: `grp__${ref.colaboradorId}__${ref.semana}__${ref.pagamentoId || 'leg'}`,
-          colaboradorId: ref.colaboradorId,
-          nomeColaborador: ref.nomeColaborador || ref.colaboradorId,
-          chavePix: ref.chavePix,
-          telefone: ref.telefone,
+        /* Buscar nome no colab */
+        const colab = rawColabs.find((c: any) => c.id === cid);
+
+        result.push({
+          id: grpKey,
+          colaboradorId: cid,
+          nomeColaborador: colab?.nome || ref.nomeColaborador || cid,
+          chavePix: colab?.chavePix || ref.chavePix,
+          telefone: colab?.telefone || colab?.celular || ref.telefone,
           semana: semFim,
           semanaLabel: semLabel,
           mes: ref.mes || mesAno,
@@ -212,31 +446,21 @@ const FreelancerPagamento: React.FC = () => {
           totalGrupo,
           dataPagamento: pagos[0]?.dataPagamento || null,
           formaPagamento: ref.formaPagamento || 'PIX',
-          confiabilidade: confiab,
+          confiabilidade: dias.some((d: any) => d.reconstituido) ? 'recalculado' : 'real',
           valorLiquido:    refComAudit.valorLiquido    ?? null,
           valorDescSaidas: refComAudit.valorDescSaidas ?? null,
           valorAbatEsp:    refComAudit.valorAbatEsp    ?? null,
           obsAudit:        refComAudit.obs             || '',
           logPagamentos:   ref.logPagamentos           || [],
-          raw: { diasDobras, diasTransp,
-                 valorLiquido: refComAudit.valorLiquido ?? null,
-                 valorDescSaidas: refComAudit.valorDescSaidas ?? null,
-                 valorAbatEsp: refComAudit.valorAbatEsp ?? null,
-                 obsAudit: refComAudit.obs || '' },
-        } as GrupoFreelancer;
-      });
-
-      /* Buscar nomes dos colaboradores */
-      try {
-        const rC = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth);
-        if (rC.ok) {
-          const colabs: any[] = await rC.json();
-          for (const g of result) {
-            const c = colabs.find(x => x.id === g.colaboradorId);
-            if (c) { g.nomeColaborador = c.nome; g.chavePix = c.chavePix; g.telefone = c.telefone || c.celular; }
-          }
-        }
-      } catch { /* nomes ficam como ID */ }
+          raw: {
+            diasDobras, diasTransp,
+            valorLiquido: refComAudit.valorLiquido ?? null,
+            valorDescSaidas: refComAudit.valorDescSaidas ?? null,
+            valorAbatEsp: refComAudit.valorAbatEsp ?? null,
+            obsAudit: refComAudit.obs || '',
+          },
+        } as GrupoFreelancer);
+      }
 
       result.sort((a, b) => {
         const nc = a.nomeColaborador.localeCompare(b.nomeColaborador);
@@ -400,7 +624,10 @@ const FreelancerPagamento: React.FC = () => {
               <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
                 <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎯</div>
                 <p>Nenhum registro de freelancer em {mesAno}.</p>
-                <p style={{ fontSize: '12px', marginTop: '8px' }}>Lance as escalas em <strong>Escalas → Editar Turno</strong> e processe em <strong>Folha de Pagamento → Freelancers</strong>.</p>
+                <p style={{ fontSize: '12px', marginTop: '8px' }}>
+                  Verifique se os colaboradores freelancers têm <strong>Tipo de Contrato = Freelancer</strong> no cadastro,
+                  e se as presenças estão marcadas como <strong>"Presente"</strong> nas Escalas.
+                </p>
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
