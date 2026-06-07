@@ -684,45 +684,217 @@ export default function FreelancerPagamento() {
       })()}
 
       {/* Modal detalhe */}
-      {detalhe && (
-        <div style={{position:'fixed',inset:0,backgroundColor:'rgba(0,0,0,.55)',zIndex:10001,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setDetalhe(null)}>
-          <div style={{...s.card,maxWidth:'680px',width:'96%',maxHeight:'88vh',overflowY:'auto',padding:'20px'}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'14px'}}>
-              <h3 style={{margin:0,color:'#c2185b'}}>📋 Detalhamento — {detalhe.fr.nome}</h3>
-              <button onClick={()=>setDetalhe(null)} style={{background:'none',border:'none',fontSize:'20px',cursor:'pointer'}}>✕</button>
+      {detalhe && (() => {
+        const fr = detalhe.fr;
+        const fech = detalhe.fech;
+        // ── todos os turnos: pendentes + já pagos ──
+        const todosTurnos: {data:string;turno:string;valor:number;pago:boolean}[] = [
+          ...(fr.diasJaPagosDetalhe||[]).map((d:any)=>({...d,pago:true})),
+          ...(fr.diasPagos||[]).map((d:any)=>({...d,pago:false})),
+        ].sort((a,b)=>a.data.localeCompare(b.data)||(a.turno.localeCompare(b.turno)));
+        // ── dias únicos com presença ──
+        const diasUnicos = Array.from(new Set(todosTurnos.map(t=>t.data))).sort();
+        const valorTranspDia = R(fr.valorTransporte);
+        // ── saídas: só consumo/descontos reais (excluir automáticos) ──
+        const EXCLUIR_SAIDA = new Set(['Desconto Transporte','Desconto Adiantamento Especial']);
+        const saidasReais = detalhe.saidasSemana.filter((s2:any)=>{
+          const t = s2.tipo||s2.origem||s2.referencia||'';
+          return !EXCLUIR_SAIDA.has(t);
+        });
+        // desconto adiantamento especial (automático — exibir separado)
+        const abatEspSaidas = detalhe.saidasSemana.filter((s2:any)=>{
+          const t = s2.tipo||s2.origem||s2.referencia||'';
+          return t==='Desconto Adiantamento Especial';
+        });
+        // ── totais ──
+        const totalTurnos = todosTurnos.reduce((s,t)=>s+t.valor,0);
+        const totalTransp = valorTranspDia>0 ? diasUnicos.length*valorTranspDia : 0;
+        const totalBruto  = totalTurnos + totalTransp;
+        const totalDesc   = saidasReais.reduce((s:number,x:any)=>s+R(x.valor),0);
+        const totalAbat   = abatEspSaidas.reduce((s:number,x:any)=>s+R(x.valor),0);
+        const totalLiq    = Math.max(0, totalBruto - totalDesc - totalAbat - R(fr.transporteAdiantado));
+        const thDet:React.CSSProperties = {...s.th,fontSize:'11px',padding:'5px 8px'};
+        const tdDet:React.CSSProperties = {...s.td,padding:'5px 8px',fontSize:'11px'};
+        return (
+          <div style={{position:'fixed',inset:0,backgroundColor:'rgba(0,0,0,.55)',zIndex:10001,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setDetalhe(null)}>
+            <div style={{...s.card,maxWidth:'720px',width:'96%',maxHeight:'92vh',overflowY:'auto',padding:'20px'}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
+                <h3 style={{margin:0,color:'#c2185b',fontSize:'16px'}}>📋 Detalhamento — {fr.nome}</h3>
+                <button onClick={()=>setDetalhe(null)} style={{background:'none',border:'none',fontSize:'20px',cursor:'pointer'}}>✕</button>
+              </div>
+              <div style={{fontSize:'12px',color:'#666',marginBottom:'14px'}}>Semana <strong>{fech.semanaLabel}</strong></div>
+
+              {/* ── CRÉDITOS: turnos ── */}
+              <div style={{marginBottom:'14px'}}>
+                <div style={{fontWeight:'bold',fontSize:'12px',color:'#2e7d32',marginBottom:'6px'}}>
+                  💰 Créditos — Turnos ({todosTurnos.length})
+                </div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                  <thead><tr>
+                    {['Data','Dia semana','Turno','Valor','Status'].map(h=><th key={h} style={thDet}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {todosTurnos.length===0
+                      ? <tr><td colSpan={5} style={{...tdDet,textAlign:'center',color:'#aaa'}}>Nenhum turno com presença</td></tr>
+                      : todosTurnos.map((t,i)=>{
+                        const dd = new Date(t.data+'T12:00:00');
+                        const diaSem = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()];
+                        const turnoLabel = t.turno==='Dia'?'☀️ Dia':t.turno==='Noite'?'🌙 Noite':t.turno;
+                        return (
+                          <tr key={i} style={{backgroundColor:t.pago?'#f1f8e9':i%2===0?'#fafafa':'white',borderLeft:t.pago?'3px solid #a5d6a7':'3px solid transparent'}}>
+                            <td style={tdDet}>{t.data}</td>
+                            <td style={tdDet}>{diaSem}</td>
+                            <td style={tdDet}>{turnoLabel}</td>
+                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#2e7d32'}}>+{fmtMoeda(t.valor)}</td>
+                            <td style={{...tdDet,textAlign:'center'}}>
+                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',
+                                backgroundColor:t.pago?'#e8f5e9':'#fff9c4',color:t.pago?'#2e7d32':'#f57f17'}}>
+                                {t.pago?'✅ Pago':'⏳ Pend.'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    }
+                    <tr style={{backgroundColor:'#e8f5e9'}}>
+                      <td colSpan={3} style={{...tdDet,fontWeight:'bold',color:'#1b5e20'}}>Subtotal turnos</td>
+                      <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#1b5e20'}}>+{fmtMoeda(totalTurnos)}</td>
+                      <td/>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ── CRÉDITOS: transporte ── */}
+              {valorTranspDia>0 && diasUnicos.length>0 && (
+                <div style={{marginBottom:'14px'}}>
+                  <div style={{fontWeight:'bold',fontSize:'12px',color:'#1565c0',marginBottom:'6px'}}>
+                    🚗 Transporte ({diasUnicos.length} dia(s) × {fmtMoeda(valorTranspDia)}/dia = {fmtMoeda(totalTransp)})
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead><tr>
+                      {['Data','Valor/dia','Adiantado','Saldo'].map(h=><th key={h} style={{...thDet,backgroundColor:'#1565c0'}}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {diasUnicos.map((data,i)=>(
+                        <tr key={i} style={{backgroundColor:i%2===0?'#e3f2fd':'#bbdefb20'}}>
+                          <td style={tdDet}>{data}</td>
+                          <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#1565c0'}}>+{fmtMoeda(valorTranspDia)}</td>
+                          <td style={{...tdDet,textAlign:'right',color:'#e65100'}}>
+                            {fr.transporteAdiantado>0 ? `-${fmtMoeda(R(fr.transporteAdiantado)/diasUnicos.length)}` : '—'}
+                          </td>
+                          <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#2e7d32'}}>
+                            {fmtMoeda(Math.max(0, valorTranspDia - (fr.transporteAdiantado>0?R(fr.transporteAdiantado)/diasUnicos.length:0)))}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr style={{backgroundColor:'#bbdefb'}}>
+                        <td style={{...tdDet,fontWeight:'bold',color:'#0d47a1'}}>Total transporte</td>
+                        <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#1565c0'}}>+{fmtMoeda(totalTransp)}</td>
+                        <td style={{...tdDet,textAlign:'right',color:'#e65100'}}>{fr.transporteAdiantado>0?`-${fmtMoeda(R(fr.transporteAdiantado))}`:'—'}</td>
+                        <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#2e7d32'}}>{fmtMoeda(R(fr.transporteSaldo))}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* ── DÉBITOS: consumo/descontos reais ── */}
+              {saidasReais.length>0 && (
+                <div style={{marginBottom:'14px'}}>
+                  <div style={{fontWeight:'bold',fontSize:'12px',color:'#c62828',marginBottom:'6px'}}>
+                    💸 Débitos — Descontos ({saidasReais.length})
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead><tr>
+                      {['Tipo','Descrição','Valor','Data'].map(h=><th key={h} style={{...thDet,backgroundColor:'#c62828'}}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {saidasReais.map((s2:any,i:number)=>(
+                        <tr key={i} style={{backgroundColor:i%2===0?'#ffebee':'#fff'}}>
+                          <td style={tdDet}>{s2.tipo||s2.origem||'—'}</td>
+                          <td style={tdDet}>{s2.descricao||'—'}</td>
+                          <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#c62828'}}>-{fmtMoeda(R(s2.valor))}</td>
+                          <td style={tdDet}>{s2.dataPagamento||s2.data||'—'}</td>
+                        </tr>
+                      ))}
+                      <tr style={{backgroundColor:'#ffcdd2'}}>
+                        <td colSpan={2} style={{...tdDet,fontWeight:'bold',color:'#b71c1c'}}>Total descontos</td>
+                        <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#b71c1c'}}>-{fmtMoeda(totalDesc)}</td>
+                        <td/>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* ── Abatimento especial (gerado automaticamente — informativo) ── */}
+              {abatEspSaidas.length>0 && (
+                <div style={{marginBottom:'14px',backgroundColor:'#f3e8ff',border:'1px solid #d8b4fe',borderRadius:'6px',padding:'10px 12px'}}>
+                  <div style={{fontWeight:'bold',fontSize:'12px',color:'#6d28d9',marginBottom:'4px'}}>➖ Abatimento Adiantamento Especial</div>
+                  {abatEspSaidas.map((s2:any,i:number)=>(
+                    <div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:'11px',color:'#5b21b6',marginTop:'2px'}}>
+                      <span>{s2.descricao||'Abatimento automático'}</span>
+                      <span style={{fontWeight:'bold'}}>-{fmtMoeda(R(s2.valor))}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Resumo final ── */}
+              <div style={{backgroundColor:'#1b5e20',borderRadius:'8px',padding:'12px 16px',color:'white'}}>
+                <div style={{fontSize:'12px',fontWeight:'bold',marginBottom:'8px',borderBottom:'1px solid rgba(255,255,255,.3)',paddingBottom:'6px'}}>
+                  📊 Resumo do pagamento
+                </div>
+                <div style={{display:'grid',gap:'4px',fontSize:'12px'}}>
+                  {totalTurnos>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
+                    <span>💰 Turnos ({todosTurnos.length}x)</span>
+                    <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTurnos)}</span>
+                  </div>}
+                  {totalTransp>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
+                    <span>🚗 Transporte ({diasUnicos.length} dia(s))</span>
+                    <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTransp)}</span>
+                  </div>}
+                  {R(fr.transporteAdiantado)>0 && <div style={{display:'flex',justifyContent:'space-between',color:'#ffcc80'}}>
+                    <span>✔ Transp. já adiantado</span>
+                    <span style={{fontWeight:'bold'}}>-{fmtMoeda(R(fr.transporteAdiantado))}</span>
+                  </div>}
+                  {totalDesc>0 && <div style={{display:'flex',justifyContent:'space-between',color:'#ef9a9a'}}>
+                    <span>💸 Descontos ({saidasReais.length}x)</span>
+                    <span style={{fontWeight:'bold'}}>-{fmtMoeda(totalDesc)}</span>
+                  </div>}
+                  {totalAbat>0 && <div style={{display:'flex',justifyContent:'space-between',color:'#ce93d8'}}>
+                    <span>➖ Abat. adto. especial</span>
+                    <span style={{fontWeight:'bold'}}>-{fmtMoeda(totalAbat)}</span>
+                  </div>}
+                  <div style={{display:'flex',justifyContent:'space-between',borderTop:'1px solid rgba(255,255,255,.4)',marginTop:'6px',paddingTop:'6px',fontSize:'15px'}}>
+                    <span style={{fontWeight:'bold'}}>✔ Líquido a pagar</span>
+                    <span style={{fontWeight:'bold',fontSize:'18px'}}>{fmtMoeda(totalLiq)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Escalas brutas (recolhido) ── */}
+              <details style={{marginTop:'14px'}}>
+                <summary style={{cursor:'pointer',fontSize:'11px',color:'#888',userSelect:'none'}}>
+                  📅 Registros de escala brutos ({detalhe.escsSemana.length})
+                </summary>
+                <table style={{width:'100%',borderCollapse:'collapse',marginTop:'6px',fontSize:'11px'}}>
+                  <thead><tr>{['Data','Turno','Presença','Presença Noite'].map(h=><th key={h} style={thDet}>{h}</th>)}</tr></thead>
+                  <tbody>{detalhe.escsSemana.map((e:any,i:number)=>(
+                    <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
+                      <td style={tdDet}>{e.data}</td>
+                      <td style={tdDet}>{e.turno}</td>
+                      <td style={{...tdDet,color:e.presenca==='presente'?'#2e7d32':'#aaa'}}>{e.presenca||'—'}</td>
+                      <td style={{...tdDet,color:e.presencaNoite==='presente'?'#2e7d32':'#aaa'}}>{e.presencaNoite||'—'}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </details>
             </div>
-            <div style={{marginBottom:'10px',fontSize:'12px',color:'#666'}}>Semana <strong>{detalhe.fech.semanaLabel}</strong></div>
-            <div style={{marginBottom:'16px'}}>
-              <strong style={{fontSize:'12px',color:'#444'}}>📅 Escalas do período ({detalhe.escsSemana.length})</strong>
-              <table style={{width:'100%',borderCollapse:'collapse',marginTop:'6px',fontSize:'11px'}}>
-                <thead><tr>{['Data','Turno','Presença','Presença Noite'].map(h=><th key={h} style={{...s.th,fontSize:'11px',padding:'5px 8px'}}>{h}</th>)}</tr></thead>
-                <tbody>{detalhe.escsSemana.map((e:any,i:number)=>(
-                  <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
-                    <td style={{...s.td,padding:'5px 8px'}}>{e.data}</td>
-                    <td style={{...s.td,padding:'5px 8px'}}>{e.turno}</td>
-                    <td style={{...s.td,padding:'5px 8px',color:e.presenca==='presente'?'#2e7d32':'#c62828'}}>{e.presenca||'—'}</td>
-                    <td style={{...s.td,padding:'5px 8px',color:e.presencaNoite==='presente'?'#2e7d32':'#c62828'}}>{e.presencaNoite||'—'}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-            {detalhe.saidasSemana.length>0 && <div>
-              <strong style={{fontSize:'12px',color:'#444'}}>💸 Saídas do período ({detalhe.saidasSemana.length})</strong>
-              <table style={{width:'100%',borderCollapse:'collapse',marginTop:'6px',fontSize:'11px'}}>
-                <thead><tr>{['Tipo','Descrição','Valor','Data'].map(h=><th key={h} style={{...s.th,fontSize:'11px',padding:'5px 8px'}}>{h}</th>)}</tr></thead>
-                <tbody>{detalhe.saidasSemana.map((s2:any,i:number)=>(
-                  <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
-                    <td style={{...s.td,padding:'5px 8px'}}>{s2.tipo||s2.origem||'—'}</td>
-                    <td style={{...s.td,padding:'5px 8px'}}>{s2.descricao||'—'}</td>
-                    <td style={{...s.td,padding:'5px 8px',color:'#c62828',fontWeight:'bold'}}>-{fmtMoeda(R(s2.valor))}</td>
-                    <td style={{...s.td,padding:'5px 8px'}}>{s2.dataPagamento||s2.data||'—'}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <main style={{flex:1,maxWidth:'1500px',margin:'0 auto',padding:'20px 16px',width:'100%'}}>
         {/* Cabeçalho */}
