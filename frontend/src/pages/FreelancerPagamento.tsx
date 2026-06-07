@@ -130,6 +130,7 @@ const FreelancerPagamento: React.FC = () => {
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [filtroPago, setFiltroPago] = useState<'todos' | 'pago' | 'pendente'>('todos');
   const [filtroColab, setFiltroColab] = useState('');
+  const [debugInfo, setDebugInfo]   = useState<any>(null);
 
   /* ── Helpers de semana ── */
   const semanasFechamento = (ano: number, mes: number): { inicio: Date; fim: Date }[] => {
@@ -222,6 +223,21 @@ const FreelancerPagamento: React.FC = () => {
       const freelancersColabs = rawColabs.filter((c: any) =>
         (c.tipoContrato || '').toLowerCase() === 'freelancer'
       );
+      /* DEBUG — aparece no console do navegador (F12 → Console) */
+      const dbg = {
+        mesAno,
+        totalColabs: rawColabs.length,
+        totalFreelancers: freelancersColabs.length,
+        freelancers: freelancersColabs.map((c: any) => ({ id: c.id, nome: c.nome, tipoContrato: c.tipoContrato })),
+        totalEscalas: rawEscalas.length,
+        totalFolhaDB: rawFolha.length,
+        granulares: granulares.length,
+        escalasDatas: rawEscalas.filter((e: any) =>
+          freelancersColabs.some((f: any) => f.id === e.colaboradorId)
+        ).slice(0, 8).map((e: any) => ({ data: e.data, colab: e.colaboradorId, presenca: e.presenca, turno: e.turno })),
+      };
+      console.log('[FreelancerPagamento] debug fetch', dbg);
+      setDebugInfo(dbg);
 
       /* ── Calcular semanas do mês ── */
       const semanas = semanasFechamento(ano, mes);
@@ -621,13 +637,70 @@ const FreelancerPagamento: React.FC = () => {
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>Carregando...</div>
             ) : gruposFiltrados.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-                <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎯</div>
-                <p>Nenhum registro de freelancer em {mesAno}.</p>
-                <p style={{ fontSize: '12px', marginTop: '8px' }}>
-                  Verifique se os colaboradores freelancers têm <strong>Tipo de Contrato = Freelancer</strong> no cadastro,
-                  e se as presenças estão marcadas como <strong>"Presente"</strong> nas Escalas.
-                </p>
+              <div style={{ padding: '24px' }}>
+                <div style={{ textAlign: 'center', marginBottom: '20px', color: '#999' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '12px' }}>🎯</div>
+                  <p style={{ fontSize: '15px', fontWeight: 'bold' }}>Nenhum registro de freelancer em {mesAno}.</p>
+                </div>
+                {/* ── Painel de diagnóstico ── */}
+                {debugInfo && (
+                  <div style={{ maxWidth: '700px', margin: '0 auto', backgroundColor: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '16px', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#495057', fontSize: '13px' }}>🔍 Diagnóstico da busca</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <tbody>
+                        <tr style={{ borderBottom: '1px solid #e9ecef' }}>
+                          <td style={{ padding: '5px 8px', color: '#666', width: '200px' }}>Colaboradores no sistema</td>
+                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalColabs > 0 ? '#2e7d32' : '#c62828' }}>{debugInfo.totalColabs}</td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid #e9ecef', backgroundColor: debugInfo.totalFreelancers === 0 ? '#ffebee' : 'transparent' }}>
+                          <td style={{ padding: '5px 8px', color: '#666' }}>Freelancers (tipoContrato='Freelancer')</td>
+                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalFreelancers > 0 ? '#2e7d32' : '#c62828' }}>
+                            {debugInfo.totalFreelancers}
+                            {debugInfo.totalFreelancers === 0 && <span style={{ color: '#c62828', marginLeft: '8px' }}>⚠️ Nenhum colaborador com Tipo = Freelancer</span>}
+                          </td>
+                        </tr>
+                        {debugInfo.freelancers.length > 0 && (
+                          <tr style={{ borderBottom: '1px solid #e9ecef' }}>
+                            <td style={{ padding: '5px 8px', color: '#666' }}>Nomes dos freelancers</td>
+                            <td style={{ padding: '5px 8px', color: '#1565c0' }}>{debugInfo.freelancers.map((f: any) => f.nome).join(', ')}</td>
+                          </tr>
+                        )}
+                        <tr style={{ borderBottom: '1px solid #e9ecef', backgroundColor: debugInfo.totalEscalas === 0 ? '#ffebee' : 'transparent' }}>
+                          <td style={{ padding: '5px 8px', color: '#666' }}>Escalas em {mesAno}</td>
+                          <td style={{ padding: '5px 8px', fontWeight: 'bold', color: debugInfo.totalEscalas > 0 ? '#2e7d32' : '#c62828' }}>
+                            {debugInfo.totalEscalas}
+                            {debugInfo.totalEscalas === 0 && <span style={{ color: '#c62828', marginLeft: '8px' }}>⚠️ Nenhuma escala neste mês</span>}
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: '1px solid #e9ecef' }}>
+                          <td style={{ padding: '5px 8px', color: '#666' }}>Registros folha DB (freelancer-dia)</td>
+                          <td style={{ padding: '5px 8px' }}>{debugInfo.granulares} de {debugInfo.totalFolhaDB} totais</td>
+                        </tr>
+                        {debugInfo.escalasDatas.length > 0 && (
+                          <tr>
+                            <td style={{ padding: '5px 8px', color: '#666', verticalAlign: 'top' }}>Escalas dos freelancers</td>
+                            <td style={{ padding: '5px 8px' }}>
+                              {debugInfo.escalasDatas.map((e: any, i: number) => (
+                                <span key={i} style={{ display: 'inline-block', margin: '2px', padding: '2px 6px', borderRadius: '4px',
+                                  backgroundColor: e.presenca === 'presente' ? '#e8f5e9' : '#ffebee',
+                                  color: e.presenca === 'presente' ? '#2e7d32' : '#c62828' }}>
+                                  {e.data} {e.turno} {e.presenca || 'sem presença'}
+                                </span>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#fff3e0', borderRadius: '6px', fontSize: '11px', color: '#e65100' }}>
+                      <strong>O que verificar:</strong><br/>
+                      {debugInfo.totalFreelancers === 0 && <div>① Ir em <strong>Colaboradores</strong> → editar o freelancer → alterar <strong>Tipo de Contrato para "Freelancer"</strong></div>}
+                      {debugInfo.totalFreelancers > 0 && debugInfo.totalEscalas === 0 && <div>① As escalas deste mês não foram encontradas. Verifique o mês selecionado ou vá em <strong>Gestão de Escalas</strong>.</div>}
+                      {debugInfo.totalFreelancers > 0 && debugInfo.totalEscalas > 0 && debugInfo.escalasDatas.length === 0 && <div>① Escalas existem mas <strong>nenhuma está vinculada aos freelancers</strong> cadastrados. Verifique se o colaborador nas escalas é o mesmo do cadastro.</div>}
+                      {debugInfo.totalFreelancers > 0 && debugInfo.escalasDatas.length > 0 && debugInfo.escalasDatas.every((e: any) => e.presenca !== 'presente') && <div>① Escalas encontradas mas <strong>nenhuma presença = "Presente"</strong>. Confirme as presenças em Gestão de Escalas.</div>}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
