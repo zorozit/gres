@@ -1200,6 +1200,7 @@ export default function Colaboradores() {
       (c.nome || '').toLowerCase().includes(q) ||
       (c.cpf  || '').replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
       celularDe(c).replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
+      (c.email  || '').toLowerCase().includes(q) ||
       (c.funcao || '').toLowerCase().includes(q) ||
       (c.cargo  || '').toLowerCase().includes(q) ||
       (c.area   || '').toLowerCase().includes(q);
@@ -1269,7 +1270,7 @@ export default function Colaboradores() {
               <input
                 ref={inputBuscaRef}
                 type="text"
-                placeholder="🔍 Buscar por nome, CPF, celular ou função..."
+                placeholder="🔍 Buscar por nome, CPF, celular, e-mail ou função..."
                 value={busca}
                 onChange={e => setBusca(e.target.value)}
                 onKeyDown={e => e.stopPropagation()}
