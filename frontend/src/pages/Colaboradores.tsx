@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
@@ -930,14 +930,7 @@ export default function Colaboradores() {
     nome: '', area: 'Salão', cor: '#1976d2', diasTrabalho: [2,3,4,5,6], turnoNoite: [],
   });
 
-  /* ── Load ──────────────────────────────────────────────────── */
-  useEffect(() => {
-    if (unitId) {
-      carregarColaboradores();
-      carregarFuncoes();
-    }
-  }, [unitId]);
-
+  /* ── Helpers de token e msg ────────────────────────────────── */
   const token = () => localStorage.getItem('auth_token');
 
   const mostrarMsg = (texto: string) => {
@@ -945,10 +938,12 @@ export default function Colaboradores() {
     setTimeout(() => setMsg(''), 3500);
   };
 
-  const carregarColaboradores = async () => {
+  /* ── Load ──────────────────────────────────────────────────── */
+  const carregarColaboradores = useCallback(async (uid: string) => {
+    if (!uid) return;
     setLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+      const r = await fetch(`${apiUrl}/colaboradores?unitId=${uid}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {
@@ -957,16 +952,24 @@ export default function Colaboradores() {
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  };
+  }, [apiUrl]);
 
-  const carregarFuncoes = async () => {
+  const carregarFuncoes = useCallback(async (uid: string) => {
+    if (!uid) return;
     try {
-      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${unitId}`, {
+      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${uid}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) { const d = await r.json(); setFuncoes(Array.isArray(d) ? d : []); }
     } catch (e) { console.error(e); }
-  };
+  }, [apiUrl]);
+
+  useEffect(() => {
+    if (unitId) {
+      carregarColaboradores(unitId);
+      carregarFuncoes(unitId);
+    }
+  }, [unitId, carregarColaboradores, carregarFuncoes]);
 
   /* ── Helpers ────────────────────────────────────────────────── */
   const celularDe = (c: Partial<Colaborador>) => c.celular || c.telefone || '';
@@ -1022,7 +1025,7 @@ export default function Colaboradores() {
         mostrarMsg('✅ Colaborador cadastrado com sucesso!');
         setNovoColab(ESTADO_INICIAL);
         setAba('lista');
-        carregarColaboradores();
+        carregarColaboradores(unitId);
       } else {
         const err = await res.json();
         alert(`Erro ao salvar: ${err.error}`);
@@ -1056,7 +1059,7 @@ export default function Colaboradores() {
       if (res.ok) {
         mostrarMsg('✅ Colaborador atualizado com sucesso!');
         setColaboradorEditando(null);
-        carregarColaboradores();
+        carregarColaboradores(unitId);
       } else {
         const err = await res.json();
         alert(`Erro ao atualizar: ${err.error}`);
@@ -1071,7 +1074,7 @@ export default function Colaboradores() {
       const res = await fetch(`${apiUrl}/colaboradores/${id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
       });
-      if (res.ok) { mostrarMsg('🗑️ Colaborador removido.'); carregarColaboradores(); }
+      if (res.ok) { mostrarMsg('🗑️ Colaborador removido.'); carregarColaboradores(unitId); }
       else alert('Erro ao deletar colaborador');
     } catch { alert('Erro ao deletar colaborador'); }
   };
@@ -1088,7 +1091,7 @@ export default function Colaboradores() {
       });
       mostrarMsg('✅ Colaborador desligado.');
       setColaboradorEditando(null);
-      carregarColaboradores();
+      carregarColaboradores(unitId);
     } catch { alert('Erro ao desligar'); }
     finally { setSalvando(false); }
   };
@@ -1104,7 +1107,7 @@ export default function Colaboradores() {
       });
       mostrarMsg('✅ Colaborador reativado.');
       setColaboradorEditando(null);
-      carregarColaboradores();
+      carregarColaboradores(unitId);
     } catch { alert('Erro ao reativar'); }
     finally { setSalvando(false); }
   };
@@ -1130,7 +1133,7 @@ export default function Colaboradores() {
         mostrarMsg(isEdit ? '✅ Função atualizada!' : '✅ Função criada!');
         setFormFuncao({ nome: '', area: 'Salão', cor: '#1976d2', diasTrabalho: [2,3,4,5,6], turnoNoite: [] });
         setFuncaoEditando(null);
-        carregarFuncoes();
+        carregarFuncoes(unitId);
       } else {
         const err = await res.json().catch(() => ({}));
         alert('Erro: ' + ((err as any).error || res.status));
@@ -1145,7 +1148,7 @@ export default function Colaboradores() {
       method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
     });
     mostrarMsg('🗑️ Função removida.');
-    carregarFuncoes();
+    carregarFuncoes(unitId);
   };
 
   const handleImportarFuncoesPadrao = async () => {
@@ -1165,7 +1168,7 @@ export default function Colaboradores() {
     }
     setSalvando(false);
     mostrarMsg(`✅ ${criados} funções importadas!`);
-    carregarFuncoes();
+    carregarFuncoes(unitId);
   };
 
   /* ── Derivados ───────────────────────────────────────────── */
