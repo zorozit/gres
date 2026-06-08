@@ -71,6 +71,8 @@ export default function FreelancerPagamento() {
   const [saidasMesCompleto,   setSaidasMesCompleto]   = useState<any[]>([]);
   const [saidasPendentesAnt,  setSaidasPendentesAnt]  = useState<any[]>([]);
   const [saldosEspeciais,     setSaldosEspeciais]     = useState<Record<string,number>>({});
+  const [motoboysFr,          setMotoboysFr]          = useState<any[]>([]);
+  const [controlesMap,        setControlesMap]        = useState<Record<string, any[]>>({});
   const [fechamentos,         setFechamentos]         = useState<any[]>([]);
   const [editFechamento, setEditFechamento] = useState<Record<string, any>>({});
 
@@ -140,7 +142,37 @@ export default function FreelancerPagamento() {
 
       const dC = await rC.json();
       const todosColabs: any[] = (Array.isArray(dC) ? dC : []).filter((c:any) => c.ativo !== false);
-      setFreelancers(todosColabs.filter((c:any) => c.tipoContrato === 'Freelancer'));
+      const frsList = todosColabs.filter((c:any) => c.tipoContrato === 'Freelancer');
+      setFreelancers(frsList);
+
+      /* ── Motoboys freelancers: derivados de colaboradores com isMotoboy=true ou cargo=motoboy ── */
+      const motos = todosColabs
+        .filter((c:any) => (c as any).isMotoboy === true || ((c as any).cargo || '').toLowerCase() === 'motoboy')
+        .map((c:any) => ({
+          id: c.id, cpf: c.cpf, nome: c.nome,
+          valorDia:    R(c.valorDia)    || 0,
+          valorNoite:  R(c.valorNoite)  || 0,
+          valorEntrega: R(c.valorEntrega) || R(c.valorTransporte) || 0,
+          valorTransporte: R(c.valorTransporte) || 0,
+          vinculo: c.tipoContrato === 'Freelancer' ? 'Freelancer' : 'CLT',
+        }));
+      setMotoboysFr(motos);
+
+      /* Buscar controle-motoboy por motoboy × mês */
+      const ctrlMap: Record<string, any[]> = {};
+      await Promise.all(motos.map(async (m:any) => {
+        try {
+          const partes = await Promise.all(mesesAlvo.map((mm:string) =>
+            fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
+              .then((r:Response) => r.ok ? r.json() : [])
+              .catch(() => [])
+          ));
+          const d: any[] = partes.flat();
+          ctrlMap[m.id] = d;
+          if (m.cpf) ctrlMap[m.cpf] = d;
+        } catch { ctrlMap[m.id] = []; }
+      }));
+      setControlesMap(ctrlMap);
 
       /* escalas */
       const escalasAcc: any[] = [];
@@ -173,11 +205,13 @@ export default function FreelancerPagamento() {
       }
       setSaldosEspeciais(saldos);
       calcularFechamentos(
-        todosColabs.filter((c:any)=>c.tipoContrato==='Freelancer'),
+        frsList,
         escalasAcc, folhasAcc,
         saidasPer,
         saidasPendAnt,
-        saldos
+        saldos,
+        motos,
+        ctrlMap
       );
     } catch(e) { console.error('[FreelancerPagamento] fetch error', e); }
     finally { setLoading(false); }
@@ -194,7 +228,9 @@ export default function FreelancerPagamento() {
     fDB: any[],
     saidasPer: any[],
     saidasPendAnt: any[],
-    saldos: Record<string,number>
+    saldos: Record<string,number>,
+    motos: any[] = [],
+    ctrlMap: Record<string, any[]> = {}
   ) => {
     if (!frs.length) { setFechamentos([]); return; }
 
@@ -258,66 +294,128 @@ export default function FreelancerPagamento() {
 
       const frList = frs.map((fr:any) => {
         const cid = fr.id;
+        const fCpf = (fr as any).cpf || '';
         const vDia   = R(fr.valorDia);
         const vNoite = R(fr.valorNoite);
         const vDobra = R(fr.valorDobra) || 120;
         const usaTurno = vDia>0 || vNoite>0;
 
+        /* ── Detectar se é motoboy freelancer ── */
+        const motoboyMatch = motos.find((m:any) => m.id === cid || (fCpf && m.cpf === fCpf));
+        const isMotoboy = !!motoboyMatch || (fr as any).cargo === 'Motoboy' || (fr as any).isMotoboy === true;
+        const motoboyId = motoboyMatch?.id || cid;
+        const vEntrega  = motoboyMatch ? (R(motoboyMatch.valorEntrega) || 0) : 0;
+        const ctrlLinhas: any[] = ctrlMap[motoboyId] || (fCpf ? ctrlMap[fCpf] : undefined) || [];
+
         /* is turno pago */
         const isTurnoPago = (data:string, turno:string) => (turnosPagosPorColab[cid]||new Map()).has(`${data}-${turno}`);
 
-        /* escalas desta semana */
-        const escsSemana = escs.filter((e:any) => e.colaboradorId===cid && e.data>=isoInicio && e.data<=isoFim2);
+        const diasJaPagos = diasPagosPorColab[cid] || new Set<string>();
 
-        /* expandir em unidades de turno */
-        type TU = {data:string;turno:string;valor:number};
-        const turnosUnidade: TU[] = [];
-        for (const esc of escsSemana) {
-          if (esc.turno==='DiaNoite') {
-            const pD = esc.presenca==='presente', pN = esc.presencaNoite==='presente';
-            if (pD) turnosUnidade.push({data:esc.data, turno:'Dia',   valor:usaTurno?vDia:vDobra});
-            if (pN) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
-          } else if (esc.turno==='Noite') {
-            const p = esc.presencaNoite==='presente'||esc.presenca==='presente';
-            if (p) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
-          } else {
-            if (esc.presenca==='presente') turnosUnidade.push({data:esc.data, turno:esc.turno||'Dia', valor:usaTurno?vDia:vDobra});
+        /* Caixinha do controle-motoboy */
+        let caixinhaCtrlMotoboy = 0;
+        const caixinhaCtrlDetalhe: {descricao:string;valor:number;data:string}[] = [];
+
+        /* diasPagos / diasJaPagosDetalhe */
+        const diasPagosList: {data:string;turno:string;valor:number}[] = [];
+        const diasJaPagosDetalhe: {data:string;turno:string;valor:number}[] = [];
+        let total = 0, totalJaPago = 0, dobras = 0, diasTrabalhados = 0, diasCodigo = '';
+
+        if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
+          /* ── Cálculo baseado em controle-motoboy (mesma lógica da FolhaPagamento) ── */
+          const linhasSemana = ctrlLinhas.filter((l:any) => l.data >= isoInicio && l.data <= isoFim2);
+          for (const linha of linhasSemana) {
+            const jaPago = diasJaPagos.has(linha.data);
+            const chegD = R(linha.chegadaDia)   > 0 ? R(linha.chegadaDia)   : (R(linha.entDia)   > 0 ? vDia   : 0);
+            const chegN = R(linha.chegadaNoite) > 0 ? R(linha.chegadaNoite) : (R(linha.entNoite) > 0 ? vNoite : 0);
+            const temDia   = chegD > 0 || R(linha.entDia)   > 0;
+            const temNoite = chegN > 0 || R(linha.entNoite) > 0;
+            const totalEntregas = (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
+            const caixinhaLinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+            const vlLinha = parseFloat((chegD + chegN + totalEntregas).toFixed(2));
+            const turno = (temDia && temNoite) ? 'DiaNoite' : temDia ? 'Dia' : temNoite ? 'Noite' : 'Dia';
+
+            if (jaPago) {
+              totalJaPago += vlLinha;
+              diasJaPagosDetalhe.push({data: linha.data, turno, valor: vlLinha});
+            } else if (vlLinha > 0) {
+              total += vlLinha;
+              diasPagosList.push({data: linha.data, turno, valor: vlLinha});
+              dobras += (temDia && temNoite) ? 2 : 1;
+              diasTrabalhados++;
+            }
+            if (caixinhaLinha > 0 && !jaPago) {
+              caixinhaCtrlMotoboy += caixinhaLinha;
+              caixinhaCtrlDetalhe.push({
+                descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
+                valor: caixinhaLinha,
+                data: linha.data,
+              });
+            }
           }
-        }
-        const escPendentes  = turnosUnidade.filter(u => !isTurnoPago(u.data,u.turno));
-        const escJaPagas    = turnosUnidade.filter(u =>  isTurnoPago(u.data,u.turno));
+          total = parseFloat(total.toFixed(2));
+          totalJaPago = parseFloat(totalJaPago.toFixed(2));
+          caixinhaCtrlMotoboy = parseFloat(caixinhaCtrlMotoboy.toFixed(2));
+          dobras = parseFloat(dobras.toFixed(1));
+          diasCodigo = diasPagosList.map(d => d.data.slice(8)).join(',');
+        } else {
+          /* ── Cálculo baseado em escalas (freelancer padrão) ── */
+          const escsSemana = escs.filter((e:any) => e.colaboradorId===cid && e.data>=isoInicio && e.data<=isoFim2);
+          type TU = {data:string;turno:string;valor:number};
+          const turnosUnidade: TU[] = [];
+          for (const esc of escsSemana) {
+            if (esc.turno==='DiaNoite') {
+              const pD = esc.presenca==='presente', pN = esc.presencaNoite==='presente';
+              if (pD) turnosUnidade.push({data:esc.data, turno:'Dia',   valor:usaTurno?vDia:vDobra});
+              if (pN) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+            } else if (esc.turno==='Noite') {
+              const p = esc.presencaNoite==='presente'||esc.presenca==='presente';
+              if (p) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+            } else {
+              if (esc.presenca==='presente') turnosUnidade.push({data:esc.data, turno:esc.turno||'Dia', valor:usaTurno?vDia:vDobra});
+            }
+          }
+          const escPendentes = turnosUnidade.filter(u => !isTurnoPago(u.data,u.turno));
+          const escJaPagas   = turnosUnidade.filter(u =>  isTurnoPago(u.data,u.turno));
+          for (const u of escPendentes) {
+            diasPagosList.push({data:u.data, turno:u.turno, valor:u.valor});
+            total += u.valor;
+          }
+          for (const u of escJaPagas) {
+            const v = turnosPagosPorColab[cid]?.get(`${u.data}-${u.turno}`)?.valor ?? u.valor;
+            diasJaPagosDetalhe.push({data:u.data, turno:u.turno, valor:v});
+            totalJaPago += v;
+          }
+          total = parseFloat(total.toFixed(2));
+          totalJaPago = parseFloat(totalJaPago.toFixed(2));
+          dobras = diasPagosList.length;
+          diasTrabalhados = new Set(escPendentes.map(u=>u.data)).size;
+          diasCodigo = [...new Set(diasPagosList.map(d=>d.data))].sort().map(d=>{
+            const dd=new Date(d+'T12:00:00'); return `${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()]} ${d.substring(8,10)}/${d.substring(5,7)}`;
+          }).join(', ');
+        } // fim if/else isMotoboy
 
-        /* diasPagos = pendentes; diasJaPagosDetalhe = já pagos */
-        const diasPagos: {data:string;turno:string;valor:number}[] = escPendentes.map(u=>({data:u.data,turno:u.turno,valor:u.valor}));
-        const diasJaPagosDetalhe: {data:string;turno:string;valor:number}[] = escJaPagas.map(u=>({
-          data:u.data, turno:u.turno,
-          valor: turnosPagosPorColab[cid]?.get(`${u.data}-${u.turno}`)?.valor ?? u.valor,
-        }));
-
-        const total       = diasPagos.reduce((s,d)=>s+d.valor,0);
-        const totalJaPago = diasJaPagosDetalhe.reduce((s,d)=>s+d.valor,0);
-        const totalBrutoPeriodo = total + totalJaPago;
-        const dobras      = diasPagos.length;
-        const diasCodigo  = [...new Set(diasPagos.map(d=>d.data))].sort().map(d=>{
-          const dd=new Date(d+'T12:00:00'); return `${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()]} ${d.substring(8,10)}/${d.substring(5,7)}`;
-        }).join(', ');
-        const diasTrabalhados = new Set(escPendentes.map(u=>u.data)).size;
+        const totalBrutoPeriodo = parseFloat((total + totalJaPago).toFixed(2));
 
         /* transporte */
         const valorTransp = R(fr.valorTransporte);
         const transpAdtMes   = calcTransporteAdiantado(cid, mesIni2, mesFim2, saidasTranspMes);
-        /* calcular quanto já foi "consumido" em semanas anteriores desta semana */
-        const semAntsDB = fDB.filter((f:any)=>
-          f.colaboradorId===cid && f.tipo==='freelancer-dia' && f.pago &&
-          !isMigradoReg(f) && !isEstornadoReg(f) &&
-          f.data >= isoInicio && f.data < isoFim2
-        );
-        const diasAntsUnicos = new Set(semAntsDB.map((f:any)=>f.data)).size;
-        const transpSemsAnt  = 0; // simplificado: mês inteiro já cobre
-        void diasAntsUnicos; void transpSemsAnt;
         const transp          = valorTransp>0 ? diasTrabalhados * valorTransp : 0;
         const transp_adt      = Math.min(transpAdtMes, transp);
         const transp_saldo    = Math.max(0, transp - transp_adt);
+
+        /* caixinha total (controle-motoboy + saídas Caixinha) */
+        const saidasCaixFr = saidasPer.filter((s:any) => {
+          const t = s.tipo||s.origem||s.referencia||'';
+          const dt = s.dataPagamento||s.data||'';
+          return s.colaboradorId===cid && t==='Caixinha' && dt>=isoInicio && dt<=isoFim2;
+        });
+        const caixinhaSaidas = parseFloat(saidasCaixFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
+        const caixinhaTotal  = parseFloat((caixinhaSaidas + caixinhaCtrlMotoboy).toFixed(2));
+        const caixinhaDetalhe = [
+          ...saidasCaixFr.map((s:any)=>({descricao:`🪙 Caixinha: ${s.descricao||'Gorjeta'}`, valor:R(s.valor), data:s.dataPagamento||s.data||''})),
+          ...caixinhaCtrlDetalhe,
+        ];
 
         /* saídas desconto da semana */
         const TIPOS_DESC = new Set(['A pagar','A receber','Consumo Interno','Desconto Adiantamento Especial']);
@@ -327,14 +425,10 @@ export default function FreelancerPagamento() {
           if (!TIPOS_DESC.has(t)) return false;
           if (s.colaboradorId !== cid) return false;
           if (dt < isoInicio || dt > isoFim2) return false;
-          // Excluir descontos de adiantamento especial já quitados via AdiantamentosSaldos.
-          // Esses registros têm adiantamentoId preenchido E pago=true —
-          // foram lançados diretamente como parcela de contrato, não devem ser
-          // cobrados novamente no pagamento semanal.
           if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
           return true;
         });
-        const saidasDesconto = saidasDescFr.reduce((s:number,x:any)=>s+R(x.valor),0);
+        const saidasDesconto = parseFloat(saidasDescFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
         const saidasDetalhe  = saidasDescFr.map((s:any)=>({descricao:s.descricao||s.tipo||'Desconto',valor:R(s.valor),data:s.dataPagamento||s.data||''}));
 
         /* pendentes anteriores */
@@ -344,7 +438,7 @@ export default function FreelancerPagamento() {
         const saldoEspecialAberto = saldos[cid] || 0;
 
         /* total líquido */
-        const totalLiquido = Math.max(0, total + transp_saldo - saidasDesconto);
+        const totalLiquido = parseFloat(Math.max(0, total + transp_saldo + caixinhaTotal - saidasDesconto).toFixed(2));
 
         /* pago? */
         const pago = diasJaPagosDetalhe.length>0 && dobras===0;
@@ -357,15 +451,15 @@ export default function FreelancerPagamento() {
           valorDia: vDia, valorNoite: vNoite, valorDobra: vDobra, valorTransporte: valorTransp,
           dobras, diasCodigo, diasTrabalhados,
           total, totalJaPago, totalBrutoPeriodo,
-          diasPagos, diasJaPagosDetalhe,
+          diasPagos: diasPagosList, diasJaPagosDetalhe,
           totalTransporte: transp_saldo,
           transporteAdiantado: transp_adt, transporteAdiantadoMes: transpAdtMes, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
           saidasDesconto, saidasDetalhe,
           totalLiquido, pago, pagoParcial,
           pendentesAnteriores, saldoEspecialAberto,
           periodoInicio: isoInicio, periodoFim: isoFim2,
-          caixinhaTotal: 0, caixinhaDetalhe: [],
-          isMotoboy: false,
+          caixinhaTotal, caixinhaDetalhe,
+          isMotoboy,
         };
       }).filter(Boolean);
 
@@ -389,9 +483,9 @@ export default function FreelancerPagamento() {
   /* recalcular quando deps mudam */
   useEffect(() => {
     if (freelancers.length>0) {
-      calcularFechamentos(freelancers, escalas, folhasDB, saidasPeriodo, saidasPendentesAnt, saldosEspeciais);
+      calcularFechamentos(freelancers, escalas, folhasDB, saidasPeriodo, saidasPendentesAnt, saldosEspeciais, motoboysFr, controlesMap);
     }
-  }, [freelancers, escalas, mesAno, periodoIni, periodoFim, saidasPendentesAnt, folhasDB, saidasPeriodo, editFechamento]);
+  }, [freelancers, escalas, mesAno, periodoIni, periodoFim, saidasPendentesAnt, folhasDB, saidasPeriodo, editFechamento, motoboysFr, controlesMap]);
 
   /* ═══════════════════════════════════════════════════════════════════════════
      Modal de Pagamento — cópia fiel do modal da FolhaPagamento
@@ -428,10 +522,27 @@ export default function FreelancerPagamento() {
            ? `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransp)}${transpAdto>0?` — coberto pelo adto (R$${fmt(transpAdto)}) — saldo: R$${fmt(fr.transporteSaldo)}`:''}` 
            : `🚗 Transporte: ${fr.diasTrabalhados} dias × R$${fmt(R(fr.valorTransporte))} = R$${fmt(totalTransp)}`)
         : '';
+
+      // Caixinha do controle-motoboy (já calculada em fr.caixinhaDetalhe)
+      const caixCtrlItems = (fr.caixinhaDetalhe || [])
+        .filter((d:any) => !caixFr.some((s:any) => (s.dataPagamento||s.data||'') === d.data)) // evitar duplicatas
+        .map((d:any, i:number) => ({
+          key: `caix_ctrl_${i}`,
+          label: `🪙 ${d.descricao||'Caixinha'} (${d.data})`,
+          valor: d.valor,
+          tipo: 'credito' as const,
+          checked: true,
+        }));
+
       const items: any[] = [
         { key:'dobras', label:`Dobras (${fr.dobras}× ${obsValor})`, valor:fr.total, tipo:'credito', checked:true },
         ...(totalTransp>0?[{key:'transporte',label:transpLabel,valor:fr.transporteSaldo,tipo:'credito',checked:fr.transporteSaldo>0}]:[]),
-        ...caixFr.map((d:any,i:number)=>({key:`caix_${i}`,label:`🪙 Caixinha: ${d.descricao||'Gorjeta'} (${saidaData(d)})`,valor:R(d.valor),tipo:'credito',checked:true})),
+        // Caixinha do controle-motoboy (para motoboys)
+        ...caixCtrlItems,
+        // Caixinha de saídas (para não-motoboys, ou complementar)
+        ...(caixCtrlItems.length === 0
+          ? caixFr.map((d:any,i:number)=>({key:`caix_${i}`,label:`🪙 Caixinha: ${d.descricao||'Gorjeta'} (${saidaData(d)})`,valor:R(d.valor),tipo:'credito',checked:true}))
+          : []),
         ...descFr.map((d:any,i:number)=>({key:`desc_${i}`,label:`🔴 Desconto: ${d.descricao||d.tipo||'Desconto'} (${saidaData(d)})`,valor:R(d.valor),tipo:'debito',checked:true})),
         ...(fr.pendentesAnteriores||[]).map((p:any,i:number)=>({
           key:`pend_${i}`,
