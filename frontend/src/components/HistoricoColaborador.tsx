@@ -20,6 +20,14 @@ const fmt = (v: any) => {
   return String(v);
 };
 
+/* Campos a IGNORAR no diff (campos técnicos/internos que sempre mudam) */
+const CAMPOS_IGNORAR = new Set([
+  'updatedAt', 'createdAt', 'id', 'sk', 'pk',
+  'responsavelId', 'responsavelNome', 'responsavelEmail',
+  'usuarioId', 'usuarioNome', 'usuarioEmail',
+  'userAgent', 'observacaoAlteracao',
+]);
+
 const fmtMoeda = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const fmtDataHora = (iso: string) => {
@@ -46,13 +54,20 @@ const CAMPO_LABEL: Record<string, string> = {
   tipoContrato: 'Tipo de contrato', cargo: 'Cargo', tipo: 'Tipo', funcao: 'Função', area: 'Área',
   salario: 'Salário base', periculosidade: 'Periculosidade %',
   valorDia: 'Adic. Dobra-Dia', valorNoite: 'Adic. Dobra-Noite',
+  valorDobra: 'Valor Dobra',
   valorTransporte: 'Transporte/dia',
   valorChegadaDia: 'Chegada Dia', valorChegadaNoite: 'Chegada Noite', valorEntrega: 'Valor/Entrega',
-  chavePix: 'Chave PIX', dataAdmissao: 'Admissão', dataDemissao: 'Demissão',
+  chavePix: 'Chave PIX', dataAdmissao: 'Admissão', dataDemissao: 'Demissão', dataNascimento: 'Nascimento',
   unitId: 'Unidade', ativo: 'Ativo',
   horarioEntrada: 'Horário entrada', horarioSaida: 'Horário saída',
-  isMotoboy: 'É motoboy', tipoAcordo: 'Tipo de acordo', valeAlimentacao: 'Vale alimentação',
+  isMotoboy: 'É motoboy', tipoAcordo: 'Tipo de acordo', acordo: 'Acordo',
+  valeAlimentacao: 'Vale alimentação',
   podeTrabalharDia: 'Pode trabalhar dia', podeTrabalharNoite: 'Pode trabalhar noite',
+  contribuicaoAssistencial: 'Contribuição Assistencial',
+  endereco: 'Endereço', numero: 'Número', complemento: 'Complemento',
+  cidade: 'Cidade', estado: 'Estado', cep: 'CEP',
+  diasDisponiveis: 'Dias disponíveis',
+  observacao: 'Observação',
 };
 
 /* ─────────── HISTÓRICO DE CADASTRO (logs de alteração) ─────────── */
@@ -87,47 +102,69 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
       </div>
       {logs.map(log => {
         const meta = EVENTO_LABEL[log.evento] || EVENTO_LABEL.alterado;
-        // Identificar campos modificados comparando antes/depois
+
+        // Calcular diff: ignora campos técnicos, mostra todos os campos conhecidos que mudaram
         const antes = log.valoresAntes || {};
         const depois = log.valoresDepois || {};
+        const temDados = log.valoresAntes !== null || log.valoresDepois !== null;
         const campos = new Set([...Object.keys(antes), ...Object.keys(depois)]);
-        const diffs: Array<{ campo: string; antes: any; depois: any }> = [];
+        const diffs: Array<{ campo: string; label: string; antes: any; depois: any }> = [];
         for (const c of campos) {
-          if (!CAMPO_LABEL[c]) continue;
-          const a = antes[c];
-          const d = depois[c];
-          if (JSON.stringify(a) !== JSON.stringify(d)) diffs.push({ campo: c, antes: a, depois: d });
+          if (CAMPOS_IGNORAR.has(c)) continue;
+          const a = antes[c] ?? null;
+          const d = depois[c] ?? null;
+          if (JSON.stringify(a) === JSON.stringify(d)) continue;
+          // Exibe tanto campos conhecidos (com label) quanto desconhecidos (com nome técnico)
+          diffs.push({ campo: c, label: CAMPO_LABEL[c] || c, antes: a, depois: d });
         }
+
+        // Ordenar: campos de remuneração primeiro, depois restantes
+        const ORDEM_PRIO = ['valorTransporte','salario','valorDia','valorNoite','valorEntrega','valorChegadaDia','valorChegadaNoite','isMotoboy','tipoAcordo','acordo','cargo','funcao','tipoContrato','ativo'];
+        diffs.sort((a, b) => {
+          const ia = ORDEM_PRIO.indexOf(a.campo);
+          const ib = ORDEM_PRIO.indexOf(b.campo);
+          if (ia === -1 && ib === -1) return a.label.localeCompare(b.label);
+          if (ia === -1) return 1;
+          if (ib === -1) return -1;
+          return ia - ib;
+        });
 
         return (
           <div key={log.id} style={{
-            border: '1px solid #e0e0e0', borderRadius: 6, padding: 12, marginBottom: 8,
-            backgroundColor: '#fafafa',
+            border: `1px solid ${diffs.length > 0 ? '#c8e6c9' : '#e0e0e0'}`,
+            borderLeft: `4px solid ${meta.cor}`,
+            borderRadius: 6, padding: 12, marginBottom: 8,
+            backgroundColor: diffs.length > 0 ? '#fafff9' : '#fafafa',
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+            {/* Cabeçalho */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: diffs.length > 0 ? 10 : 0, flexWrap: 'wrap', gap: 8 }}>
               <div>
                 <span style={{ fontSize: 14, fontWeight: 700, color: meta.cor }}>{meta.icon} {meta.label}</span>
                 {log.observacao && <span style={{ marginLeft: 8, fontSize: 11, color: '#888', fontStyle: 'italic' }}>"{log.observacao}"</span>}
               </div>
               <div style={{ fontSize: 11, color: '#666', textAlign: 'right' }}>
-                <div>🕒 {fmtDataHora(log.timestamp)}</div>
-                <div>👤 {log.usuarioNome || log.usuarioId || 'desconhecido'}</div>
+                {log.timestamp
+                  ? <div>🕒 {fmtDataHora(log.timestamp)}</div>
+                  : <div style={{ color: '#bbb' }}>🕒 data não registrada</div>}
+                <div>👤 {log.usuarioNome || log.usuarioEmail || log.usuarioId || 'desconhecido'}</div>
                 {log.unitId && <div>🏢 {log.unitId}</div>}
               </div>
             </div>
+
+            {/* Tabela de diffs */}
             {diffs.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#eeeeee' }}>
-                    <th style={{ padding: '4px 8px', textAlign: 'left' }}>Campo</th>
+                  <tr style={{ backgroundColor: '#e8f5e9' }}>
+                    <th style={{ padding: '4px 8px', textAlign: 'left', color: '#333' }}>Campo</th>
                     <th style={{ padding: '4px 8px', textAlign: 'left', color: '#c62828' }}>Antes</th>
                     <th style={{ padding: '4px 8px', textAlign: 'left', color: '#2e7d32' }}>Depois</th>
                   </tr>
                 </thead>
                 <tbody>
                   {diffs.map(d => (
-                    <tr key={d.campo} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '4px 8px', fontWeight: 600 }}>{CAMPO_LABEL[d.campo] || d.campo}</td>
+                    <tr key={d.campo} style={{ borderBottom: '1px solid #e8f5e9' }}>
+                      <td style={{ padding: '4px 8px', fontWeight: 600, color: '#555' }}>{d.label}</td>
                       <td style={{ padding: '4px 8px', color: '#c62828', textDecoration: 'line-through' }}>{fmt(d.antes)}</td>
                       <td style={{ padding: '4px 8px', color: '#2e7d32', fontWeight: 600 }}>{fmt(d.depois)}</td>
                     </tr>
@@ -135,8 +172,20 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
                 </tbody>
               </table>
             )}
+
+            {/* Fallbacks */}
             {log.evento === 'criado' && diffs.length === 0 && (
-              <div style={{ fontSize: 11, color: '#888' }}>Cadastro inicial.</div>
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>📋 Cadastro inicial — dados criados sem snapshot de diff.</div>
+            )}
+            {log.evento !== 'criado' && diffs.length === 0 && !temDados && (
+              <div style={{ fontSize: 11, color: '#bbb', marginTop: 4, fontStyle: 'italic' }}>
+                ℹ️ Log legado — detalhe de campos não disponível (registrado antes do sistema de diff).
+              </div>
+            )}
+            {log.evento !== 'criado' && diffs.length === 0 && temDados && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4, fontStyle: 'italic' }}>
+                ℹ️ Nenhuma diferença detectada nos campos monitorados.
+              </div>
             )}
           </div>
         );

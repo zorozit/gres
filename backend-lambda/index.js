@@ -752,7 +752,7 @@ exports.handler = async (event) => {
           let evento = 'alterado';
           if (diffs.ativo) evento = updated.ativo ? 'reativado' : 'desativado';
           else if (diffs.unitId) evento = 'transferido';
-          else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte) evento = 'remuneracao_alterada';
+          else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte || diffs.periculosidade || diffs.contribuicaoAssistencial || diffs.isMotoboy || diffs.tipoAcordo || diffs.acordo) evento = 'remuneracao_alterada';
           else if (diffs.cargo || diffs.tipo || diffs.funcao || diffs.area) evento = 'cargo_alterado';
           else if (diffs.tipoContrato) evento = 'contrato_alterado';
 
