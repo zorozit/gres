@@ -320,7 +320,7 @@ export default function FreelancerPagamento() {
         const diasPagosList: {data:string;turno:string;valor:number}[] = [];
         const diasJaPagosDetalhe: {data:string;turno:string;valor:number}[] = [];
         // Detalhe linha-a-linha para o modal (motoboy): chegada + entregas separados
-        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number}[] = [];
+        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number;pago:boolean}[] = [];
         let total = 0, totalJaPago = 0, dobras = 0, diasTrabalhados = 0, diasCodigo = '';
 
         if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
@@ -340,12 +340,21 @@ export default function FreelancerPagamento() {
             if (jaPago) {
               totalJaPago += vlLinha;
               diasJaPagosDetalhe.push({data: linha.data, turno, valor: vlLinha});
+              // Guardar detalhe para o modal (pago — exibição de auditoria)
+              if (vlLinha > 0) ctrlLinhasDetalhe.push({
+                data: linha.data, turno,
+                chegada: parseFloat((chegD + chegN).toFixed(2)),
+                qtdEntregas: R(linha.entDia) + R(linha.entNoite),
+                vlEntrega: vEntrega,
+                totalEntregas: parseFloat(totalEntregas.toFixed(2)),
+                vlLinha, pago: true,
+              });
             } else if (vlLinha > 0) {
               total += vlLinha;
               diasPagosList.push({data: linha.data, turno, valor: vlLinha});
               dobras += (temDia && temNoite) ? 2 : 1;
               diasTrabalhados++;
-              // Guardar detalhe para o modal
+              // Guardar detalhe para o modal (pendente)
               ctrlLinhasDetalhe.push({
                 data: linha.data,
                 turno,
@@ -353,7 +362,7 @@ export default function FreelancerPagamento() {
                 qtdEntregas: R(linha.entDia) + R(linha.entNoite),
                 vlEntrega: vEntrega,
                 totalEntregas: parseFloat(totalEntregas.toFixed(2)),
-                vlLinha,
+                vlLinha, pago: false,
               });
             }
             if (caixinhaLinha > 0 && !jaPago) {
@@ -851,7 +860,7 @@ export default function FreelancerPagamento() {
           ...(fr.diasPagos||[]).map((d:any)=>({...d,pago:false})),
         ].sort((a,b)=>a.data.localeCompare(b.data)||(a.turno.localeCompare(b.turno)));
         // ── detalhe por linha do controle-motoboy (chegada + entregas separados) ──
-        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number}[] =
+        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number;pago:boolean}[] =
           fr.ctrlLinhasDetalhe || [];
         const isMotoboy = fr.isMotoboy === true;
         // ── dias únicos com presença ──
@@ -906,37 +915,18 @@ export default function FreelancerPagamento() {
                         const dataFmt = `${l.data.slice(8)}/${l.data.slice(5,7)} ${diaSem}`;
                         const turnoLabel = l.turno==='Dia'?'☀️ Dia':l.turno==='Noite'?'🌙 Noite':l.turno==='DiaNoite'?'☀️🌙':l.turno;
                         return (
-                          <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
+                          <tr key={i} style={{backgroundColor:l.pago?'#f1f8e9':i%2===0?'#fafafa':'white',borderLeft:l.pago?'3px solid #a5d6a7':'3px solid transparent'}}>
                             <td style={tdDet}>{dataFmt}</td>
                             <td style={tdDet}>{turnoLabel}</td>
-                            <td style={{...tdDet,textAlign:'right',color:'#e65100'}}>+{fmtMoeda(l.chegada)}</td>
-                            <td style={{...tdDet,textAlign:'right',color:'#1565c0'}}>
+                            <td style={{...tdDet,textAlign:'right',color:l.pago?'#888':'#e65100'}}>+{fmtMoeda(l.chegada)}</td>
+                            <td style={{...tdDet,textAlign:'right',color:l.pago?'#888':'#1565c0'}}>
                               {l.qtdEntregas>0 ? `${l.qtdEntregas}×${fmtMoeda(l.vlEntrega)} = +${fmtMoeda(l.totalEntregas)}` : '—'}
                             </td>
-                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#2e7d32'}}>+{fmtMoeda(l.vlLinha)}</td>
+                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:l.pago?'#888':'#2e7d32'}}>+{fmtMoeda(l.vlLinha)}</td>
                             <td style={{...tdDet,textAlign:'center'}}>
-                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',backgroundColor:'#fff9c4',color:'#f57f17'}}>
-                                ⏳ Pend.
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {/* já pagos (sem detalhe de ctrl) */}
-                      {(fr.diasJaPagosDetalhe||[]).map((t:any,i:number)=>{
-                        const dd = new Date(t.data+'T12:00:00');
-                        const diaSem = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()];
-                        const dataFmt = `${t.data.slice(8)}/${t.data.slice(5,7)} ${diaSem}`;
-                        const turnoLabel = t.turno==='Dia'?'☀️ Dia':t.turno==='Noite'?'🌙 Noite':t.turno==='DiaNoite'?'☀️🌙':t.turno;
-                        return (
-                          <tr key={`pg-${i}`} style={{backgroundColor:'#f1f8e9',borderLeft:'3px solid #a5d6a7'}}>
-                            <td style={tdDet}>{dataFmt}</td>
-                            <td style={tdDet}>{turnoLabel}</td>
-                            <td style={{...tdDet,textAlign:'right',color:'#aaa'}} colSpan={2}>—</td>
-                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#888'}}>+{fmtMoeda(t.valor)}</td>
-                            <td style={{...tdDet,textAlign:'center'}}>
-                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',backgroundColor:'#e8f5e9',color:'#2e7d32'}}>
-                                ✅ Pago
+                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',
+                                backgroundColor:l.pago?'#e8f5e9':'#fff9c4',color:l.pago?'#2e7d32':'#f57f17'}}>
+                                {l.pago?'✅ Pago':'⏳ Pend.'}
                               </span>
                             </td>
                           </tr>
