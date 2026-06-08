@@ -455,6 +455,27 @@ git push origin main
 # → Amplify detecta o push e serve o dist/ commitado
 ```
 
+### Deploy do Backend Lambda (AWS)
+```bash
+# O Lambda NÃO é atualizado automaticamente pelo Amplify.
+# Após modificar backend-lambda/index.js, fazer deploy manual:
+
+cd backend-lambda
+npm install --production
+zip -r /tmp/gres-lambda.zip . -x "*.git*" -x "*test*" -x "*.md" -x "*.bak" -x "lambda*.zip"
+
+# Via AWS CLI (credenciais configuradas):
+aws lambda update-function-code \
+  --function-name gres-backend \
+  --zip-file fileb:///tmp/gres-lambda.zip \
+  --region us-east-2
+
+# Ou usar o script pronto:
+bash infra/deploy-lambda.sh
+```
+> **Último deploy do Lambda:** 2026-06-08 — inclui fix GET /motoboys (fallback acordo{})
+> e fix POST/PUT /colaboradores (sincroniza campos raiz com acordo{}).
+
 ---
 
 ## 📦 Estrutura do Projeto
