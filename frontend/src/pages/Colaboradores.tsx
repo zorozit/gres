@@ -920,6 +920,7 @@ export default function Colaboradores() {
   const [filtroArea, setFiltroArea]         = useState('');
   const [filtroAtivo, setFiltroAtivo]       = useState(true);
   const [busca, setBusca]                   = useState('');
+  const inputBuscaRef = React.useRef<HTMLInputElement>(null);
 
   // New colaborador form (unified)
   const [novoColab, setNovoColab] = useState<Partial<Colaborador>>(ESTADO_INICIAL);
@@ -1186,7 +1187,9 @@ export default function Colaboradores() {
         (c.nome || '').toLowerCase().includes(q) ||
         (c.cpf  || '').replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
         celularDe(c).replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
-        (c.funcao || '').toLowerCase().includes(q);
+        (c.funcao || '').toLowerCase().includes(q) ||
+        (c.cargo  || '').toLowerCase().includes(q) ||
+        (c.area   || '').toLowerCase().includes(q);
       return matchContrato && matchArea && matchAtivo && matchBusca;
     });
   }, [colaboradores, filtroContrato, filtroArea, filtroAtivo, busca]);
@@ -1251,8 +1254,15 @@ export default function Colaboradores() {
 
             {/* Filtros */}
             <div style={S.filtrosContainer}>
-              <input type="text" placeholder="🔍 Buscar por nome, CPF, celular ou função..."
-                value={busca} onChange={e => setBusca(e.target.value)} style={S.inputBusca} />
+              <input
+                ref={inputBuscaRef}
+                type="text"
+                placeholder="🔍 Buscar por nome, CPF, celular ou função..."
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                onKeyDown={e => e.stopPropagation()}
+                style={S.inputBusca}
+              />
 
               {/* Filtro por tipo de contrato — botões pill */}
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -1282,8 +1292,18 @@ export default function Colaboradores() {
               </select>
             </div>
 
-            <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px' }}>
-              Exibindo <strong>{colaboradoresFiltrados.length}</strong> colaborador(es)
+            <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              Exibindo <strong>{colaboradoresFiltrados.length}</strong> de <strong>{colaboradores.length}</strong> colaborador(es)
+              {busca && (
+                <span style={{ color: '#1976d2' }}>
+                  — buscando: <em>"{busca}"</em>
+                  <button
+                    onClick={() => { setBusca(''); setTimeout(() => inputBuscaRef.current?.focus(), 0); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontWeight: 'bold', padding: '0 4px', fontSize: '12px' }}
+                    title="Limpar busca"
+                  >✕</button>
+                </span>
+              )}
             </div>
 
             {loading ? (
