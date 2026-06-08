@@ -3,7 +3,9 @@
 Sistema completo de gestão operacional para redes de restaurantes com foco em controle de caixa, folha de pagamento freelancer/CLT, escalas, saídas e motoboys.
 
 **Deploy:** AWS Amplify (frontend) + AWS Lambda (backend) + DynamoDB  
-**Última atualização:** 08/06/2026
+**Última atualização:** 08/06/2026  
+**Bundle JS atual:** `index-F9OrQyCr.js` (Amplify job #312)  
+**Lambda em produção:** `gres-backend` — deploy 08/06/2026 18:51 UTC
 
 ---
 
@@ -499,21 +501,147 @@ gres/
 
 ---
 
+## 📡 Contratos de API — Backend Lambda
+
+> **Base URL:** `https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod`  
+> **Auth:** `Authorization: Bearer <token>` em todos os endpoints (exceto `/health`)  
+> **Handler:** `backend-lambda/index.js` — arquivo único, ~1800 linhas
+
+### GET /colaboradores
+```
+Query: unitId (obrigatório)
+Retorna: array de objetos Colaborador (scan RAW do DynamoDB gres-prod-colaboradores)
+Campos relevantes para motoboys:
+  - id, nome, cpf, telefone, isMotoboy (bool)
+  - tipoContrato: 'CLT' | 'Freelancer'
+  - tipoAcordo: 'motoboy' | 'mensalista' | 'diarista' | ...
+  - acordo: { chegadaDia, chegadaNoite, valorEntrega }  ← objeto aninhado
+  - valorChegadaDia, valorChegadaNoite, valorEntrega    ← campos RAIZ (primários)
+  - valorDia, valorNoite                                ← campos legados (retrocompat)
+⚠️  valorChegadaDia/Noite/valorEntrega nos campos raiz são os lidos pelo módulo Motoboys.
+    Se zerados, o frontend faz fallback para acordo{} automaticamente.
+```
+
+### GET /motoboys
+```
+Query: unitId (obrigatório)
+Retorna: array normalizado — lê gres-prod-colaboradores onde isMotoboy=true
+Mapeamento de campos (com fallback para acordo{}):
+  valorChegadaDia   = c.valorChegadaDia   || ac.chegadaDia   || c.valorDia   || 0
+  valorChegadaNoite = c.valorChegadaNoite || ac.chegadaNoite || c.valorNoite  || 0
+  valorEntrega      = c.valorEntrega      || ac.valorEntrega  || c.valorTransporte || 0
+  acordo: c.acordo || null  ← sempre propagado para fallback no frontend
+⚠️  NÃO usa mais gres-prod-motoboys (tabela LEGADA — vazia em produção).
+```
+
+### POST /colaboradores
+```
+Body: { ...camposColaborador, tipoAcordo, acordo: { chegadaDia, chegadaNoite, valorEntrega } }
+Sincronização automática (backend):
+  valorChegadaDia  = parseFloat(valorChegadaDia)  || acordo.chegadaDia  || 0
+  valorChegadaNoite= parseFloat(valorChegadaNoite) || acordo.chegadaNoite || 0
+  valorEntrega     = parseFloat(valorEntrega)      || acordo.valorEntrega || 0
+Grava em: gres-prod-colaboradores
+Log em:   gres-prod-colaboradores-log
+```
+
+### PUT /colaboradores/:id
+```
+Body: campos a alterar (parcial)
+Comportamento: lê registro original → aplica diffs → salva completo
+Sincronização campos raiz com acordo{} igual ao POST.
+Log de auditoria: evento 'remuneracao_alterada' quando muda salario/acordo/valorEntrega/etc.
+```
+
+### GET /controle-motoboy
+```
+Query: motoboyId, mes (YYYY-MM), unitId
+Retorna: array de ControleDia do mês (gres-prod-controle-motoboy)
+```
+
+### POST /controle-motoboy
+```
+Body: { motoboyId, data, turno, entDia, entNoite, caixinha, vlVariavel, ... }
+Upsert por (motoboyId + data).
+```
+
+### GET /saidas
+```
+Query: unitId, dataInicio, dataFim
+Retorna: saídas do período (gres-prod-saidas)
+Campos motoboy: viagens, caixinha, turno
+```
+
+---
+
+## 🏍️ Módulo Motoboys — Campos Críticos e Fórmulas
+
+### Fonte de dados
+```
+fetchMotoboys() → GET /colaboradores?unitId=X (NÃO /motoboys)
+Filtra: c.isMotoboy === true || c.cargo.toLowerCase() === 'motoboy'
+Mapeamento com fallback:
+  const ac = c.acordo || {};
+  valorChegadaDia:   R(c.valorChegadaDia)   || R(ac.chegadaDia)   || R(c.valorDia)   || 0
+  valorChegadaNoite: R(c.valorChegadaNoite) || R(ac.chegadaNoite) || R(c.valorNoite) || 0
+  valorEntrega:      R(c.valorEntrega)      || R(ac.valorEntrega) || R(c.valorTransporte) || 0
+```
+
+### Fórmulas de cálculo (Freelancer)
+```
+vlVariavel = chegadaDia + chegadaNoite + (valorEntrega × totalViagens) + totalCaixinha
+Total      = vlVariavel + (adiantamentos pagos no período)
+```
+
+### Estado dos motoboys em produção (08/06/2026)
+| Nome | vEntrega | vChDia | vChNoite | Status |
+|------|----------|--------|----------|--------|
+| Thiago Motoboy | R$7 | R$70 | R$70 | ✅ correto (corrigido via DynamoDB direto) |
+| Clayton Costa | R$5 | R$70 | R$70 | ✅ correto |
+| Mateus Ferreira | R$7 | R$54,36 | R$54,36 | ✅ correto |
+| Marcelo Bezerra | R$7 | R$54,36 | R$54,36 | ✅ correto |
+
+---
+
+## 🔧 Filtro de Colaboradores — Implementação
+
+```typescript
+// Colaboradores.tsx — cálculo DIRETO no render (sem useMemo/useEffect)
+// Garante que busca sempre usa o valor atual do estado sem stale closure.
+const buscaAtual = busca.trim();
+const q = buscaAtual.toLowerCase();
+const colaboradoresFiltrados = colaboradores.filter(c => {
+  const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
+  const matchArea     = !filtroArea || c.area === filtroArea;
+  const matchAtivo    = filtroAtivo ? c.ativo !== false : c.ativo === false;
+  const matchBusca    = !buscaAtual ||
+    c.nome?.toLowerCase().includes(q) ||
+    c.cpf?.replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
+    celularDe(c).replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
+    c.funcao?.toLowerCase().includes(q) ||
+    c.cargo?.toLowerCase().includes(q) ||
+    c.area?.toLowerCase().includes(q);
+  return matchContrato && matchArea && matchAtivo && matchBusca;
+});
+```
+
+---
+
 ## 📝 Histórico de Mudanças Recentes
 
-| Commit | Descrição |
-|--------|-----------|
-| (07/06) | **Fix permissões menu**: `freelancer-pagamento` e `motoboy-auditoria` adicionados ao `TODOS_MODULOS` em `PermissoesConfig.tsx` — módulos agora aparecem no menu para admin/gerente após re-salvar permissões |
-| `5f712ef` | **fix(modal-detalhe)**: reescrita completa do modal `📋 Ver` em FreelancerPagamento — turnos com valores, transporte por dia, separação de Desconto Adto. Especial, resumo final |
-| `870cf30` | **feat(freelancer-pagamento)**: colunas Líquido+Status no padrão Extrato — valor líquido em cor da forma + equação subscript bruto/desc/adto/líquido |
-| `6f98916` | **fix(carregarDados)**: vars locais antes de setState + fix imports TypeScript no FreelancerPagamento |
-| `c2aaba5` | **feat(folha-pagamento)**: aba Freelancers com colunas Líquido+Status no padrão Extrato (compBrutoFP/compDescFP/compAbatFP/compLiqFP) |
-| `ff3bef1` | **Extrato: integridade do laço de pagamento** — suprimir lista geral, transporte dia a dia, sub-linha adto. especial |
-| `fbb9b95` | **Extrato: log PIX real + EXCLUIR_DO_PIX + pagamentoIdLigado preciso** |
-| `4b7a900` | **Extrato linha a linha integrado + Auditoria com usuário real** — ...auditoriaCampos() no payload folha |
-| `31a1361` | **Auditoria: detecta pagamento via pagoVariavel + totalSaidasPeriodo prevalece** |
-| `a272360` | **Fix regex R[$] + saidasPeriodo com filtro por colaborador** |
-| `70a905d` | README reescrito com arquitetura e modelo de dados |
+| Data | Commit | Descrição |
+|------|--------|-----------|
+| 08/06 | `(atual)` | **fix(colaboradores)**: filtro reescrito como cálculo direto no render — elimina problema de stale closure definitivamente |
+| 08/06 | `0fd6127` | **fix**: filtro colaboradores (useEffect+buscaRef) + valorEntrega via acordo{} no fetchMotoboys |
+| 08/06 | `697b60b` | **docs**: seção deploy Lambda + data último deploy |
+| 08/06 | `0c2a37a` | **docs**: documentar módulo motoboys |
+| 08/06 | `7b57e18` | **fix(motoboys)**: valorEntrega/chegada lidos do acordo{} — unificação cadastro |
+| 08/06 | `b908dd1` | **fix(colaboradores)**: busca robusta — ref no input, stopPropagation, cargo+area |
+| 08/06 | `8bb5ab8` | **fix(motoboys)**: Ch.Noite/Ch.Dia habilitados + mapeamento valorChegadaNoite |
+| 07/06 | `dd25694` | **fix(historico-colaborador)**: diff de campos + logs legados + eventos remuneração |
+| 07/06 | `0047fe3` | **fix(freelancer-pagamento)**: motoboys freelancers usam controle-motoboy |
+| 07/06 | `4fe63b2` | **feat(adiantamentos)**: editar tipo especial↔transporte + excluir sem parcelas |
+| 07/06 | (07/06) | **fix permissões menu**: freelancer-pagamento e motoboy-auditoria no TODOS_MODULOS |
 
 ---
 
