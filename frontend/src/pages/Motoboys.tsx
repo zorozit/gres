@@ -373,8 +373,8 @@ export const Motoboys: React.FC = () => {
           vinculo: c.tipoContrato === 'CLT' ? 'CLT' : 'Freelancer',
           salario: R(c.salario) || 0,
           periculosidade: R(c.periculosidade) || 0,
-          valorChegadaDia:   R(c.valorDia)        || 0,
-          valorChegadaNoite: R(c.valorNoite)      || 0,
+          valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorDia)   || 0,
+          valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorNoite) || 0,
           valorEntrega:      R(c.valorEntrega) || R(c.valorTransporte) || 0,
           ativo: c.ativo !== false,
         }));
@@ -917,17 +917,49 @@ export const Motoboys: React.FC = () => {
                   const vEntrega      = R(motoboyCtrl?.valorEntrega);
 
                   // Toggle de presença (Ch.Dia / Ch.Noite) para auto-preencher chegada
+                  // Se o valor de chegada não está configurado no cadastro, pede ao usuário
                   const toggleChegada = (idx: number, turno: 'Dia' | 'Noite') => {
+                    const linhaAtual = controleComAcumulado[idx] as any;
+                    const jaAtivo = turno === 'Dia' ? R(linhaAtual?.chegadaDia) > 0 : R(linhaAtual?.chegadaNoite) > 0;
+
+                    // Se já está ativo, desmarcar
+                    if (jaAtivo) {
+                      setControle(prev => {
+                        const next = [...prev];
+                        const linha: any = next[idx];
+                        if (turno === 'Dia') linha.chegadaDia = 0;
+                        else linha.chegadaNoite = 0;
+                        const totalEntregas = R(linha.entDia) + R(linha.entNoite);
+                        const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
+                        linha.vlVariavel = parseFloat(
+                          (R(linha.chegadaDia) + R(linha.chegadaNoite) + (vEntrega * totalEntregas) + totalCaixinha).toFixed(2)
+                        );
+                        return next;
+                      });
+                      return;
+                    }
+
+                    // Se vai ativar: usa valor cadastrado; se não configurado, pede ao usuário
+                    const vCadastrado = turno === 'Dia' ? vChegadaDia : vChegadaNoite;
+                    let valorFinal = vCadastrado;
+                    if (vCadastrado <= 0) {
+                      const input = window.prompt(
+                        `Valor de chegada ${turno === 'Dia' ? 'Dia' : 'Noite'} não configurado no cadastro.\nDigite o valor (R$) para lançar:`,
+                        '0'
+                      );
+                      if (input === null) return; // usuário cancelou
+                      valorFinal = parseFloat(input.replace(',', '.')) || 0;
+                      if (valorFinal <= 0) {
+                        alert('Valor inválido. Lançamento cancelado.');
+                        return;
+                      }
+                    }
+
                     setControle(prev => {
                       const next = [...prev];
                       const linha: any = next[idx];
-                      if (turno === 'Dia') {
-                        const ja = R(linha.chegadaDia) > 0;
-                        linha.chegadaDia = ja ? 0 : vChegadaDia;
-                      } else {
-                        const ja = R(linha.chegadaNoite) > 0;
-                        linha.chegadaNoite = ja ? 0 : vChegadaNoite;
-                      }
+                      if (turno === 'Dia') linha.chegadaDia = valorFinal;
+                      else linha.chegadaNoite = valorFinal;
                       const totalEntregas = R(linha.entDia) + R(linha.entNoite);
                       const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
                       linha.vlVariavel = parseFloat(
@@ -1147,9 +1179,8 @@ export const Motoboys: React.FC = () => {
                                         <input type="checkbox"
                                           checked={R(l.chegadaDia) > 0}
                                           onChange={() => toggleChegada(idx, 'Dia')}
-                                          disabled={vChegadaDia <= 0}
-                                          title={vChegadaDia > 0 ? `Auto-preenche R$ ${fmt(vChegadaDia)}` : 'Valor de chegada não configurado no cadastro'}
-                                          style={{ width:'16px', height:'16px', cursor: vChegadaDia > 0 ? 'pointer' : 'not-allowed', accentColor:'#e65100' }} />
+                                          title={vChegadaDia > 0 ? `Auto-preenche R$ ${fmt(vChegadaDia)}` : 'Valor não configurado — clique para digitar manualmente'}
+                                          style={{ width:'16px', height:'16px', cursor:'pointer', accentColor:'#e65100' }} />
                                         {R(l.chegadaDia) > 0 && (
                                           <div style={{ fontSize:'10px', color:'#e65100', fontWeight:600 }}>{fmt(R(l.chegadaDia))}</div>
                                         )}
@@ -1168,9 +1199,8 @@ export const Motoboys: React.FC = () => {
                                         <input type="checkbox"
                                           checked={R(l.chegadaNoite) > 0}
                                           onChange={() => toggleChegada(idx, 'Noite')}
-                                          disabled={vChegadaNoite <= 0}
-                                          title={vChegadaNoite > 0 ? `Auto-preenche R$ ${fmt(vChegadaNoite)}` : 'Valor de chegada não configurado no cadastro'}
-                                          style={{ width:'16px', height:'16px', cursor: vChegadaNoite > 0 ? 'pointer' : 'not-allowed', accentColor:'#7b1fa2' }} />
+                                          title={vChegadaNoite > 0 ? `Auto-preenche R$ ${fmt(vChegadaNoite)}` : 'Valor não configurado — clique para digitar manualmente'}
+                                          style={{ width:'16px', height:'16px', cursor:'pointer', accentColor:'#7b1fa2' }} />
                                         {R(l.chegadaNoite) > 0 && (
                                           <div style={{ fontSize:'10px', color:'#7b1fa2', fontWeight:600 }}>{fmt(R(l.chegadaNoite))}</div>
                                         )}
