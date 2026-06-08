@@ -3,7 +3,7 @@
 Sistema completo de gestão operacional para redes de restaurantes com foco em controle de caixa, folha de pagamento freelancer/CLT, escalas, saídas e motoboys.
 
 **Deploy:** AWS Amplify (frontend) + AWS Lambda (backend) + DynamoDB  
-**Última atualização:** 06/06/2026
+**Última atualização:** 08/06/2026
 
 ---
 
@@ -66,7 +66,7 @@ DynamoDB (NoSQL)
 | `gres-prod-fornecedores` | `id` | Cadastro de fornecedores | ❌ sem log |
 | `gres-prod-vagas` | `id` | Vagas de recrutamento (soft delete) | ❌ sem log |
 | `gres-prod-funcoes-escala` | `id` (func-xxxx) | Regras de função/área para escala | ❌ sem log |
-| `gres-prod-motoboys` | `id` (mot-xxxx) | Legado — motoboys migrados para colaboradores | ❌ sem log |
+| `gres-prod-motoboys` | `id` (mot-xxxx) | **LEGADO — NÃO USAR.** Motoboys migrados para `gres-prod-colaboradores` com `isMotoboy=true`. GET /motoboys ignora esta tabela. | ❌ sem log |
 | `gres-prod-freelancers` | `id` | Legado — freelancers migrados | ❌ sem log |
 | `gres-prod-candidatos` | `id` | Candidatos de vagas | ❌ sem log |
 
@@ -267,6 +267,58 @@ SPRINT ESTRUTURAL (Mês 2)
 ├── [P3.10] GSI timestamp para /auditoria (eliminar scan)
 ├── [P3.11] GSI unitId+data para /saidas e /folha-pagamento
 └── [P3.12] IDs de saída com componente aleatório
+```
+
+---
+
+## 🏍️ Módulo Motoboys — Arquitetura e Campos Críticos
+
+### Fonte única de dados: `gres-prod-colaboradores`
+
+Motoboys são colaboradores com `isMotoboy = true`. **A tabela `gres-prod-motoboys` é LEGADA e NÃO deve ser usada.**
+
+```
+GET /motoboys → scan em gres-prod-colaboradores WHERE isMotoboy=true AND ativo=true
+                ↓
+                Mapeamento com fallback em cascata:
+                valorChegadaDia   = c.valorChegadaDia   || acordo.chegadaDia   || c.valorDia   || 0
+                valorChegadaNoite = c.valorChegadaNoite || acordo.chegadaNoite || c.valorNoite  || 0
+                valorEntrega      = c.valorEntrega      || acordo.valorEntrega  || c.valorTransporte || 0
+```
+
+### Campos do colaborador-motoboy
+
+| Campo raiz DynamoDB | Campo `acordo{}` | Descrição |
+|---|---|---|
+| `valorChegadaDia` | `acordo.chegadaDia` | Valor pago por chegada no turno dia (R$) |
+| `valorChegadaNoite` | `acordo.chegadaNoite` | Valor pago por chegada no turno noite (R$) |
+| `valorEntrega` | `acordo.valorEntrega` | Valor por entrega/viagem (R$) |
+| `tipoAcordo` | — | `'motoboy'` para o tipo chegada+entregas |
+| `isMotoboy` | — | `true` para marcar como motoboy |
+
+### Por que havia dois cadastros (histórico)
+
+Antes da unificação, existia um módulo separado de cadastro de motoboys (tabela `gres-prod-motoboys`).
+Após a unificação em `gres-prod-colaboradores`, um bug em `buildAcordoCompatFields` fazia os campos
+`valorChegadaDia`, `valorChegadaNoite` e `valorEntrega` ficarem **zerados no nível raiz** do registro,
+embora os valores corretos estivessem dentro do objeto `acordo{}`.
+
+**Fix aplicado (commit `7b57e18`):**
+1. `buildAcordoCompatFields` agora propaga `valorChegadaDia/Noite/valorEntrega` corretamente para o nível raiz
+2. `GET /motoboys` usa fallback `acordo{}` para registros legados sem re-salvar
+3. `POST/PUT /colaboradores` sincroniza campos raiz a partir de `acordo{}` ao salvar
+4. `Motoboys.tsx` usa fallback `acordo{}` em todos os cálculos locais
+
+### Fórmula de cálculo — Freelancer motoboy
+
+```
+vlVariavel por dia = chegadaDia + chegadaNoite + (entDia + entNoite) × valorEntrega + caixinha
+```
+
+### Fórmula de cálculo — CLT motoboy
+
+```
+vlVariavel por dia = (entDia + entNoite) × valorEntrega + caixinha
 ```
 
 ---
