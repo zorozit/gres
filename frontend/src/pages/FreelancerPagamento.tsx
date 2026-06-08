@@ -547,8 +547,25 @@ export default function FreelancerPagamento() {
           checked: true,
         }));
 
+      // Label do item principal: motoboy usa chegada + entregas, freelancer usa dobras
+      const ctrlDet: {chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number}[] = fr.ctrlLinhasDetalhe || [];
+      const isMotoboy = fr.isMotoboy === true && ctrlDet.length > 0;
+      const labelPrincipal = (() => {
+        if (isMotoboy) {
+          const totalChegada  = parseFloat(ctrlDet.reduce((s,l)=>s+l.chegada,0).toFixed(2));
+          const totalQtdEnt   = ctrlDet.reduce((s,l)=>s+l.qtdEntregas,0);
+          const vlEnt         = ctrlDet[0]?.vlEntrega || 0;
+          const totalEnt      = parseFloat(ctrlDet.reduce((s,l)=>s+l.totalEntregas,0).toFixed(2));
+          const partes: string[] = [];
+          if (totalChegada > 0) partes.push(`🏍️ Chegada: R$${fmt(totalChegada)}`);
+          if (totalQtdEnt > 0)  partes.push(`📦 ${totalQtdEnt}× R$${fmt(vlEnt)} = R$${fmt(totalEnt)}`);
+          return partes.join('  +  ') || `🏍️ Motoboy: R$${fmt(fr.total)}`;
+        }
+        return `Dobras (${fr.dobras}× ${obsValor})`;
+      })();
+
       const items: any[] = [
-        { key:'dobras', label:`Dobras (${fr.dobras}× ${obsValor})`, valor:fr.total, tipo:'credito', checked:true },
+        { key:'dobras', label: labelPrincipal, valor:fr.total, tipo:'credito', checked:true },
         ...(totalTransp>0?[{key:'transporte',label:transpLabel,valor:fr.transporteSaldo,tipo:'credito',checked:fr.transporteSaldo>0}]:[]),
         // Caixinha do controle-motoboy (para motoboys)
         ...caixCtrlItems,
