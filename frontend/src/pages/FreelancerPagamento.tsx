@@ -324,7 +324,15 @@ export default function FreelancerPagamento() {
         const saidasDescFr = saidasPer.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
-          return s.colaboradorId===cid && TIPOS_DESC.has(t) && dt>=isoInicio && dt<=isoFim2;
+          if (!TIPOS_DESC.has(t)) return false;
+          if (s.colaboradorId !== cid) return false;
+          if (dt < isoInicio || dt > isoFim2) return false;
+          // Excluir descontos de adiantamento especial já quitados via AdiantamentosSaldos.
+          // Esses registros têm adiantamentoId preenchido E pago=true —
+          // foram lançados diretamente como parcela de contrato, não devem ser
+          // cobrados novamente no pagamento semanal.
+          if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+          return true;
         });
         const saidasDesconto = saidasDescFr.reduce((s:number,x:any)=>s+R(x.valor),0);
         const saidasDetalhe  = saidasDescFr.map((s:any)=>({descricao:s.descricao||s.tipo||'Desconto',valor:R(s.valor),data:s.dataPagamento||s.data||''}));
@@ -401,7 +409,16 @@ export default function FreelancerPagamento() {
       const saidaData = (s:any) => s.dataPagamento||s.data||'';
       const rangeIni = fech.dataInicioBase;
       const rangeFim = fech.dataFimEfetivo||fech.dataFechamentoBase;
-      const descFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_DESC.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
+      const descFr = saidasFrescas.filter((s:any) => {
+        const t = s.tipo||s.origem||s.referencia||'';
+        if (s.colaboradorId !== fr.id) return false;
+        if (!TIPOS_DESC.includes(t)) return false;
+        if (saidaData(s) < rangeIni || saidaData(s) > rangeFim) return false;
+        // Excluir parcelas de adiantamento especial já quitadas via AdiantamentosSaldos.
+        // Critério: adiantamentoId preenchido + pago=true → já foi baixado lá, não cobrar de novo.
+        if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+        return true;
+      });
       const caixFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
       const obsValor = (fr.valorDia>0||fr.valorNoite>0) ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite` : `R$${fmt(fr.valorDobra)}/dobra`;
       const totalTransp = fr.diasTrabalhados * R(fr.valorTransporte);

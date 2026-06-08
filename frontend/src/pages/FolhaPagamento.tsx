@@ -1161,12 +1161,16 @@ export default function FolhaPagamento() {
         // Descontos reais do colaborador: vale/empréstimo, consumo e parcelas de adiantamento especial
         // 'Caixinha' permanece como crédito e não entra nesta lista
         const TIPOS_DESCONTO_FREELANCER = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
-        const saidasDescFreelancer = saidasPeriodo.filter((s: any) =>
-          s.colaboradorId === f.id &&
-          TIPOS_DESCONTO_FREELANCER.includes(s.tipo || s.origem || s.referencia || '') &&
-          saidaData(s) >= isoInicio &&
-          saidaData(s) <= isoFim
-        );
+        const saidasDescFreelancer = saidasPeriodo.filter((s: any) => {
+          const t = s.tipo || s.origem || s.referencia || '';
+          if (s.colaboradorId !== f.id) return false;
+          if (!TIPOS_DESCONTO_FREELANCER.includes(t)) return false;
+          if (saidaData(s) < isoInicio || saidaData(s) > isoFim) return false;
+          // Parcelas de adiantamento especial já quitadas via AdiantamentosSaldos não devem
+          // ser cobradas novamente: adiantamentoId preenchido + pago=true = já baixado.
+          if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+          return true;
+        });
         const saidasDesconto = parseFloat(
           saidasDescFreelancer.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
         );
@@ -1702,11 +1706,16 @@ export default function FolhaPagamento() {
       const rangeIni = fech.dataInicioBase;  // início efetivo (clipado se período global)
       const rangeFim = (fech as any).dataFimEfetivo || fech.dataFechamentoBase; // fim efetivo
 
-      const saidasDescFr = saidasFrescas.filter((s: any) =>
-        s.colaboradorId === fr.id &&
-        TIPOS_DESCONTO.includes(s.tipo || s.origem || s.referencia || '') &&
-        saidaData(s) >= rangeIni && saidaData(s) <= rangeFim
-      );
+      const saidasDescFr = saidasFrescas.filter((s: any) => {
+        const t = s.tipo || s.origem || s.referencia || '';
+        if (s.colaboradorId !== fr.id) return false;
+        if (!TIPOS_DESCONTO.includes(t)) return false;
+        if (saidaData(s) < rangeIni || saidaData(s) > rangeFim) return false;
+        // Parcelas de adiantamento especial já quitadas via AdiantamentosSaldos não devem
+        // ser cobradas novamente: adiantamentoId preenchido + pago=true = já baixado.
+        if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+        return true;
+      });
       const saidasCaixFr = saidasFrescas.filter((s: any) =>
         s.colaboradorId === fr.id &&
         TIPOS_CAIXINHA.includes(s.tipo || s.origem || s.referencia || '') &&
