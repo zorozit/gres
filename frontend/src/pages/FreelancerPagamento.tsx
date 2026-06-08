@@ -319,6 +319,8 @@ export default function FreelancerPagamento() {
         /* diasPagos / diasJaPagosDetalhe */
         const diasPagosList: {data:string;turno:string;valor:number}[] = [];
         const diasJaPagosDetalhe: {data:string;turno:string;valor:number}[] = [];
+        // Detalhe linha-a-linha para o modal (motoboy): chegada + entregas separados
+        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number}[] = [];
         let total = 0, totalJaPago = 0, dobras = 0, diasTrabalhados = 0, diasCodigo = '';
 
         if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
@@ -343,6 +345,16 @@ export default function FreelancerPagamento() {
               diasPagosList.push({data: linha.data, turno, valor: vlLinha});
               dobras += (temDia && temNoite) ? 2 : 1;
               diasTrabalhados++;
+              // Guardar detalhe para o modal
+              ctrlLinhasDetalhe.push({
+                data: linha.data,
+                turno,
+                chegada: parseFloat((chegD + chegN).toFixed(2)),
+                qtdEntregas: R(linha.entDia) + R(linha.entNoite),
+                vlEntrega: vEntrega,
+                totalEntregas: parseFloat(totalEntregas.toFixed(2)),
+                vlLinha,
+              });
             }
             if (caixinhaLinha > 0 && !jaPago) {
               caixinhaCtrlMotoboy += caixinhaLinha;
@@ -452,6 +464,7 @@ export default function FreelancerPagamento() {
           dobras, diasCodigo, diasTrabalhados,
           total, totalJaPago, totalBrutoPeriodo,
           diasPagos: diasPagosList, diasJaPagosDetalhe,
+          ctrlLinhasDetalhe,  // detalhe chegada+entregas por linha (motoboy)
           totalTransporte: transp_saldo,
           transporteAdiantado: transp_adt, transporteAdiantadoMes: transpAdtMes, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
           saidasDesconto, saidasDetalhe,
@@ -820,6 +833,10 @@ export default function FreelancerPagamento() {
           ...(fr.diasJaPagosDetalhe||[]).map((d:any)=>({...d,pago:true})),
           ...(fr.diasPagos||[]).map((d:any)=>({...d,pago:false})),
         ].sort((a,b)=>a.data.localeCompare(b.data)||(a.turno.localeCompare(b.turno)));
+        // ── detalhe por linha do controle-motoboy (chegada + entregas separados) ──
+        const ctrlLinhasDetalhe: {data:string;turno:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;vlLinha:number}[] =
+          fr.ctrlLinhasDetalhe || [];
+        const isMotoboy = fr.isMotoboy === true;
         // ── dias únicos com presença ──
         const diasUnicos = Array.from(new Set(todosTurnos.map(t=>t.data))).sort();
         const valorTranspDia = R(fr.valorTransporte);
@@ -855,7 +872,69 @@ export default function FreelancerPagamento() {
               </div>
               <div style={{fontSize:'12px',color:'#666',marginBottom:'14px'}}>Semana <strong>{fech.semanaLabel}</strong></div>
 
-              {/* ── CRÉDITOS: turnos ── */}
+              {/* ── CRÉDITOS: motoboy (chegada + entregas detalhados) ── */}
+              {isMotoboy && ctrlLinhasDetalhe.length>0 ? (
+                <div style={{marginBottom:'14px'}}>
+                  <div style={{fontWeight:'bold',fontSize:'12px',color:'#2e7d32',marginBottom:'6px'}}>
+                    🏍️ Créditos — Motoboy ({ctrlLinhasDetalhe.length} dia(s))
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead><tr>
+                      {['Data','Turno','Chegada','Entregas','Total dia','Status'].map(h=><th key={h} style={thDet}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {ctrlLinhasDetalhe.map((l,i)=>{
+                        const dd = new Date(l.data+'T12:00:00');
+                        const diaSem = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()];
+                        const dataFmt = `${l.data.slice(8)}/${l.data.slice(5,7)} ${diaSem}`;
+                        const turnoLabel = l.turno==='Dia'?'☀️ Dia':l.turno==='Noite'?'🌙 Noite':l.turno==='DiaNoite'?'☀️🌙':l.turno;
+                        return (
+                          <tr key={i} style={{backgroundColor:i%2===0?'#fafafa':'white'}}>
+                            <td style={tdDet}>{dataFmt}</td>
+                            <td style={tdDet}>{turnoLabel}</td>
+                            <td style={{...tdDet,textAlign:'right',color:'#e65100'}}>+{fmtMoeda(l.chegada)}</td>
+                            <td style={{...tdDet,textAlign:'right',color:'#1565c0'}}>
+                              {l.qtdEntregas>0 ? `${l.qtdEntregas}×${fmtMoeda(l.vlEntrega)} = +${fmtMoeda(l.totalEntregas)}` : '—'}
+                            </td>
+                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#2e7d32'}}>+{fmtMoeda(l.vlLinha)}</td>
+                            <td style={{...tdDet,textAlign:'center'}}>
+                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',backgroundColor:'#fff9c4',color:'#f57f17'}}>
+                                ⏳ Pend.
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {/* já pagos (sem detalhe de ctrl) */}
+                      {(fr.diasJaPagosDetalhe||[]).map((t:any,i:number)=>{
+                        const dd = new Date(t.data+'T12:00:00');
+                        const diaSem = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dd.getDay()];
+                        const dataFmt = `${t.data.slice(8)}/${t.data.slice(5,7)} ${diaSem}`;
+                        const turnoLabel = t.turno==='Dia'?'☀️ Dia':t.turno==='Noite'?'🌙 Noite':t.turno==='DiaNoite'?'☀️🌙':t.turno;
+                        return (
+                          <tr key={`pg-${i}`} style={{backgroundColor:'#f1f8e9',borderLeft:'3px solid #a5d6a7'}}>
+                            <td style={tdDet}>{dataFmt}</td>
+                            <td style={tdDet}>{turnoLabel}</td>
+                            <td style={{...tdDet,textAlign:'right',color:'#aaa'}} colSpan={2}>—</td>
+                            <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#888'}}>+{fmtMoeda(t.valor)}</td>
+                            <td style={{...tdDet,textAlign:'center'}}>
+                              <span style={{padding:'2px 7px',borderRadius:'8px',fontSize:'10px',fontWeight:'bold',backgroundColor:'#e8f5e9',color:'#2e7d32'}}>
+                                ✅ Pago
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <tr style={{backgroundColor:'#e8f5e9'}}>
+                        <td colSpan={4} style={{...tdDet,fontWeight:'bold',color:'#1b5e20'}}>Subtotal motoboy</td>
+                        <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#1b5e20'}}>+{fmtMoeda(totalTurnos)}</td>
+                        <td/>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+              /* ── CRÉDITOS: turnos (freelancer padrão) ── */
               <div style={{marginBottom:'14px'}}>
                 <div style={{fontWeight:'bold',fontSize:'12px',color:'#2e7d32',marginBottom:'6px'}}>
                   💰 Créditos — Turnos ({todosTurnos.length})
@@ -895,6 +974,7 @@ export default function FreelancerPagamento() {
                   </tbody>
                 </table>
               </div>
+              )}
 
               {/* ── CRÉDITOS: transporte ── */}
               {valorTranspDia>0 && diasUnicos.length>0 && (
@@ -1008,10 +1088,22 @@ export default function FreelancerPagamento() {
                   📊 Resumo do pagamento
                 </div>
                 <div style={{display:'grid',gap:'4px',fontSize:'12px'}}>
-                  {totalTurnos>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
-                    <span>💰 Turnos ({todosTurnos.length}x)</span>
-                    <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTurnos)}</span>
-                  </div>}
+                  {totalTurnos>0 && isMotoboy && ctrlLinhasDetalhe.length>0 ? (<>
+                    {/* Motoboy: chegada + entregas separados */}
+                    {ctrlLinhasDetalhe.reduce((s,l)=>s+l.chegada,0)>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
+                      <span>🏍️ Chegada ({ctrlLinhasDetalhe.length}x)</span>
+                      <span style={{fontWeight:'bold'}}>+{fmtMoeda(ctrlLinhasDetalhe.reduce((s,l)=>s+l.chegada,0))}</span>
+                    </div>}
+                    {ctrlLinhasDetalhe.reduce((s,l)=>s+l.totalEntregas,0)>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
+                      <span>📦 Entregas ({ctrlLinhasDetalhe.reduce((s,l)=>s+l.qtdEntregas,0)}×{fmtMoeda(ctrlLinhasDetalhe[0]?.vlEntrega||0)})</span>
+                      <span style={{fontWeight:'bold'}}>+{fmtMoeda(ctrlLinhasDetalhe.reduce((s,l)=>s+l.totalEntregas,0))}</span>
+                    </div>}
+                  </>) : totalTurnos>0 ? (
+                    <div style={{display:'flex',justifyContent:'space-between'}}>
+                      <span>💰 Turnos ({todosTurnos.length}x)</span>
+                      <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTurnos)}</span>
+                    </div>
+                  ) : null}
                   {totalTransp>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
                     <span>🚗 Transporte ({diasUnicos.length} dia(s))</span>
                     <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTransp)}</span>
