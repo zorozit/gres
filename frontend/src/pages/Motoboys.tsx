@@ -32,6 +32,8 @@ interface Motoboy {
   /** Freelancer: valor pago por entrega realizada */
   valorEntrega?: number;
   ativo: boolean;
+  /** Objeto acordo completo — usado como fallback quando campos raiz estão zerados */
+  acordo?: Record<string, any>;
 }
 
 /** Escala / turno + presença de um colaborador em um dia */
@@ -361,26 +363,32 @@ export const Motoboys: React.FC = () => {
 
       const motosDB: Motoboy[] = colabs
         .filter((c: any) => c.ativo !== false && (c.isMotoboy === true || (c.cargo || '').toLowerCase() === 'motoboy'))
-        .map((c: any) => ({
-          id: c.id,
-          colaboradorId: c.id,
-          nome: c.nome,
-          cpf: c.cpf || '',
-          telefone: c.telefone || c.celular || '',
-          placa: c.placa || '',
-          dataAdmissao: c.dataAdmissao || '',
-          dataDemissao: c.dataDemissao || '',
-          comissao: R(c.comissao) || 0,
-          chavePix: c.chavePix || '',
-          unitId: c.unitId || unitId || '',
-          vinculo: c.tipoContrato === 'CLT' ? 'CLT' : 'Freelancer',
-          salario: R(c.salario) || 0,
-          periculosidade: R(c.periculosidade) || 0,
-          valorChegadaDia:   R(c.valorChegadaDia)   || R(c.valorDia)   || 0,
-          valorChegadaNoite: R(c.valorChegadaNoite) || R(c.valorNoite) || 0,
-          valorEntrega:      R(c.valorEntrega) || R(c.valorTransporte) || 0,
-          ativo: c.ativo !== false,
-        }));
+        .map((c: any) => {
+          // Fallback para acordo{} — registros salvos antes do fix de buildAcordoCompatFields
+          // tinham valorEntrega/chegada apenas dentro do objeto acordo, não nos campos raiz.
+          const ac = c.acordo || {};
+          return {
+            id: c.id,
+            colaboradorId: c.id,
+            nome: c.nome,
+            cpf: c.cpf || '',
+            telefone: c.telefone || c.celular || '',
+            placa: c.placa || '',
+            dataAdmissao: c.dataAdmissao || '',
+            dataDemissao: c.dataDemissao || '',
+            comissao: R(c.comissao) || 0,
+            chavePix: c.chavePix || '',
+            unitId: c.unitId || unitId || '',
+            vinculo: c.tipoContrato === 'CLT' ? 'CLT' : 'Freelancer',
+            salario: R(c.salario) || 0,
+            periculosidade: R(c.periculosidade) || 0,
+            valorChegadaDia:   R(c.valorChegadaDia)   || R(ac.chegadaDia)   || R(c.valorDia)   || 0,
+            valorChegadaNoite: R(c.valorChegadaNoite) || R(ac.chegadaNoite) || R(c.valorNoite) || 0,
+            valorEntrega:      R(c.valorEntrega)      || R(ac.valorEntrega) || R(c.valorTransporte) || 0,
+            ativo: c.ativo !== false,
+            acordo: ac,  // preservar objeto acordo para fallbacks downstream
+          };
+        });
 
       setMotoboys(motosDB);
     } catch (e) { console.error(e); }

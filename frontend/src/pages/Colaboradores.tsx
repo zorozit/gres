@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
@@ -930,7 +930,9 @@ export default function Colaboradores() {
   const [filtroArea, setFiltroArea]         = useState('');
   const [filtroAtivo, setFiltroAtivo]       = useState(true);
   const [busca, setBusca]                   = useState('');
-  const inputBuscaRef = React.useRef<HTMLInputElement>(null);
+  const inputBuscaRef = useRef<HTMLInputElement>(null);
+  // Ref espelho do busca para evitar stale closure no filtro
+  const buscaRef = useRef('');
 
   // New colaborador form (unified)
   const [novoColab, setNovoColab] = useState<Partial<Colaborador>>(ESTADO_INICIAL);
@@ -1187,21 +1189,26 @@ export default function Colaboradores() {
   const totalFreelancer = useMemo(() => colaboradores.filter(c => c.tipoContrato === 'Freelancer').length, [colaboradores]);
 
   /* ── Filtros ──────────────────────────────────────────────── */
-  const colaboradoresFiltrados = useMemo(() => {
-    return colaboradores.filter(c => {
+  // Usar useState + useEffect em vez de useMemo para evitar stale closure com busca
+  const [colaboradoresFiltrados, setColaboradoresFiltrados] = useState<Colaborador[]>([]);
+
+  useEffect(() => {
+    const q = buscaRef.current.toLowerCase();
+    const buscaAtual = buscaRef.current;
+    const resultado = colaboradores.filter(c => {
       const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
       const matchArea     = !filtroArea || (c.area || '') === filtroArea;
       const matchAtivo    = filtroAtivo ? c.ativo !== false : c.ativo === false;
-      const q = busca.toLowerCase();
-      const matchBusca = !busca ||
+      const matchBusca = !buscaAtual ||
         (c.nome || '').toLowerCase().includes(q) ||
-        (c.cpf  || '').replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
-        celularDe(c).replace(/\D/g,'').includes(q.replace(/\D/g,'')) ||
+        (c.cpf  || '').replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
+        celularDe(c).replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
         (c.funcao || '').toLowerCase().includes(q) ||
         (c.cargo  || '').toLowerCase().includes(q) ||
         (c.area   || '').toLowerCase().includes(q);
       return matchContrato && matchArea && matchAtivo && matchBusca;
     });
+    setColaboradoresFiltrados(resultado);
   }, [colaboradores, filtroContrato, filtroArea, filtroAtivo, busca]);
 
   const areasUnicas = useMemo(() => {
@@ -1269,7 +1276,7 @@ export default function Colaboradores() {
                 type="text"
                 placeholder="🔍 Buscar por nome, CPF, celular ou função..."
                 value={busca}
-                onChange={e => setBusca(e.target.value)}
+                onChange={e => { buscaRef.current = e.target.value; setBusca(e.target.value); }}
                 onKeyDown={e => e.stopPropagation()}
                 style={S.inputBusca}
               />
@@ -1308,7 +1315,7 @@ export default function Colaboradores() {
                 <span style={{ color: '#1976d2' }}>
                   — buscando: <em>"{busca}"</em>
                   <button
-                    onClick={() => { setBusca(''); setTimeout(() => inputBuscaRef.current?.focus(), 0); }}
+                    onClick={() => { buscaRef.current = ''; setBusca(''); setTimeout(() => inputBuscaRef.current?.focus(), 0); }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c62828', fontWeight: 'bold', padding: '0 4px', fontSize: '12px' }}
                     title="Limpar busca"
                   >✕</button>
