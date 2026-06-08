@@ -305,7 +305,17 @@ const DIAS_ACORDO = [
 
 const buildAcordoCompatFields = (tipoAcordo: string, acordo: any) => {
   if (tipoAcordo === 'motoboy') {
-    return { valorDia: acordo?.chegadaDia || 0, valorNoite: acordo?.chegadaNoite || 0, isMotoboy: true };
+    // IMPORTANTE: propagar os campos raiz valorChegadaDia/valorChegadaNoite/valorEntrega
+    // O módulo Motoboys.tsx lê ESSES campos raiz via GET /motoboys.
+    // Sem isso, o valorEntrega fica 0 no DynamoDB e as entregas não são calculadas.
+    return {
+      isMotoboy:         true,
+      valorDia:          acordo?.chegadaDia   || 0,  // retrocompat
+      valorNoite:        acordo?.chegadaNoite || 0,  // retrocompat
+      valorChegadaDia:   acordo?.chegadaDia   || 0,  // campo primário lido pelo módulo motoboys
+      valorChegadaNoite: acordo?.chegadaNoite || 0,  // campo primário lido pelo módulo motoboys
+      valorEntrega:      acordo?.valorEntrega || 0,  // campo primário lido pelo módulo motoboys
+    };
   }
   if (tipoAcordo === 'valor_turno') {
     const tab = acordo?.tabela || {};

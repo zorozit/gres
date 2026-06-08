@@ -174,9 +174,12 @@ function preencherControleComSaidas(
   modo: 'integrado' | 'merge' = 'integrado'
 ): ControleDia[] {
   const isFreelancer = motoboy?.vinculo === 'Freelancer';
-  const valorEntrega    = R(motoboy?.valorEntrega);
-  const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
-  const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
+  // Fallback para campos do objeto acordo{} — compatibilidade com registros salvos
+  // antes do fix de buildAcordoCompatFields (valorEntrega/Chegada ficavam só no acordo).
+  const ac = (motoboy as any)?.acordo || {};
+  const valorEntrega    = R(motoboy?.valorEntrega)    || R(ac.valorEntrega)  || 0;
+  const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada) || R(ac.chegadaDia)   || 0;
+  const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada) || R(ac.chegadaNoite) || 0;
 
   const colabId = motoboy?.colaboradorId;
   const idSet = new Set([motoboyId, colabId].filter(Boolean) as string[]);
@@ -551,9 +554,11 @@ export const Motoboys: React.FC = () => {
 
       if (isFreelancerAt && motoboyAt) {
         // Freelancer: auto-preencher chegadaDia/chegadaNoite ao digitar entregas
-        const vChegadaDia   = R(motoboyAt.valorChegadaDia   ?? motoboyAt.valorChegada);
-        const vChegadaNoite = R(motoboyAt.valorChegadaNoite ?? motoboyAt.valorChegada);
-        const valorEntrega  = R(motoboyAt.valorEntrega);
+        // Fallback para acordo{} — compatibilidade com registros legados
+        const acH = (motoboyAt as any)?.acordo || {};
+        const vChegadaDia   = R(motoboyAt.valorChegadaDia   ?? motoboyAt.valorChegada) || R(acH.chegadaDia)   || 0;
+        const vChegadaNoite = R(motoboyAt.valorChegadaNoite ?? motoboyAt.valorChegada) || R(acH.chegadaNoite) || 0;
+        const valorEntrega  = R(motoboyAt.valorEntrega) || R(acH.valorEntrega) || 0;
 
         if (campo === 'entDia') {
           linha.chegadaDia = numVal > 0 && vChegadaDia > 0 ? vChegadaDia : 0;
@@ -569,7 +574,8 @@ export const Motoboys: React.FC = () => {
         );
       } else if (motoboyAt) {
         // CLT: vlVariavel = (entregas×valorEntrega) + caixinha
-        const valorEntrega = R(motoboyAt.valorEntrega);
+        const acH = (motoboyAt as any)?.acordo || {};
+        const valorEntrega = R(motoboyAt.valorEntrega) || R(acH.valorEntrega) || 0;
         const totalEntregas = R(linha.entDia) + R(linha.entNoite);
         const totalCaixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
         linha.vlVariavel = parseFloat(((valorEntrega * totalEntregas) + totalCaixinha).toFixed(2));
@@ -684,9 +690,11 @@ export const Motoboys: React.FC = () => {
     const periculosidadeValor = salBase * peri;
 
     // Freelancer-specific: chegada (dia + noite) a partir das linhas
-    const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada);
-    const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada);
-    const vEntrega = R(motoboy?.valorEntrega);
+    // Fallback para acordo{} — compatibilidade com registros legados
+    const acRes = (motoboy as any)?.acordo || {};
+    const vChegadaDia   = R(motoboy?.valorChegadaDia   ?? motoboy?.valorChegada) || R(acRes.chegadaDia)   || 0;
+    const vChegadaNoite = R(motoboy?.valorChegadaNoite ?? motoboy?.valorChegada) || R(acRes.chegadaNoite) || 0;
+    const vEntrega = R(motoboy?.valorEntrega) || R(acRes.valorEntrega) || 0;
 
     // Soma de chegadas reais calculadas por preencherControleComSaidas
     const totalChegadaDia   = controleComAcumulado.reduce((s, l) => s + R(l.chegadaDia),   0);
@@ -912,9 +920,11 @@ export const Motoboys: React.FC = () => {
                   const isFreelancerCtrl = motoboyCtrl?.vinculo === 'Freelancer';
                   const showChegada = isFreelancerCtrl;
                   const semanas = semanasParaExibicao();
-                  const vChegadaDia   = R(motoboyCtrl?.valorChegadaDia   ?? motoboyCtrl?.valorChegada);
-                  const vChegadaNoite = R(motoboyCtrl?.valorChegadaNoite ?? motoboyCtrl?.valorChegada);
-                  const vEntrega      = R(motoboyCtrl?.valorEntrega);
+                  // Fallback para acordo{} — compatibilidade com registros legados
+                  const acTab = (motoboyCtrl as any)?.acordo || {};
+                  const vChegadaDia   = R(motoboyCtrl?.valorChegadaDia   ?? motoboyCtrl?.valorChegada) || R(acTab.chegadaDia)   || 0;
+                  const vChegadaNoite = R(motoboyCtrl?.valorChegadaNoite ?? motoboyCtrl?.valorChegada) || R(acTab.chegadaNoite) || 0;
+                  const vEntrega      = R(motoboyCtrl?.valorEntrega) || R(acTab.valorEntrega) || 0;
 
                   // Toggle de presença (Ch.Dia / Ch.Noite) para auto-preencher chegada
                   // Se o valor de chegada não está configurado no cadastro, pede ao usuário

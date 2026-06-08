@@ -612,10 +612,12 @@ exports.handler = async (event) => {
           isMotoboy:        isMotoboy === true || isMotoboy === 'true' || false,
           tipoAcordo:       tipoAcordo || (isMotoboy ? 'motoboy' : null),
           acordo:           acordo || null,
-          // Campos de chegada motoboy (retrocompat)
-          valorChegadaDia:  parseFloat(valorChegadaDia) || 0,
-          valorChegadaNoite:parseFloat(valorChegadaNoite) || 0,
-          valorEntrega:     parseFloat(valorEntrega) || 0,
+          // Campos raiz de chegada/entrega — sincronizados com acordo{} para garantir
+          // que o módulo motoboys leia os valores corretos mesmo se o frontend
+          // enviou os campos raiz zerados mas o acordo tem os valores.
+          valorChegadaDia:  parseFloat(valorChegadaDia) || (acordo || {}).chegadaDia || 0,
+          valorChegadaNoite:parseFloat(valorChegadaNoite) || (acordo || {}).chegadaNoite || 0,
+          valorEntrega:     parseFloat(valorEntrega) || (acordo || {}).valorEntrega || 0,
           // Periculosidade (CLT motoboy)
           periculosidade:   parseFloat(periculosidade) || 0,
           // Horário de trabalho
@@ -725,10 +727,18 @@ exports.handler = async (event) => {
           isMotoboy:        isMotoboy !== undefined ? (isMotoboy === true || isMotoboy === 'true') : (original.Item.isMotoboy || false),
           tipoAcordo:       tipoAcordo !== undefined ? tipoAcordo : (original.Item.tipoAcordo || null),
           acordo:           acordo !== undefined ? acordo : (original.Item.acordo || null),
-          // Campos de chegada motoboy (retrocompat)
-          valorChegadaDia:  valorChegadaDia !== undefined ? (parseFloat(valorChegadaDia) || 0) : (original.Item.valorChegadaDia || 0),
-          valorChegadaNoite:valorChegadaNoite !== undefined ? (parseFloat(valorChegadaNoite) || 0) : (original.Item.valorChegadaNoite || 0),
-          valorEntrega:     valorEntrega !== undefined ? (parseFloat(valorEntrega) || 0) : (original.Item.valorEntrega || 0),
+          // Campos de chegada/entrega motoboy — campos raiz são a fonte de verdade lida pelo módulo.
+          // Ao salvar: sincronizar a partir do acordo{} como fallback para corrigir registros legados
+          // onde buildAcordoCompatFields não propagava esses campos para o nível raiz.
+          valorChegadaDia:  valorChegadaDia !== undefined
+            ? (parseFloat(valorChegadaDia) || 0)
+            : (original.Item.valorChegadaDia || (acordo || original.Item.acordo || {}).chegadaDia || original.Item.valorDia || 0),
+          valorChegadaNoite: valorChegadaNoite !== undefined
+            ? (parseFloat(valorChegadaNoite) || 0)
+            : (original.Item.valorChegadaNoite || (acordo || original.Item.acordo || {}).chegadaNoite || original.Item.valorNoite || 0),
+          valorEntrega: valorEntrega !== undefined
+            ? (parseFloat(valorEntrega) || 0)
+            : (original.Item.valorEntrega || (acordo || original.Item.acordo || {}).valorEntrega || original.Item.valorTransporte || 0),
           // Periculosidade
           periculosidade:   periculosidade !== undefined ? (parseFloat(periculosidade) || 0) : (original.Item.periculosidade || 0),
           // Horário de trabalho
@@ -930,31 +940,40 @@ exports.handler = async (event) => {
         }
 
         const result = await dynamodb.scan(params).promise();
-        const motoboys = (result.Items || []).map(c => ({
-          // Compatibilidade com campos esperados pelo frontend Motoboys.tsx
-          id: c.id,
-          colaboradorId: c.id,
-          nome: c.nome,
-          cpf: c.cpf || '',
-          telefone: c.telefone || c.celular || '',
-          placa: c.placa || '',
-          dataAdmissao: c.dataAdmissao || '',
-          dataDemissao: c.dataDemissao || '',
-          comissao: c.comissao || 0,
-          chavePix: c.chavePix || '',
-          unitId: c.unitId || '',
-          vinculo: c.tipoContrato || c.vinculo || 'Freelancer',
-          salario: c.salario || 0,
-          periculosidade: c.periculosidade || 0,
-          valorChegadaDia:   c.valorChegadaDia   || c.valorDia   || 0,
-          valorChegadaNoite: c.valorChegadaNoite || c.valorNoite || 0,
-          valorEntrega:      c.valorEntrega || c.valorTransporte || 0,
-          isMotoboy: true,
-          ativo: c.ativo !== false,
-          // Preservar tipoAcordo para uso futuro
-          tipoAcordo: c.tipoAcordo || 'motoboy',
-          acordo: c.acordo || null,
-        }));
+        const motoboys = (result.Items || []).map(c => {
+          // Normalizar acordo: fonte primária de valorChegadaDia/Noite e valorEntrega
+          // para colaboradores salvos via módulo unificado (campo raiz pode estar zerado
+          // se buildAcordoCompatFields não propagava — retrocompatibilidade).
+          const ac = c.acordo || {};
+          const valorChegadaDia   = c.valorChegadaDia   || ac.chegadaDia   || c.valorDia   || 0;
+          const valorChegadaNoite = c.valorChegadaNoite || ac.chegadaNoite || c.valorNoite  || 0;
+          const valorEntrega      = c.valorEntrega      || ac.valorEntrega  || c.valorTransporte || 0;
+
+          return {
+            // Compatibilidade com campos esperados pelo frontend Motoboys.tsx
+            id: c.id,
+            colaboradorId: c.id,
+            nome: c.nome,
+            cpf: c.cpf || '',
+            telefone: c.telefone || c.celular || '',
+            placa: c.placa || '',
+            dataAdmissao: c.dataAdmissao || '',
+            dataDemissao: c.dataDemissao || '',
+            comissao: c.comissao || 0,
+            chavePix: c.chavePix || '',
+            unitId: c.unitId || '',
+            vinculo: c.tipoContrato || c.vinculo || 'Freelancer',
+            salario: c.salario || 0,
+            periculosidade: c.periculosidade || 0,
+            valorChegadaDia,
+            valorChegadaNoite,
+            valorEntrega,
+            isMotoboy: true,
+            ativo: c.ativo !== false,
+            tipoAcordo: c.tipoAcordo || 'motoboy',
+            acordo: c.acordo || null,
+          };
+        });
 
         return response(200, motoboys.sort((a, b) => (a.nome || '').localeCompare(b.nome || '')));
       } catch (error) {
