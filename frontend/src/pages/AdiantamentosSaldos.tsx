@@ -109,7 +109,7 @@ export const AdiantamentosSaldos: React.FC = () => {
 
   // Modal editar adiantamento
   const [modalEditarAdto, setModalEditarAdto] = useState<ContratoAdiantamento | null>(null);
-  const [formEditarAdto, setFormEditarAdto] = useState({ valor: '', data: '', descricao: '', formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto' });
+  const [formEditarAdto, setFormEditarAdto] = useState({ valor: '', data: '', descricao: '', formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', tipo: 'especial' as 'especial' | 'transporte' });
 
   // Modal nova parcela
   const [modalParcela, setModalParcela] = useState(false);
@@ -293,6 +293,7 @@ export const AdiantamentosSaldos: React.FC = () => {
       data: contrato.dataAbertura,
       descricao: contrato.descricao,
       formaPagamento: (contrato.raw.formaPagamento as any) || 'PIX',
+      tipo: contrato.tipoAdiantamento,
     });
     setModalEditarAdto(contrato);
   };
@@ -303,7 +304,7 @@ export const AdiantamentosSaldos: React.FC = () => {
     if (isNaN(novoValor) || novoValor <= 0) { alert('Valor inválido.'); return; }
     setSalvando(true);
     const raw = modalEditarAdto.raw;
-    const tipoLabel = modalEditarAdto.tipoAdiantamento === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
+    const tipoLabel = formEditarAdto.tipo === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
     try {
       const res = await fetch(`${apiUrl}/saidas/${raw.id}`, {
         method: 'PUT',
@@ -328,6 +329,26 @@ export const AdiantamentosSaldos: React.FC = () => {
       setModalEditarAdto(null);
       await carregarDados();
     } catch (e: any) { alert('Erro ao salvar: ' + e.message); } finally { setSalvando(false); }
+  };
+
+  /* ── Excluir adiantamento (somente sem parcelas) ─────── */
+  const excluirAdiantamento = async (contrato: ContratoAdiantamento) => {
+    if (contrato.parcelas.length > 0) {
+      alert('Não é possível excluir: este adiantamento já possui ' + contrato.parcelas.length + ' parcela(s) registrada(s). Quite o contrato em vez de excluir.');
+      return;
+    }
+    if (!window.confirm(
+      `Excluir adiantamento de ${fmtMoeda(contrato.valorTotal)} de ${contrato.colaboradorNome}?\n\nEsta ação será registrada nos logs de auditoria e não pode ser desfeita.`
+    )) return;
+    setSalvando(true);
+    try {
+      const res = await fetch(`${apiUrl}/saidas/${contrato.raw.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await carregarDados();
+    } catch (e: any) { alert('Erro ao excluir: ' + e.message); } finally { setSalvando(false); }
   };
 
     const salvarParcela = async () => {
@@ -606,8 +627,30 @@ export const AdiantamentosSaldos: React.FC = () => {
             </div>
 
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 16, padding: '10px 14px', backgroundColor: '#f0f9ff', borderRadius: 8, borderLeft: '4px solid #0284c7' }}>
-              <strong>{modalEditarAdto.colaboradorNome}</strong> — {modalEditarAdto.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}<br/>
+              <strong>{modalEditarAdto.colaboradorNome}</strong><br/>
               <span style={{ fontSize: 11 }}>ID: {modalEditarAdto.adiantamentoId}</span>
+            </div>
+
+            {/* Tipo do adiantamento — editável */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={s.label}>Tipo do adiantamento</label>
+              {modalEditarAdto.parcelas.length > 0 && (
+                <div style={{ fontSize: 11, color: '#92400e', backgroundColor: '#fff7ed', borderRadius: 6, padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #f59e0b' }}>
+                  ⚠️ Existem {modalEditarAdto.parcelas.length} parcela(s) vinculada(s). Alterar o tipo não reprocessa as parcelas já registradas.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([{ v: 'especial', label: '💸 Adiantamento Especial', color: '#7c3aed', bg: '#faf5ff' },
+                   { v: 'transporte', label: '🚗 Adiantamento Transporte', color: '#c2410c', bg: '#fff7ed' }] as const).map(opt => (
+                  <button key={opt.v} onClick={() => setFormEditarAdto(f => ({ ...f, tipo: opt.v }))}
+                    style={{ flex: 1, padding: '9px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
+                      border: `2px solid ${formEditarAdto.tipo === opt.v ? opt.color : '#cbd5e1'}`,
+                      background: formEditarAdto.tipo === opt.v ? opt.bg : 'white',
+                      color: formEditarAdto.tipo === opt.v ? opt.color : '#475569' }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {modalEditarAdto.totalAbatido > 0 && (
@@ -656,13 +699,29 @@ export const AdiantamentosSaldos: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>
-              <button onClick={() => setModalEditarAdto(null)} style={{ ...s.btn('#94a3b8'), padding: '8px 20px' }}>Cancelar</button>
-              <button onClick={salvarEdicaoAdto} disabled={salvando
-                || parseFloat(formEditarAdto.valor) < modalEditarAdto.totalAbatido}
-                style={{ ...s.btn('#0284c7'), padding: '8px 20px', fontWeight: 700 }}>
-                {salvando ? '⏳ Salvando...' : '✅ Salvar Alterações'}
-              </button>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginTop: 22, flexWrap: 'wrap' }}>
+              {/* Excluir — somente sem parcelas */}
+              {modalEditarAdto.parcelas.length === 0 ? (
+                <button
+                  onClick={() => { setModalEditarAdto(null); excluirAdiantamento(modalEditarAdto); }}
+                  disabled={salvando}
+                  style={{ ...s.btn('#dc2626'), padding: '8px 16px', fontSize: 12 }}
+                  title="Excluir este adiantamento (sem parcelas)">
+                  🗑️ Excluir
+                </button>
+              ) : (
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                  🔒 Não excluível: {modalEditarAdto.parcelas.length} parcela(s)
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setModalEditarAdto(null)} style={{ ...s.btn('#94a3b8'), padding: '8px 20px' }}>Cancelar</button>
+                <button onClick={salvarEdicaoAdto} disabled={salvando
+                  || parseFloat(formEditarAdto.valor) < modalEditarAdto.totalAbatido}
+                  style={{ ...s.btn('#0284c7'), padding: '8px 20px', fontWeight: 700 }}>
+                  {salvando ? '⏳ Salvando...' : '✅ Salvar Alterações'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -812,9 +871,18 @@ export const AdiantamentosSaldos: React.FC = () => {
                       )}
                       <button onClick={() => abrirEdicaoAdto(c)}
                         style={{ ...s.btn('#0284c7'), padding: '6px 12px', fontSize: 12 }}
-                        title="Editar valor, data ou descrição do adiantamento">
+                        title="Editar valor, data, tipo ou descrição">
                         ✏️ Editar
                       </button>
+                      {c.parcelas.length === 0 && (
+                        <button
+                          onClick={e => { e.stopPropagation(); excluirAdiantamento(c); }}
+                          disabled={salvando}
+                          style={{ ...s.btn('#dc2626'), padding: '6px 12px', fontSize: 12 }}
+                          title="Excluir (sem parcelas)">
+                          🗑️
+                        </button>
+                      )}
                       <button onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}
                         style={{ ...s.btn('#475569'), padding: '6px 12px', fontSize: 12 }}>
                         {aberto ? '▲ Fechar' : '▼ Detalhes'}
