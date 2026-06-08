@@ -100,7 +100,7 @@ export const SidebarNav: React.FC = () => {
   const location   = useLocation();
   const { user, logout } = useAuth();
   const { temAcesso, loaded } = usePermissoes();
-  const { activeUnit, userUnits, setActiveUnit } = useUnit();
+  const { activeUnit, userUnits, setActiveUnit, isLoadingUnits } = useUnit();
 
   const userRole = ((user as any)?.perfil || localStorage.getItem('user_role') || '').toLowerCase();
   const perfilLabel = (user as any)?.perfil || localStorage.getItem('user_role') || '';
@@ -214,7 +214,11 @@ export const SidebarNav: React.FC = () => {
         {/* Seletor de unidade */}
         {!compact && (
           <div className="sidebar-unit">
-            {userUnits.length > 1 ? (
+            {isLoadingUnits ? (
+              <div className="sidebar-unit-name" style={{ color: '#5a7a9a', fontStyle: 'italic' }}>
+                🏢 Carregando…
+              </div>
+            ) : userUnits.length > 1 ? (
               <select
                 className="sidebar-unit-select"
                 value={activeUnit?.id || ''}
@@ -229,13 +233,18 @@ export const SidebarNav: React.FC = () => {
               </select>
             ) : (
               <div className="sidebar-unit-name">
-                🏢 {activeUnit?.nome || '—'}
+                🏢 {activeUnit?.nome || userUnits[0]?.nome || '—'}
               </div>
             )}
           </div>
         )}
-        {compact && activeUnit && (
-          <div className="sidebar-unit-compact" title={activeUnit.nome}>🏢</div>
+        {compact && (
+          <div
+            className="sidebar-unit-compact"
+            title={activeUnit?.nome || (isLoadingUnits ? 'Carregando…' : 'Sem unidade')}
+          >
+            🏢
+          </div>
         )}
 
         {/* Navegação por grupos */}
