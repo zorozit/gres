@@ -837,7 +837,10 @@ export default function FreelancerPagamento() {
         // ── totais ──
         const totalTurnos = todosTurnos.reduce((s,t)=>s+t.valor,0);
         const totalTransp = valorTranspDia>0 ? diasUnicos.length*valorTranspDia : 0;
-        const totalBruto  = totalTurnos + totalTransp;
+        // Caixinha do controle-motoboy (fr.caixinhaDetalhe) + saídas tipo Caixinha da semana
+        const caixinhaDet = fr.caixinhaDetalhe || [];
+        const totalCaixinha = parseFloat((R(fr.caixinhaTotal) || caixinhaDet.reduce((s:number,d:any)=>s+R(d.valor),0)).toFixed(2));
+        const totalBruto  = totalTurnos + totalTransp + totalCaixinha;
         const totalDesc   = saidasReais.reduce((s:number,x:any)=>s+R(x.valor),0);
         const totalAbat   = abatEspSaidas.reduce((s:number,x:any)=>s+R(x.valor),0);
         const totalLiq    = Math.max(0, totalBruto - totalDesc - totalAbat - R(fr.transporteAdiantado));
@@ -956,6 +959,36 @@ export default function FreelancerPagamento() {
                 </div>
               )}
 
+              {/* ── CRÉDITOS: caixinha do controle-motoboy ── */}
+              {totalCaixinha>0 && (
+                <div style={{marginBottom:'14px'}}>
+                  <div style={{fontWeight:'bold',fontSize:'12px',color:'#00838f',marginBottom:'6px'}}>
+                    🪙 Caixinha / Gorjeta
+                  </div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                    <thead><tr>
+                      {['Descrição','Data','Valor'].map(h=><th key={h} style={{...thDet,backgroundColor:'#00838f'}}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {caixinhaDet.length>0
+                        ? caixinhaDet.map((d:any,i:number)=>(
+                            <tr key={i} style={{backgroundColor:i%2===0?'#e0f7fa':'#fff'}}>
+                              <td style={tdDet}>{d.descricao||'🪙 Caixinha'}</td>
+                              <td style={tdDet}>{d.data||'—'}</td>
+                              <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#00838f'}}>+{fmtMoeda(R(d.valor))}</td>
+                            </tr>
+                          ))
+                        : <tr><td colSpan={3} style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#00838f'}}>+{fmtMoeda(totalCaixinha)}</td></tr>
+                      }
+                      <tr style={{backgroundColor:'#b2ebf2'}}>
+                        <td colSpan={2} style={{...tdDet,fontWeight:'bold',color:'#006064'}}>Total caixinha</td>
+                        <td style={{...tdDet,textAlign:'right',fontWeight:'bold',color:'#006064'}}>+{fmtMoeda(totalCaixinha)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* ── Abatimento especial (gerado automaticamente — informativo) ── */}
               {abatEspSaidas.length>0 && (
                 <div style={{marginBottom:'14px',backgroundColor:'#f3e8ff',border:'1px solid #d8b4fe',borderRadius:'6px',padding:'10px 12px'}}>
@@ -982,6 +1015,10 @@ export default function FreelancerPagamento() {
                   {totalTransp>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
                     <span>🚗 Transporte ({diasUnicos.length} dia(s))</span>
                     <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalTransp)}</span>
+                  </div>}
+                  {totalCaixinha>0 && <div style={{display:'flex',justifyContent:'space-between'}}>
+                    <span>🪙 Caixinha ({caixinhaDet.length||1}x)</span>
+                    <span style={{fontWeight:'bold'}}>+{fmtMoeda(totalCaixinha)}</span>
                   </div>}
                   {R(fr.transporteAdiantado)>0 && <div style={{display:'flex',justifyContent:'space-between',color:'#ffcc80'}}>
                     <span>✔ Transp. já adiantado</span>
