@@ -2053,6 +2053,18 @@ export default function FolhaPagamento() {
 
                   // ─ NOVO MODELO: 1 POST por dia/turno selecionado (dobras) ──────────────────
                   // Monta array de dias a partir dos diasPagos pendentes (somente os de dobras)
+                  // Resolver valor por turno respeitando acordo.tabela
+                  const DOW_K_PAG = ['dom','seg','ter','qua','qui','sex','sab'];
+                  const resolverValTurnoPag = (data: string, turno: 'Dia' | 'Noite'): number => {
+                    if (fr.tipoAcordo === 'valor_turno' && fr.acordo?.tabela) {
+                      const dow = new Date(data + 'T12:00:00').getDay();
+                      const vals = (fr.acordo.tabela as any)[DOW_K_PAG[dow]] || {};
+                      return turno === 'Dia' ? R(vals.D) : R(vals.N);
+                    }
+                    if (R(fr.valorDia) > 0 || R(fr.valorNoite) > 0) return turno === 'Dia' ? R(fr.valorDia) : R(fr.valorNoite);
+                    return R(fr.valorDobra) || 120;
+                  };
+
                   const diasParaPagar: {data: string; turno: string; valor: number; tipoCodigo: string}[] = [];
                   if (inclDobras && fr.diasPagos) {
                     for (const dp of fr.diasPagos) {
@@ -2060,17 +2072,19 @@ export default function FolhaPagamento() {
                       // DiaNoite já vem expandido em registros separados Dia/Noite
                       // mas pode ainda vir agrupado — expandir
                       if (turno === 'DiaNoite' || turno === 'DN') {
-                        diasParaPagar.push({ data: dp.data, turno: 'Dia',   valor: R(fr.valorDia)   || dp.valor/2, tipoCodigo: 'freelancer-dia' });
-                        diasParaPagar.push({ data: dp.data, turno: 'Noite', valor: R(fr.valorNoite) || dp.valor/2, tipoCodigo: 'freelancer-noite' });
+                        diasParaPagar.push({ data: dp.data, turno: 'Dia',   valor: resolverValTurnoPag(dp.data, 'Dia'), tipoCodigo: 'freelancer-dia' });
+                        diasParaPagar.push({ data: dp.data, turno: 'Noite', valor: resolverValTurnoPag(dp.data, 'Noite'), tipoCodigo: 'freelancer-noite' });
                       } else {
                         diasParaPagar.push({ data: dp.data, turno, valor: dp.valor, tipoCodigo: turno === 'Dia' ? 'freelancer-dia' : 'freelancer-noite' });
                       }
                     }
                   }
 
-                  const obsLabel2 = (fr.valorDia > 0 || fr.valorNoite > 0)
-                    ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
-                    : `R$${fmt(fr.valorDobra)}/dobra`;
+                  const obsLabel2 = fr.tipoAcordo === 'valor_turno'
+                    ? `tabela variável (${diasParaPagar.map(d=>`${d.data.slice(8)}/${d.data.slice(5,7)}${d.turno==='Dia'?'D':'N'}=R$${fmt(d.valor)}`).join(', ')})`
+                    : (fr.valorDia > 0 || fr.valorNoite > 0)
+                      ? `D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`
+                      : `R$${fmt(fr.valorDobra)}/dobra`;
 
                   // Envia todos os turnos de uma vez (backend itera e salva 1 registro por turno)
                   // Transporte é enviado como lote separado (logo abaixo) com o mesmo pagamentoId

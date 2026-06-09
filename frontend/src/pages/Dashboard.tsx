@@ -167,7 +167,14 @@ export const Dashboard: React.FC = () => {
       const transp = R(colab.valorTransporte) * fator; // rateado por turno
 
       if (isFree) {
-        const vTurno = turno === 'Noite' ? (R(colab.valorNoite) || R(colab.valorDia) || 120) : (R(colab.valorDia) || 120);
+        let vTurno = turno === 'Noite' ? (R(colab.valorNoite) || R(colab.valorDia) || 120) : (R(colab.valorDia) || 120);
+        // Respeitar acordo.tabela (valor_turno) por dia da semana
+        if (colab.tipoAcordo === 'valor_turno' && colab.acordo?.tabela) {
+          const DOW_K = ['dom','seg','ter','qua','qui','sex','sab'];
+          const dow = new Date(data + 'T12:00:00').getDay();
+          const vals = colab.acordo.tabela[DOW_K[dow]] || {};
+          vTurno = turno === 'Noite' ? (R(vals.N) || vTurno) : (R(vals.D) || vTurno);
+        }
         custoFree += vTurno * fator + transp;
       } else {
         const salDia = parseFloat((R(colab.salario) / 30 * fator).toFixed(2));

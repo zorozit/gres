@@ -292,6 +292,7 @@ export default function FreelancerPagamento() {
       const mesFim2 = new Date(ano2,mes2,0).toISOString().split('T')[0];
       const saidasTranspMes = periodoCustomAtivo ? saidasPer : (saidasMesCompleto.length>0?saidasMesCompleto:saidasPer);
 
+      const DOW_KEYS = ['dom','seg','ter','qua','qui','sex','sab'];
       const frList = frs.map((fr:any) => {
         const cid = fr.id;
         const fCpf = (fr as any).cpf || '';
@@ -299,6 +300,19 @@ export default function FreelancerPagamento() {
         const vNoite = R(fr.valorNoite);
         const vDobra = R(fr.valorDobra) || 120;
         const usaTurno = vDia>0 || vNoite>0;
+        const isValorTurno = fr.tipoAcordo === 'valor_turno' && fr.acordo?.tabela;
+        const acordoTabela = fr.acordo?.tabela || {};
+
+        /* Resolver valor do turno levando em conta acordo.tabela por dia da semana */
+        const resolverValorTurno = (data: string, turno: 'Dia' | 'Noite'): number => {
+          if (isValorTurno) {
+            const dow = new Date(data + 'T12:00:00').getDay();
+            const vals = acordoTabela[DOW_KEYS[dow]] || {};
+            return turno === 'Dia' ? R(vals.D) : R(vals.N);
+          }
+          if (usaTurno) return turno === 'Dia' ? vDia : vNoite;
+          return vDobra;
+        };
 
         /* ── Detectar se é motoboy freelancer ── */
         const motoboyMatch = motos.find((m:any) => m.id === cid || (fCpf && m.cpf === fCpf));
@@ -387,13 +401,13 @@ export default function FreelancerPagamento() {
           for (const esc of escsSemana) {
             if (esc.turno==='DiaNoite') {
               const pD = esc.presenca==='presente', pN = esc.presencaNoite==='presente';
-              if (pD) turnosUnidade.push({data:esc.data, turno:'Dia',   valor:usaTurno?vDia:vDobra});
-              if (pN) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+              if (pD) turnosUnidade.push({data:esc.data, turno:'Dia',   valor:resolverValorTurno(esc.data, 'Dia')});
+              if (pN) turnosUnidade.push({data:esc.data, turno:'Noite', valor:resolverValorTurno(esc.data, 'Noite')});
             } else if (esc.turno==='Noite') {
               const p = esc.presencaNoite==='presente'||esc.presenca==='presente';
-              if (p) turnosUnidade.push({data:esc.data, turno:'Noite', valor:usaTurno?vNoite:vDobra});
+              if (p) turnosUnidade.push({data:esc.data, turno:'Noite', valor:resolverValorTurno(esc.data, 'Noite')});
             } else {
-              if (esc.presenca==='presente') turnosUnidade.push({data:esc.data, turno:esc.turno||'Dia', valor:usaTurno?vDia:vDobra});
+              if (esc.presenca==='presente') turnosUnidade.push({data:esc.data, turno:esc.turno||'Dia', valor:resolverValorTurno(esc.data, (esc.turno||'Dia') as 'Dia'|'Noite')});
             }
           }
           const escPendentes = turnosUnidade.filter(u => !isTurnoPago(u.data,u.turno));
@@ -470,6 +484,8 @@ export default function FreelancerPagamento() {
         return {
           id: cid, nome: fr.nome, chavePix: fr.chavePix, telefone: fr.telefone||fr.celular,
           valorDia: vDia, valorNoite: vNoite, valorDobra: vDobra, valorTransporte: valorTransp,
+          tipoAcordo: fr.tipoAcordo || null, acordo: fr.acordo || null,
+          isValorTurno, resolverValorTurno,
           dobras, diasCodigo, diasTrabalhados,
           total, totalJaPago, totalBrutoPeriodo,
           diasPagos: diasPagosList, diasJaPagosDetalhe,
@@ -536,7 +552,9 @@ export default function FreelancerPagamento() {
         return true;
       });
       const caixFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
-      const obsValor = (fr.valorDia>0||fr.valorNoite>0) ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite` : `R$${fmt(fr.valorDobra)}/dobra`;
+      const obsValor = fr.isValorTurno
+        ? `📅 Tabela variável por dia da semana`
+        : (fr.valorDia>0||fr.valorNoite>0) ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite` : `R$${fmt(fr.valorDobra)}/dobra`;
       const totalTransp = fr.diasTrabalhados * R(fr.valorTransporte);
       const transpAdto  = Math.min(fr.transporteAdiantado, totalTransp);
       const transpLabel = totalTransp>0
@@ -623,8 +641,8 @@ export default function FreelancerPagamento() {
         for (const dp of fr.diasPagos) {
           const turno = dp.turno||'Dia';
           if (turno==='DiaNoite'||turno==='DN') {
-            diasParaPagar.push({data:dp.data,turno:'Dia',  valor:R(fr.valorDia)||dp.valor/2,tipoCodigo:'freelancer-dia'});
-            diasParaPagar.push({data:dp.data,turno:'Noite',valor:R(fr.valorNoite)||dp.valor/2,tipoCodigo:'freelancer-noite'});
+            diasParaPagar.push({data:dp.data,turno:'Dia',  valor:fr.resolverValorTurno?fr.resolverValorTurno(dp.data,'Dia'):(R(fr.valorDia)||dp.valor/2),tipoCodigo:'freelancer-dia'});
+            diasParaPagar.push({data:dp.data,turno:'Noite',valor:fr.resolverValorTurno?fr.resolverValorTurno(dp.data,'Noite'):(R(fr.valorNoite)||dp.valor/2),tipoCodigo:'freelancer-noite'});
           } else {
             diasParaPagar.push({data:dp.data,turno,valor:dp.valor,tipoCodigo:turno==='Dia'?'freelancer-dia':'freelancer-noite'});
           }
@@ -637,7 +655,9 @@ export default function FreelancerPagamento() {
       const valorDescSaidas   = totalDebito;
       const valorAbatEsp2     = vlAbate;
       const valorLiquido      = Math.max(0, valorBrutoLote - valorDescSaidas - valorAbatEsp2);
-      const obsLabel = (fr.valorDia>0||fr.valorNoite>0)?`D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`:`R$${fmt(fr.valorDobra)}/dobra`;
+      const obsLabel = fr.isValorTurno
+        ? `tabela variável (${diasParaPagar.map((d:any)=>`${d.data.slice(8)}/${d.data.slice(5,7)}${d.turno==='Dia'?'D':'N'}=R$${fmt(d.valor)}`).join(', ')})`
+        : (fr.valorDia>0||fr.valorNoite>0)?`D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`:`R$${fmt(fr.valorDobra)}/dobra`;
 
       const payload = {
         colaboradorId:fr.id, mes:mesAno, semana:fech.dataFechamento, unitId, pago:true,
@@ -1348,9 +1368,11 @@ export default function FreelancerPagamento() {
                                 {fr.totalJaPago>0 && fr.dobras===0 && <div style={{fontSize:'9px',color:'#1565c0',fontWeight:'normal'}}>tudo pago</div>}
                               </td>
                               <td style={{...s.td,textAlign:'right'}}>
-                                {(fr.valorDia>0||fr.valorNoite>0)
-                                  ? <><span style={{color:'#e65100'}}>☀️{fmt(fr.valorDia)}</span><br/><span style={{color:'#3949ab'}}>🌙{fmt(fr.valorNoite)}</span></>
-                                  : <>R$ {fmt(fr.valorDobra)}</>}
+                                {fr.isValorTurno
+                                  ? <span style={{color:'#6a1b9a',fontSize:'10px'}} title="Valor variável por dia da semana (acordo.tabela)">📅 Variável</span>
+                                  : (fr.valorDia>0||fr.valorNoite>0)
+                                    ? <><span style={{color:'#e65100'}}>☀️{fmt(fr.valorDia)}</span><br/><span style={{color:'#3949ab'}}>🌙{fmt(fr.valorNoite)}</span></>
+                                    : <>R$ {fmt(fr.valorDobra)}</>}
                               </td>
                               <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:'#1976d2',fontSize:'13px'}}>
                                 {fmtMoeda(fr.totalBrutoPeriodo??fr.total)}
