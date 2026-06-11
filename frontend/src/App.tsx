@@ -30,6 +30,7 @@ import ConciliacaoBancaria from './pages/ConciliacaoBancaria';
 import Despesas from './pages/Despesas';
 import Fornecedores from './pages/Fornecedores';
 import { UpdateBanner } from './components/UpdateBanner';
+import LandingPage from './pages/LandingPage';
 import './App.css';
 
 // Helper: envolve children em ProtectedRoute + AppLayout
@@ -148,8 +149,8 @@ function App() {
               <Route path="/modulos/permissoes"
                 element={<Protected moduloId="permissoes"><PermissoesConfig /></Protected>} />
 
-              {/* Fallback */}
-              <Route path="/" element={<Navigate to="/modulos" replace />} />
+              {/* Landing page pública na raiz */}
+              <Route path="/" element={<LandingPage />} />
             </Routes>
           </UnitProvider>
         </PermissoesProvider>

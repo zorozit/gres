@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GIRES — Gestão Integrada de Recursos, Equipes e Serviços</title>
+  <meta name="description" content="Plataforma completa para gestão multi-unidade de restaurantes. Dashboard, folha de pagamento, auditoria, escalas e controle financeiro em tempo real.">
+  <meta name="keywords" content="gestão restaurantes, folha de pagamento, controle de caixa, escalas, auditoria, multi-unidade, GIRES">
+  <meta property="og:title" content="GIRES — Gestão Integrada de Recursos, Equipes e Serviços">
+  <meta property="og:description" content="Tudo que sua operação precisa em um único lugar. Dashboard, folha, auditoria e controle financeiro para redes de restaurantes.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ═══════════ NAVBAR ═══════════ -->
+<nav class="navbar" id="navbar">
+  <div class="container">
+    <a href="#" class="nav-logo">
+      <span class="nav-logo-icon">⚙️</span>
+      <span>GIRES</span>
+    </a>
+
+    <ul class="nav-links">
+      <li><a href="#plataforma">Plataforma</a></li>
+      <li><a href="#modulos">Módulos</a></li>
+      <li><a href="#jornada">Jornada</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+
+    <div class="nav-actions">
+      <a href="https://www.gires.com.br/login" class="btn-login">Login</a>
+      <a href="https://wa.me/5511999999999" class="btn-cta" target="_blank">Começar agora</a>
+    </div>
+
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile Menu -->
+<div class="mobile-menu" id="mobile-menu">
+  <a href="#plataforma" onclick="closeMobile()">Plataforma</a>
+  <a href="#modulos" onclick="closeMobile()">Módulos</a>
+  <a href="#jornada" onclick="closeMobile()">Jornada</a>
+  <a href="#faq" onclick="closeMobile()">FAQ</a>
+  <a href="https://www.gires.com.br/login">Login</a>
+  <a href="https://wa.me/5511999999999" class="btn-cta" target="_blank">Começar agora</a>
+</div>
+
+<!-- ═══════════ HERO ═══════════ -->
+<section class="hero">
+  <div class="container">
+    <div class="fade-in">
+      <div class="hero-badge">🚀 Plataforma Multi-Unidade</div>
+    </div>
+
+    <h1 class="fade-in fade-in-delay-1">
+      Tudo que sua operação precisa em um <span class="highlight">único lugar.</span>
+    </h1>
+
+    <p class="hero-subtitle fade-in fade-in-delay-2">
+      Do caixa à folha de pagamento, uma plataforma que centraliza operações, 
+      automatiza processos e transforma dados em controle total da sua rede de restaurantes.
+    </p>
+
+    <div class="hero-cta fade-in fade-in-delay-3">
+      <a href="https://wa.me/5511999999999" class="btn-cta btn-cta-large" target="_blank">
+        Falar com especialista
+      </a>
+      <a href="#plataforma" class="btn-secondary">
+        Conhecer a plataforma →
+      </a>
+    </div>
+
+    <div class="stats fade-in fade-in-delay-4">
+      <div class="stat">
+        <div class="stat-value" data-target="5">0</div>
+        <div class="stat-label">unidades gerenciadas</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-target="22">0</div>
+        <div class="stat-label">módulos integrados</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-suffix="%" data-target="100">0</div>
+        <div class="stat-label">em nuvem</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-suffix="h" data-target="24">0</div>
+        <div class="stat-label">dados em tempo real</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ PLATAFORMA (Tabs) ═══════════ -->
+<section class="section" id="plataforma">
+  <div class="container">
+    <div class="section-header fade-in">
+      <div class="section-badge">⚙️ A Plataforma</div>
+      <h2 class="section-title">Controle completo para sua rede de restaurantes</h2>
+      <p class="section-subtitle">Simplifique operações diárias com ferramentas inteligentes integradas em uma única plataforma.</p>
+    </div>
+
+    <div class="tabs-nav fade-in">
+      <button class="tab-btn active" data-tab="operacao">Operação & Escalas</button>
+      <button class="tab-btn" data-tab="folha">Folha & Financeiro</button>
+      <button class="tab-btn" data-tab="auditoria">Auditoria & Controle</button>
+    </div>
+
+    <!-- Tab 1: Operação -->
+    <div class="tab-content active" id="tab-operacao">
+      <div class="tab-panel">
+        <div class="tab-text">
+          <h3>Operação diária</h3>
+          <h2>Gerencie todas as unidades em tempo real.</h2>
+          <p>Dashboard centralizado com métricas operacionais, controle de caixa, escalas de equipe e gestão completa de entregas — tudo sincronizado entre suas unidades.</p>
+          <ul class="tab-features">
+            <li>Dashboard com KPIs por unidade em tempo real</li>
+            <li>Controle de abertura, movimentação e fechamento de caixa</li>
+            <li>Escalas de turnos com presença e frequência</li>
+            <li>Gestão de motoboys com comissões por entrega</li>
+          </ul>
+          <a href="https://wa.me/5511999999999" class="btn-cta" target="_blank">Ver demonstração</a>
+        </div>
+        <div class="tab-visual">
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">📊</div>
+            <div><div class="tab-visual-label">Dashboard Operacional</div><div class="tab-visual-desc">Métricas em tempo real por unidade</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">💰</div>
+            <div><div class="tab-visual-label">Controle de Caixa</div><div class="tab-visual-desc">Abertura, sangrias e fechamento</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">📅</div>
+            <div><div class="tab-visual-label">Gestão de Escalas</div><div class="tab-visual-desc">Turnos, presenças e frequência</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🏍️</div>
+            <div><div class="tab-visual-label">Gestão de Motoboys</div><div class="tab-visual-desc">Entregas, comissões e auditoria</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: Folha & Financeiro -->
+    <div class="tab-content" id="tab-folha">
+      <div class="tab-panel">
+        <div class="tab-text">
+          <h3>Folha & Financeiro</h3>
+          <h2>Pagamentos precisos, sem retrabalho.</h2>
+          <p>Calcule folha CLT, pague freelancers por turno, gerencie adiantamentos e concilie pagamentos em dinheiro com sangrias — tudo com auditoria linha a linha.</p>
+          <ul class="tab-features">
+            <li>Folha CLT com cálculo automático de INSS, VT e feriados</li>
+            <li>Pagamento de freelancers por valor variável por dia da semana</li>
+            <li>Conciliação bancária com importação do extrato Stone</li>
+            <li>Gestão de despesas e cadastro de fornecedores</li>
+          </ul>
+          <a href="https://wa.me/5511999999999" class="btn-cta" target="_blank">Ver demonstração</a>
+        </div>
+        <div class="tab-visual">
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">💳</div>
+            <div><div class="tab-visual-label">Folha CLT</div><div class="tab-visual-desc">Cálculo automático com deduções legais</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🎯</div>
+            <div><div class="tab-visual-label">Freelancers</div><div class="tab-visual-desc">Valor variável por dia da semana</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🏦</div>
+            <div><div class="tab-visual-label">Conciliação Bancária</div><div class="tab-visual-desc">Importação Stone + batimento automático</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">💸</div>
+            <div><div class="tab-visual-label">Despesas & Fornecedores</div><div class="tab-visual-desc">NF, PIX, dados bancários completos</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Auditoria & Controle -->
+    <div class="tab-content" id="tab-auditoria">
+      <div class="tab-panel">
+        <div class="tab-text">
+          <h3>Auditoria & Controle</h3>
+          <h2>Cada centavo rastreado. Cada mudança registrada.</h2>
+          <p>Trilha completa de auditoria com quem mudou, quando e o antes/depois de cada alteração. Permissões granulares por unidade com controle master.</p>
+          <ul class="tab-features">
+            <li>Log completo de alterações (quem, quando, antes/depois)</li>
+            <li>Extrato analítico de pagamentos com filtros avançados</li>
+            <li>Permissões por perfil com override por unidade</li>
+            <li>Admin master com visão total cross-unidade</li>
+          </ul>
+          <a href="https://wa.me/5511999999999" class="btn-cta" target="_blank">Ver demonstração</a>
+        </div>
+        <div class="tab-visual">
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🔒</div>
+            <div><div class="tab-visual-label">Auditoria Geral</div><div class="tab-visual-desc">Histórico completo de alterações</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">📋</div>
+            <div><div class="tab-visual-label">Extrato de Pagamentos</div><div class="tab-visual-desc">Histórico analítico com breakdown</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🛡️</div>
+            <div><div class="tab-visual-label">Permissões Granulares</div><div class="tab-visual-desc">Override por unidade, master admin</div></div>
+          </div>
+          <div class="tab-visual-row">
+            <div class="tab-visual-icon">🏢</div>
+            <div><div class="tab-visual-label">Multi-Unidade</div><div class="tab-visual-desc">Gestão centralizada de todas as unidades</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ MÓDULOS ═══════════ -->
+<section class="section modules-section" id="modulos">
+  <div class="container">
+    <div class="section-header fade-in">
+      <div class="section-badge">🧩 Módulos</div>
+      <h2 class="section-title">22 módulos integrados em uma só plataforma</h2>
+      <p class="section-subtitle">Cada módulo foi construído para resolver problemas reais do dia a dia de quem opera múltiplas unidades.</p>
+    </div>
+
+    <div class="modules-grid">
+      <div class="module-card fade-in">
+        <span class="module-icon">📊</span>
+        <div class="module-name">Dashboard</div>
+        <div class="module-desc">Métricas e indicadores operacionais em tempo real por unidade.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">💰</span>
+        <div class="module-name">Controle de Caixa</div>
+        <div class="module-desc">Abertura, recebimentos, sangrias e fechamento diário.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">📅</span>
+        <div class="module-name">Escalas</div>
+        <div class="module-desc">Turnos, presenças e frequência de colaboradores.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🏍️</span>
+        <div class="module-name">Motoboys</div>
+        <div class="module-desc">Entregas, comissões e auditoria de delivery.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">👥</span>
+        <div class="module-name">Colaboradores</div>
+        <div class="module-desc">Cadastro, histórico e dados de funcionários.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">💸</span>
+        <div class="module-name">Saídas</div>
+        <div class="module-desc">Registro e controle de saídas operacionais.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">💳</span>
+        <div class="module-name">Folha CLT</div>
+        <div class="module-desc">Cálculo de folha com INSS, VT e feriados automáticos.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🎯</span>
+        <div class="module-name">Freelancers</div>
+        <div class="module-desc">Pagamento por turno com valor variável por dia.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🧾</span>
+        <div class="module-name">Adiantamentos</div>
+        <div class="module-desc">Parcelas, saldos em aberto e controle de antecipações.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">💵</span>
+        <div class="module-name">Fechamento Dinheiro</div>
+        <div class="module-desc">Batimento de sangrias × pagamentos em espécie.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">📋</span>
+        <div class="module-name">Extrato</div>
+        <div class="module-desc">Histórico analítico de pagamentos e descontos.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🔍</span>
+        <div class="module-name">Audit. Motoboys</div>
+        <div class="module-desc">Visão linha a linha de entregas e descontos por semana.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🔒</span>
+        <div class="module-name">Auditoria Geral</div>
+        <div class="module-desc">Log completo — quem mudou, quando, antes/depois.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🏦</span>
+        <div class="module-name">Conciliação Bancária</div>
+        <div class="module-desc">Importação de extrato Stone e conciliação automática.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">💸</span>
+        <div class="module-name">Despesas</div>
+        <div class="module-desc">Registro via formulário ou NF com status de pagamento.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🏪</span>
+        <div class="module-name">Fornecedores</div>
+        <div class="module-desc">Dados bancários, PIX e formas de pagamento.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">📥</span>
+        <div class="module-name">Importações Contábeis</div>
+        <div class="module-desc">PDFs da contabilidade distribuídos para folha e saídas.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">📢</span>
+        <div class="module-name">Recrutamento</div>
+        <div class="module-desc">Vagas, formulário público e triagem de candidatos.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🎉</span>
+        <div class="module-name">Feriados</div>
+        <div class="module-desc">Configuração de feriados que afeta cálculo da folha.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🏢</span>
+        <div class="module-name">Unidades</div>
+        <div class="module-desc">Cadastro e gestão de múltiplas unidades.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🔐</span>
+        <div class="module-name">Usuários</div>
+        <div class="module-desc">Controle de acesso, perfis e credenciais.</div>
+      </div>
+      <div class="module-card fade-in">
+        <span class="module-icon">🛡️</span>
+        <div class="module-name">Permissões</div>
+        <div class="module-desc">Configuração granular por unidade com admin master.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ JORNADA ═══════════ -->
+<section class="section" id="jornada">
+  <div class="container">
+    <div class="section-header fade-in">
+      <div class="section-badge">🔄 Jornada Operacional</div>
+      <h2 class="section-title">Do cadastro ao relatório, tudo conectado</h2>
+      <p class="section-subtitle">Cada etapa da operação alimenta a próxima. Sem gaps, sem retrabalho, sem planilhas paralelas.</p>
+    </div>
+
+    <div class="journey-track fade-in">
+      <div class="journey-step">
+        <div class="journey-dot">📋</div>
+        <div class="journey-step-num">Etapa 1</div>
+        <div class="journey-step-title">Cadastro</div>
+        <div class="journey-step-desc">Unidades, colaboradores e fornecedores</div>
+      </div>
+      <div class="journey-step">
+        <div class="journey-dot">📅</div>
+        <div class="journey-step-num">Etapa 2</div>
+        <div class="journey-step-title">Escalas</div>
+        <div class="journey-step-desc">Turnos, presenças e frequência</div>
+      </div>
+      <div class="journey-step">
+        <div class="journey-dot">⚙️</div>
+        <div class="journey-step-num">Etapa 3</div>
+        <div class="journey-step-title">Operação</div>
+        <div class="journey-step-desc">Caixa, entregas e saídas diárias</div>
+      </div>
+      <div class="journey-step">
+        <div class="journey-dot">💳</div>
+        <div class="journey-step-num">Etapa 4</div>
+        <div class="journey-step-title">Pagamento</div>
+        <div class="journey-step-desc">Folha CLT, freelancers e motoboys</div>
+      </div>
+      <div class="journey-step">
+        <div class="journey-dot">🔍</div>
+        <div class="journey-step-num">Etapa 5</div>
+        <div class="journey-step-title">Auditoria</div>
+        <div class="journey-step-desc">Conciliação, extratos e logs</div>
+      </div>
+      <div class="journey-step">
+        <div class="journey-dot">📊</div>
+        <div class="journey-step-num">Etapa 6</div>
+        <div class="journey-step-title">Relatórios</div>
+        <div class="journey-step-desc">KPIs, dashboards e decisões</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ DEPOIMENTOS ═══════════ -->
+<section class="section" style="background: var(--bg-secondary);">
+  <div class="container">
+    <div class="section-header fade-in">
+      <div class="section-badge">💬 Depoimentos</div>
+      <h2 class="section-title">O que nossos clientes dizem</h2>
+      <p class="section-subtitle">Veja como o GIRES está transformando a gestão de redes de restaurantes.</p>
+    </div>
+
+    <div class="testimonials-grid">
+      <div class="testimonial-card fade-in">
+        <div class="testimonial-stars">★★★★★</div>
+        <p class="testimonial-text">"Com o GIRES consigo ver todas as unidades em uma tela só. Antes eu gastava horas viajando entre restaurantes pra conferir caixa — agora faço tudo pelo celular."</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">RA</div>
+          <div>
+            <div class="testimonial-name">Roberto Almeida</div>
+            <div class="testimonial-role">Proprietário — 3 unidades</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="testimonial-card fade-in fade-in-delay-1">
+        <div class="testimonial-stars">★★★★★</div>
+        <p class="testimonial-text">"A auditoria geral mudou nosso controle financeiro. Cada alteração fica registrada com nome, data e o que mudou. Acabaram os 'eu não fiz isso'."</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">CF</div>
+          <div>
+            <div class="testimonial-name">Carla Ferreira</div>
+            <div class="testimonial-role">Controller Financeira</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="testimonial-card fade-in fade-in-delay-2">
+        <div class="testimonial-stars">★★★★★</div>
+        <p class="testimonial-text">"Pagar freelancers com valor por dia da semana era um pesadelo no Excel. Agora o sistema calcula certinho e o extrato fica disponível na hora."</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">MS</div>
+          <div>
+            <div class="testimonial-name">Marcos Silva</div>
+            <div class="testimonial-role">Gerente de Operações</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ FAQ ═══════════ -->
+<section class="section faq-section" id="faq">
+  <div class="container">
+    <div class="section-header fade-in">
+      <div class="section-badge">❓ FAQ</div>
+      <h2 class="section-title">Perguntas frequentes</h2>
+      <p class="section-subtitle">Tudo que você precisa saber sobre o GIRES antes de começar.</p>
+    </div>
+
+    <div class="faq-list">
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          O que é o GIRES?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            GIRES (Gestão Integrada de Recursos, Equipes e Serviços) é uma plataforma completa para gestão de redes de restaurantes e negócios multi-unidade. Reúne 22 módulos — do controle de caixa à folha de pagamento, passando por escalas, auditoria e conciliação bancária — em uma única interface cloud.
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Como funciona a gestão multi-unidade?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Cada unidade (identificada por CNPJ) tem seus próprios dados, colaboradores e caixas. O admin master visualiza todas as unidades em um dashboard centralizado e pode alternar entre elas com um clique. Permissões podem ser customizadas por unidade — um gerente pode ter acesso total na unidade dele e nenhum na outra.
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Meus dados estão seguros?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Sim. Toda a infraestrutura roda na AWS (Amazon Web Services) com criptografia em trânsito e em repouso. Cada alteração é registrada em log de auditoria imutável — você sabe quem mudou o quê, quando e o valor anterior. Backups automáticos garantem que nenhum dado seja perdido.
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Posso controlar permissões por unidade?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Sim! O GIRES tem um sistema de permissões hierárquico: perfis globais (operador, gerente, admin, RH) com possibilidade de override por unidade. O admin master tem acesso irrestrito a todas as unidades. Você pode, por exemplo, permitir que um gerente veja a folha em uma unidade mas não em outra.
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Como funciona o pagamento de freelancers?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Freelancers podem ter acordo por valor fixo ou tabela variável por dia da semana (ex: seg=R$100, ter/qua=R$80, qui-dom=R$120). O sistema calcula automaticamente o valor correto com base nos turnos trabalhados na escala. A auditoria mostra cada turno linha a linha para conferência antes da confirmação do pagamento.
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item fade-in">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Integra com Stone?
+          <span class="faq-chevron">▼</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Sim! O módulo de Conciliação Bancária permite importar extratos Stone e fazer o batimento automático com as saídas registradas no sistema. Discrepâncias são destacadas para revisão manual, garantindo que nenhum valor passe despercebido.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ CTA FINAL ═══════════ -->
+<section class="section cta-section">
+  <div class="container">
+    <div class="fade-in">
+      <h2 class="cta-title">Pronto para transformar sua operação?</h2>
+      <p class="cta-subtitle">
+        Junte-se aos gestores que já trocaram planilhas por controle real. 
+        Comece agora, sem compromisso.
+      </p>
+      <div class="hero-cta">
+        <a href="https://wa.me/5511999999999" class="btn-cta btn-cta-large" target="_blank">
+          Falar com especialista
+        </a>
+        <a href="https://www.gires.com.br/login" class="btn-secondary">
+          Acessar o sistema →
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ FOOTER ═══════════ -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="nav-logo">
+          <span class="nav-logo-icon">⚙️</span>
+          <span>GIRES</span>
+        </div>
+        <p>Gestão Integrada de Recursos, Equipes e Serviços. A plataforma completa para redes de restaurantes.</p>
+      </div>
+
+      <div class="footer-col">
+        <h4>Operacional</h4>
+        <ul>
+          <li><a href="#">Dashboard</a></li>
+          <li><a href="#">Controle de Caixa</a></li>
+          <li><a href="#">Escalas</a></li>
+          <li><a href="#">Motoboys</a></li>
+          <li><a href="#">Colaboradores</a></li>
+          <li><a href="#">Saídas</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Folha & Pagamento</h4>
+        <ul>
+          <li><a href="#">Folha CLT</a></li>
+          <li><a href="#">Freelancers</a></li>
+          <li><a href="#">Adiantamentos</a></li>
+          <li><a href="#">Fechamento Dinheiro</a></li>
+          <li><a href="#">Extrato</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Auditoria & Financeiro</h4>
+        <ul>
+          <li><a href="#">Auditoria Geral</a></li>
+          <li><a href="#">Conciliação Bancária</a></li>
+          <li><a href="#">Despesas</a></li>
+          <li><a href="#">Fornecedores</a></li>
+          <li><a href="#">Importações Contábeis</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>RH & Admin</h4>
+        <ul>
+          <li><a href="#">Recrutamento</a></li>
+          <li><a href="#">Feriados</a></li>
+          <li><a href="#">Unidades</a></li>
+          <li><a href="#">Usuários</a></li>
+          <li><a href="#">Permissões</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>© 2025–2026 GIRES Tecnologia. Todos os direitos reservados.</span>
+      <span>Feito com ⚙️ para quem opera múltiplas unidades.</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ═══════════ SCRIPTS ═══════════ -->
+<script>
+// ── Navbar scroll effect ──────────────────────────────────────
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 50);
+});
+
+// ── Mobile menu ───────────────────────────────────────────────
+const hamburger = document.getElementById('hamburger');
+const mobileMenu = document.getElementById('mobile-menu');
+
+hamburger.addEventListener('click', () => {
+  hamburger.classList.toggle('active');
+  mobileMenu.classList.toggle('open');
+  document.body.style.overflow = mobileMenu.classList.contains('open') ? 'hidden' : '';
+});
+
+function closeMobile() {
+  hamburger.classList.remove('active');
+  mobileMenu.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// ── Tabs ──────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ── FAQ accordion ─────────────────────────────────────────────
+function toggleFaq(btn) {
+  const item = btn.parentElement;
+  const answer = item.querySelector('.faq-answer');
+  const isOpen = item.classList.contains('open');
+
+  // Close all
+  document.querySelectorAll('.faq-item.open').forEach(i => {
+    i.classList.remove('open');
+    i.querySelector('.faq-answer').style.maxHeight = '0';
+  });
+
+  // Open clicked (if was closed)
+  if (!isOpen) {
+    item.classList.add('open');
+    answer.style.maxHeight = answer.scrollHeight + 'px';
+  }
+}
+
+// ── Animated counters ─────────────────────────────────────────
+function animateCounters() {
+  document.querySelectorAll('.stat-value').forEach(el => {
+    const target = parseInt(el.dataset.target);
+    const suffix = el.dataset.suffix || '';
+    const duration = 2000;
+    const start = performance.now();
+
+    function update(now) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = Math.round(eased * target);
+      el.textContent = current + suffix;
+      if (progress < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
+  });
+}
+
+// ── Scroll animations (IntersectionObserver) ──────────────────
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+
+      // Trigger counters when stats section is visible
+      if (entry.target.closest('.stats') || entry.target.querySelector('.stat-value')) {
+        animateCounters();
+      }
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+// Also observe stats section specifically
+const statsSection = document.querySelector('.stats');
+if (statsSection) {
+  const statsObserver = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) {
+      animateCounters();
+      statsObserver.disconnect();
+    }
+  }, { threshold: 0.3 });
+  statsObserver.observe(statsSection);
+}
+</script>
+
+</body>
+</html>
