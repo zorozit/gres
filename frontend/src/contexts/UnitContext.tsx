@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useAuth } from './AuthContext';
 
 export interface Unit {
   id: string;
@@ -17,6 +18,7 @@ interface UnitContextType {
   setUserUnits: (units: Unit[]) => void;
   isLoadingUnits: boolean;
   setIsLoadingUnits: (loading: boolean) => void;
+  reloadUnits: () => Promise<void>;
 }
 
 const UnitContext = createContext<UnitContextType | undefined>(undefined);
@@ -27,6 +29,7 @@ export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeUnit, setActiveUnit] = useState<Unit | null>(null);
   const [userUnits, setUserUnits] = useState<Unit[]>([]);
   const [isLoadingUnits, setIsLoadingUnits] = useState(false);
+  const { isAuthenticated } = useAuth();
 
   // Restaura unidade ativa do localStorage ao montar
   useEffect(() => {
@@ -45,74 +48,68 @@ export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [activeUnit]);
 
-  // ── Carrega unidades da API assim que o token estiver disponível ──────────
-  // Fica em polling leve (a cada 500ms) até o token aparecer, depois carrega
-  // uma única vez. Isso garante que as unidades sejam carregadas independente
-  // de qual componente estiver montado.
-  useEffect(() => {
-    let tries = 0;
-    const MAX_TRIES = 20; // até 10s de espera
+  // ── Carrega unidades da API quando autenticado ────────────────────────────
+  const loadUnits = useCallback(async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
 
-    const tryLoad = async () => {
-      const token = localStorage.getItem('auth_token');
-      if (!token) {
-        tries++;
-        if (tries < MAX_TRIES) {
-          setTimeout(tryLoad, 500);
-        }
-        return;
+    setIsLoadingUnits(true);
+    try {
+      const response = await fetch(`${API_URL}/unidades`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) return;
+
+      const allUnits: Unit[] = await response.json();
+
+      // Filtrar por unidades do usuário (não-admin e não-master)
+      const userRole  = localStorage.getItem('user_role') || '';
+      const isMaster  = localStorage.getItem('is_master') === 'true';
+      const isAdmin   = isMaster || ['admin', 'Admin', 'Administrador', 'ADMIN'].includes(userRole);
+      const unitIdsRaw = localStorage.getItem('user_unit_ids') || '[]';
+      const userUnitIds: string[] = (() => {
+        try { return JSON.parse(unitIdsRaw); } catch { return []; }
+      })();
+
+      let units = allUnits;
+      if (!isAdmin && userUnitIds.length > 0) {
+        units = allUnits.filter((u) => {
+          const cnpj = (u.id || u.cnpj || '').replace(/\D/g, '').substring(0, 14);
+          return userUnitIds.includes(cnpj);
+        });
       }
 
-      setIsLoadingUnits(true);
-      try {
-        const response = await fetch(`${API_URL}/unidades`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+      setUserUnits(units);
 
-        if (!response.ok) return;
-
-        const allUnits: Unit[] = await response.json();
-
-        // Filtrar por unidades do usuário (não-admin)
-        const userRole  = localStorage.getItem('user_role') || '';
-        const isAdmin   = ['admin', 'Admin', 'Administrador', 'ADMIN'].includes(userRole);
-        const unitIdsRaw = localStorage.getItem('user_unit_ids') || '[]';
-        const userUnitIds: string[] = (() => {
-          try { return JSON.parse(unitIdsRaw); } catch { return []; }
-        })();
-
-        let units = allUnits;
-        if (!isAdmin && userUnitIds.length > 0) {
-          units = allUnits.filter((u) => {
-            const cnpj = (u.id || u.cnpj || '').replace(/\D/g, '').substring(0, 14);
-            return userUnitIds.includes(cnpj);
-          });
+      // Define unidade ativa: restaura do localStorage se válida, senão usa a primeira
+      setActiveUnit(prev => {
+        if (prev) {
+          const still = units.find(u => u.id === prev.id);
+          if (still) return still;
         }
-
-        setUserUnits(units);
-
-        // Define unidade ativa: restaura do localStorage se válida, senão usa a primeira
-        setActiveUnit(prev => {
-          if (prev) {
-            // Verifica se a unidade salva ainda é válida para este usuário
-            const still = units.find(u => u.id === prev.id);
-            if (still) return still; // mantém (e atualiza dados)
-          }
-          return units.length > 0 ? units[0] : null;
-        });
-      } catch (err) {
-        console.error('UnitContext: erro ao carregar unidades:', err);
-      } finally {
-        setIsLoadingUnits(false);
-      }
-    };
-
-    tryLoad();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        return units.length > 0 ? units[0] : null;
+      });
+    } catch (err) {
+      console.error('UnitContext: erro ao carregar unidades:', err);
+    } finally {
+      setIsLoadingUnits(false);
+    }
   }, []);
+
+  // Recarrega quando isAuthenticated muda para true
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadUnits();
+    } else {
+      // Logout: limpa unidades
+      setUserUnits([]);
+      setActiveUnit(null);
+    }
+  }, [isAuthenticated, loadUnits]);
 
   const value: UnitContextType = {
     activeUnit,
@@ -121,6 +118,7 @@ export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUserUnits,
     isLoadingUnits,
     setIsLoadingUnits,
+    reloadUnits: loadUnits,
   };
 
   return (
