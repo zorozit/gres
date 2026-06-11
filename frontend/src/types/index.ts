@@ -1,4 +1,4 @@
-// Tipos principais do GRES
+// Tipos principais do GIRES
 
 export interface User {
   id: string

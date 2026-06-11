@@ -29,19 +29,19 @@ export const Login: React.FC = () => {
       {/* ── Left: brand panel (shown ≥ 900 px) ───────────── */}
       <div className="login-left">
         <div className="login-brand">
-          <span className="login-brand-logo">🍽️</span>
+          <span className="login-brand-logo">⚙️</span>
           <h1 className="login-brand-name">GIRES</h1>
           <p className="login-brand-tagline">
-            Gestão Inteligente<br />para Restaurantes
+            Gestão Integrada de<br />Recursos, Equipes e Serviços
           </p>
         </div>
 
         <div className="login-features">
           {[
-            { icon: '📊', title: 'Dashboard em tempo real', desc: 'Métricas e indicadores do negócio' },
-            { icon: '👥', title: 'Gestão de equipes',       desc: 'CLT, Freelancer e Motoboys' },
-            { icon: '💰', title: 'Controle financeiro',     desc: 'Caixa, saídas e folha de pagamento' },
-            { icon: '📅', title: 'Escalas automatizadas',   desc: 'Turnos dia, noite e DiaNoite' },
+            { icon: '📊', title: 'Operação',    desc: 'Dashboard, escalas e controles em tempo real' },
+            { icon: '💰', title: 'Financeiro',   desc: 'Caixa, saídas, despesas e conciliação' },
+            { icon: '👥', title: 'Folha e RH',   desc: 'CLT, Freelancer, Motoboys e recrutamento' },
+            { icon: '🔧', title: 'Administrativo', desc: 'Unidades, fornecedores e auditoria' },
           ].map(f => (
             <div key={f.title} className="login-feature-item">
               <div className="login-feature-icon">{f.icon}</div>
@@ -61,10 +61,10 @@ export const Login: React.FC = () => {
           {/* header */}
           <div className="login-header">
             <div className="login-logo-row">
-              <span className="login-logo-icon">🍽️</span>
+              <span className="login-logo-icon">⚙️</span>
               <h1 className="login-logo-name">GIRES</h1>
             </div>
-            <p className="login-subtitle">Gestão Inteligente para Restaurantes</p>
+            <p className="login-subtitle">Gestão Integrada de Recursos, Equipes e Serviços</p>
           </div>
 
           {/* form */}

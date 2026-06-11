@@ -188,16 +188,16 @@ export const SidebarNav: React.FC = () => {
         <div className="sidebar-header">
           {!compact && (
             <div className="sidebar-logo">
-              <span className="sidebar-logo-icon">🍽️</span>
+              <span className="sidebar-logo-icon">⚙️</span>
               <div className="sidebar-logo-text">
                 <span className="sidebar-logo-title">GIRES</span>
-                <span className="sidebar-logo-sub">Gestão de Restaurantes</span>
+                <span className="sidebar-logo-sub">Gestão Integrada</span>
               </div>
             </div>
           )}
           {compact && (
             <div className="sidebar-logo sidebar-logo--compact">
-              <span className="sidebar-logo-icon">🍽️</span>
+              <span className="sidebar-logo-icon">⚙️</span>
             </div>
           )}
 
