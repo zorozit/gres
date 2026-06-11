@@ -10,6 +10,7 @@ interface AuthContextType {
   email?: string;
   token?: string;
   userUnitIds?: string[];  // unidades que o usuário tem acesso
+  isMaster: boolean;       // admin master (admin@gres.com) — acesso total
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -67,7 +68,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const rawUnitIds: string[] = data.user.unitIds || (rawUnitId ? [rawUnitId] : []);
       const unitIdsClean = rawUnitIds.map((u: string) => u.replace(/\D/g, '').substring(0, 14)).filter(Boolean);
 
-      const userData = { email, perfil: data.user.perfil, unitId: unitIdClean, unitIds: unitIdsClean, id: data.user.id };
+      const isMaster = data.user.isMaster === true || email === 'admin@gres.com';
+      const userData = { email, perfil: data.user.perfil, unitId: unitIdClean, unitIds: unitIdsClean, id: data.user.id, isMaster };
       setUser(userData);
       setIsAuthenticated(true);
       // Persiste todas as chaves usadas pelo app
@@ -79,7 +81,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('unit_id', unitIdClean);       // usado em Saidas e outros
       localStorage.setItem('user_unit_ids', JSON.stringify(unitIdsClean)); // array de unidades
       localStorage.setItem('user_id', data.user.id || '');
-      console.log('Login bem-sucedido! unitId (CNPJ):', unitIdClean, '| unitIds:', unitIdsClean, '| userId:', data.user.id);
+      localStorage.setItem('is_master', isMaster ? 'true' : 'false');
+      console.log('Login bem-sucedido! unitId (CNPJ):', unitIdClean, '| unitIds:', unitIdsClean, '| userId:', data.user.id, '| isMaster:', isMaster);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Credenciais inválidas';
       setError(errorMsg);
@@ -102,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('unit_id');
     localStorage.removeItem('user_unit_ids');
     localStorage.removeItem('user_id');
+    localStorage.removeItem('is_master');
   };
 
   const token = localStorage.getItem('token') || undefined;
@@ -109,6 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try { return JSON.parse(localStorage.getItem('user_unit_ids') || '[]'); }
     catch { return []; }
   })();
+  const isMaster = localStorage.getItem('is_master') === 'true' || (user as any)?.isMaster === true;
 
   // loading = true enquanto sessão não verificada OU durante o submit do login
   const loading = !sessionChecked || loginLoading;
@@ -123,7 +128,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       error,
       email: user?.email,
       token,
-      userUnitIds
+      userUnitIds,
+      isMaster
     }}>
       {children}
     </AuthContext.Provider>

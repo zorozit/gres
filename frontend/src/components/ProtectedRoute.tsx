@@ -21,7 +21,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   adminOnly = false,
   superAdminOnly = false,
 }) => {
-  const { isAuthenticated, loading: authLoading, user } = useAuth();
+  const { isAuthenticated, loading: authLoading, user, isMaster } = useAuth();
   const { loaded: permLoaded, temAcesso } = usePermissoes();
 
   // Aguarda autenticação E permissões carregarem
@@ -40,6 +40,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const role = ((user as any)?.perfil || localStorage.getItem('user_role') || '').toLowerCase();
   const isAdmin = ADMIN_ROLES.includes(role);
   const isSuperAdmin = SUPER_ADMIN.includes(role);
+
+  // Master tem acesso TOTAL — bypass todas as permissões
+  if (isMaster) {
+    return <>{children}</>;
+  }
 
   // superAdminOnly: só admin passa
   if (superAdminOnly && !isSuperAdmin) {

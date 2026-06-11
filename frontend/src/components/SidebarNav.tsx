@@ -98,7 +98,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
 export const SidebarNav: React.FC = () => {
   const navigate   = useNavigate();
   const location   = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, isMaster } = useAuth();
   const { temAcesso, loaded } = usePermissoes();
   const { activeUnit, userUnits, setActiveUnit, isLoadingUnits } = useUnit();
 
@@ -145,12 +145,12 @@ export const SidebarNav: React.FC = () => {
 
   const isActive = (path: string) => location.pathname === path;
 
-  // Filtra apenas módulos com acesso
-  const visibleGroups = loaded
+  // Filtra apenas módulos com acesso (master vê tudo)
+  const visibleGroups = loaded || isMaster
     ? MODULE_GROUPS
         .map(g => ({
           ...g,
-          modules: g.modules.filter(m => temAcesso(userRole, m.id)),
+          modules: isMaster ? g.modules : g.modules.filter(m => temAcesso(userRole, m.id)),
         }))
         .filter(g => g.modules.length > 0)
     : [];

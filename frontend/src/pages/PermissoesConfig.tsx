@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissoes } from '../contexts/PermissoesContext';
+import { useUnit } from '../contexts/UnitContext';
 import { Footer } from '../components/Footer';
 
 // ─── Definição canônica dos módulos do sistema ───────────────────────────────
@@ -42,7 +43,7 @@ const PERFIS = [
     desc: 'Acesso exclusivo ao módulo de recrutamento e triagem de vagas' },
 ];
 
-// Tudo bloqueado por padrão — admin configura explicitamente, sem fallbacks
+// Tudo bloqueado por padrão
 const DEFAULT_PERMISSOES: Record<string, Record<string, boolean>> = {
   operador: Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
   gerente:  Object.fromEntries(TODOS_MODULOS.map(m => [m.id, false])),
@@ -51,7 +52,6 @@ const DEFAULT_PERMISSOES: Record<string, Record<string, boolean>> = {
 };
 
 // ─── Preset recomendado por perfil ──────────────────────────────────────────
-// Usado pelo botão "Aplicar Preset Recomendado" — não substitui permissões salvas no servidor
 const PRESET_RECOMENDADO: Record<string, string[]> = {
   operador: ['dashboard', 'caixa', 'escalas', 'motoboys'],
   gerente:  [
@@ -68,29 +68,38 @@ const PRESET_RECOMENDADO: Record<string, string[]> = {
 // ─── Componente principal ────────────────────────────────────────────────────
 export const PermissoesConfig: React.FC = () => {
   const navigate = useNavigate();
-  const { email, logout } = useAuth();
+  const { email, logout, isMaster } = useAuth();
   const { recarregar: recarregarContexto } = usePermissoes();
+  const { userUnits } = useUnit();
   const [permissoes, setPermissoes] = useState<Record<string, Record<string, boolean>>>(DEFAULT_PERMISSOES);
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
+  const [removendo, setRemovendo] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [perfilAtivo, setPerfilAtivo] = useState<string>('operador');
+  const [escopoSelecionado, setEscopoSelecionado] = useState<string>('global'); // 'global' ou CNPJ da unidade
+  const [isOverrideAtivo, setIsOverrideAtivo] = useState(false); // true se carregou um override existente
 
   const apiUrl = import.meta.env.VITE_API_ENDPOINT;
   const token = localStorage.getItem('auth_token');
   const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  const userRole = localStorage.getItem('user_role') || '';
+  const isAdmin = ['admin', 'Admin', 'Administrador', 'ADMIN'].includes(userRole);
+  const canEdit = isMaster || isAdmin;
 
-  // ─── Carregar permissões salvas ─────────────────────────────────────────
-  const carregar = useCallback(async () => {
+  // ─── Carregar permissões por escopo ─────────────────────────────────
+  const carregar = useCallback(async (escopo?: string) => {
+    const esc = escopo ?? escopoSelecionado;
     setLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/perfis-permissoes`, { headers: { Authorization: `Bearer ${token}` } });
+      const url = esc === 'global'
+        ? `${apiUrl}/perfis-permissoes`
+        : `${apiUrl}/perfis-permissoes?unitId=${esc}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (r.ok) {
         const data = await r.json();
         if (data.permissoes) {
-          // Sem merge com defaults: o que está salvo é a única fonte de verdade.
-          // Garante apenas que novos módulos adicionados após o último save aparecem como false.
           const normalizado: Record<string, Record<string, boolean>> = {};
           for (const perfil of PERFIS) {
             const salvo = data.permissoes[perfil.key] || {};
@@ -100,20 +109,55 @@ export const PermissoesConfig: React.FC = () => {
           }
           setPermissoes(normalizado);
           setUpdatedAt(data.updatedAt);
+          setIsOverrideAtivo(!!data.isOverride);
+        } else if (esc !== 'global') {
+          // Unidade sem override — carregar global como base
+          const rGlobal = await fetch(`${apiUrl}/perfis-permissoes`, { headers: { Authorization: `Bearer ${token}` } });
+          if (rGlobal.ok) {
+            const dataGlobal = await rGlobal.json();
+            if (dataGlobal.permissoes) {
+              const normalizado: Record<string, Record<string, boolean>> = {};
+              for (const perfil of PERFIS) {
+                const salvo = dataGlobal.permissoes[perfil.key] || {};
+                normalizado[perfil.key] = Object.fromEntries(
+                  TODOS_MODULOS.map(m => [m.id, salvo[m.id] === true])
+                );
+              }
+              setPermissoes(normalizado);
+              setUpdatedAt(dataGlobal.updatedAt);
+            } else {
+              setPermissoes(DEFAULT_PERMISSOES);
+              setUpdatedAt(null);
+            }
+          }
+          setIsOverrideAtivo(false);
+        } else {
+          setPermissoes(DEFAULT_PERMISSOES);
+          setUpdatedAt(null);
+          setIsOverrideAtivo(false);
         }
-        // Se data.permissoes é null (nunca salvo), mantém DEFAULT_PERMISSOES (tudo false)
       }
     } catch (err) {
       console.error('Erro ao carregar permissões:', err);
     } finally {
       setLoading(false);
+      setDirty(false);
     }
-  }, [apiUrl, token]);
+  }, [apiUrl, token, escopoSelecionado]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Quando muda escopo, recarrega
+  const handleEscopoChange = (novoEscopo: string) => {
+    if (dirty && !window.confirm('Há alterações não salvas. Deseja descartar e trocar de escopo?')) return;
+    setEscopoSelecionado(novoEscopo);
+    setDirty(false);
+    carregar(novoEscopo);
+  };
+
   // ─── Toggle de permissão ────────────────────────────────────────────────
   const toggle = (perfilKey: string, moduloId: string) => {
+    if (!canEdit) return;
     setPermissoes(prev => ({
       ...prev,
       [perfilKey]: { ...prev[perfilKey], [moduloId]: !prev[perfilKey]?.[moduloId] },
@@ -123,18 +167,26 @@ export const PermissoesConfig: React.FC = () => {
 
   // ─── Salvar ─────────────────────────────────────────────────────────────
   const salvar = async () => {
+    if (!canEdit) return;
     setSalvando(true);
     try {
+      const payload: any = { permissoes };
+      if (escopoSelecionado !== 'global') {
+        payload.unitId = escopoSelecionado;
+      }
       const r = await fetch(`${apiUrl}/perfis-permissoes`, {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ permissoes }),
+        body: JSON.stringify(payload),
       });
       if (r.ok) {
         const data = await r.json();
         setUpdatedAt(data.updatedAt);
         setDirty(false);
-        await recarregarContexto(); // atualiza o contexto global para efeito imediato
+        if (escopoSelecionado !== 'global') {
+          setIsOverrideAtivo(true);
+        }
+        await recarregarContexto();
         alert('✅ Permissões salvas com sucesso!');
       } else {
         alert('Erro ao salvar permissões');
@@ -146,8 +198,36 @@ export const PermissoesConfig: React.FC = () => {
     }
   };
 
+  // ─── Remover override da unidade ────────────────────────────────────────
+  const removerOverride = async () => {
+    if (escopoSelecionado === 'global') return;
+    if (!canEdit) return;
+    const nomeUnidade = userUnits.find(u => u.id === escopoSelecionado)?.nome || escopoSelecionado;
+    if (!window.confirm(`Remover override de "${nomeUnidade}"?\nA unidade voltará a usar o padrão global.`)) return;
+    setRemovendo(true);
+    try {
+      const r = await fetch(`${apiUrl}/perfis-permissoes?unitId=${escopoSelecionado}`, {
+        method: 'DELETE',
+        headers,
+      });
+      if (r.ok) {
+        setIsOverrideAtivo(false);
+        await carregar(escopoSelecionado);
+        await recarregarContexto();
+        alert('✅ Override removido. Usando padrão global.');
+      } else {
+        alert('Erro ao remover override');
+      }
+    } catch {
+      alert('Erro de conexão');
+    } finally {
+      setRemovendo(false);
+    }
+  };
+
   // ─── Resetar para defaults ──────────────────────────────────────────────
   const resetarDefaults = () => {
+    if (!canEdit) return;
     if (!window.confirm('Bloquear todos os acessos de todos os perfis? Isso removerá todas as permissões configuradas.')) return;
     setPermissoes(DEFAULT_PERMISSOES);
     setDirty(true);
@@ -162,6 +242,10 @@ export const PermissoesConfig: React.FC = () => {
     if (!iso) return 'Nunca salvo — usando defaults';
     return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   };
+
+  const escopoLabel = escopoSelecionado === 'global'
+    ? '🌐 Padrão Global'
+    : `🏢 ${userUnits.find(u => u.id === escopoSelecionado)?.nome || escopoSelecionado}`;
 
   // ─── Styles ──────────────────────────────────────────────────────────────
   const s = {
@@ -191,6 +275,11 @@ export const PermissoesConfig: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button onClick={() => navigate('/modulos')} style={s.btn('rgba(255,255,255,0.2)')}>← Módulos</button>
           <h1 style={s.hTitle}>🛡️ Config. de Permissões</h1>
+          {isMaster && (
+            <span style={{ background: 'rgba(255,255,255,0.25)', padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700 }}>
+              👑 MASTER
+            </span>
+          )}
         </div>
         <div style={s.hRight}>
           <span>{email}</span>
@@ -199,32 +288,85 @@ export const PermissoesConfig: React.FC = () => {
       </div>
 
       <div style={s.body}>
+        {/* ── Seletor de escopo (global vs unidade) ── */}
+        {canEdit && (
+          <div style={{
+            marginBottom: '20px', padding: '16px 20px', background: '#fff',
+            borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,.08)',
+            display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap'
+          }}>
+            <div style={{ fontWeight: 700, fontSize: '14px', color: '#333' }}>📍 Escopo:</div>
+            <select
+              value={escopoSelecionado}
+              onChange={e => handleEscopoChange(e.target.value)}
+              style={{
+                padding: '8px 14px', borderRadius: '8px', border: '2px solid #667eea',
+                fontSize: '14px', fontWeight: 600, minWidth: '280px', cursor: 'pointer',
+                background: escopoSelecionado === 'global' ? '#f0f4ff' : '#fff8e1'
+              }}
+            >
+              <option value="global">🌐 Padrão Global</option>
+              {userUnits.map(u => (
+                <option key={u.id} value={u.id}>🏢 {u.nome}</option>
+              ))}
+            </select>
+            <div style={{ fontSize: '12px', color: '#888', flex: 1 }}>
+              {escopoSelecionado === 'global'
+                ? 'Permissões aplicadas a todas as unidades que NÃO têm override.'
+                : isOverrideAtivo
+                  ? '⚡ Esta unidade tem override customizado.'
+                  : '📋 Usando padrão global (sem override). Ao salvar, criará um override para esta unidade.'
+              }
+            </div>
+            {escopoSelecionado !== 'global' && isOverrideAtivo && (
+              <button
+                onClick={removerOverride}
+                disabled={removendo}
+                style={s.btn('#ff5722')}
+                title="Remove o override e volta a usar o padrão global"
+              >
+                {removendo ? '⏳...' : '🗑️ Remover override'}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Cabeçalho da página */}
         <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>🔑 Permissões por Perfil</h2>
+            <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>
+              🔑 Permissões por Perfil {escopoSelecionado !== 'global' && (
+                <span style={{ fontSize: '14px', color: '#e67e22' }}>
+                  — {userUnits.find(u => u.id === escopoSelecionado)?.nome}
+                </span>
+              )}
+            </h2>
             <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#888' }}>
-              Configure quais módulos cada perfil pode acessar. Mudanças têm efeito imediato após salvar.
+              {canEdit
+                ? 'Configure quais módulos cada perfil pode acessar. Mudanças têm efeito imediato após salvar.'
+                : '🔒 Somente o admin master pode alterar permissões.'}
             </p>
             <p style={{ margin: '4px 0 0', fontSize: '12px', color: updatedAt ? '#4caf50' : '#aaa' }}>
               {updatedAt ? `✅ Última atualização: ${formatDate(updatedAt)}` : '⚠️ Usando permissões padrão (nunca foram salvas)'}
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <button onClick={resetarDefaults} style={s.btn('#eee', '#555')}>🔄 Restaurar Padrão</button>
-            <button
-              onClick={salvar}
-              disabled={salvando || !dirty}
-              style={{ ...s.btn(dirty ? '#4caf50' : '#aaa'), opacity: !dirty ? 0.7 : 1 }}
-            >
-              {salvando ? '⏳ Salvando...' : '💾 Salvar Permissões'}
-            </button>
-          </div>
+          {canEdit && (
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button onClick={resetarDefaults} style={s.btn('#eee', '#555')}>🔄 Restaurar Padrão</button>
+              <button
+                onClick={salvar}
+                disabled={salvando || !dirty}
+                style={{ ...s.btn(dirty ? '#4caf50' : '#aaa'), opacity: !dirty ? 0.7 : 1 }}
+              >
+                {salvando ? '⏳ Salvando...' : escopoSelecionado === 'global' ? '💾 Salvar Permissões' : '💾 Salvar Override'}
+              </button>
+            </div>
+          )}
         </div>
 
         {dirty && (
           <div style={{ padding: '10px 16px', background: '#fff3e0', border: '1px solid #ffcc02', borderRadius: '8px', marginBottom: '20px', fontSize: '13px', color: '#e65100', fontWeight: 600 }}>
-            ⚠️ Há alterações não salvas. Clique em "Salvar Permissões" para aplicar.
+            ⚠️ Há alterações não salvas. Clique em "{escopoSelecionado === 'global' ? 'Salvar Permissões' : 'Salvar Override'}" para aplicar.
           </div>
         )}
 
@@ -283,44 +425,46 @@ export const PermissoesConfig: React.FC = () => {
             </div>
 
             {/* Ações rápidas */}
-            <div style={{ padding: '10px 20px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => {
-                  const tudo: Record<string, boolean> = {};
-                  TODOS_MODULOS.forEach(m => { tudo[m.id] = true; });
-                  setPermissoes(prev => ({ ...prev, [perfilAtivo]: tudo }));
-                  setDirty(true);
-                }}
-                style={s.btn('#e3f2fd', '#1565c0')}
-              >✅ Liberar todos</button>
-              <button
-                onClick={() => {
-                  const nada: Record<string, boolean> = {};
-                  TODOS_MODULOS.forEach(m => { nada[m.id] = false; });
-                  setPermissoes(prev => ({ ...prev, [perfilAtivo]: nada }));
-                  setDirty(true);
-                }}
-                style={s.btn('#ffebee', '#c62828')}
-              >🔒 Bloquear todos</button>
-              <button
-                onClick={() => {
-                  setPermissoes(prev => ({ ...prev, [perfilAtivo]: { ...DEFAULT_PERMISSOES[perfilAtivo] } }));
-                  setDirty(true);
-                }}
-                style={s.btn('#f3e5f5', '#7b1fa2')}
-              >🔄 Padrão deste perfil</button>
-              <button
-                title={`Aplica conjunto de módulos recomendados para o perfil ${perfilInfo.label}`}
-                onClick={() => {
-                  const preset = PRESET_RECOMENDADO[perfilAtivo] || [];
-                  const novas: Record<string, boolean> = {};
-                  TODOS_MODULOS.forEach(m => { novas[m.id] = preset.includes(m.id); });
-                  setPermissoes(prev => ({ ...prev, [perfilAtivo]: novas }));
-                  setDirty(true);
-                }}
-                style={s.btn('#e8f5e9', '#2e7d32')}
-              >⭐ Preset recomendado</button>
-            </div>
+            {canEdit && (
+              <div style={{ padding: '10px 20px', background: '#fafafa', borderBottom: '1px solid #eee', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => {
+                    const tudo: Record<string, boolean> = {};
+                    TODOS_MODULOS.forEach(m => { tudo[m.id] = true; });
+                    setPermissoes(prev => ({ ...prev, [perfilAtivo]: tudo }));
+                    setDirty(true);
+                  }}
+                  style={s.btn('#e3f2fd', '#1565c0')}
+                >✅ Liberar todos</button>
+                <button
+                  onClick={() => {
+                    const nada: Record<string, boolean> = {};
+                    TODOS_MODULOS.forEach(m => { nada[m.id] = false; });
+                    setPermissoes(prev => ({ ...prev, [perfilAtivo]: nada }));
+                    setDirty(true);
+                  }}
+                  style={s.btn('#ffebee', '#c62828')}
+                >🔒 Bloquear todos</button>
+                <button
+                  onClick={() => {
+                    setPermissoes(prev => ({ ...prev, [perfilAtivo]: { ...DEFAULT_PERMISSOES[perfilAtivo] } }));
+                    setDirty(true);
+                  }}
+                  style={s.btn('#f3e5f5', '#7b1fa2')}
+                >🔄 Padrão deste perfil</button>
+                <button
+                  title={`Aplica conjunto de módulos recomendados para o perfil ${perfilInfo.label}`}
+                  onClick={() => {
+                    const preset = PRESET_RECOMENDADO[perfilAtivo] || [];
+                    const novas: Record<string, boolean> = {};
+                    TODOS_MODULOS.forEach(m => { novas[m.id] = preset.includes(m.id); });
+                    setPermissoes(prev => ({ ...prev, [perfilAtivo]: novas }));
+                    setDirty(true);
+                  }}
+                  style={s.btn('#e8f5e9', '#2e7d32')}
+                >⭐ Preset recomendado</button>
+              </div>
+            )}
 
             {/* Lista de módulos */}
             <div style={{ padding: '8px 0' }}>
@@ -334,10 +478,10 @@ export const PermissoesConfig: React.FC = () => {
                       padding: '12px 20px',
                       background: idx % 2 === 0 ? '#fff' : '#fafafa',
                       borderBottom: '1px solid #f0f0f0',
-                      cursor: 'pointer',
+                      cursor: canEdit ? 'pointer' : 'default',
                       transition: 'background .1s',
                     }}
-                    onClick={() => toggle(perfilAtivo, modulo.id)}
+                    onClick={() => canEdit && toggle(perfilAtivo, modulo.id)}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <span style={{ fontSize: '20px', minWidth: '24px', textAlign: 'center' }}>{modulo.icon}</span>
@@ -367,7 +511,14 @@ export const PermissoesConfig: React.FC = () => {
 
         {/* Tabela resumo de todos os perfis */}
         <div style={{ marginTop: '32px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,.08)' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#333' }}>📊 Resumo — Todos os Perfis</h3>
+          <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#333' }}>
+            📊 Resumo — Todos os Perfis
+            {escopoSelecionado !== 'global' && (
+              <span style={{ fontSize: '13px', color: '#888', fontWeight: 400, marginLeft: '8px' }}>
+                ({escopoLabel})
+              </span>
+            )}
+          </h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
@@ -394,9 +545,9 @@ export const PermissoesConfig: React.FC = () => {
                       return (
                         <td
                           key={p.key}
-                          style={{ padding: '9px 16px', textAlign: 'center', borderBottom: '1px solid #eee', cursor: 'pointer' }}
-                          onClick={() => { toggle(p.key, m.id); setPerfilAtivo(p.key); }}
-                          title={`${ok ? 'Bloquear' : 'Liberar'} ${m.title} para ${p.label}`}
+                          style={{ padding: '9px 16px', textAlign: 'center', borderBottom: '1px solid #eee', cursor: canEdit ? 'pointer' : 'default' }}
+                          onClick={() => { if (canEdit) { toggle(p.key, m.id); setPerfilAtivo(p.key); } }}
+                          title={canEdit ? `${ok ? 'Bloquear' : 'Liberar'} ${m.title} para ${p.label}` : ''}
                         >
                           <span style={{ fontSize: '18px' }}>{ok ? '✅' : '🔒'}</span>
                         </td>
@@ -420,19 +571,19 @@ export const PermissoesConfig: React.FC = () => {
             </table>
           </div>
           <p style={{ fontSize: '11px', color: '#aaa', marginTop: '10px' }}>
-            💡 Clique em qualquer célula na tabela para alternar o acesso. Não esqueça de salvar.
+            💡 {canEdit ? 'Clique em qualquer célula na tabela para alternar o acesso. Não esqueça de salvar.' : 'Somente admin master pode alterar permissões.'}
           </p>
         </div>
 
         {/* Botão salvar fixo na parte inferior (quando há alterações) */}
-        {dirty && (
+        {dirty && canEdit && (
           <div style={{ position: 'fixed', bottom: '20px', right: '20px', zIndex: 100 }}>
             <button
               onClick={salvar}
               disabled={salvando}
               style={{ padding: '12px 24px', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '15px', boxShadow: '0 4px 16px rgba(76,175,80,.5)' }}
             >
-              {salvando ? '⏳ Salvando...' : '💾 Salvar Permissões'}
+              {salvando ? '⏳ Salvando...' : escopoSelecionado === 'global' ? '💾 Salvar Permissões' : '💾 Salvar Override'}
             </button>
           </div>
         )}
