@@ -30,6 +30,8 @@ import FormularioVaga from './pages/FormularioVaga';
 import ConciliacaoBancaria from './pages/ConciliacaoBancaria';
 import Despesas from './pages/Despesas';
 import Fornecedores from './pages/Fornecedores';
+import Payslips from './pages/Payslips';
+import HistoricoRemuneracoes from './pages/HistoricoRemuneracoes';
 import { UpdateBanner } from './components/UpdateBanner';
 import LandingPage from './pages/LandingPage';
 import './App.css';
@@ -149,6 +151,12 @@ function App() {
 
               <Route path="/modulos/permissoes"
                 element={<Protected moduloId="permissoes"><PermissoesConfig /></Protected>} />
+              <Route path="/modulos/payslips"
+                element={<Protected moduloId="payslips"><Payslips /></Protected>} />
+
+              <Route path="/modulos/historico-remuneracoes"
+                element={<Protected moduloId="historico-remuneracoes"><HistoricoRemuneracoes /></Protected>} />
+
               <Route path="/modulos/regras-sistema"
                 element={<Protected moduloId="regras-sistema"><RegrasSistema /></Protected>} />
 

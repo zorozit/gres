@@ -46,6 +46,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
       { id: 'freelancer-pagamento', icon: '🎯', title: 'Freelancers',         path: '/modulos/freelancer-pagamento' },
       { id: 'adiantamentos-saldos', icon: '🧾', title: 'Adiantamentos',       path: '/modulos/adiantamentos-saldos' },
       { id: 'fechamento-dinheiro',  icon: '💵', title: 'Fechamento Dinheiro', path: '/modulos/fechamento-dinheiro' },
+      { id: 'payslips',             icon: '🧾', title: 'Payslips',            path: '/modulos/payslips' },
     ],
   },
   {
@@ -78,6 +79,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
     color: '#e67e22',
     modules: [
       { id: 'vagas', icon: '📢', title: 'Recrutamento', path: '/modulos/vagas' },
+      { id: 'historico-remuneracoes', icon: '📊', title: 'Remunerações',        path: '/modulos/historico-remuneracoes' },
       { id: 'feriados', icon: '🎉', title: 'Feriados', path: '/modulos/feriados' },
     ],
   },
