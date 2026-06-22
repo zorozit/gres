@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 export const Logs: React.FC = () => {
   const navigate = useNavigate();
@@ -32,7 +34,7 @@ export const Logs: React.FC = () => {
       if (filtroDataInicio) params.append('dataInicio', filtroDataInicio);
       if (filtroDataFim) params.append('dataFim', filtroDataFim);
 
-      const response = await fetch(`${apiUrl}/logs?${params.toString()}`, {
+      const response = await fetchAuth(`${apiUrl}/logs?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();

@@ -4,6 +4,8 @@ import { Footer } from '../components/Footer';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONCILIAÇÃO BANCÁRIA — Modelo Stone
@@ -223,9 +225,9 @@ const ConciliacaoBancaria: React.FC = () => {
     try {
       // Busca saídas e despesas em paralelo
       const [resSaidas, resDespesas] = await Promise.allSettled([
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
           { headers: { Authorization: `Bearer ${authToken}` } }),
-        fetch(`${apiUrl}/despesas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
+        fetchAuth(`${apiUrl}/despesas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`,
           { headers: { Authorization: `Bearer ${authToken}` } }),
       ]);
 

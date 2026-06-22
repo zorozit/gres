@@ -4,6 +4,8 @@ import { Footer } from '../components/Footer';
 import { DashboardPercentuais } from '../components/DashboardPercentuais';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 const R = (v: any) => parseFloat(v) || 0;
 
@@ -35,7 +37,7 @@ export const Dashboard: React.FC = () => {
   const unitId = activeUnit?.id || '';
 
   React.useEffect(() => {
-    fetch(`${apiUrl}/unidades`, { headers: { Authorization: `Bearer ${token()}` } })
+    fetchAuth(`${apiUrl}/unidades`, { headers: { Authorization: `Bearer ${token()}` } })
       .then(r => r.json()).then(d => { if (Array.isArray(d)) setUnidades(d); }).catch(() => {});
   }, []);
 
@@ -59,15 +61,15 @@ export const Dashboard: React.FC = () => {
       mesesAlvo.add(dataInicio.substring(0, 7));
       mesesAlvo.add(dataFim.substring(0, 7));
       const folhaFetches = [...mesesAlvo].map(mm =>
-        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, { headers: h }).catch(() => null)
+        fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, { headers: h }).catch(() => null)
       );
 
       const [rC, rCol, rEsc, rMoto, rSaidas, ...foRs] = await Promise.all([
-        fetch(`${apiUrl}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: h }).catch(() => null),
-        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: h }).catch(() => null),
-        fetch(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: h }).catch(() => null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
+        fetchAuth(`${apiUrl}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: h }).catch(() => null),
+        fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: h }).catch(() => null),
+        fetchAuth(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: h }).catch(() => null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
         ...folhaFetches,
       ]);
       if (rC?.ok)      { const d = await rC.json();      setCaixaData   (Array.isArray(d) ? d : []); }

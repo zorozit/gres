@@ -5,6 +5,8 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { MovimentosCaixa } from './MovimentosCaixa';
 import { ImportarCaixaCSV } from '../components/ImportarCaixaCSV';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 interface RegistroCaixa {
   id: string;
@@ -90,7 +92,7 @@ export default function Caixa() {
   const carregarUsuarios = async () => {
     try {
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/usuarios?unitId=${unitId}`, {
+      const response = await fetchAuth(`${apiUrl}/usuarios?unitId=${unitId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -201,7 +203,7 @@ export default function Caixa() {
 
     try {
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/caixa`, {
+      const response = await fetchAuth(`${apiUrl}/caixa`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(registroCompleto)
@@ -265,7 +267,7 @@ export default function Caixa() {
     const payload = { ...registroEditando, total, diferenca };
     try {
       const token = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/caixa/${registroEditando.id}`, {
+      const res = await fetchAuth(`${apiUrl}/caixa/${registroEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
@@ -288,7 +290,7 @@ export default function Caixa() {
     if (!window.confirm('Tem certeza que deseja deletar este registro?')) return;
     try {
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/caixa/${id}`, {
+      const response = await fetchAuth(`${apiUrl}/caixa/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

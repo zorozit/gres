@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUnit } from '../contexts/UnitContext';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /*
   ══════════════════════════════════════════════════════════════════════════
@@ -192,7 +194,7 @@ export const Saidas: React.FC = () => {
   const carregarColaboradores = async () => {
     try {
       const token = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+      const res = await fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -257,7 +259,7 @@ export const Saidas: React.FC = () => {
       const token = localStorage.getItem('auth_token');
       // dataPagamento = data da saída (dataSelecionada) se não informado separadamente
       const dataPgto = novoRegistro.dataPagamento || dataSelecionada;
-      const res = await fetch(`${apiUrl}/saidas`, {
+      const res = await fetchAuth(`${apiUrl}/saidas`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,7 +304,7 @@ export const Saidas: React.FC = () => {
         referencia: registroEditando.tipo || registroEditando.referencia,
         dataPagamento: registroEditando.dataPagamento || registroEditando.data,
       };
-      const res = await fetch(`${apiUrl}/saidas/${registroEditando.id}`, {
+      const res = await fetchAuth(`${apiUrl}/saidas/${registroEditando.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -322,7 +324,7 @@ export const Saidas: React.FC = () => {
     if (!window.confirm('Tem certeza que deseja deletar este registro?')) return;
     try {
       const token = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/saidas/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchAuth(`${apiUrl}/saidas/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) { alert('Saída deletada!'); handleFiltrar(); }
       else { alert('Erro ao deletar saída'); }
     } catch (err) { alert('Erro ao deletar saída'); }

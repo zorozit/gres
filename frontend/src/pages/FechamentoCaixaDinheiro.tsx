@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 const API = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 const fmtM = (v: number) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -66,10 +68,10 @@ export const FechamentoCaixaDinheiro: React.FC = () => {
       }
 
       const [rC, rS, rColabs, ...rFolhas] = await Promise.all([
-        fetch(`${API}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
-        fetch(`${API}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
-        fetch(`${API}/colaboradores?unitId=${unitId}`, { headers: h }),
-        ...[...mesesSet].map(mes => fetch(`${API}/folha-pagamento?unitId=${unitId}&mes=${mes}`, { headers: h })),
+        fetchAuth(`${API}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
+        fetchAuth(`${API}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }),
+        fetchAuth(`${API}/colaboradores?unitId=${unitId}`, { headers: h }),
+        ...[...mesesSet].map(mes => fetchAuth(`${API}/folha-pagamento?unitId=${unitId}&mes=${mes}`, { headers: h })),
       ]);
 
       const caixaJson  = rC.ok ? await rC.json() : [];

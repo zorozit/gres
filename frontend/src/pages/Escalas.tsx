@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Feriados 2026 ──────────────────────────────────────────────────────── */
 const FERIADOS_2026: Record<string, string> = {
@@ -218,7 +220,7 @@ export const Escalas: React.FC = () => {
 
   const fetchColabs = async () => {
     try {
-      const r = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
+      const r = await fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
       // API pode retornar array direto OU { colaboradores: [...] } / { data: [...] }
       const lista: Pessoa[] = Array.isArray(d)
@@ -242,7 +244,7 @@ export const Escalas: React.FC = () => {
 
   const fetchEscalas = async () => {
     try {
-      const r = await fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers:{ Authorization:`Bearer ${token()}` } });
+      const r = await fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers:{ Authorization:`Bearer ${token()}` } });
       const d = await r.json();
       const lista:Escala[] = Array.isArray(d)?d:(Array.isArray(d?.escalas)?d.escalas:[]);
       setEscalas(lista);
@@ -274,7 +276,7 @@ export const Escalas: React.FC = () => {
 
   const fetchFuncoes = async () => {
     try {
-      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
+      const r = await fetchAuth(`${apiUrl}/funcoes-escala?unitId=${unitId}`, { headers:{ Authorization:`Bearer ${token()}` } });
       if (r.ok) { const d=await r.json(); setFuncoes(Array.isArray(d)?d:[]); }
     } catch(e){console.error(e);}
   };
@@ -372,13 +374,13 @@ export const Escalas: React.FC = () => {
       const existente = escalasMap[pessoaId]?.[data];
       if (existente) {
         if (turno === 'Folga') {
-          const r = await fetch(`${apiUrl}/escalas/${existente.id}`, {
+          const r = await fetchAuth(`${apiUrl}/escalas/${existente.id}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token()}` }
           });
           if (!r.ok) throw new Error(`DELETE falhou: ${r.status}`);
         } else {
-          const r = await fetch(`${apiUrl}/escalas/${existente.id}`, {
+          const r = await fetchAuth(`${apiUrl}/escalas/${existente.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
             body: JSON.stringify({ turno }),
@@ -386,7 +388,7 @@ export const Escalas: React.FC = () => {
           if (!r.ok) throw new Error(`PUT falhou: ${r.status}`);
         }
       } else if (turno !== 'Folga') {
-        const r = await fetch(`${apiUrl}/escalas`, {
+        const r = await fetchAuth(`${apiUrl}/escalas`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
           body: JSON.stringify({ unitId, colaboradorId: pessoaId, data, turno }),
@@ -414,7 +416,7 @@ export const Escalas: React.FC = () => {
     const esc = escalasMap[pessoaId]?.[data];
     if (esc) {
       const field = isNoite ? 'presencaNoite' : 'presenca';
-      await fetch(`${apiUrl}/escalas/${esc.id}`, {
+      await fetchAuth(`${apiUrl}/escalas/${esc.id}`, {
         method:'PUT',
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
         body: JSON.stringify({ [field]: next, responsavelId, responsavelNome }),
@@ -422,7 +424,7 @@ export const Escalas: React.FC = () => {
     } else if (next) {
       const turno = isNoite ? 'Noite' : 'Dia';
       const field = isNoite ? 'presencaNoite' : 'presenca';
-      await fetch(`${apiUrl}/escalas`, {
+      await fetchAuth(`${apiUrl}/escalas`, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token()}` },
         body: JSON.stringify({ unitId, colaboradorId:pessoaId, data, turno, [field]:next, responsavelId, responsavelNome }),
@@ -487,7 +489,7 @@ export const Escalas: React.FC = () => {
           turno = 'Dia';
         }
         try {
-          await fetch(`${apiUrl}/escalas`,{
+          await fetchAuth(`${apiUrl}/escalas`,{
             method:'POST',
             headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},
             body: JSON.stringify({ unitId, colaboradorId:p.id, data:ds, turno }),
@@ -669,7 +671,7 @@ export const Escalas: React.FC = () => {
     setHistoricoMeta(meta);
     setHistoricoLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/escalas-log/${escId}`, {
+      const r = await fetchAuth(`${apiUrl}/escalas-log/${escId}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {

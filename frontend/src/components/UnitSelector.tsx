@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import '../styles/UnitSelector.css';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 export const UnitSelector: React.FC = () => {
   const { activeUnit, setActiveUnit, userUnits, setUserUnits, isLoadingUnits, setIsLoadingUnits } = useUnit();
@@ -16,7 +18,7 @@ export const UnitSelector: React.FC = () => {
     const loadUnits = async () => {
       setIsLoadingUnits(true);
       try {
-        const response = await fetch('https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod/unidades', {
+        const response = await fetchAuth('https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod/unidades', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'

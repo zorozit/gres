@@ -4,6 +4,8 @@ import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Interfaces ─────────────────────────────────────────────────────────── */
 
@@ -356,7 +358,7 @@ export const Motoboys: React.FC = () => {
     try {
       const token = localStorage.getItem('auth_token');
       // OPÇÃO A: motoboys = colaboradores com isMotoboy=true (fonte única)
-      const rC = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`,
+      const rC = await fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`,
         { headers: { Authorization: `Bearer ${token}` } });
       const dC = await rC.json();
       const colabs: any[] = Array.isArray(dC) ? dC : [];
@@ -423,9 +425,9 @@ export const Motoboys: React.FC = () => {
       }
       const headers = { Authorization: `Bearer ${token}` };
       const [rS, ...rEs] = await Promise.all([
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`, { headers }),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`, { headers }),
         ...mesesAlvo.map(mm =>
-          fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, { headers }).catch(() => null as any)
+          fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, { headers }).catch(() => null as any)
         ),
       ]);
       const dS = await rS.json();
@@ -483,7 +485,7 @@ export const Motoboys: React.FC = () => {
 
       // Buscar controle de todos os meses tocados e mesclar
       const partes = await Promise.all(mesesAlvo.map(mm =>
-        fetch(`${apiUrl}/controle-motoboy?motoboyId=${ctrlMotoboyId}&mes=${mm}&unitId=${unitId}`, { headers })
+        fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${ctrlMotoboyId}&mes=${mm}&unitId=${unitId}`, { headers })
           .then(r => r.ok ? r.json() : [])
           .catch(() => [])
       ));
@@ -608,7 +610,7 @@ export const Motoboys: React.FC = () => {
           porMes.get(mm)!.push(l);
         }
         for (const [mm, linhas] of porMes) {
-          await fetch(`${apiUrl}/controle-motoboy`, {
+          await fetchAuth(`${apiUrl}/controle-motoboy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ motoboyId: ctrlMotoboyId, mes: mm, unitId, linhas }),
@@ -618,7 +620,7 @@ export const Motoboys: React.FC = () => {
         return;
       }
       const payload = { motoboyId: ctrlMotoboyId, mes: ctrlMesAno, unitId, linhas: controleComAcumulado };
-      const r = await fetch(`${apiUrl}/controle-motoboy`, {
+      const r = await fetchAuth(`${apiUrl}/controle-motoboy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -1007,7 +1009,7 @@ export const Motoboys: React.FC = () => {
                     try {
                       if (escAtual) {
                         // PUT atualiza presença (usa turno existente)
-                        await fetch(`${apiUrl}/escalas/${escAtual.id}`, {
+                        await fetchAuth(`${apiUrl}/escalas/${escAtual.id}`, {
                           method: 'PUT',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({ presenca: novaPres }),
@@ -1019,7 +1021,7 @@ export const Motoboys: React.FC = () => {
                       } else {
                         // Cria escala (turno padrão Dia ou Folga)
                         const turnoNovo = novaPres === 'folga' ? 'Folga' : 'Dia';
-                        const r = await fetch(`${apiUrl}/escalas`, {
+                        const r = await fetchAuth(`${apiUrl}/escalas`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({
@@ -1058,7 +1060,7 @@ export const Motoboys: React.FC = () => {
                     const targetColabId = motoboyCtrl.colaboradorId || ctrlMotoboyId;
                     try {
                       if (escAtual) {
-                        await fetch(`${apiUrl}/escalas/${escAtual.id}`, {
+                        await fetchAuth(`${apiUrl}/escalas/${escAtual.id}`, {
                           method: 'PUT',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({ observacao: obs }),
@@ -1067,7 +1069,7 @@ export const Motoboys: React.FC = () => {
                           e.id === escAtual.id ? { ...e, observacao: obs } : e
                         ));
                       } else if (obs.trim()) {
-                        const r = await fetch(`${apiUrl}/escalas`, {
+                        const r = await fetchAuth(`${apiUrl}/escalas`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({

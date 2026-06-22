@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 const API_URL = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
@@ -75,7 +77,7 @@ export default function FormularioVaga() {
   /* ── Carrega vagas pelo vagaId da URL ── */
   useEffect(() => {
     if (!vagaId) return;
-    fetch(`${API_URL}/vagas-publicas?vagaId=${vagaId}`)
+    fetchAuth(`${API_URL}/vagas-publicas?vagaId=${vagaId}`)
       .then(r => r.json())
       .then(d => {
         if (d.encerrada) { setEncerrada(true); return; }
@@ -158,7 +160,7 @@ export default function FormularioVaga() {
     }
     setEnviando(true);
     try {
-      const res = await fetch(`${API_URL}/candidatos-publico`, {
+      const res = await fetchAuth(`${API_URL}/candidatos-publico`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

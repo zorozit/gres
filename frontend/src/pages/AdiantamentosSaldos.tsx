@@ -4,6 +4,8 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Tipos ─────────────────────────────────────────────── */
 
@@ -126,8 +128,8 @@ export const AdiantamentosSaldos: React.FC = () => {
     try {
       const dataInicio = inicioHistorico(parseInt(mesesHistorico, 10) || 12);
       const [rColabs, rSaidas] = await Promise.all([
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${hoje()}`, { headers: { Authorization: `Bearer ${token()}` } }),
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token()}` } }),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${hoje()}`, { headers: { Authorization: `Bearer ${token()}` } }),
       ]);
       if (rColabs.ok) { const d = await rColabs.json(); setColaboradores(Array.isArray(d) ? d : []); }
       if (rSaidas.ok) {
@@ -272,7 +274,7 @@ export const AdiantamentosSaldos: React.FC = () => {
         observacao: formNovoAdto.descricao || '',
         updatedAt: new Date().toISOString(),
       };
-      const res = await fetch(`${apiUrl}/saidas`, {
+      const res = await fetchAuth(`${apiUrl}/saidas`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
@@ -306,7 +308,7 @@ export const AdiantamentosSaldos: React.FC = () => {
     const raw = modalEditarAdto.raw;
     const tipoLabel = formEditarAdto.tipo === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
     try {
-      const res = await fetch(`${apiUrl}/saidas/${raw.id}`, {
+      const res = await fetchAuth(`${apiUrl}/saidas/${raw.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify({
@@ -342,7 +344,7 @@ export const AdiantamentosSaldos: React.FC = () => {
     )) return;
     setSalvando(true);
     try {
-      const res = await fetch(`${apiUrl}/saidas/${contrato.raw.id}`, {
+      const res = await fetchAuth(`${apiUrl}/saidas/${contrato.raw.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token()}` },
       });
@@ -374,7 +376,7 @@ export const AdiantamentosSaldos: React.FC = () => {
         observacao: formParcela.obs || '',
         updatedAt: new Date().toISOString(),
       };
-      const res = await fetch(`${apiUrl}/saidas`, {
+      const res = await fetchAuth(`${apiUrl}/saidas`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });

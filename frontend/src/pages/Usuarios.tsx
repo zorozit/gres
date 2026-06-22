@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 // Perfis para badge visual
 const PERFIS_SISTEMA = [
@@ -57,7 +59,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/usuarios`, {
+      const response = await fetchAuth(`${apiUrl}/usuarios`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -77,7 +79,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/unidades`, {
+      const response = await fetchAuth(`${apiUrl}/unidades`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -121,7 +123,7 @@ export const Usuarios: React.FC = () => {
         ativo: novoUsuario.ativo,
         senha: senhaFinal
       };
-      const response = await fetch(`${apiUrl}/usuarios`, {
+      const response = await fetchAuth(`${apiUrl}/usuarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
@@ -182,7 +184,7 @@ export const Usuarios: React.FC = () => {
         ativo: usuarioEditando.ativo
       };
       if (novaSenha) payload.senha = novaSenha;
-      const response = await fetch(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
+      const response = await fetchAuth(`${apiUrl}/usuarios/${usuarioEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
@@ -211,7 +213,7 @@ export const Usuarios: React.FC = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_ENDPOINT;
       const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${apiUrl}/usuarios/${id}`, {
+      const response = await fetchAuth(`${apiUrl}/usuarios/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

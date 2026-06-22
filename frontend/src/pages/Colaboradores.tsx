@@ -3,7 +3,9 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
 import {
+
   HistoricoColaborador,
   HistoricoPagamentos,
   HistoricoEscalas,
@@ -954,7 +956,7 @@ export default function Colaboradores() {
     if (!uid) return;
     setLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/colaboradores?unitId=${uid}`, {
+      const r = await fetchAuth(`${apiUrl}/colaboradores?unitId=${uid}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {
@@ -968,7 +970,7 @@ export default function Colaboradores() {
   const carregarFuncoes = useCallback(async (uid: string) => {
     if (!uid) return;
     try {
-      const r = await fetch(`${apiUrl}/funcoes-escala?unitId=${uid}`, {
+      const r = await fetchAuth(`${apiUrl}/funcoes-escala?unitId=${uid}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) { const d = await r.json(); setFuncoes(Array.isArray(d) ? d : []); }
@@ -1027,7 +1029,7 @@ export default function Colaboradores() {
 
     setSalvando(true);
     try {
-      const res = await fetch(`${apiUrl}/colaboradores`, {
+      const res = await fetchAuth(`${apiUrl}/colaboradores`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1062,7 +1064,7 @@ export default function Colaboradores() {
     };
     setSalvando(true);
     try {
-      const res = await fetch(`${apiUrl}/colaboradores/${colaboradorEditando.id}`, {
+      const res = await fetchAuth(`${apiUrl}/colaboradores/${colaboradorEditando.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1082,7 +1084,7 @@ export default function Colaboradores() {
   const handleDeletarColaborador = async (id: string) => {
     if (!window.confirm('Deletar este colaborador permanentemente?')) return;
     try {
-      const res = await fetch(`${apiUrl}/colaboradores/${id}`, {
+      const res = await fetchAuth(`${apiUrl}/colaboradores/${id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
       });
       if (res.ok) { mostrarMsg('🗑️ Colaborador removido.'); carregarColaboradores(unitId); }
@@ -1095,7 +1097,7 @@ export default function Colaboradores() {
     if (!dataDemissao) return;
     setSalvando(true);
     try {
-      await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
+      await fetchAuth(`${apiUrl}/colaboradores/${colab.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...colab, ativo: false, dataDemissao, ...auditoria(), observacaoAlteracao: `Desligamento manual em ${dataDemissao}` }),
@@ -1111,7 +1113,7 @@ export default function Colaboradores() {
     if (!window.confirm(`Reativar ${colab.nome}?`)) return;
     setSalvando(true);
     try {
-      await fetch(`${apiUrl}/colaboradores/${colab.id}`, {
+      await fetchAuth(`${apiUrl}/colaboradores/${colab.id}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...colab, ativo: true, dataDemissao: '', ...auditoria(), observacaoAlteracao: 'Reativacao manual' }),
@@ -1135,7 +1137,7 @@ export default function Colaboradores() {
         unitId,
         ...(isEdit ? { id: funcaoEditando!.id } : {}),
       };
-      const res = await fetch(`${apiUrl}/funcoes-escala`, {
+      const res = await fetchAuth(`${apiUrl}/funcoes-escala`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1155,7 +1157,7 @@ export default function Colaboradores() {
 
   const handleDeletarFuncao = async (id: string, nome: string) => {
     if (!window.confirm(`Excluir função "${nome}"?`)) return;
-    await fetch(`${apiUrl}/funcoes-escala/${id}`, {
+    await fetchAuth(`${apiUrl}/funcoes-escala/${id}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token()}` },
     });
     mostrarMsg('🗑️ Função removida.');
@@ -1169,7 +1171,7 @@ export default function Colaboradores() {
     for (const f of FUNCOES_ESCALA_PADRAO) {
       try {
         const existe = funcoes.find(x => x.nome.toLowerCase() === f.nome.toLowerCase());
-        await fetch(`${apiUrl}/funcoes-escala`, {
+        await fetchAuth(`${apiUrl}/funcoes-escala`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...f, unitId, ...(existe ? { id: existe.id } : {}) }),

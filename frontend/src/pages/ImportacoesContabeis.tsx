@@ -5,6 +5,8 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { buildDefaultPaymentDate, normalizeName, parsePayrollPdf } from '../utils/payrollImport';
 import type { DocumentoFolhaTipo, ImportPayrollParseResult, ImportPayrollRecord } from '../utils/payrollImport';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 interface Colaborador {
   id: string;
@@ -56,7 +58,7 @@ export const ImportacoesContabeis: React.FC = () => {
     if (!unitId || !authToken) return;
     const carregarColaboradores = async () => {
       try {
-        const res = await fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+        const res = await fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -98,7 +100,7 @@ export const ImportacoesContabeis: React.FC = () => {
         const [year, month] = result.competencia.split('-');
         const start = `${year}-${month}-01`;
         const end = `${year}-${month}-31`;
-        const response = await fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${start}&dataFim=${end}`, {
+        const response = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${start}&dataFim=${end}`, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (response.ok) {
@@ -106,7 +108,7 @@ export const ImportacoesContabeis: React.FC = () => {
           existingSaidas = Array.isArray(data) ? data : [];
         }
       } else {
-        const response = await fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${result.competencia}`, {
+        const response = await fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${result.competencia}`, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (response.ok) {
@@ -215,7 +217,7 @@ export const ImportacoesContabeis: React.FC = () => {
       unitId,
     };
 
-    const response = await fetch(`${apiUrl}/saidas`, {
+    const response = await fetchAuth(`${apiUrl}/saidas`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -248,7 +250,7 @@ export const ImportacoesContabeis: React.FC = () => {
       obs: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
     };
 
-    const response = await fetch(`${apiUrl}/folha-pagamento`, {
+    const response = await fetchAuth(`${apiUrl}/folha-pagamento`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

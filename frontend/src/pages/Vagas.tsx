@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 const API_URL = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 const FORM_BASE = 'https://www.gires.com.br/vaga';  // /vaga/:vagaId
@@ -132,7 +134,7 @@ export default function Vagas() {
     if (!unitId) return;
     setLoadingVagas(true);
     try {
-      const r = await fetch(`${API_URL}/vagas?unitId=${unitId}`, { headers: authHeaders() });
+      const r = await fetchAuth(`${API_URL}/vagas?unitId=${unitId}`, { headers: authHeaders() });
       const d = await r.json();
       setVagas(d.vagas || []);
     } finally {
@@ -148,7 +150,7 @@ export default function Vagas() {
       let url = `${API_URL}/candidatos?unitId=${unitId}`;
       if (filtroStatus) url += `&status=${filtroStatus}`;
       if (filtroVaga) url += `&vagaTitulo=${encodeURIComponent(filtroVaga)}`;
-      const r = await fetch(url, { headers: authHeaders() });
+      const r = await fetchAuth(url, { headers: authHeaders() });
       const d = await r.json();
       setCandidatos(d.candidatos || []);
     } finally {
@@ -188,14 +190,14 @@ export default function Vagas() {
     try {
       if (vagaEditando) {
         // Editar
-        await fetch(`${API_URL}/vagas/${vagaEditando.id}`, {
+        await fetchAuth(`${API_URL}/vagas/${vagaEditando.id}`, {
           method: 'PUT',
           headers: authHeaders(),
           body: JSON.stringify(novaVaga),
         });
       } else {
         // Criar
-        await fetch(`${API_URL}/vagas`, {
+        await fetchAuth(`${API_URL}/vagas`, {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ ...novaVaga, unitId }),
@@ -213,7 +215,7 @@ export default function Vagas() {
   /* ── Toggle status da vaga ── */
   const toggleVaga = async (vaga: Vaga) => {
     const newStatus = vaga.status === 'aberta' ? 'fechada' : 'aberta';
-    await fetch(`${API_URL}/vagas/${vaga.id}`, {
+    await fetchAuth(`${API_URL}/vagas/${vaga.id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify({ status: newStatus }),
@@ -232,7 +234,7 @@ export default function Vagas() {
 
   /* ── Candidato: salvar status/notas ── */
   const salvarCandidato = async (candidato: Candidato, updates: Partial<Candidato>) => {
-    await fetch(`${API_URL}/candidatos/${candidato.id}`, {
+    await fetchAuth(`${API_URL}/candidatos/${candidato.id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify(updates),
@@ -255,7 +257,7 @@ export default function Vagas() {
   const aplicarStatusLote = async () => {
     if (!novoStatusLote || selecionados.size === 0) return;
     await Promise.all([...selecionados].map(id =>
-      fetch(`${API_URL}/candidatos/${id}`, {
+      fetchAuth(`${API_URL}/candidatos/${id}`, {
         method: 'PUT',
         headers: authHeaders(),
         body: JSON.stringify({ status: novoStatusLote }),

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 export type AbaModal = 'cadastro' | 'historico' | 'pagamentos' | 'escalas' | 'saidas' | 'motoboy';
 
@@ -78,7 +80,7 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
   useEffect(() => {
     if (!colaboradorId) return;
     setLoading(true);
-    fetch(`${apiUrl}/colaboradores-log/${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetchAuth(`${apiUrl}/colaboradores-log/${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : [])
       .then(d => setLogs(Array.isArray(d) ? d : []))
       .catch(() => setLogs([]))
@@ -203,7 +205,7 @@ export const HistoricoPagamentos: React.FC<PropsComUnit> = ({ colaboradorId, uni
     if (!colaboradorId) return;
     setLoading(true);
     Promise.all([
-      fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&colaboradorId=${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&colaboradorId=${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : [])
         .catch(() => []),
     ]).then(([folha]) => {
@@ -263,7 +265,7 @@ export const HistoricoEscalas: React.FC<PropsComUnit> = ({ colaboradorId, unitId
   useEffect(() => {
     if (!colaboradorId) return;
     setLoading(true);
-    fetch(`${apiUrl}/escalas?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetchAuth(`${apiUrl}/escalas?unitId=${unitId}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : [])
       .then(d => {
         const todas = Array.isArray(d) ? d : [];
@@ -329,7 +331,7 @@ export const HistoricoSaidas: React.FC<PropsComUnit> = ({ colaboradorId, unitId,
     const hoje = new Date();
     const inicio = new Date(hoje.getFullYear(), hoje.getMonth() - 12, 1).toISOString().split('T')[0];
     const fim = hoje.toISOString().split('T')[0];
-    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${inicio}&dataFim=${fim}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : [])
       .then(d => {
         const todas = Array.isArray(d) ? d : [];
@@ -395,7 +397,7 @@ export const HistoricoMotoboy: React.FC<PropsComUnit> = ({ colaboradorId, apiUrl
       meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
     }
     Promise.all(meses.map(mm =>
-      fetch(`${apiUrl}/controle-motoboy?motoboyId=${colaboradorId}&mes=${mm}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${colaboradorId}&mes=${mm}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : [])
         .catch(() => [])
     )).then(partes => {

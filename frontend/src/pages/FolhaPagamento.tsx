@@ -6,6 +6,8 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 import { isFeriado } from '../utils/feriados';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
 
@@ -401,7 +403,7 @@ export default function FolhaPagamento() {
 
   const abrirHistorico = async (colaboradorId: string) => {
     try {
-      const r = await fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&colaboradorId=${colaboradorId}`, {
+      const r = await fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&colaboradorId=${colaboradorId}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {
@@ -471,25 +473,25 @@ export default function FolhaPagamento() {
       const auth = { headers: { Authorization: `Bearer ${token()}` } };
       // Fetches de folha/escalas/controle-motoboy precisam ser por mês (backend filtra por &mes=)
       const folhaFetches = mesesAlvo.map(mm =>
-        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
+        fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
       );
       const escalaFetches = mesesAlvo.map(mm =>
-        fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
+        fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
       );
       // Quando período custom ativo, buscar também o mês completo para adiantamentos de transporte
       const rSMes = periodoCustomAtivo
-        ? fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalMesAnoInicio}&dataFim=${mesalMesAnoFim}`, auth).catch(() => null)
+        ? fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalMesAnoInicio}&dataFim=${mesalMesAnoFim}`, auth).catch(() => null)
         : null;
 
       const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
         Promise.all(folhaFetches),
         Promise.all(escalaFetches),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(() => null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(() => null),
         // Pending saídas from previous 3 months
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(() => null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(() => null),
         // Histórico longo para saldo de adiantamento especial
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, auth).catch(() => null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, auth).catch(() => null),
         // Saídas do mês completo (usado para adiantamento transporte quando período custom ativo)
         rSMes || Promise.resolve(null),
       ]);
@@ -556,7 +558,7 @@ export default function FolhaPagamento() {
       await Promise.all(motos.map(async m => {
         try {
           const partes = await Promise.all(mesesAlvo.map(mm =>
-            fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
+            fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
               .then(r => r.ok ? r.json() : [])
               .catch(() => [])
           ));
@@ -1290,7 +1292,7 @@ export default function FolhaPagamento() {
         saldoFinal: folha.saldoFinal,
         ...auditoriaCampos(),
       };
-      await fetch(`${apiUrl}/folha-pagamento`, {
+      await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
@@ -1319,7 +1321,7 @@ export default function FolhaPagamento() {
         saldoFinal: folha.saldoFinal,
         ...auditoriaCampos(),
       };
-      await fetch(`${apiUrl}/folha-pagamento`, {
+      await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
@@ -1788,7 +1790,7 @@ export default function FolhaPagamento() {
     const ultimoDia  = new Date(ano, mes, 0).getDate();
     const dataFim    = `${mesAnoLocal}-${String(ultimoDia).padStart(2,'0')}`;
 
-    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, {
+    fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, {
       headers: { Authorization: `Bearer ${token()}` }
     })
       .then(r => r.ok ? r.json() : [])
@@ -2115,7 +2117,7 @@ export default function FolhaPagamento() {
                     // ── Obs legível (mantido para compatibilidade) ──
                     obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''} - Líquido: R$${fmt(valorLiquido)}`,
                   };
-                  const resp = await fetch(`${apiUrl}/folha-pagamento`, {
+                  const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                     body: JSON.stringify(payload),
@@ -2148,7 +2150,7 @@ export default function FolhaPagamento() {
                       }],
                       obs: `Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length || 0} dias - R$${fmt(fr.transporteSaldo)}`,
                     };
-                    await fetch(`${apiUrl}/folha-pagamento`, {
+                    await fetchAuth(`${apiUrl}/folha-pagamento`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                       body: JSON.stringify(payloadTransp),
@@ -2187,7 +2189,7 @@ export default function FolhaPagamento() {
                         obs: `Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede ? ' [excede adto]' : ''}`,
                         updatedAt: new Date().toISOString(),
                       };
-                      await fetch(`${apiUrl}/saidas`, {
+                      await fetchAuth(`${apiUrl}/saidas`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                         body: JSON.stringify(payloadDescTransp),
@@ -2214,11 +2216,38 @@ export default function FolhaPagamento() {
                       obs: `Abatido no pagamento da semana ${fech.semanaLabel}`,
                       updatedAt: new Date().toISOString(),
                     };
-                    await fetch(`${apiUrl}/saidas`, {
+                    await fetchAuth(`${apiUrl}/saidas`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                       body: JSON.stringify(payloadDesc),
                     });
+                  }
+
+                  /* P2.3: Auto-gerar payslip */
+                  try {
+                    const semLabel2 = fech.semanaLabel || mesAno;
+                    const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
+                    await fetchAuth(`${apiUrl}/payslips`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                      body: JSON.stringify({
+                        colaboradorId: fr.id,
+                        nomeColaborador: fr.nome,
+                        unitId,
+                        periodo: periodoKey2,
+                        periodoInicio: periodoIni || mesAno + '-01',
+                        periodoFim: periodoFim || mesAno + '-31',
+                        mes: mesAno,
+                        bruto: totalCredito,
+                        transporte: fr.transporteSaldo || 0,
+                        descontos: totalDebito + vlAbate,
+                        liquido: _totalFinal,
+                        status: 'pago',
+                        pagamentos: [],
+                      }),
+                    });
+                  } catch (psErr) {
+                    console.warn('[Payslip] Erro ao gerar payslip (best-effort):', psErr);
                   }
 
                   await carregarDados();
@@ -2509,7 +2538,7 @@ export default function FolhaPagamento() {
                               onClick={async () => {
                                 if (!window.confirm(`Excluir lançamento "${tipo} — ${s2.descricao || ''}" no valor de ${fmtMoeda(R(s2.valor))}?\n\nEssa ação não pode ser desfeita.`)) return;
                                 try {
-                                  const res = await fetch(`${apiUrl}/saidas/${s2.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
+                                  const res = await fetchAuth(`${apiUrl}/saidas/${s2.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
                                   if (res.ok) { alert('✅ Lançamento excluído.'); onClose(); carregarDados(); }
                                   else { alert('Erro ao excluir.'); }
                                 } catch { alert('Erro de rede ao excluir.'); }
@@ -2621,7 +2650,7 @@ export default function FolhaPagamento() {
           descricao:  saidaInlineEdit.descricao || '',
           dataPagamento: saidaInlineEdit.dataPagamento || saidaInlineEdit.data,
         };
-        const res = await fetch(`${apiUrl}/saidas/${saidaInlineEdit.id}`, {
+        const res = await fetchAuth(`${apiUrl}/saidas/${saidaInlineEdit.id}`, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -2779,7 +2808,7 @@ export default function FolhaPagamento() {
     };
 
     const tipo = modalPgtoTipo;
-    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
+    fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
       headers: { Authorization: `Bearer ${token()}` }
     })
       .then(r => r.ok ? r.json() : [])
@@ -2839,7 +2868,7 @@ export default function FolhaPagamento() {
         saldoFinal: modalPagamento.saldoFinal,
         logPagamentos: newLogs,
       };
-      await fetch(`${apiUrl}/folha-pagamento`, {
+      await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
@@ -4084,7 +4113,7 @@ export default function FolhaPagamento() {
                                                   valorBruto: brutoEditado, valorTransporte: transpEditado,
                                                   totalFinal: totalEdit, obs: ed.obs || '',
                                                 };
-                                                await fetch(`${apiUrl}/folha-pagamento`, {
+                                                await fetchAuth(`${apiUrl}/folha-pagamento`, {
                                                   method: 'POST',
                                                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                                                   body: JSON.stringify(payload),
@@ -4101,7 +4130,7 @@ export default function FolhaPagamento() {
                                                   valorBruto: brutoEditado, valorTransporte: transpEditado,
                                                   totalFinal: totalEdit, obs: ed.obs || '',
                                                 };
-                                                await fetch(`${apiUrl}/folha-pagamento`, {
+                                                await fetchAuth(`${apiUrl}/folha-pagamento`, {
                                                   method: 'POST',
                                                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                                                   body: JSON.stringify(payload),
@@ -4806,7 +4835,7 @@ export default function FolhaPagamento() {
                                           setSalvando(true);
                                           try {
                                             const payload = { colaboradorId: fr.id, mes: mesAno, semana: fech.dataFechamento, unitId, pago: false, dataPagamento: null, diasPagos: [] };
-                                            const resp = await fetch(`${apiUrl}/folha-pagamento`, {
+                                            const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
                                               method: 'POST',
                                               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                                               body: JSON.stringify(payload),
@@ -4848,7 +4877,7 @@ export default function FolhaPagamento() {
                                               pago: false,
                                               dias: diasJaPagosNovos.map((d: any) => ({ data: d.data, turno: d.turno, valor: d.valor })),
                                             };
-                                            const r1 = await fetch(`${apiUrl}/folha-pagamento`, {
+                                            const r1 = await fetchAuth(`${apiUrl}/folha-pagamento`, {
                                               method: 'POST',
                                               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                                               body: JSON.stringify(payloadDias),
@@ -4861,7 +4890,7 @@ export default function FolhaPagamento() {
                                               semana: fech.dataFechamento, unitId,
                                               pago: false, dataPagamento: null, diasPagos: [],
                                             };
-                                            const r2 = await fetch(`${apiUrl}/folha-pagamento`, {
+                                            const r2 = await fetchAuth(`${apiUrl}/folha-pagamento`, {
                                               method: 'POST',
                                               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
                                               body: JSON.stringify(payloadLeg),

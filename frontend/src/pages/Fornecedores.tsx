@@ -3,6 +3,8 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CADASTRO DE FORNECEDORES
@@ -95,7 +97,7 @@ const Fornecedores: React.FC = () => {
     if (!unitId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/fornecedores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${authToken}` } });
+      const res = await fetchAuth(`${apiUrl}/fornecedores?unitId=${unitId}`, { headers: { Authorization: `Bearer ${authToken}` } });
       if (res.ok) {
         const data = await res.json();
         setLista(Array.isArray(data) ? data : []);
@@ -176,7 +178,7 @@ const Fornecedores: React.FC = () => {
   // ── Ativar/Desativar ──────────────────────────────────────────────────
   const toggleAtivo = async (f: Fornecedor) => {
     try {
-      const res = await fetch(`${apiUrl}/fornecedores/${f.id}`, {
+      const res = await fetchAuth(`${apiUrl}/fornecedores/${f.id}`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({ ...f, ativo: !f.ativo }),
@@ -188,7 +190,7 @@ const Fornecedores: React.FC = () => {
   const deletar = async (f: Fornecedor) => {
     if (!window.confirm(`Excluir fornecedor "${f.razaoSocial}"? Esta ação não pode ser desfeita.`)) return;
     try {
-      const res = await fetch(`${apiUrl}/fornecedores/${f.id}`, { method: 'DELETE', headers });
+      const res = await fetchAuth(`${apiUrl}/fornecedores/${f.id}`, { method: 'DELETE', headers });
       if (res.ok) carregar();
     } catch (err) { console.error(err); }
   };

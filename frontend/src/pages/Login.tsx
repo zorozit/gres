@@ -15,7 +15,14 @@ export const Login: React.FC = () => {
     setLoading(true);
     try {
       await login(email, password);
-      navigate('/modulos');
+      // Redirect para página anterior se foi redirecionado por 401
+      const redirectTo = localStorage.getItem('redirect_after_login');
+      if (redirectTo) {
+        localStorage.removeItem('redirect_after_login');
+        navigate(redirectTo);
+      } else {
+        navigate('/modulos');
+      }
     } catch (err) {
       console.error('Erro ao fazer login:', err);
     } finally {

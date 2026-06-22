@@ -21,6 +21,8 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
 const R = (v: any): number => {
@@ -169,7 +171,7 @@ const MotoboyAuditoria: React.FC = () => {
   /* ── Carregar lista de motoboys ── */
   useEffect(() => {
     if (!unitId) return;
-    fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth)
+    fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth)
       .then(r => r.ok ? r.json() : [])
       .then((colabs: any[]) => {
         const motos: Motoboy[] = colabs
@@ -205,8 +207,8 @@ const MotoboyAuditoria: React.FC = () => {
       const dataFim    = new Date(ano, mes, 0).toISOString().split('T')[0];
 
       const [rCtrl, rSaidas] = await Promise.all([
-        fetch(`${apiUrl}/controle-motoboy?motoboyId=${motoboyId}&mes=${mesAno}&unitId=${unitId}`, auth),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth),
+        fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${motoboyId}&mes=${mesAno}&unitId=${unitId}`, auth),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth),
       ]);
 
       const controle: ControleDia[] = rCtrl.ok ? (await rCtrl.json()) : [];

@@ -5,6 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 interface PagamentoLog {
@@ -181,18 +183,18 @@ export const Extrato: React.FC = () => {
       const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-01`;
 
       const [rF, rC, rS, rSPend] = await Promise.all([
-        fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, {
+        fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
         // Current month saidas
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataIni}&dataFim=${dataFim}`, {
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataIni}&dataFim=${dataFim}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
         // Older pending saidas (last 3 months)
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataIni}`, {
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataIni}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
       ]);
@@ -517,7 +519,7 @@ export const Extrato: React.FC = () => {
         updatedAt:      new Date().toISOString(),
       };
 
-      const res = await fetch(`${apiUrl}/saidas/${editItem.id}`, {
+      const res = await fetchAuth(`${apiUrl}/saidas/${editItem.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
@@ -579,7 +581,7 @@ export const Extrato: React.FC = () => {
     if (!window.confirm(`Excluir lançamento "${item.tipoSaida || ''} — ${item.descricao}" no valor de ${fmtMoeda(item.valor)}?\n\nEssa ação não pode ser desfeita.`)) return;
     try {
       const tk = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/saidas/${item.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tk}` } });
+      const res = await fetchAuth(`${apiUrl}/saidas/${item.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tk}` } });
       if (res.ok) {
         alert('✅ Lançamento excluído.');
         setItems(prev => prev.filter(it => it.id !== item.id));
@@ -831,7 +833,7 @@ export const Extrato: React.FC = () => {
         motivoExclusao: excluirMotivo.trim(),
         updatedAt: agora,
       };
-      const res = await fetch(`${apiUrl}/saidas/${modalExcluir.id}`, {
+      const res = await fetchAuth(`${apiUrl}/saidas/${modalExcluir.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(body),
@@ -903,7 +905,7 @@ export const Extrato: React.FC = () => {
         observacao:    ajusteForm.obs.trim() || `Ajuste manual via Extrato — ${ajusteForm.tipo === 'credito' ? 'crédito' : 'débito'} de R$${val.toFixed(2)}`,
         pago:          false,
       };
-      const res = await fetch(`${apiUrl}/saidas`, {
+      const res = await fetchAuth(`${apiUrl}/saidas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(body),

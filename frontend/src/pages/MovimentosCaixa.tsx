@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import * as XLSX from 'xlsx';
 import { useUnit } from '../contexts/UnitContext';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 interface RegistroCaixa {
   id: string;
@@ -95,7 +97,7 @@ export const MovimentosCaixa: React.FC = () => {
     const carregarUnidades = async () => {
       try {
         const token = localStorage.getItem('auth_token');
-        const response = await fetch(`${apiUrl}/unidades`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const response = await fetchAuth(`${apiUrl}/unidades`, { headers: { 'Authorization': `Bearer ${token}` } });
         const data = await response.json();
         if (Array.isArray(data)) {
           setUnidades(data);
@@ -111,7 +113,7 @@ export const MovimentosCaixa: React.FC = () => {
       if (!selectedUnit) return;
       try {
         const token = localStorage.getItem('auth_token');
-        const response = await fetch(`${apiUrl}/usuarios?unitId=${selectedUnit}`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const response = await fetchAuth(`${apiUrl}/usuarios?unitId=${selectedUnit}`, { headers: { 'Authorization': `Bearer ${token}` } });
         const data = await response.json();
         if (Array.isArray(data)) setUsuarios(data);
       } catch (error) { console.error('Erro ao carregar usuários:', error); }
@@ -249,7 +251,7 @@ export const MovimentosCaixa: React.FC = () => {
     const payload = { ...registroEditando, total, diferenca };
     try {
       const token = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/caixa/${registroEditando.id}`, {
+      const res = await fetchAuth(`${apiUrl}/caixa/${registroEditando.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -269,7 +271,7 @@ export const MovimentosCaixa: React.FC = () => {
     if (!window.confirm('Tem certeza que deseja deletar este registro?')) return;
     try {
       const token = localStorage.getItem('auth_token');
-      const res = await fetch(`${apiUrl}/caixa/${id}`, {
+      const res = await fetchAuth(`${apiUrl}/caixa/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` },
       });

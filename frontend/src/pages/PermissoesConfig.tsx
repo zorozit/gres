@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePermissoes } from '../contexts/PermissoesContext';
 import { useUnit } from '../contexts/UnitContext';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 // ─── Definição canônica dos módulos do sistema ───────────────────────────────
 const TODOS_MODULOS = [
@@ -112,7 +114,7 @@ export const PermissoesConfig: React.FC = () => {
           setIsOverrideAtivo(!!data.isOverride);
         } else if (esc !== 'global') {
           // Unidade sem override — carregar global como base
-          const rGlobal = await fetch(`${apiUrl}/perfis-permissoes`, { headers: { Authorization: `Bearer ${token}` } });
+          const rGlobal = await fetchAuth(`${apiUrl}/perfis-permissoes`, { headers: { Authorization: `Bearer ${token}` } });
           if (rGlobal.ok) {
             const dataGlobal = await rGlobal.json();
             if (dataGlobal.permissoes) {
@@ -174,7 +176,7 @@ export const PermissoesConfig: React.FC = () => {
       if (escopoSelecionado !== 'global') {
         payload.unitId = escopoSelecionado;
       }
-      const r = await fetch(`${apiUrl}/perfis-permissoes`, {
+      const r = await fetchAuth(`${apiUrl}/perfis-permissoes`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(payload),
@@ -206,7 +208,7 @@ export const PermissoesConfig: React.FC = () => {
     if (!window.confirm(`Remover override de "${nomeUnidade}"?\nA unidade voltará a usar o padrão global.`)) return;
     setRemovendo(true);
     try {
-      const r = await fetch(`${apiUrl}/perfis-permissoes?unitId=${escopoSelecionado}`, {
+      const r = await fetchAuth(`${apiUrl}/perfis-permissoes?unitId=${escopoSelecionado}`, {
         method: 'DELETE',
         headers,
       });

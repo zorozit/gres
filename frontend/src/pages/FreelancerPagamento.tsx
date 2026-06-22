@@ -18,6 +18,8 @@ import { useUnit } from '../contexts/UnitContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 /* ─── Helpers (idênticos à FolhaPagamento) ────────────────────────────────── */
 const R = (v: any): number => { const n = parseFloat(String(v ?? 0).replace(',', '.')); return isNaN(n) ? 0 : n; };
@@ -124,18 +126,18 @@ export default function FreelancerPagamento() {
 
       const auth = { headers: { Authorization: `Bearer ${token()}` } };
 
-      const folhaFetches  = mesesAlvo.map(mm => fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
-      const escalaFetches = mesesAlvo.map(mm => fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
+      const folhaFetches  = mesesAlvo.map(mm => fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
+      const escalaFetches = mesesAlvo.map(mm => fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
       // Sempre buscar saídas do mês completo (necessário para cálculo de adiantamento de transporte)
-      const rSMes = fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null);
+      const rSMes = fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null);
 
       const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
-        fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
         Promise.all(folhaFetches),
         Promise.all(escalaFetches),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(()=>null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(()=>null),
-        fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histIni}&dataFim=${dataFim}`, auth).catch(()=>null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(()=>null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(()=>null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histIni}&dataFim=${dataFim}`, auth).catch(()=>null),
         rSMes || Promise.resolve(null),
       ]);
 
@@ -162,7 +164,7 @@ export default function FreelancerPagamento() {
       await Promise.all(motos.map(async (m:any) => {
         try {
           const partes = await Promise.all(mesesAlvo.map((mm:string) =>
-            fetch(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
+            fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${m.id}&mes=${mm}&unitId=${unitId}`, auth)
               .then((r:Response) => r.ok ? r.json() : [])
               .catch(() => [])
           ));
@@ -633,7 +635,7 @@ export default function FreelancerPagamento() {
 
     const [ano3,mes3] = mesAno.split('-').map(Number);
     const dI3 = `${mesAno}-01`, dF3 = new Date(ano3,mes3,0).toISOString().split('T')[0];
-    fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dI3}&dataFim=${dF3}`,{headers:{Authorization:`Bearer ${token()}`}})
+    fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dI3}&dataFim=${dF3}`,{headers:{Authorization:`Bearer ${token()}`}})
       .then(r=>r.ok?r.json():[]).then(buildChecklist).catch(()=>buildChecklist(saidasPeriodo));
   }, [modalPgto]);
 
@@ -687,13 +689,13 @@ export default function FreelancerPagamento() {
         valorBruto:valorBrutoLote, valorDescSaidas, valorAbatEsp:valorAbatEsp2, valorLiquido,
         obs:`Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaPgto}${fr.transporteAdiantado>0?` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}`:''}${caixinhaChecked>0?` - Caixinha: +R$${fmt(caixinhaChecked)}`:''}${totalDebito>0?` - Desc. saídas: R$${fmt(totalDebito)}`:''}${vlAbate>0?` - Abat. adto.esp.: R$${fmt(vlAbate)}`:''} - Líquido: R$${fmt(valorLiquido)}`,
       };
-      const resp = await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify(payload)});
+      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify(payload)});
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const respData = await resp.json();
       const pagamentoIdGerado: string = respData.pagamentoId||'';
 
       if (inclTransp && fr.transporteSaldo>0) {
-        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+        await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
           colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:true,
           dataPagamento:dataLocalPgto,formaPagamento:formaPgto,pagamentoId:pagamentoIdGerado,
           ...auditoriaCampos(),valorBruto:valorBrutoLote,valorDescSaidas,valorAbatEsp:valorAbatEsp2,valorLiquido,
@@ -708,7 +710,7 @@ export default function FreelancerPagamento() {
         let saldoDisp = R(fr.transporteAdiantado);
         for (const data of diasUnicos) {
           const excede = saldoDisp < R(fr.valorTransporte);
-          await fetch(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          await fetchAuth(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
             unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
             tipo:'Desconto Transporte',origem:'Desconto Transporte',referencia:'Desconto Transporte',
             descricao:`Transporte do dia ${data} (consumo do adto.)`,valor:R(fr.valorTransporte),
@@ -722,7 +724,7 @@ export default function FreelancerPagamento() {
 
       /* Abatimento especial automático */
       if (abaterEsp && vlAbate>0) {
-        await fetch(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+        await fetchAuth(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
           unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
           tipo:'Desconto Adiantamento Especial',origem:'Desconto Adiantamento Especial',referencia:'Desconto Adiantamento Especial',
           descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`,valor:vlAbate,
@@ -742,7 +744,7 @@ export default function FreelancerPagamento() {
             && s.pago !== true && s.pago !== 'true' && !s.pagamentoIdLigado;
         });
         for (const sc of saidasCaixPagar) {
-          await fetch(`${apiUrl}/saidas/${sc.id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          await fetchAuth(`${apiUrl}/saidas/${sc.id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
             ...sc,
             pago: true,
             pagamentoIdLigado: pagamentoIdGerado,
@@ -750,6 +752,34 @@ export default function FreelancerPagamento() {
             updatedAt: new Date().toISOString(),
           })});
         }
+      }
+
+      /* P2.3: Auto-gerar payslip ao confirmar pagamento */
+      try {
+        const semLabel = fech.semanaLabel || `${fech.dataInicioBase}-${fech.dataFechamento}`;
+        const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
+        await fetchAuth(`${apiUrl}/payslips`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+          body: JSON.stringify({
+            colaboradorId: fr.id,
+            nomeColaborador: fr.nome,
+            unitId,
+            periodo: periodoKey,
+            periodoInicio: fech.dataInicioBase || fech.dataFechamento,
+            periodoFim: fech.dataFechamento,
+            mes: mesAno,
+            bruto: valorBrutoLote,
+            transporte: valorTranspSaldo,
+            descontos: valorDescSaidas + valorAbatEsp2,
+            adiantamentos: R(fr.transporteAdiantado) || 0,
+            liquido: valorLiquido,
+            status: 'pago',
+            pagamentos: [pagamentoIdGerado].filter(Boolean),
+          }),
+        });
+      } catch (psErr) {
+        console.warn('[Payslip] Erro ao gerar payslip (best-effort):', psErr);
       }
 
       await carregarDados();
@@ -767,12 +797,12 @@ export default function FreelancerPagamento() {
         f.data>=fech.dataInicioBase && f.data<=fech.dataFechamento && f.pago
       );
       if (diasPagosNovos.length>0) {
-        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+        await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
           colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,
           dias:diasPagosNovos.map((d:any)=>({data:d.data,turno:d.turno,valor:d.valor})),
         })});
       } else {
-        await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+        await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
           colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[],
         })});
       }
@@ -1496,7 +1526,7 @@ export default function FreelancerPagamento() {
                                     if(!window.confirm(`Reabrir pagamento de ${fr.nome}?`)) return;
                                     setSalvando(true);
                                     try {
-                                      await fetch(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[]})});
+                                      await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[]})});
                                       await carregarDados();
                                       setTimeout(()=>setModalPgto({fr,fech}),300);
                                     } catch(err){alert('Erro: '+err);} finally{setSalvando(false);}

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 interface LogItem {
   id: string;
@@ -94,7 +96,7 @@ export default function Auditoria() {
         ...(filtroEntidade ? { entidadeId: filtroEntidade } : {}),
         limit: '500',
       });
-      const r = await fetch(`${apiUrl}/auditoria?${params}`, {
+      const r = await fetchAuth(`${apiUrl}/auditoria?${params}`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {

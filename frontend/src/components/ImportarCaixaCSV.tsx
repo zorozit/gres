@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { fetchAuth } from '../utils/fetchAuth';
+
 
 interface ImportarCaixaCSVProps {
   unitId: string;
@@ -237,7 +239,7 @@ export const ImportarCaixaCSV: React.FC<ImportarCaixaCSVProps> = ({
           updatedAt: new Date().toISOString()
         };
 
-        const response = await fetch(`${apiUrl}/caixa`, {
+        const response = await fetchAuth(`${apiUrl}/caixa`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
