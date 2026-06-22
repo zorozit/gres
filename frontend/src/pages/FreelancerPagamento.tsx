@@ -439,11 +439,14 @@ export default function FreelancerPagamento() {
         const transp_adt      = Math.min(transpAdtMes, transp);
         const transp_saldo    = Math.max(0, transp - transp_adt);
 
-        /* caixinha total (controle-motoboy + saídas Caixinha) */
+        /* caixinha total (controle-motoboy + saídas Caixinha) — exclui já pagas */
         const saidasCaixFr = saidasPer.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
-          return s.colaboradorId===cid && t==='Caixinha' && dt>=isoInicio && dt<=isoFim2;
+          if (s.colaboradorId!==cid || t!=='Caixinha' || dt<isoInicio || dt>isoFim2) return false;
+          // Excluir caixinhas já incorporadas a um pagamento anterior
+          if (s.pago === true || s.pago === 'true' || s.pagamentoIdLigado) return false;
+          return true;
         });
         const caixinhaSaidas = parseFloat(saidasCaixFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
         const caixinhaTotal  = parseFloat((caixinhaSaidas + caixinhaCtrlMotoboy).toFixed(2));
@@ -551,7 +554,15 @@ export default function FreelancerPagamento() {
         if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
         return true;
       });
-      const caixFr = saidasFrescas.filter((s:any)=>s.colaboradorId===fr.id && TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'') && saidaData(s)>=rangeIni && saidaData(s)<=rangeFim);
+      const caixFr = saidasFrescas.filter((s:any)=>{
+        if (s.colaboradorId!==fr.id) return false;
+        if (!TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'')) return false;
+        const d = saidaData(s);
+        if (d<rangeIni || d>rangeFim) return false;
+        // Excluir caixinhas já incorporadas a um pagamento anterior
+        if (s.pago === true || s.pago === 'true' || s.pagamentoIdLigado) return false;
+        return true;
+      });
       const obsValor = fr.isValorTurno
         ? `📅 Tabela variável por dia da semana`
         : (fr.valorDia>0||fr.valorNoite>0) ? `☀️ R$${fmt(fr.valorDia)}/dia + 🌙 R$${fmt(fr.valorNoite)}/noite` : `R$${fmt(fr.valorDobra)}/dobra`;
@@ -708,6 +719,27 @@ export default function FreelancerPagamento() {
           dataPagamento:dataLocalPgto,data:dataLocalPgto,pago:true,
           obs:`Abatido no pagamento da semana ${fech.semanaLabel}`,updatedAt:new Date().toISOString(),
         })});
+      }
+
+      /* Marcar saídas tipo Caixinha como pagas (evita dupla contagem em pagamento parcial) */
+      if (caixinhaChecked > 0) {
+        const rangeIni = fr.periodoInicio || fech.dataInicioBase;
+        const rangeFim = fr.periodoFim || fech.dataFechamento;
+        const saidasCaixPagar = saidasPeriodo.filter((s:any) => {
+          const t = s.tipo||s.origem||s.referencia||'';
+          const dt = s.dataPagamento||s.data||'';
+          return s.colaboradorId===fr.id && t==='Caixinha' && dt>=rangeIni && dt<=rangeFim
+            && s.pago !== true && s.pago !== 'true' && !s.pagamentoIdLigado;
+        });
+        for (const sc of saidasCaixPagar) {
+          await fetch(`${apiUrl}/saidas/${sc.id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+            ...sc,
+            pago: true,
+            pagamentoIdLigado: pagamentoIdGerado,
+            obs: `${sc.obs||''} [Pago no lote sem. ${fech.semanaLabel}]`.trim(),
+            updatedAt: new Date().toISOString(),
+          })});
+        }
       }
 
       await carregarDados();
