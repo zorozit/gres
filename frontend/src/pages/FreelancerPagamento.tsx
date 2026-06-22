@@ -126,9 +126,8 @@ export default function FreelancerPagamento() {
 
       const folhaFetches  = mesesAlvo.map(mm => fetch(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
       const escalaFetches = mesesAlvo.map(mm => fetch(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, auth).catch(()=>null));
-      const rSMes = periodoCustomAtivo
-        ? fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null)
-        : null;
+      // Sempre buscar saídas do mês completo (necessário para cálculo de adiantamento de transporte)
+      const rSMes = fetch(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null);
 
       const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
         fetch(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
@@ -290,7 +289,9 @@ export default function FreelancerPagamento() {
       const [ano2,mes2] = mesAno.split('-').map(Number);
       const mesIni2 = `${mesAno}-01`;
       const mesFim2 = new Date(ano2,mes2,0).toISOString().split('T')[0];
-      const saidasTranspMes = periodoCustomAtivo ? saidasPer : (saidasMesCompleto.length>0?saidasMesCompleto:saidasPer);
+      // Para cálculo de adiantamento de transporte, SEMPRE usar saídas do mês completo
+      // (o adiantamento pode ter sido feito em qualquer dia do mês, não só na semana atual)
+      const saidasTranspMes = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPer;
 
       const DOW_KEYS = ['dom','seg','ter','qua','qui','sex','sab'];
       const frList = frs.map((fr:any) => {
@@ -434,7 +435,16 @@ export default function FreelancerPagamento() {
 
         /* transporte */
         const valorTransp = R(fr.valorTransporte);
-        const transpAdtMes   = calcTransporteAdiantado(cid, mesIni2, mesFim2, saidasTranspMes);
+        const transpAdtBruto  = calcTransporteAdiantado(cid, mesIni2, mesFim2, saidasTranspMes);
+        // Calcular quanto do adiantamento já foi consumido (saídas "Desconto Transporte" já pagas no mês)
+        const transpJaConsumido = saidasTranspMes.filter((s:any) => {
+          const t = s.tipo||s.origem||s.referencia||'';
+          const dt = s.dataPagamento||s.data||'';
+          return s.colaboradorId===cid && t==='Desconto Transporte'
+            && dt>=mesIni2 && dt<=mesFim2
+            && (s.pago===true || s.pago==='true' || s.pagamentoIdLigado);
+        }).reduce((acc:number,s:any)=>acc+R(s.valor),0);
+        const transpAdtMes   = Math.max(0, transpAdtBruto - transpJaConsumido);
         const transp          = valorTransp>0 ? diasTrabalhados * valorTransp : 0;
         const transp_adt      = Math.min(transpAdtMes, transp);
         const transp_saldo    = Math.max(0, transp - transp_adt);
@@ -494,7 +504,7 @@ export default function FreelancerPagamento() {
           diasPagos: diasPagosList, diasJaPagosDetalhe,
           ctrlLinhasDetalhe,  // detalhe chegada+entregas por linha (motoboy)
           totalTransporte: transp_saldo,
-          transporteAdiantado: transp_adt, transporteAdiantadoMes: transpAdtMes, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
+          transporteAdiantado: transp_adt, transporteAdiantadoBruto: transpAdtBruto, transporteAdiantadoMes: transpAdtMes, transporteJaConsumido: transpJaConsumido, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
           saidasDesconto, saidasDetalhe,
           totalLiquido, pago, pagoParcial,
           pendentesAnteriores, saldoEspecialAberto,
@@ -812,9 +822,10 @@ export default function FreelancerPagamento() {
                 <div style={{backgroundColor:'#e8f5e9',border:'1px solid #a5d6a7',borderLeft:'4px solid #388e3c',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',fontSize:'12px'}}>
                   <div style={{fontWeight:'bold',color:'#2e7d32',fontSize:'13px',marginBottom:'6px'}}>🚗 Conta Transporte (saldo separado)</div>
                   <div style={{color:'#1b5e20',lineHeight:'1.7',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 14px'}}>
-                    <div>📥 Adiantado no mês: <strong>{fmtMoeda(fr.transporteAdiantadoMes)}</strong></div>
+                    <div>📥 Adiantado no mês: <strong>{fmtMoeda(fr.transporteAdiantadoBruto)}</strong></div>
                     <div>🚗 Transp. desta semana: <strong>{fmtMoeda(totalTranspSemana)}</strong></div>
-                    <div>💰 Disponível: <strong style={{color:fr.transporteAdiantado>0?'#388e3c':'#c62828'}}>{fmtMoeda(fr.transporteAdiantado)}</strong></div>
+                    {fr.transporteJaConsumido > 0 && <div>✅ Já descontado: <strong style={{color:'#e65100'}}>-{fmtMoeda(fr.transporteJaConsumido)}</strong></div>}
+                    <div>💰 Disponível: <strong style={{color:fr.transporteAdiantadoMes>0?'#388e3c':'#c62828'}}>{fmtMoeda(fr.transporteAdiantadoMes)}</strong></div>
                     <div>🟢 Saldo a pagar: <strong>{fmtMoeda(fr.transporteSaldo)}</strong></div>
                   </div>
                 </div>
