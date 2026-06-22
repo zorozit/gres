@@ -682,58 +682,38 @@ export default function FreelancerPagamento() {
         ? `tabela variável (${diasParaPagar.map((d:any)=>`${d.data.slice(8)}/${d.data.slice(5,7)}${d.turno==='Dia'?'D':'N'}=R$${fmt(d.valor)}`).join(', ')})`
         : (fr.valorDia>0||fr.valorNoite>0)?`D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`:`R$${fmt(fr.valorDobra)}/dobra`;
 
-      const payload = {
-        colaboradorId:fr.id, mes:mesAno, semana:fech.dataFechamento, unitId, pago:true,
-        dataPagamento:dataLocalPgto, formaPagamento:formaPgto, dias:diasParaPagar,
-        ...auditoriaCampos(),
-        valorBruto:valorBrutoLote, valorDescSaidas, valorAbatEsp:valorAbatEsp2, valorLiquido,
-        obs:`Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaPgto}${fr.transporteAdiantado>0?` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}`:''}${caixinhaChecked>0?` - Caixinha: +R$${fmt(caixinhaChecked)}`:''}${totalDebito>0?` - Desc. saídas: R$${fmt(totalDebito)}`:''}${vlAbate>0?` - Abat. adto.esp.: R$${fmt(vlAbate)}`:''} - Líquido: R$${fmt(valorLiquido)}`,
-      };
-      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify(payload)});
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const respData = await resp.json();
-      const pagamentoIdGerado: string = respData.pagamentoId||'';
+      const obsText = `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel} - ${formaPgto}${fr.transporteAdiantado>0?` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}`:''}${caixinhaChecked>0?` - Caixinha: +R$${fmt(caixinhaChecked)}`:''}${totalDebito>0?` - Desc. saídas: R$${fmt(totalDebito)}`:''}${vlAbate>0?` - Abat. adto.esp.: R$${fmt(vlAbate)}`:''} - Líquido: R$${fmt(valorLiquido)}`;
 
-      if (inclTransp && fr.transporteSaldo>0) {
-        await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
-          colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:true,
-          dataPagamento:dataLocalPgto,formaPagamento:formaPgto,pagamentoId:pagamentoIdGerado,
-          ...auditoriaCampos(),valorBruto:valorBrutoLote,valorDescSaidas,valorAbatEsp:valorAbatEsp2,valorLiquido,
-          dias:[{data:fech.dataFechamento,turno:'Transporte',valor:fr.transporteSaldo,tipoCodigo:'transporte-freelancer'}],
-          obs:`Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length||0} dias - R$${fmt(fr.transporteSaldo)}`,
-        })});
+      /* ── P0.4: Montar operações para pagamento atômico (TransactWriteItems) ── */
+      const operacoes: any[] = [];
+
+      // 1) Turnos (folha-pagamento)
+      for (const dp of diasParaPagar) {
+        operacoes.push({ tipo:'folha-turno', data:dp.data, turno:dp.turno, valor:dp.valor, tipoCodigo:dp.tipoCodigo, obs:obsText });
       }
 
-      /* Desconto Transporte automático por dia */
+      // 2) Transporte
+      if (inclTransp && fr.transporteSaldo>0) {
+        operacoes.push({ tipo:'folha-transporte', data:fech.dataFechamento, valor:fr.transporteSaldo, obs:`Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length||0} dias - R$${fmt(fr.transporteSaldo)}` });
+      }
+
+      // 3) Desconto Transporte automático por dia
       if (R(fr.valorTransporte)>0 && inclDobras && fr.diasPagos?.length>0) {
         const diasUnicos = Array.from(new Set(fr.diasPagos.map((dp:any)=>dp.data))).sort() as string[];
         let saldoDisp = R(fr.transporteAdiantado);
         for (const data of diasUnicos) {
           const excede = saldoDisp < R(fr.valorTransporte);
-          await fetchAuth(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
-            unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
-            tipo:'Desconto Transporte',origem:'Desconto Transporte',referencia:'Desconto Transporte',
-            descricao:`Transporte do dia ${data} (consumo do adto.)`,valor:R(fr.valorTransporte),
-            dataPagamento:data,data,pago:true,excedeAdto:excede,pagamentoIdLigado:pagamentoIdGerado,
-            obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}`,
-            updatedAt:new Date().toISOString(),
-          })});
+          operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Transporte', descricao:`Transporte do dia ${data} (consumo do adto.)`, valor:R(fr.valorTransporte), data, dataPagamento:data, pago:true, excedeAdto:excede, responsavel:responsavelEmail, responsavelId, obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}` });
           saldoDisp = Math.max(0, saldoDisp - R(fr.valorTransporte));
         }
       }
 
-      /* Abatimento especial automático */
+      // 4) Abatimento especial
       if (abaterEsp && vlAbate>0) {
-        await fetchAuth(`${apiUrl}/saidas`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
-          unitId,responsavel:responsavelEmail,responsavelId,colaboradorId:fr.id,
-          tipo:'Desconto Adiantamento Especial',origem:'Desconto Adiantamento Especial',referencia:'Desconto Adiantamento Especial',
-          descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`,valor:vlAbate,
-          dataPagamento:dataLocalPgto,data:dataLocalPgto,pago:true,
-          obs:`Abatido no pagamento da semana ${fech.semanaLabel}`,updatedAt:new Date().toISOString(),
-        })});
+        operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}` });
       }
 
-      /* Marcar saídas tipo Caixinha como pagas (evita dupla contagem em pagamento parcial) */
+      // 5) Marcar caixinhas como pagas
       if (caixinhaChecked > 0) {
         const rangeIni = fr.periodoInicio || fech.dataInicioBase;
         const rangeFim = fr.periodoFim || fech.dataFechamento;
@@ -744,42 +724,31 @@ export default function FreelancerPagamento() {
             && s.pago !== true && s.pago !== 'true' && !s.pagamentoIdLigado;
         });
         for (const sc of saidasCaixPagar) {
-          await fetchAuth(`${apiUrl}/saidas/${sc.id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
-            ...sc,
-            pago: true,
-            pagamentoIdLigado: pagamentoIdGerado,
-            obs: `${sc.obs||''} [Pago no lote sem. ${fech.semanaLabel}]`.trim(),
-            updatedAt: new Date().toISOString(),
-          })});
+          operacoes.push({ tipo:'saida-atualizar', id:sc.id, obs:`${sc.obs||''} [Pago no lote sem. ${fech.semanaLabel}]`.trim() });
         }
       }
 
-      /* P2.3: Auto-gerar payslip ao confirmar pagamento */
-      try {
-        const semLabel = fech.semanaLabel || `${fech.dataInicioBase}-${fech.dataFechamento}`;
-        const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
-        await fetchAuth(`${apiUrl}/payslips`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-          body: JSON.stringify({
-            colaboradorId: fr.id,
-            nomeColaborador: fr.nome,
-            unitId,
-            periodo: periodoKey,
-            periodoInicio: fech.dataInicioBase || fech.dataFechamento,
-            periodoFim: fech.dataFechamento,
-            mes: mesAno,
-            bruto: valorBrutoLote,
-            transporte: valorTranspSaldo,
-            descontos: valorDescSaidas + valorAbatEsp2,
-            adiantamentos: R(fr.transporteAdiantado) || 0,
-            liquido: valorLiquido,
-            status: 'pago',
-            pagamentos: [pagamentoIdGerado].filter(Boolean),
-          }),
-        });
-      } catch (psErr) {
-        console.warn('[Payslip] Erro ao gerar payslip (best-effort):', psErr);
+      // 6) Payslip automático
+      const semLabel = fech.semanaLabel || `${fech.dataInicioBase}-${fech.dataFechamento}`;
+      const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
+      operacoes.push({ tipo:'payslip', periodo:periodoKey, periodoInicio:fech.dataInicioBase||fech.dataFechamento, periodoFim:fech.dataFechamento, bruto:valorBrutoLote, transporte:valorTranspSaldo, descontos:valorDescSaidas+valorAbatEsp2, adiantamentos:R(fr.transporteAdiantado)||0, liquido:valorLiquido, nomeColaborador:fr.nome });
+
+      // ── Enviar tudo de uma vez (atômico) ──
+      const resp = await fetchAuth(`${apiUrl}/pagamento-batch`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},
+        body:JSON.stringify({
+          colaboradorId:fr.id, unitId, mes:mesAno, semana:fech.dataFechamento,
+          dataPagamento:dataLocalPgto, formaPagamento:formaPgto,
+          ...auditoriaCampos(),
+          valorBruto:valorBrutoLote, valorDescSaidas, valorAbatEsp:valorAbatEsp2, valorLiquido,
+          obs:obsText,
+          operacoes,
+        }),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(()=>null);
+        throw new Error(errData?.message || `HTTP ${resp.status}`);
       }
 
       await carregarDados();

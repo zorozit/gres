@@ -2100,154 +2100,59 @@ export default function FolhaPagamento() {
                   const valorAbatEsp      = vlAbate;        // abatimento adiantamento especial
                   const valorLiquido      = Math.max(0, valorBrutoLote - valorDescSaidas - valorAbatEsp);
 
-                  const payload = {
-                    colaboradorId: fr.id, mes: mesAno,
-                    semana: fech.dataFechamento, unitId,
-                    pago: true,
-                    dataPagamento: dataLocalFreelancer,
-                    formaPagamento: formaFreelancer,
-                    dias: diasParaPagar,
-                    // ── Responsável pelo pagamento (auditoria) ──
-                    ...auditoriaCampos(),
-                    // ── Campos estruturados de auditoria ──
-                    valorBruto:      valorBrutoLote,    // dobras + transporte + caixinha
-                    valorDescSaidas: valorDescSaidas,   // total descontos (consumo/transp)
-                    valorAbatEsp:    valorAbatEsp,       // abatimento adto. especial
-                    valorLiquido:    valorLiquido,       // PIX/Dinheiro efetivamente enviado
-                    // ── Obs legível (mantido para compatibilidade) ──
-                    obs: `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''} - Líquido: R$${fmt(valorLiquido)}`,
-                  };
-                  const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                    body: JSON.stringify(payload),
-                  });
-                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                  const respData = await resp.json();
-                  // pagamentoId retornado pelo backend — amarra todos os turnos deste lote
-                  const pagamentoIdGerado: string = respData.pagamentoId || '';
+                  const obsText2 = `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''} - Líquido: R$${fmt(valorLiquido)}`;
 
-                  // Registrar transporte como lançamento separado, mesmo pagamentoId do lote
-                  if (inclTransporte && fr.transporteSaldo > 0) {
-                    const payloadTransp = {
-                      colaboradorId: fr.id, mes: mesAno,
-                      semana: fech.dataFechamento, unitId,
-                      pago: true,
-                      dataPagamento: dataLocalFreelancer,
-                      formaPagamento: formaFreelancer,
-                      pagamentoId: pagamentoIdGerado,
-                      ...auditoriaCampos(),
-                      // Referência ao lote principal para auditoria
-                      valorBruto:      valorBrutoLote,
-                      valorDescSaidas: valorDescSaidas,
-                      valorAbatEsp:    valorAbatEsp,
-                      valorLiquido:    valorLiquido,
-                      dias: [{
-                        data: fech.dataFechamento,
-                        turno: 'Transporte',
-                        valor: fr.transporteSaldo,
-                        tipoCodigo: 'transporte-freelancer',
-                      }],
-                      obs: `Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length || 0} dias - R$${fmt(fr.transporteSaldo)}`,
-                    };
-                    await fetchAuth(`${apiUrl}/folha-pagamento`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                      body: JSON.stringify(payloadTransp),
-                    });
+                  /* ── P0.4: Montar operações para pagamento atômico ── */
+                  const operacoes: any[] = [];
+
+                  // 1) Turnos
+                  for (const dp of diasParaPagar) {
+                    operacoes.push({ tipo:'folha-turno', data:dp.data, turno:dp.turno, valor:dp.valor, tipoCodigo:dp.tipoCodigo, obs:obsText2 });
                   }
 
-                  // ── NOVO: Desconto Transporte automatico (1 por dia trabalhado) ──
-                  // Cria 1 saida "Desconto Transporte" para cada dia físico pago, com o
-                  // valorTransporte do colaborador. Limite: total adiantado no mês (FIFO).
-                  // Excedentes recebem flag excedeAdto=true para o operador decidir caso a caso.
+                  // 2) Transporte
+                  if (inclTransporte && fr.transporteSaldo > 0) {
+                    operacoes.push({ tipo:'folha-transporte', data:fech.dataFechamento, valor:fr.transporteSaldo, obs:`Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length||0} dias - R$${fmt(fr.transporteSaldo)}` });
+                  }
+
+                  // 3) Desconto Transporte por dia
                   const valorTransporteColab = R(fr.valorTransporte);
                   if (valorTransporteColab > 0 && inclDobras && fr.diasPagos && fr.diasPagos.length > 0) {
-                    // dias únicos físicos pagos nesta semana (DiaNoite = 1 dia)
-                    const diasUnicosSemana = Array.from(new Set(
-                      fr.diasPagos.map((dp: any) => dp.data)
-                    )).sort() as string[];
-                    // Saldo do adto. ainda disponível = total adto. mês − já consumido em sem. anteriores
+                    const diasUnicosSemana = Array.from(new Set(fr.diasPagos.map((dp: any) => dp.data))).sort() as string[];
                     let saldoDispAtual = R(fr.transporteAdiantado);
                     for (const data of diasUnicosSemana) {
                       const excede = saldoDispAtual < valorTransporteColab;
-                      const payloadDescTransp = {
-                        unitId,
-                        responsavel: responsavelEmail,
-                        responsavelId,
-                        colaboradorId: fr.id,
-                        tipo: 'Desconto Transporte',
-                        origem: 'Desconto Transporte',
-                        referencia: 'Desconto Transporte',
-                        descricao: `Transporte do dia ${data} (consumo do adto.)`,
-                        valor: valorTransporteColab,
-                        dataPagamento: data,
-                        data: data,
-                        pago: true,
-                        excedeAdto: excede,
-                        pagamentoIdLigado: pagamentoIdGerado,
-                        obs: `Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede ? ' [excede adto]' : ''}`,
-                        updatedAt: new Date().toISOString(),
-                      };
-                      await fetchAuth(`${apiUrl}/saidas`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                        body: JSON.stringify(payloadDescTransp),
-                      });
+                      operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Transporte', descricao:`Transporte do dia ${data} (consumo do adto.)`, valor:valorTransporteColab, data, dataPagamento:data, pago:true, excedeAdto:excede, responsavel:responsavelEmail, responsavelId, obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}` });
                       saldoDispAtual = Math.max(0, saldoDispAtual - valorTransporteColab);
                     }
                   }
 
-                  // Lançar abatimento de adiantamento especial automaticamente
+                  // 4) Abatimento especial
                   if (abaterEspecial && vlAbate > 0) {
-                    const payloadDesc = {
-                      unitId,
-                      responsavel: responsavelEmail,
-                      responsavelId,
-                      colaboradorId: fr.id,
-                      tipo: 'Desconto Adiantamento Especial',
-                      origem: 'Desconto Adiantamento Especial',
-                      referencia: 'Desconto Adiantamento Especial',
-                      descricao: `Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`,
-                      valor: vlAbate,
-                      dataPagamento: dataLocalFreelancer,
-                      data: dataLocalFreelancer,
-                      pago: true,
-                      obs: `Abatido no pagamento da semana ${fech.semanaLabel}`,
-                      updatedAt: new Date().toISOString(),
-                    };
-                    await fetchAuth(`${apiUrl}/saidas`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                      body: JSON.stringify(payloadDesc),
-                    });
+                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}` });
                   }
 
-                  /* P2.3: Auto-gerar payslip */
-                  try {
-                    const semLabel2 = fech.semanaLabel || mesAno;
-                    const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
-                    await fetchAuth(`${apiUrl}/payslips`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                      body: JSON.stringify({
-                        colaboradorId: fr.id,
-                        nomeColaborador: fr.nome,
-                        unitId,
-                        periodo: periodoKey2,
-                        periodoInicio: periodoIni || mesAno + '-01',
-                        periodoFim: periodoFim || mesAno + '-31',
-                        mes: mesAno,
-                        bruto: totalCredito,
-                        transporte: fr.transporteSaldo || 0,
-                        descontos: totalDebito + vlAbate,
-                        liquido: _totalFinal,
-                        status: 'pago',
-                        pagamentos: [],
-                      }),
-                    });
-                  } catch (psErr) {
-                    console.warn('[Payslip] Erro ao gerar payslip (best-effort):', psErr);
+                  // 5) Payslip
+                  const semLabel2 = fech.semanaLabel || mesAno;
+                  const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
+                  operacoes.push({ tipo:'payslip', periodo:periodoKey2, periodoInicio:periodoIni||mesAno+'-01', periodoFim:periodoFim||mesAno+'-31', bruto:valorBrutoLote, transporte:fr.transporteSaldo||0, descontos:totalDebito+vlAbate, liquido:valorLiquido, nomeColaborador:fr.nome });
+
+                  // ── Enviar tudo de uma vez (atômico) ──
+                  const resp = await fetchAuth(`${apiUrl}/pagamento-batch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                    body: JSON.stringify({
+                      colaboradorId: fr.id, unitId, mes: mesAno, semana: fech.dataFechamento,
+                      dataPagamento: dataLocalFreelancer, formaPagamento: formaFreelancer,
+                      ...auditoriaCampos(),
+                      valorBruto: valorBrutoLote, valorDescSaidas, valorAbatEsp, valorLiquido,
+                      obs: obsText2,
+                      operacoes,
+                    }),
+                  });
+                  if (!resp.ok) {
+                    const errData = await resp.json().catch(()=>null);
+                    throw new Error(errData?.message || `HTTP ${resp.status}`);
                   }
 
                   await carregarDados();

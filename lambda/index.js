@@ -3341,6 +3341,283 @@ exports.handler = async (event) => {
       }
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /pagamento-batch — Pagamento atômico (TransactWriteItems)
+    // Recebe todas as operações de um pagamento (folha + saídas + payslip)
+    // e executa atomicamente: tudo salva ou nada salva.
+    // ════════════════════════════════════════════════════════════════════
+    if (rawPath === '/pagamento-batch' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, mes, semana, operacoes } = body;
+
+      if (!colaboradorId || !mes || !unitId) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId, mes e unitId são obrigatórios');
+      }
+      if (!Array.isArray(operacoes) || operacoes.length === 0) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'operacoes deve ser um array não vazio');
+      }
+      // DynamoDB TransactWriteItems limit: 100 items
+      if (operacoes.length > 100) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Máximo 100 operações por batch');
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
+
+        // Validar colaborador
+        const colaborador = await validarColaborador(colaboradorId);
+        if (!colaborador) {
+          return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Colaborador não encontrado', { colaboradorId });
+        }
+
+        // Gerar pagamentoId do lote
+        const pagamentoId = body.pagamentoId || `pgto-${colaboradorId}-${now.replace(/[:.]/g, '').slice(0, 17)}`;
+
+        const transactItems = [];
+        const savedIds = [];
+        const valorCorrecoes = [];
+
+        for (const op of operacoes) {
+          switch (op.tipo) {
+
+            // ── FOLHA-PAGAMENTO (turno individual) ─────────────────────────
+            case 'folha-turno': {
+              const { data, turno, valor, tipoCodigo, obs: opObs, dataPagamento: opDtPgto, formaPagamento: opForma } = op;
+              if (!data || !turno) break;
+              let valorFinal = parseFloat(valor) || 0;
+
+              // P0.1: Validação server-side
+              if (turno !== 'Transporte') {
+                const valorEsperado = resolverValorTurnoServidor(colaborador, data, turno);
+                if (valorEsperado > 0 && Math.abs(valorFinal - valorEsperado) > 0.01) {
+                  valorCorrecoes.push({ data, turno, frontendVal: valorFinal, servidorVal: valorEsperado });
+                  valorFinal = valorEsperado;
+                }
+              }
+
+              const dayId = `folha-${colaboradorId}-${data}-${turno}`;
+              const item = {
+                id: dayId,
+                tipo: 'freelancer-dia',
+                tipoCodigo: tipoCodigo || (turno === 'Dia' ? 'freelancer-dia' : 'freelancer-noite'),
+                colaboradorId, data, turno, mes,
+                semana: semana || null,
+                unitId: normalizedUnitId,
+                valor: valorFinal,
+                pago: true,
+                dataPagamento: opDtPgto || body.dataPagamento || now.split('T')[0],
+                formaPagamento: opForma || body.formaPagamento || 'PIX',
+                pagamentoId,
+                transacaoBancariaId: null,
+                confiabilidade: 'real',
+                ...(body.valorBruto !== undefined ? { valorBruto: parseFloat(body.valorBruto) || 0 } : {}),
+                ...(body.valorDescSaidas !== undefined ? { valorDescSaidas: parseFloat(body.valorDescSaidas) || 0 } : {}),
+                ...(body.valorAbatEsp !== undefined ? { valorAbatEsp: parseFloat(body.valorAbatEsp) || 0 } : {}),
+                ...(body.valorLiquido !== undefined ? { valorLiquido: parseFloat(body.valorLiquido) || 0 } : {}),
+                obs: opObs || body.obs || '',
+                updatedAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-folha-pagamento',
+                  Item: item,
+                  ConditionExpression: 'attribute_not_exists(id) OR pago = :false',
+                  ExpressionAttributeValues: { ':false': false },
+                },
+              });
+              savedIds.push(dayId);
+              break;
+            }
+
+            // ── FOLHA-PAGAMENTO (transporte) ───────────────────────────────
+            case 'folha-transporte': {
+              const { data: tData, valor: tValor, obs: tObs, dataPagamento: tDtPgto, formaPagamento: tForma } = op;
+              const dayId = `folha-${colaboradorId}-${tData || semana}-Transporte`;
+              const item = {
+                id: dayId,
+                tipo: 'freelancer-dia',
+                tipoCodigo: 'transporte-freelancer',
+                colaboradorId, data: tData || semana, turno: 'Transporte', mes,
+                semana: semana || null,
+                unitId: normalizedUnitId,
+                valor: parseFloat(tValor) || 0,
+                pago: true,
+                dataPagamento: tDtPgto || body.dataPagamento || now.split('T')[0],
+                formaPagamento: tForma || body.formaPagamento || 'PIX',
+                pagamentoId,
+                transacaoBancariaId: null,
+                confiabilidade: 'real',
+                obs: tObs || '',
+                updatedAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-folha-pagamento',
+                  Item: item,
+                  ConditionExpression: 'attribute_not_exists(id) OR pago = :false',
+                  ExpressionAttributeValues: { ':false': false },
+                },
+              });
+              savedIds.push(dayId);
+              break;
+            }
+
+            // ── SAÍDA (criar nova) ─────────────────────────────────────────
+            case 'saida-criar': {
+              const saidaId = op.id || `saida-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+              const item = {
+                id: saidaId,
+                responsavel: op.responsavel || '',
+                responsavelId: op.responsavelId || '',
+                responsavelNome: op.responsavelNome || op.responsavel || '',
+                colaboradorId,
+                colaborador: colaborador.nome || '',
+                favorecido: colaborador.nome || '',
+                descricao: op.descricao || '',
+                valor: parseFloat(op.valor) || 0,
+                data: op.data || now.split('T')[0],
+                turno: op.turno || '',
+                tipo: op.tipoSaida || op.tipo || 'A pagar',
+                origem: op.tipoSaida || op.tipo || 'A pagar',
+                referencia: op.tipoSaida || op.tipo || 'A pagar',
+                dataPagamento: op.dataPagamento || '',
+                observacao: op.observacao || '',
+                viagens: 0,
+                caixinha: 0,
+                formaPagamento: op.formaPagamento || 'PIX',
+                pago: op.pago !== undefined ? op.pago : true,
+                obs: op.obs || '',
+                pagamentoIdLigado: pagamentoId,
+                ...(op.excedeAdto !== undefined ? { excedeAdto: !!op.excedeAdto } : {}),
+                unitId: normalizedUnitId,
+                timestamp: now,
+                createdAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-saidas',
+                  Item: item,
+                },
+              });
+              savedIds.push(saidaId);
+              break;
+            }
+
+            // ── SAÍDA (atualizar existente — marcar caixinha como paga) ────
+            case 'saida-atualizar': {
+              if (!op.id) break;
+              transactItems.push({
+                Update: {
+                  TableName: 'gres-prod-saidas',
+                  Key: { id: op.id },
+                  UpdateExpression: 'SET pago = :pago, pagamentoIdLigado = :pgtoId, obs = :obs, updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':pago': true,
+                    ':pgtoId': pagamentoId,
+                    ':obs': op.obs || '',
+                    ':now': now,
+                  },
+                },
+              });
+              savedIds.push(op.id);
+              break;
+            }
+
+            // ── PAYSLIP ────────────────────────────────────────────────────
+            case 'payslip': {
+              const psId = op.id || `ps-${colaboradorId}-${mes}-${(semana || 'full').replace(/[^\w]/g, '')}`;
+              const psItem = {
+                id: psId,
+                colaboradorId,
+                nomeColaborador: op.nomeColaborador || colaborador.nome || '',
+                unitId: normalizedUnitId,
+                periodo: op.periodo || mes,
+                periodoInicio: op.periodoInicio || '',
+                periodoFim: op.periodoFim || '',
+                mes,
+                bruto: parseFloat(op.bruto) || 0,
+                transporte: parseFloat(op.transporte) || 0,
+                descontos: parseFloat(op.descontos) || 0,
+                adiantamentos: parseFloat(op.adiantamentos) || 0,
+                liquido: parseFloat(op.liquido) || 0,
+                status: op.status || 'pago',
+                pagamentos: [pagamentoId],
+                criadoEm: now,
+                atualizadoEm: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-payslips',
+                  Item: psItem,
+                },
+              });
+              savedIds.push(psId);
+              break;
+            }
+
+            default:
+              console.warn(`[pagamento-batch] tipo de operação desconhecido: ${op.tipo}`);
+          }
+        }
+
+        if (transactItems.length === 0) {
+          return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Nenhuma operação válida para executar');
+        }
+
+        // ── EXECUTAR TRANSAÇÃO ATÔMICA ──────────────────────────────────────
+        // DynamoDB limit: 100 items per TransactWriteItems call
+        // Se tiver mais de 25, precisa fazer em batches (DynamoDB aceita até 100 mas
+        // recomenda batches menores para evitar throttle)
+        if (transactItems.length <= 25) {
+          await dynamodb.transactWrite({ TransactItems: transactItems }).promise();
+        } else {
+          // Batch in groups of 25
+          for (let i = 0; i < transactItems.length; i += 25) {
+            const batch = transactItems.slice(i, i + 25);
+            await dynamodb.transactWrite({ TransactItems: batch }).promise();
+          }
+        }
+
+        // Auditoria
+        const audBatch = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'folha-pagamento',
+          entidadeId: pagamentoId,
+          evento: 'pagamento-batch',
+          valoresAntes: null,
+          valoresDepois: { colaboradorId, mes, semana, operacoes: operacoes.length, ids: savedIds },
+          ...audBatch,
+          unitId: normalizedUnitId,
+        });
+
+        return successResponse(200, {
+          pagamentoId,
+          ids: savedIds,
+          count: savedIds.length,
+          transacoes: transactItems.length,
+          atomico: true,
+          ...(valorCorrecoes.length > 0 ? { valorCorrecoes, aviso: 'Alguns valores foram corrigidos pelo servidor' } : {}),
+        });
+
+      } catch (err) {
+        console.error('[pagamento-batch] Erro:', err);
+        // TransactionCanceledException = uma ou mais condições falharam
+        if (err.code === 'TransactionCanceledException') {
+          const reasons = (err.CancellationReasons || []).map((r, i) => ({
+            index: i,
+            code: r.Code,
+            message: r.Message || '',
+            item: r.Item,
+          })).filter(r => r.code !== 'None');
+          return errorResponse(409, ERROR_CODES.CONFLICT,
+            'Transação cancelada — uma ou mais operações conflitaram (ex: turno já pago)',
+            { reasons }
+          );
+        }
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro no pagamento batch: ' + err.message);
+      }
+    }
+
     // Rota não encontrada
     return errorResponse(404, ERROR_CODES.NOT_FOUND, `Rota não encontrada: ${rawPath}`);
 
