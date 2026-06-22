@@ -86,10 +86,22 @@ export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUserUnits(units);
 
       // Define unidade ativa: restaura do localStorage se válida, senão usa a primeira
+      // Lê direto do localStorage pra evitar race condition no refresh
+      // (o state React pode ainda não ter sido atualizado pelo useEffect de restauração)
       setActiveUnit(prev => {
+        // Tenta o state atual primeiro
         if (prev) {
           const still = units.find(u => u.id === prev.id);
           if (still) return still;
+        }
+        // Se state está null, tenta restaurar do localStorage
+        const saved = localStorage.getItem('activeUnit');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const match = units.find(u => u.id === parsed.id);
+            if (match) return match;
+          } catch { /* ignore */ }
         }
         return units.length > 0 ? units[0] : null;
       });
