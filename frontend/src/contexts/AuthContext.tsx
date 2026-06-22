@@ -106,6 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('user_unit_ids');
     localStorage.removeItem('user_id');
     localStorage.removeItem('is_master');
+    localStorage.removeItem('activeUnit');
   };
 
   const token = localStorage.getItem('token') || undefined;

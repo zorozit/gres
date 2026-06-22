@@ -26,27 +26,30 @@ const UnitContext = createContext<UnitContextType | undefined>(undefined);
 const API_URL = 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
 export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeUnit, setActiveUnit] = useState<Unit | null>(null);
+  // Inicializa direto do localStorage (síncrono, sem useEffect)
+  const [activeUnit, setActiveUnitRaw] = useState<Unit | null>(() => {
+    try {
+      const saved = localStorage.getItem('activeUnit');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [userUnits, setUserUnits] = useState<Unit[]>([]);
   const [isLoadingUnits, setIsLoadingUnits] = useState(false);
   const { isAuthenticated } = useAuth();
 
-  // Restaura unidade ativa do localStorage ao montar
-  useEffect(() => {
-    const savedUnit = localStorage.getItem('activeUnit');
-    if (savedUnit) {
-      try { setActiveUnit(JSON.parse(savedUnit)); } catch { /* ignore */ }
-    }
+  // Wrapper do setActiveUnit que persiste no localStorage
+  const setActiveUnit = React.useCallback((unit: Unit | React.SetStateAction<Unit | null>) => {
+    setActiveUnitRaw(prev => {
+      const next = typeof unit === 'function' ? unit(prev) : unit;
+      if (next) {
+        localStorage.setItem('activeUnit', JSON.stringify(next));
+      }
+      // Não remove activeUnit do localStorage aqui—
+      // isso é feito pelo AuthContext.logout().
+      // No refresh, activeUnit fica null brevemente mas o localStorage sobrevive.
+      return next;
+    });
   }, []);
-
-  // Persiste unidade ativa no localStorage quando mudar
-  useEffect(() => {
-    if (activeUnit) {
-      localStorage.setItem('activeUnit', JSON.stringify(activeUnit));
-    } else {
-      localStorage.removeItem('activeUnit');
-    }
-  }, [activeUnit]);
 
   // ── Carrega unidades da API quando autenticado ────────────────────────────
   const loadUnits = useCallback(async () => {
@@ -117,9 +120,9 @@ export const UnitProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isAuthenticated) {
       loadUnits();
     } else {
-      // Logout: limpa unidades
+      // Limpa state (localStorage é limpo pelo AuthContext.logout)
       setUserUnits([]);
-      setActiveUnit(null);
+      setActiveUnitRaw(null);
     }
   }, [isAuthenticated, loadUnits]);
 
