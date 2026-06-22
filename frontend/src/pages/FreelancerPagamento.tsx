@@ -887,7 +887,7 @@ export default function FreelancerPagamento() {
         const diasUnicos = Array.from(new Set(todosTurnos.map(t=>t.data))).sort();
         const valorTranspDia = R(fr.valorTransporte);
         // ── saídas: só consumo/descontos reais (excluir automáticos) ──
-        const EXCLUIR_SAIDA = new Set(['Desconto Transporte','Desconto Adiantamento Especial']);
+        const EXCLUIR_SAIDA = new Set(['Desconto Transporte','Desconto Adiantamento Especial','Caixinha']);
         const saidasReais = detalhe.saidasSemana.filter((s2:any)=>{
           const t = s2.tipo||s2.origem||s2.referencia||'';
           return !EXCLUIR_SAIDA.has(t);
