@@ -1,6 +1,12 @@
 // Import only specific services to avoid loading all AWS SDK clients
 const DynamoDB = require('aws-sdk/clients/dynamodb');
 const CognitoIdentityServiceProvider = require('aws-sdk/clients/cognitoidentityserviceprovider');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// JWT secret — em produção deveria ser env var
+const JWT_SECRET = process.env.JWT_SECRET || 'gires-jwt-secret-2026-prod';
+const JWT_EXPIRES_IN = '8h';
 
 const cognito = new CognitoIdentityServiceProvider({
   region: 'us-east-2'
@@ -321,6 +327,76 @@ const resolverResponsavel = async (identificador, fallbackNome) => {
   };
 };
 
+// ─────────────────────────────────────────────────────────
+// JWT helpers
+// ─────────────────────────────────────────────────────────
+
+/** Gera JWT assinado com dados do usuário */
+function gerarToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      email: user.email,
+      perfil: user.perfil || 'operador',
+      unitIds: user.unitIds || [],
+      isMaster: user.email === 'admin@gres.com',
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
+/** Verifica token e retorna payload ou null */
+function verificarToken(authHeader) {
+  if (!authHeader) return null;
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return null;
+  try {
+    return jwt.verify(parts[1], JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+// Rotas públicas que não exigem JWT
+const ROTAS_PUBLICAS = ['/auth/login', '/health'];
+
+// ─────────────────────────────────────────────────────────
+// Bcrypt helpers
+// ─────────────────────────────────────────────────────────
+const BCRYPT_ROUNDS = 10;
+
+/** Verifica se string já é hash bcrypt */
+function isBcryptHash(str) {
+  return typeof str === 'string' && str.startsWith('$2');
+}
+
+/**
+ * Compara senha digitada com armazenada.
+ * Se armazenada for texto plano, faz compare direto e regrava como hash (migração transparente).
+ */
+async function compararSenha(senhaDigitada, senhaArmazenada, userId) {
+  if (isBcryptHash(senhaArmazenada)) {
+    return bcrypt.compareSync(senhaDigitada, senhaArmazenada);
+  }
+  // Senha em texto plano — compare direto
+  if (senhaDigitada !== senhaArmazenada) return false;
+  // Auto-migrar para hash
+  try {
+    const hash = bcrypt.hashSync(senhaDigitada, BCRYPT_ROUNDS);
+    await dynamodb.update({
+      TableName: 'gres-prod-usuarios',
+      Key: { id: userId },
+      UpdateExpression: 'SET senha = :h',
+      ExpressionAttributeValues: { ':h': hash },
+    }).promise();
+    console.log(`Auto-migrou senha de ${userId} para bcrypt`);
+  } catch (e) {
+    console.warn('Falha ao auto-migrar senha (best-effort):', e.message);
+  }
+  return true;
+}
+
 // Handler principal
 exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
@@ -330,12 +406,24 @@ exports.handler = async (event) => {
     const rawPath = event.rawPath || event.path || '/';
     const body = event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {};
     const queryParams = event.queryStringParameters || {};
+    const headers = event.headers || {};
 
     console.log(`Method: ${httpMethod}, Path: ${rawPath}`);
 
     // OPTIONS para CORS
     if (httpMethod === 'OPTIONS') {
       return response(200, { ok: true });
+    }
+
+    // ── JWT Auth middleware ──────────────────────────────
+    const isRotaPublica = ROTAS_PUBLICAS.some(r => rawPath === r || rawPath.includes(r));
+    if (!isRotaPublica) {
+      const tokenPayload = verificarToken(headers.authorization || headers.Authorization);
+      if (!tokenPayload) {
+        return response(401, { error: 'Token inválido ou ausente. Faça login novamente.' });
+      }
+      // Injeta dados do token no body pra uso interno (não sobrescreve body do POST)
+      event._auth = tokenPayload;
     }
 
     // LOGIN com DynamoDB
@@ -360,18 +448,14 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
         
-        // Validar senha
-        if (user.senha !== password) {
+        // Validar senha (bcrypt ou texto plano com auto-migração)
+        const senhaOk = await compararSenha(password, user.senha || '', user.id);
+        if (!senhaOk) {
           return response(401, { error: 'Senha incorreta' });
         }
 
-        // Gerar token JWT simples
-        const token = Buffer.from(JSON.stringify({
-          email: user.email,
-          id: user.id,
-          perfil: user.perfil,
-          iat: Math.floor(Date.now() / 1000)
-        })).toString('base64');
+        // Gerar JWT assinado
+        const token = gerarToken(user);
 
         return response(200, {
           success: true,
@@ -420,13 +504,16 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
 
+        // Hash da nova senha com bcrypt
+        const hashedPassword = bcrypt.hashSync(newPassword, BCRYPT_ROUNDS);
+
         // Atualizar senha no DynamoDB
         await dynamodb.update({
           TableName: 'gres-prod-usuarios',
           Key: { id: user.id },
           UpdateExpression: 'SET senha = :newPassword',
           ExpressionAttributeValues: {
-            ':newPassword': newPassword
+            ':newPassword': hashedPassword
           }
         }).promise();
 
@@ -529,7 +616,7 @@ exports.handler = async (event) => {
           unitIds: unitIds ? unitIds.map(resolveUnitId) : [unitIdClean],
           cpf: cpf || '',
           celular: celular || '',
-          senha: senha || '',
+          senha: senha ? bcrypt.hashSync(senha, BCRYPT_ROUNDS) : '',
           ativo: ativo !== false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -821,34 +908,113 @@ exports.handler = async (event) => {
       }
     }
 
-    // DELETE COLABORADORES
+    // DELETE COLABORADORES — soft delete (marca ativo=false em vez de apagar)
     if (rawPath.includes('/colaboradores/') && httpMethod === 'DELETE') {
       const colaboradorId = rawPath.split('/').pop();
       if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
 
       try {
-        await dynamodb.delete({
+        // Buscar colaborador atual
+        const original = await dynamodb.get({
           TableName: 'gres-prod-colaboradores',
           Key: { id: colaboradorId }
         }).promise();
 
-        return response(200, { success: true, message: 'Colaborador deletado com sucesso' });
+        if (!original.Item) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        // Verificar dependências (registros vinculados)
+        const dependencias = {};
+        const [folhaRes, saidasRes, escalasRes] = await Promise.all([
+          dynamodb.scan({
+            TableName: 'gres-prod-folha-pagamento',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+          dynamodb.scan({
+            TableName: 'gres-prod-saidas',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+          dynamodb.scan({
+            TableName: 'gres-prod-escalas',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+        ]);
+        if (folhaRes.Count > 0) dependencias.folhaPagamento = folhaRes.Count;
+        if (saidasRes.Count > 0) dependencias.saidas = saidasRes.Count;
+        if (escalasRes.Count > 0) dependencias.escalas = escalasRes.Count;
+
+        const authData = event._auth || {};
+
+        // Soft delete: marca ativo=false
+        await dynamodb.update({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId },
+          UpdateExpression: 'SET ativo = :f, desativadoEm = :ts, desativadoPor = :uid, desativadoPorNome = :un, updatedAt = :ts',
+          ExpressionAttributeValues: {
+            ':f': false,
+            ':ts': new Date().toISOString(),
+            ':uid': authData.sub || body.responsavelId || '',
+            ':un': authData.email || body.responsavelNome || '',
+          },
+        }).promise();
+
+        // Log de auditoria
+        await logColaboradorAlteracao({
+          colaboradorId,
+          evento: 'desativado',
+          valoresAntes: { ativo: original.Item.ativo },
+          valoresDepois: { ativo: false },
+          usuarioId: authData.sub || body.responsavelId || '',
+          usuarioNome: authData.email || body.responsavelNome || '',
+          unitId: original.Item.unitId || '',
+        });
+
+        const temDependencias = Object.keys(dependencias).length > 0;
+        return response(200, {
+          success: true,
+          softDelete: true,
+          message: temDependencias
+            ? `Colaborador desativado (tem ${Object.values(dependencias).reduce((a,b)=>a+b,0)} registros vinculados — dados preservados)`
+            : 'Colaborador desativado com sucesso',
+          dependencias: temDependencias ? dependencias : undefined,
+        });
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao deletar colaborador: ' + error.message });
+        return response(500, { error: 'Erro ao desativar colaborador: ' + error.message });
       }
     }
 
-    // GET COLABORADORES — filtra por unitId (CNPJ)
+    // GET COLABORADORES — filtra por unitId (CNPJ); exclui inativos por padrão
     if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'GET') {
       try {
         const unitIdRaw = queryParams.unitId;
         const unitIdClean = unitIdRaw ? resolveUnitId(unitIdRaw) : null;
+        const incluirInativos = queryParams.incluirInativos === 'true';
         let params = { TableName: 'gres-prod-colaboradores' };
 
+        const filters = [];
+        const exprValues = {};
+
         if (unitIdClean) {
-          params.FilterExpression = 'unitId = :uid';
-          params.ExpressionAttributeValues = { ':uid': unitIdClean };
+          filters.push('unitId = :uid');
+          exprValues[':uid'] = unitIdClean;
+        }
+
+        if (!incluirInativos) {
+          filters.push('(ativo <> :inativo OR attribute_not_exists(ativo))');
+          exprValues[':inativo'] = false;
+        }
+
+        if (filters.length > 0) {
+          params.FilterExpression = filters.join(' AND ');
+          params.ExpressionAttributeValues = exprValues;
         }
 
         const result = await dynamodb.scan(params).promise();
@@ -1214,7 +1380,7 @@ exports.handler = async (event) => {
       }
     }
 
-    // POST ESCALAS
+    // POST ESCALAS — com check de duplicata
     if (rawPath === '/escalas' && httpMethod === 'POST') {
       const uid = body.unitId || body.unidadeId;
       const { data, colaboradorId, turno, observacao } = body;
@@ -1222,8 +1388,23 @@ exports.handler = async (event) => {
         return response(400, { error: 'unitId, data, colaboradorId e turno são obrigatórios' });
       }
       try {
+        // ID determinístico: garante idempotência natural
+        const escalaId = `esc-${colaboradorId}-${data}-${turno}-${toCnpj(uid)}`;
+
+        // Check duplicata: já existe escala ativa com mesmo colab+data+turno+unit?
+        const dupCheck = await dynamodb.get({
+          TableName: 'gres-prod-escalas',
+          Key: { id: escalaId },
+        }).promise();
+        if (dupCheck.Item && !dupCheck.Item._deleted && dupCheck.Item.turno !== 'Deletado') {
+          return response(409, {
+            error: 'Já existe escala para este colaborador neste dia/turno/unidade',
+            existingId: dupCheck.Item.id,
+          });
+        }
+
         const item = {
-          id: `esc-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          id: escalaId,
           unitId: uid, unidadeId: uid, data, colaboradorId, turno,
           observacao: observacao || '',
           timestamp: new Date().toISOString(), createdAt: new Date().toISOString()

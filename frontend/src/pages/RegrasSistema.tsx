@@ -278,8 +278,16 @@ const CATEGORIAS: CategoriaRegras[] = [
       {
         id: 'escala-duplicata',
         titulo: 'Verificação de duplicata de escala',
-        descricao: 'Impedir que o mesmo colaborador seja escalado duas vezes no mesmo dia/turno/unidade.',
-        status: 'planejado',
+        descricao: 'Impede que o mesmo colaborador seja escalado duas vezes no mesmo dia/turno/unidade.',
+        detalhes: [
+          'ID determinístico: esc-{colaboradorId}-{data}-{turno}-{unitId}',
+          'POST /escalas verifica se já existe registro ativo com mesmo ID',
+          'Duplicata → HTTP 409 Conflict com mensagem clara',
+          'Idempotência natural: mesmo POST = mesmo ID = mesmo registro',
+          'Turno diferente no mesmo dia é permitido (Dia + Noite)',
+        ],
+        status: 'ativo',
+        desde: '2026-06-22',
       },
     ],
   },
@@ -293,19 +301,45 @@ const CATEGORIAS: CategoriaRegras[] = [
         id: 'jwt-auth',
         titulo: 'P1.1 — Autenticação JWT',
         descricao: 'Todas as rotas protegidas da API exigem token JWT válido no header Authorization.',
-        status: 'planejado',
+        detalhes: [
+          'Login retorna JWT assinado com HS256 (expira em 8h)',
+          'Payload: sub (userId), email, perfil, unitIds[], isMaster',
+          'Middleware verifica token antes de processar qualquer rota protegida',
+          'Rotas públicas: /auth/login e /health',
+          'Token expirado → HTTP 401 → frontend redireciona pro login',
+          'Frontend envia via header Authorization: Bearer <token>',
+        ],
+        status: 'ativo',
+        desde: '2026-06-22',
       },
       {
         id: 'bcrypt-senhas',
         titulo: 'P1.2 — Hash de senhas (bcrypt)',
         descricao: 'Senhas são armazenadas como hash bcrypt em vez de texto plano.',
-        status: 'planejado',
+        detalhes: [
+          'Todas as 10 senhas migradas de texto plano para bcrypt ($2b$10$...)',
+          'Login usa bcrypt.compareSync() para validar',
+          'Auto-migração transparente: se senha ainda for texto plano, autentica e regrava como hash',
+          'Criação e alteração de senha sempre grava hash (nunca texto plano)',
+          'Custo: 10 rounds (BCRYPT_ROUNDS = 10)',
+        ],
+        status: 'ativo',
+        desde: '2026-06-22',
       },
       {
         id: 'soft-delete',
         titulo: 'P1.3 — Soft delete de colaboradores',
         descricao: 'Ao excluir colaborador, marca como ativo=false em vez de deletar. Verifica dependências antes.',
-        status: 'planejado',
+        detalhes: [
+          'DELETE /colaboradores/:id → UPDATE com ativo=false, desativadoEm, desativadoPor',
+          'Verifica dependências: folha-pagamento, saídas, escalas vinculadas',
+          'Retorna contagem de registros vinculados na resposta',
+          'GET /colaboradores exclui inativos por padrão',
+          'Parâmetro ?incluirInativos=true mostra todos (ativos + inativos)',
+          'Log de auditoria com evento "desativado"',
+        ],
+        status: 'ativo',
+        desde: '2026-06-22',
       },
     ],
   },
@@ -480,7 +514,7 @@ export default function RegrasSistema() {
       )}
 
       <div style={{ textAlign: 'center', padding: '24px 0 0', fontSize: 11, color: '#bbb' }}>
-        Última atualização: 22/06/2026 — GIRES v1.0
+        Última atualização: 22/06/2026 — GIRES v1.1 (P0+P1 completos)
       </div>
     </div>
   );
