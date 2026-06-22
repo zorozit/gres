@@ -90,6 +90,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
       { id: 'unidades',   icon: '🏢', title: 'Unidades',    path: '/modulos/unidades' },
       { id: 'usuarios',   icon: '🔐', title: 'Usuários',    path: '/modulos/usuarios' },
       { id: 'permissoes', icon: '🛡️', title: 'Permissões',  path: '/modulos/permissoes' },
+      { id: 'regras-sistema', icon: '📖', title: 'Regras do Sistema', path: '/modulos/regras-sistema' },
     ],
   },
 ];

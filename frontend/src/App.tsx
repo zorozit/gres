@@ -15,6 +15,7 @@ import { Usuarios } from './pages/Usuarios';
 import Colaboradores from './pages/Colaboradores';
 import { Motoboys } from './pages/Motoboys';
 import { PermissoesConfig } from './pages/PermissoesConfig';
+import RegrasSistema from './pages/RegrasSistema';
 import Auditoria from './pages/Auditoria';
 import Feriados from './pages/Feriados';
 import FolhaPagamento from './pages/FolhaPagamento';
@@ -148,6 +149,8 @@ function App() {
 
               <Route path="/modulos/permissoes"
                 element={<Protected moduloId="permissoes"><PermissoesConfig /></Protected>} />
+              <Route path="/modulos/regras-sistema"
+                element={<Protected moduloId="regras-sistema"><RegrasSistema /></Protected>} />
 
               {/* Landing page pública na raiz */}
               <Route path="/" element={<LandingPage />} />
