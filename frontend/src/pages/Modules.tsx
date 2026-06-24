@@ -27,6 +27,9 @@ const ALL_MODULES = [
   { id: 'unidades',              icon: '🏢', title: 'Cadastro de Unidades',      description: 'Gerencie as unidades de restaurante',                                              path: '/modulos/unidades',              color: '#ff6b9d', group: 'admin' },
   { id: 'usuarios',              icon: '🔐', title: 'Gestão de Usuários',        description: 'Controle de acesso e perfis',                                                      path: '/modulos/usuarios',              color: '#c44569', group: 'admin' },
   { id: 'permissoes',            icon: '🛡️', title: 'Config. de Permissões',     description: 'Defina quais módulos cada perfil pode acessar',                                   path: '/modulos/permissoes',            color: '#e53935', group: 'admin' },
+  { id: 'payslips',               icon: '🧾', title: 'Payslips',                  description: 'Resumos consolidados de pagamento por colaborador e período',                     path: '/modulos/payslips',              color: '#00897b', group: 'folha' },
+  { id: 'historico-remuneracoes',  icon: '📊', title: 'Histórico Remunerações',    description: 'Timeline de acordos e valores por colaborador ao longo do tempo',                 path: '/modulos/historico-remuneracoes', color: '#5c6bc0', group: 'rh' },
+  { id: 'regras-sistema',          icon: '📋', title: 'Regras do Sistema',          description: 'Documentação das regras de negócio e cálculos do GIRES',                         path: '/modulos/regras-sistema',        color: '#546e7a', group: 'admin' },
 ];
 
 const GROUPS = [
