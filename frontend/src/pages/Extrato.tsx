@@ -720,7 +720,7 @@ export const Extrato: React.FC = () => {
               ...(item.tipoSaida ? [{ label: 'Tipo Saída', value: item.tipoSaida }] : []),
               { label: 'Descrição',       value: item.descricao },
               { label: 'Valor Total',     value: fmtMoeda(item.valor) },
-              ...(item.valorBruto    ? [{ label: 'Bruto (dobras)',   value: fmtMoeda(item.valorBruto) }]    : []),
+              ...(item.valorBruto    ? [{ label: item.tipoContrato === 'CLT' ? 'Salário Bruto' : 'Bruto (dobras)',   value: fmtMoeda(item.valorBruto) }]    : []),
               ...(item.valorTransporte ? [{ label: 'Transporte',    value: fmtMoeda(item.valorTransporte!) }] : []),
               ...(item.desconto      ? [{ label: 'Desconto saídas', value: fmtMoeda(item.desconto) }]      : []),
               { label: 'Forma de Pagamento', value: item.formaPagamento ? (item.formaPagamento === 'PIX' ? '📱 PIX' : item.formaPagamento === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto') : '—' },
@@ -1131,6 +1131,25 @@ export const Extrato: React.FC = () => {
       return next;
     });
 
+    // --- Dados do motoboy (fetch assíncrono) ---
+    const [motoboyData, setMotoboyData] = React.useState<any[] | null>(null);
+    React.useEffect(() => {
+      // Buscar dados do controle-motoboy se CLT
+      const fetchMotoboy = async () => {
+        try {
+          const tk = localStorage.getItem('auth_token');
+          const r = await fetchAuth(`${apiUrl}/controle-motoboy?motoboyId=${colabId}&mes=${mesAno}&unitId=${unitId}`, {
+            headers: tk ? { Authorization: `Bearer ${tk}` } : {},
+          });
+          if (r?.ok) {
+            const d = await r.json();
+            setMotoboyData(Array.isArray(d) ? d : []);
+          } else { setMotoboyData([]); }
+        } catch { setMotoboyData([]); }
+      };
+      fetchMotoboy();
+    }, [colabId, mesAno, unitId]);
+
     const colabItems = items.filter(i => i.colaboradorId === colabId).sort((a, b) => {
       const dA = a.dataPagamento || a.semana || a.mes || '';
       const dB = b.dataPagamento || b.semana || b.mes || '';
@@ -1271,7 +1290,7 @@ export const Extrato: React.FC = () => {
                 )}
                 {pagoVariavel && varValor > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                    <span style={{ color: '#a5d6a7' }}>├─ Variável ({varData ? fmtDataBR(varData) : '—'})</span>
+                    <span style={{ color: '#a5d6a7' }}>├─ Variável motoboy ({varData ? fmtDataBR(varData) : '—'})</span>
                     <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>{fmtMoeda(varValor)}</span>
                   </div>
                 )}
@@ -1346,9 +1365,9 @@ export const Extrato: React.FC = () => {
                 )}
                 {pagoVariavel && varValor > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', backgroundColor: '#e8f5e9', borderRadius: '8px', borderLeft: '4px solid #388e3c' }}>
-                    <div style={{ fontSize: '20px' }}>📱</div>
+                    <div style={{ fontSize: '20px' }}>🏍️</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1b5e20' }}>Variável (dobras/motoboy)</div>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1b5e20' }}>Variável Motoboy (corridas)</div>
                       <div style={{ fontSize: '11px', color: '#666' }}>{varData ? fmtDataBR(varData) : '—'} • PIX</div>
                     </div>
                     <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(varValor)}</div>
@@ -1422,14 +1441,107 @@ export const Extrato: React.FC = () => {
               </div>
             )}
 
+            {/* ═══ VARIÁVEL MOTOBOY ═══ */}
+            {motoboyData && motoboyData.length > 0 && (() => {
+              const totalEntD = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entDia) || 0), 0);
+              const totalEntN = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entNoite) || 0), 0);
+              const totalCaixD = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.caixinhaDia) || 0), 0);
+              const totalCaixN = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.caixinhaNoite) || 0), 0);
+              const totalVlVar = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.vlVariavel) || 0), 0);
+              const totalPgto = motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.pgto) || 0), 0);
+              const diasTrabalhados = motoboyData.filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) > 0).length;
+
+              return (
+                <div style={{ marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 10px', fontSize: '13px', color: '#e65100', borderBottom: '2px solid #fff3e0', paddingBottom: '6px' }}>
+                    🏍️ Variável Motoboy — {nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)}
+                  </h4>
+
+                  {/* Cards resumo motoboy */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+                    <div style={{ padding: '10px', backgroundColor: '#fff3e0', borderRadius: '8px', textAlign: 'center', borderLeft: '3px solid #e65100' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#e65100', textTransform: 'uppercase' }}>Entregas</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#bf360c' }}>{(totalEntD + totalEntN).toFixed(0)}</div>
+                      <div style={{ fontSize: '10px', color: '#888' }}>☀️ {totalEntD.toFixed(0)} dia · 🌙 {totalEntN.toFixed(0)} noite</div>
+                    </div>
+                    <div style={{ padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '8px', textAlign: 'center', borderLeft: '3px solid #2e7d32' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#2e7d32', textTransform: 'uppercase' }}>Caixinhas</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#1b5e20' }}>{fmtMoeda(totalCaixD + totalCaixN)}</div>
+                      <div style={{ fontSize: '10px', color: '#888' }}>☀️ R${fmt(totalCaixD)} · 🌙 R${fmt(totalCaixN)}</div>
+                    </div>
+                    <div style={{ padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '8px', textAlign: 'center', borderLeft: '3px solid #1565c0' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#1565c0', textTransform: 'uppercase' }}>Variável Acum.</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#0d47a1' }}>{fmtMoeda(totalVlVar)}</div>
+                      <div style={{ fontSize: '10px', color: '#888' }}>{diasTrabalhados} dias trabalhados</div>
+                    </div>
+                    {totalPgto > 0 && (
+                      <div style={{ padding: '10px', backgroundColor: '#f3e5f5', borderRadius: '8px', textAlign: 'center', borderLeft: '3px solid #7b1fa2' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#7b1fa2', textTransform: 'uppercase' }}>Pago (pgto)</div>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#4a148c' }}>{fmtMoeda(totalPgto)}</div>
+                        <div style={{ fontSize: '10px', color: '#888' }}>registrado no controle</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Tabela diária expansível */}
+                  <div style={{ cursor: 'pointer', padding: '6px 10px', backgroundColor: '#fff8e1', borderRadius: '6px', fontSize: '12px', color: '#f57f17', fontWeight: 'bold' }}
+                    onClick={() => toggleExpandido('motoboy_detalhe')}>
+                    {expandidos.has('motoboy_detalhe') ? '▼' : '▶'} Ver detalhamento diário
+                  </div>
+                  {expandidos.has('motoboy_detalhe') && (
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '6px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#e65100', color: 'white' }}>
+                            <th style={{ padding: '4px 6px', textAlign: 'left' }}>Data</th>
+                            <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent. ☀️</th>
+                            <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent. 🌙</th>
+                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix. ☀️</th>
+                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix. 🌙</th>
+                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Variável</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {motoboyData
+                            .sort((a: any, b: any) => (a.data || '').localeCompare(b.data || ''))
+                            .filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) + (parseFloat(d.vlVariavel) || 0) > 0)
+                            .map((d: any, idx: number) => (
+                            <tr key={d.id || idx} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : '#fff', borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '3px 6px' }}>{d.data ? fmtDataBR(d.data) : '—'}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'center', color: '#e65100', fontWeight: 'bold' }}>{parseFloat(d.entDia) || 0}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'center', color: '#4a148c', fontWeight: 'bold' }}>{parseFloat(d.entNoite) || 0}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right', color: '#2e7d32' }}>{(parseFloat(d.caixinhaDia) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaDia)) : '—'}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right', color: '#2e7d32' }}>{(parseFloat(d.caixinhaNoite) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaNoite)) : '—'}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{(parseFloat(d.vlVariavel) || 0) > 0 ? fmtMoeda(parseFloat(d.vlVariavel)) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ backgroundColor: '#e65100', color: 'white', fontWeight: 'bold' }}>
+                            <td style={{ padding: '4px 6px' }}>TOTAL</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'center' }}>{totalEntD.toFixed(0)}</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'center' }}>{totalEntN.toFixed(0)}</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(totalCaixD)}</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(totalCaixN)}</td>
+                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(totalVlVar)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Glossário CLT */}
             <div style={{ padding: '8px 10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '10px', color: '#555', lineHeight: '1.6' }}>
               <strong>📖 Como ler:</strong> {' '}
               <strong>Salário Bruto</strong> = valor base do contrato CLT. {' '}
-              <strong>Adiantamento</strong> = parcela paga no dia 20 (aprox. 40%). {' '}
+              <strong>Adiantamento</strong> = parcela paga no dia 20. {' '}
               <strong>Saldo Final</strong> = restante pago no dia 05 do mês seguinte. {' '}
-              <strong>Descontos</strong> = transporte adiantado semanalmente, marmitas, compras — abatidos do total. {' '}
-              <strong>Líquido Efetivo</strong> = o que o colaborador efetivamente recebeu líquido no mês.
+              <strong>Variável Motoboy</strong> = comissão por entregas + caixinhas do mês. {' '}
+              <strong>Descontos</strong> = transporte semanal, marmitas, compras — abatidos do total. {' '}
+              <strong>Líquido Efetivo</strong> = o que o colaborador efetivamente recebeu líquido.
             </div>
 
             <div style={{ marginTop: '14px', textAlign: 'right' }}>
