@@ -1136,7 +1136,313 @@ export const Extrato: React.FC = () => {
       const dB = b.dataPagamento || b.semana || b.mes || '';
       return dB.localeCompare(dA);
     });
-    const nome        = colabItems[0]?.nomeColaborador || colabId;
+    const nome = colabItems[0]?.nomeColaborador || colabId;
+
+    // Detectar CLT: tipoContrato === 'CLT' ou existência de folha sem semana
+    const folhaCLT = colabItems.find(i => i.origem === 'folha' && (!i.semana || i.semana === undefined) && (i.tipoContrato === 'CLT' || i.descricao?.includes('CLT')));
+    const isCLT = colabItems.some(i => i.tipoContrato === 'CLT') || !!folhaCLT;
+
+    // ═══════════════════════════════════════════════════════
+    // CLT: Demonstrativo Mensal
+    // ═══════════════════════════════════════════════════════
+    if (isCLT) {
+      // --- Dados da folha ---
+      const folhaItem = colabItems.find(i => i.origem === 'folha' && (!i.semana || i.semana === undefined));
+      const raw = folhaItem?.raw || {} as any;
+      const bruto = R(raw.valorBruto) || R(folhaItem?.valorBruto) || 0;
+      const saldoFinal = R(raw.saldoFinal) || R(raw.totalFinal) || R(folhaItem?.valor) || 0;
+      const pagoAdiantamento = raw.pagoAdiantamento === true;
+      const dataPgtoAdiantamento = raw.dataPgtoAdiantamento || '';
+      const dataPagamento = raw.dataPagamento || folhaItem?.dataPagamento || '';
+      const pagoVariavel = raw.pagoVariavel === true;
+      const dataPgtoVariavel = raw.dataPgtoVariavel && typeof raw.dataPgtoVariavel === 'string' ? raw.dataPgtoVariavel : '';
+
+      // --- Saídas do mês ---
+      const saidas = colabItems.filter(i => i.origem === 'saida');
+
+      // Agrupar saídas por categoria
+      const saidasPorCategoria: Record<string, { items: ExtratoItem[]; total: number; isDebito: boolean }> = {};
+      for (const sa of saidas) {
+        const cat = sa.tipoSaida || sa.descricao || 'Outros';
+        if (!saidasPorCategoria[cat]) saidasPorCategoria[cat] = { items: [], total: 0, isDebito: false };
+        saidasPorCategoria[cat].items.push(sa);
+        saidasPorCategoria[cat].total += R(sa.valor);
+        saidasPorCategoria[cat].isDebito = sa.tipo === 'debito';
+      }
+
+      // --- Pagamentos recebidos (depósitos em conta) ---
+      // Adiantamento salário: pode vir como saída ou do registro de folha
+      const saidaAdto = saidas.find(sa => sa.tipoSaida === 'Adiantamento Salário');
+      const adtoValor = saidaAdto ? R(saidaAdto.valor) : 0;
+      const adtoData = saidaAdto?.dataPagamento || dataPgtoAdiantamento || '';
+
+      // Variável (se existir)
+      const itemVariavel = colabItems.find(i => i.id?.endsWith('_var'));
+      const varValor = itemVariavel ? R(itemVariavel.valor) : 0;
+      const varData = itemVariavel?.dataPagamento || dataPgtoVariavel || '';
+
+      // Total depositado
+      const totalDepositado = saldoFinal + adtoValor + varValor;
+
+      // --- Descontos do mês ---
+      // Categorias de desconto: tudo que não é pagamento direto ao colaborador
+      const categoriasDesconto: { cat: string; items: ExtratoItem[]; total: number }[] = [];
+      const categoriasCredito: { cat: string; items: ExtratoItem[]; total: number }[] = [];
+      
+      for (const [cat, data] of Object.entries(saidasPorCategoria)) {
+        // Adiantamento Salário já contabilizado nos pagamentos recebidos
+        if (cat === 'Adiantamento Salário') continue;
+        
+        if (data.isDebito || cat === 'Consumo Interno' || cat === 'Desconto' || cat === 'Desconto Transporte' || cat === 'Desconto Adiantamento Especial' || cat === 'Sangria' || cat === 'A receber') {
+          categoriasDesconto.push({ cat, items: data.items, total: data.total });
+        } else if (cat === 'Adiantamento Transporte') {
+          // Transporte adiantado é crédito pago ao colaborador, mas deve ser abatido no salário
+          categoriasDesconto.push({ cat: 'Adiantamento Transporte', items: data.items, total: data.total });
+        } else if (cat === 'Adiantamento Especial') {
+          categoriasDesconto.push({ cat: 'Adiantamento Especial', items: data.items, total: data.total });
+        } else {
+          // Outros créditos (A pagar, Caixinha, etc.)
+          categoriasCredito.push({ cat, items: data.items, total: data.total });
+        }
+      }
+
+      const totalDescontos = categoriasDesconto.reduce((s, c) => s + c.total, 0);
+      const totalCreditosExtras = categoriasCredito.reduce((s, c) => s + c.total, 0);
+      const liquidoEfetivo = totalDepositado + totalCreditosExtras - totalDescontos;
+
+      const pendentes = colabItems.filter(i => !i.pago);
+
+      // Formatar nome do mês
+      const [anoStr, mesStr] = mesAno.split('-');
+      const nomeMes = new Date(parseInt(anoStr), parseInt(mesStr) - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+      return (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={onClose}>
+          <div style={{ ...s.card, maxWidth: '780px', width: '97%', maxHeight: '93vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ margin: 0, color: '#1565c0' }}>📋 Demonstrativo CLT — {nome}</h3>
+              <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* Badge de período */}
+            <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ padding: '4px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
+                📅 {nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)}
+              </span>
+              <span style={{ padding: '4px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>
+                💼 CLT
+              </span>
+              {folhaItem?.pago && (
+                <span style={{ padding: '4px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>
+                  ✅ Quitado
+                </span>
+              )}
+            </div>
+
+            {/* ═══ CARD DEMONSTRATIVO ═══ */}
+            <div style={{ marginBottom: '16px', padding: '18px 20px', borderRadius: '12px', background: 'linear-gradient(135deg, #1a2236 0%, #243044 100%)', color: '#e8f0fe' }}>
+              
+              {/* Salário Bruto */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#bbdefb' }}>💰 Salário Bruto</span>
+                <span style={{ fontSize: '20px', fontWeight: 'bold', color: '#ffffff' }}>{fmtMoeda(bruto)}</span>
+              </div>
+
+              {/* Pagamentos Recebidos */}
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#81c784', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                  📥 Pagamentos Recebidos
+                </div>
+                {pagoAdiantamento && adtoValor > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                    <span style={{ color: '#a5d6a7' }}>├─ Adiantamento ({adtoData ? fmtDataBR(adtoData) : 'dia 20'})</span>
+                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>{fmtMoeda(adtoValor)}</span>
+                  </div>
+                )}
+                {saldoFinal > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                    <span style={{ color: '#a5d6a7' }}>├─ Saldo final ({dataPagamento ? fmtDataBR(dataPagamento) : 'dia 05'})</span>
+                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>{fmtMoeda(saldoFinal)}</span>
+                  </div>
+                )}
+                {pagoVariavel && varValor > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                    <span style={{ color: '#a5d6a7' }}>├─ Variável ({varData ? fmtDataBR(varData) : '—'})</span>
+                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>{fmtMoeda(varValor)}</span>
+                  </div>
+                )}
+                {totalCreditosExtras > 0 && categoriasCredito.map(cc => (
+                  <div key={cc.cat} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                    <span style={{ color: '#a5d6a7' }}>├─ {cc.cat} ({cc.items.length}x)</span>
+                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>{fmtMoeda(cc.total)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontSize: '12px', borderTop: '1px dashed rgba(255,255,255,0.15)', marginTop: '4px' }}>
+                  <span style={{ color: '#e8f5e9', fontWeight: 'bold' }}>└─ Total depositado</span>
+                  <span style={{ color: '#e8f5e9', fontWeight: 'bold', fontSize: '14px' }}>{fmtMoeda(totalDepositado + totalCreditosExtras)}</span>
+                </div>
+              </div>
+
+              {/* Descontos */}
+              {categoriasDesconto.length > 0 && (
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#ef9a9a', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                    📤 Descontos do Mês
+                  </div>
+                  {categoriasDesconto.map(cd => (
+                    <div key={cd.cat} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#ef9a9a' }}>├─ {cd.cat} ({cd.items.length}x)</span>
+                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(cd.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontSize: '12px', borderTop: '1px dashed rgba(255,255,255,0.15)', marginTop: '4px' }}>
+                    <span style={{ color: '#ffcdd2', fontWeight: 'bold' }}>└─ Total descontos</span>
+                    <span style={{ color: '#ffcdd2', fontWeight: 'bold', fontSize: '14px' }}>−{fmtMoeda(totalDescontos)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* LÍQUIDO EFETIVO */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 0 0', borderTop: '2px solid rgba(255,255,255,0.3)' }}>
+                <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#ffffff' }}>💵 LÍQUIDO EFETIVO</span>
+                <span style={{ fontSize: '22px', fontWeight: 'bold', color: liquidoEfetivo >= 0 ? '#69f0ae' : '#ff8a80' }}>
+                  {liquidoEfetivo < 0 ? '−' : ''}{fmtMoeda(Math.abs(liquidoEfetivo))}
+                </span>
+              </div>
+              <div style={{ fontSize: '10px', color: '#8fa8c8', textAlign: 'right', marginTop: '2px' }}>
+                (Total depositado {fmtMoeda(totalDepositado + totalCreditosExtras)} − Descontos {fmtMoeda(totalDescontos)})
+              </div>
+            </div>
+
+            {/* ═══ TIMELINE DE PAGAMENTOS ═══ */}
+            <div style={{ marginBottom: '16px' }}>
+              <h4 style={{ margin: '0 0 10px', fontSize: '13px', color: '#1565c0', borderBottom: '2px solid #e3f2fd', paddingBottom: '6px' }}>
+                📅 Pagamentos Recebidos
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {pagoAdiantamento && adtoValor > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', backgroundColor: '#f3e5f5', borderRadius: '8px', borderLeft: '4px solid #7b1fa2' }}>
+                    <div style={{ fontSize: '20px' }}>📱</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#4a148c' }}>Adiantamento (dia 20)</div>
+                      <div style={{ fontSize: '11px', color: '#666' }}>{adtoData ? fmtDataBR(adtoData) : '—'} • PIX</div>
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(adtoValor)}</div>
+                  </div>
+                )}
+                {saldoFinal > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', backgroundColor: '#e3f2fd', borderRadius: '8px', borderLeft: '4px solid #1565c0' }}>
+                    <div style={{ fontSize: '20px' }}>📱</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#0d47a1' }}>Saldo Final (pagamento)</div>
+                      <div style={{ fontSize: '11px', color: '#666' }}>{dataPagamento ? fmtDataBR(dataPagamento) : '—'} • PIX</div>
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(saldoFinal)}</div>
+                  </div>
+                )}
+                {pagoVariavel && varValor > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', backgroundColor: '#e8f5e9', borderRadius: '8px', borderLeft: '4px solid #388e3c' }}>
+                    <div style={{ fontSize: '20px' }}>📱</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1b5e20' }}>Variável (dobras/motoboy)</div>
+                      <div style={{ fontSize: '11px', color: '#666' }}>{varData ? fmtDataBR(varData) : '—'} • PIX</div>
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(varValor)}</div>
+                  </div>
+                )}
+                {categoriasCredito.map(cc => cc.items.map(ci => (
+                  <div key={ci.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', backgroundColor: '#fff3e0', borderRadius: '8px', borderLeft: '4px solid #e65100' }}>
+                    <div style={{ fontSize: '20px' }}>📱</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#bf360c' }}>{ci.descricao || cc.cat}</div>
+                      <div style={{ fontSize: '11px', color: '#666' }}>{ci.dataPagamento ? fmtDataBR(ci.dataPagamento) : '—'} • {ci.formaPagamento || 'PIX'}</div>
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(R(ci.valor))}</div>
+                  </div>
+                )))}
+              </div>
+            </div>
+
+            {/* ═══ DESCONTOS DETALHADOS ═══ */}
+            {categoriasDesconto.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ margin: '0 0 10px', fontSize: '13px', color: '#c62828', borderBottom: '2px solid #ffebee', paddingBottom: '6px' }}>
+                  📤 Descontos do Mês
+                </h4>
+                {categoriasDesconto.map(cd => (
+                  <div key={cd.cat} style={{ marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', backgroundColor: '#ffebee', borderRadius: '6px', cursor: 'pointer' }}
+                      onClick={() => toggleExpandido(`desc_${cd.cat}`)}>
+                      <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#c62828' }}>
+                        {expandidos.has(`desc_${cd.cat}`) ? '▼' : '▶'} {cd.cat} ({cd.items.length}x)
+                      </span>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(cd.total)}</span>
+                    </div>
+                    {expandidos.has(`desc_${cd.cat}`) && (
+                      <div style={{ paddingLeft: '12px', marginTop: '4px' }}>
+                        {cd.items.map(di => (
+                          <div key={di.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px', borderBottom: '1px dashed #eee', fontSize: '11px' }}>
+                            <div>
+                              <span style={{ color: '#333' }}>{di.descricao || cd.cat}</span>
+                              <span style={{ color: '#999', marginLeft: '8px' }}>{di.dataPagamento ? fmtDataBR(di.dataPagamento) : '—'}</span>
+                              {di.obs && di.obs !== di.descricao && <span style={{ color: '#bbb', marginLeft: '6px', fontStyle: 'italic' }}>({di.obs})</span>}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(R(di.valor))}</span>
+                              <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
+                                backgroundColor: di.pago ? '#e8f5e9' : '#fff9c4', color: di.pago ? '#2e7d32' : '#f57f17' }}>
+                                {di.pago ? '✅' : '⏳'}
+                              </span>
+                              {di.origem === 'saida' && (
+                                <div style={{ display: 'flex', gap: '3px' }}>
+                                  <button onClick={() => { onClose(); abrirEdicao(di); }}
+                                    style={{ ...s.btn('#f57c00'), padding: '2px 5px', fontSize: '10px' }} title="Editar">✏️</button>
+                                  <button onClick={() => excluirSaida(di)}
+                                    style={{ ...s.btn('#c62828'), padding: '2px 5px', fontSize: '10px' }} title="Excluir">🗑️</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pendentes */}
+            {pendentes.length > 0 && (
+              <div style={{ backgroundColor: '#fff9c4', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px', fontSize: '12px', borderLeft: '4px solid #f9a825', color: '#5d4037' }}>
+                <strong>⏳ {pendentes.length} lançamento(s) pendente(s)</strong> — serão descontados no próximo pagamento.
+              </div>
+            )}
+
+            {/* Glossário CLT */}
+            <div style={{ padding: '8px 10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '10px', color: '#555', lineHeight: '1.6' }}>
+              <strong>📖 Como ler:</strong> {' '}
+              <strong>Salário Bruto</strong> = valor base do contrato CLT. {' '}
+              <strong>Adiantamento</strong> = parcela paga no dia 20 (aprox. 40%). {' '}
+              <strong>Saldo Final</strong> = restante pago no dia 05 do mês seguinte. {' '}
+              <strong>Descontos</strong> = transporte adiantado semanalmente, marmitas, compras — abatidos do total. {' '}
+              <strong>Líquido Efetivo</strong> = o que o colaborador efetivamente recebeu líquido no mês.
+            </div>
+
+            <div style={{ marginTop: '14px', textAlign: 'right' }}>
+              <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // FREELANCER: Lógica original (inalterada)
+    // ═══════════════════════════════════════════════════════
 
     // Conta SEMANA: folha (crédito) + créditos a receber − débitos da semana − adiantamentos já pagos
     const folhaTotal       = colabItems.filter(i => i.origem === 'folha').reduce((s, i) => s + i.valor, 0);
@@ -1170,8 +1476,6 @@ export const Extrato: React.FC = () => {
             <h3 style={{ margin: 0, color: '#1565c0' }}>📊 Analítico — {nome} ({mesAno})</h3>
             <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
           </div>
-
-          {/* Card destaque: Líquido a Receber */}
           <div style={{ marginBottom: '12px', padding: '14px 16px', borderRadius: '10px',
             background: liquidoAReceber >= 0 ? 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)' : 'linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%)',
             borderLeft: `5px solid ${liquidoAReceber >= 0 ? '#1565c0' : '#c62828'}` }}>
