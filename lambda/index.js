@@ -2068,13 +2068,20 @@ exports.handler = async (event) => {
           valorLiquidoContabil: origItemPreserve?.valorLiquidoContabil || null,
           updatedAt: now,
         };
-        // Deduplicar logPagamentos por id (evita duplicatas em race conditions)
+        // Deduplicar logPagamentos: por id E por (valor+data+tipo)
+        // Previne duplicatas de double-click (ids diferentes mas mesmo pagamento)
         if (Array.isArray(item.logPagamentos)) {
-          const seen = new Set();
+          const seenIds = new Set();
+          const seenKeys = new Set();
           item.logPagamentos = item.logPagamentos.filter(lp => {
-            if (!lp || !lp.id) return true;
-            if (seen.has(lp.id)) return false;
-            seen.add(lp.id);
+            if (!lp) return false;
+            // Dedup por id
+            if (lp.id && seenIds.has(lp.id)) return false;
+            if (lp.id) seenIds.add(lp.id);
+            // Dedup por (valor, data, tipo) — previne multi-clique
+            const key = `${lp.valor || 0}_${lp.data || ''}_${lp.tipo || ''}`;
+            if (seenKeys.has(key)) return false;
+            seenKeys.add(key);
             return true;
           });
         }
