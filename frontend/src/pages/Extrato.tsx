@@ -76,7 +76,7 @@ const TIPOS_SAIDA = [
   'Sangria',
 ];
 // Categorias que representam DÉBITO (descontado do colaborador — valor negativo)
-const TIPOS_DEBITO = ['A receber', 'Consumo Interno', 'Desconto', 'Desconto Transporte', 'Desconto Adiantamento Especial', 'Sangria'];
+const TIPOS_DEBITO = ['A receber', 'A pagar', 'Consumo Interno', 'Desconto', 'Desconto Transporte', 'Desconto Adiantamento Especial', 'Sangria'];
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
 const R = (v: any) => parseFloat(v) || 0;
@@ -316,55 +316,24 @@ export const Extrato: React.FC = () => {
           // Para granulares agrupados: totalFinal = soma dos pagos, valorBruto = total semana
           // Para legados freelancer: valorBruto (dobras), para CLT: totalFinal
           const isGranular = item.tipo === 'freelancer-dia-grupo';
+          // Valor do item:
+          // - Granulares freelancer: totalFinal (soma dos pagos)
+          // - Freelancer legado: valorBruto (dobras)
+          // - CLT: soma dos logPagamentos (total real pago) — NÃO usar saldoFinal/totalFinal
+          //   que podem estar corrompidos pelo EMS importer
+          const cltLogTotal = isCLT && Array.isArray(item.logPagamentos)
+            ? item.logPagamentos.reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0)
+            : 0;
           const val = isGranular
-            ? R(item.totalFinal)   // só o que foi efetivamente pago
-            : (!isCLT && R(item.valorBruto) > 0
-                ? R(item.valorBruto)
-                : R(item.totalFinal) || R(item.saldoFinal) || 0);
+            ? R(item.totalFinal)
+            : isCLT
+              ? (cltLogTotal > 0 ? cltLogTotal : R(item.totalFinal) || R(item.saldoFinal) || 0)
+              : (R(item.valorBruto) > 0 ? R(item.valorBruto) : R(item.totalFinal) || R(item.saldoFinal) || 0);
 
-          // Para CLT: gerar linha de Adiantamento (dia 20) separada quando pagoAdiantamento=true
-          if (isCLT && item.pagoAdiantamento === true) {
-            // Valor: adtoLiquido (calculado pelo frontend) ou soma dos logPagamentos tipo Adiantamento
-            const logsAdto = (item.logPagamentos || []).filter((l: any) => l.tipo === 'Adiantamento');
-            const adtoVal = R(item.adtoLiquido) || R(item.adtoContabil)
-              || logsAdto.reduce((s: number, l: any) => s + R(l.valor), 0)
-              || 0;
-            allItems.push({
-              id: `${item.id}_adto`,
-              colaboradorId: item.colaboradorId,
-              nomeColaborador: nome, tipoContrato: tc,
-              origem: 'folha', mes: item.mes, semana: undefined,
-              tipo: 'credito',
-              descricao: `Adiantamento CLT (dia 20) – ${item.mes}`,
-              valor: adtoVal,
-              pago: true,
-              dataPagamento: item.dataPgtoAdiantamento || undefined,
-              obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
-              formaPagamento: item.formaPagamento || undefined,
-              logPagamentos: [],
-              raw: item,
-            });
-          }
-
-          // Para CLT: gerar linha de Variável (dobras/motoboy) separada quando pagoVariavel=true
-          if (isCLT && item.pagoVariavel === true) {
-            const varVal = R(item.totalFinal) || 0;
-            allItems.push({
-              id: `${item.id}_var`,
-              colaboradorId: item.colaboradorId,
-              nomeColaborador: nome, tipoContrato: tc,
-              origem: 'folha', mes: item.mes, semana: undefined,
-              tipo: 'credito',
-              descricao: `Variável CLT (dobras/motoboy) – ${item.mes}`,
-              valor: varVal,
-              pago: true,
-              dataPagamento: item.dataPgtoVariavel || undefined,
-              obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
-              formaPagamento: item.formaPagamento || undefined,
-              logPagamentos: [],
-              raw: item,
-            });
-          }
+          // Para CLT: NÃO gerar items sintéticos (_adto, _var)
+          // O ModalColaborador CLT recalcula tudo a partir dos dados fonte
+          // Gerar apenas 1 item com o valor total dos logPagamentos (= total pago real)
+          // Isso evita dupla/tripla contagem no resumo por colaborador
 
           // Linha principal: salário mensal CLT ou dobras freelancer
           const confBadge = isGranular
@@ -374,7 +343,7 @@ export const Extrato: React.FC = () => {
             ? `Dobras semanais ${fmtDataBR(item.semana)} – ${item.obs}${confBadge}${item.pagoParcial ? ` — +R$${R(item.totalPendente).toFixed(2)} pend.` : ''}`
             : (item.semana && item.semana !== true
                 ? `Dobras semanais ${fmtDataBR(item.semana)} (${tc})`
-                : `Pagamento mensal CLT – ${item.mes}`);
+                : `Folha CLT – ${item.mes}`);
 
           // Turnos pendentes: só existem como escalas confirmadas sem lançamento
           // NÃO gerar linha de pendente para recalculados (não sabemos se foram realmente pagos)
@@ -456,6 +425,9 @@ export const Extrato: React.FC = () => {
           if (!incluirPendentesAntigos && saidaMes !== mesAno) continue;
 
           const isDebito = TIPOS_DEBITO.includes(tipo);
+          // Para CLT: 'Adiantamento Salário' é registro interno (já incluído no logPagamentos do dia 20)
+          // Não criar item separado pra não duplicar no resumo
+          if (tc === 'CLT' && tipo === 'Adiantamento Salário') continue;
           // Avoid duplicates (same id already added)
           if (allItems.find(x => x.id === (saida.id || ''))) continue;
 
