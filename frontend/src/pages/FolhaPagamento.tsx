@@ -1285,25 +1285,34 @@ export default function FolhaPagamento() {
     const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
     setSalvando(true);
     try {
+      // Registrar no logPagamentos quando marcar como pago
+      const existingLogs = folha.logPagamentos || [];
+      const newLogs = novoPago ? [
+        ...existingLogs,
+        { id: Date.now().toString(), data: dataPgtoFinal || hoje2, valor: folha.pgtosDia20, forma: 'PIX' as const, tipo: 'Adiantamento' as const }
+      ] : existingLogs;
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
         pago: novoPago, dataPagamento: dataPgtoFinal,
         pagoAdiantamento: novoPago, dataPgtoAdiantamento: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
+        logPagamentos: newLogs,
         ...auditoriaCampos(),
       };
-      await fetchAuth(`${apiUrl}/folha-pagamento`, {
+      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
+      if (!resp?.ok) throw new Error(`HTTP ${resp?.status}: ${await resp?.text().catch(() => 'sem detalhe')}`);
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
           ? { ...f, pago: novoPago, dataPagamento: novoPago ? (dataOverride || hoje2) : undefined,
-              pagoAdiantamento: novoPago, dataPgtoAdiantamento: novoPago ? (dataOverride || hoje2) : undefined }
+              pagoAdiantamento: novoPago, dataPgtoAdiantamento: novoPago ? (dataOverride || hoje2) : undefined,
+              logPagamentos: newLogs }
           : f
       ));
-    } catch { alert('Erro ao salvar status'); }
+    } catch (err: any) { alert(`Erro ao salvar pagamento: ${err?.message || err}. Tente novamente.`); console.error('handleTogglePago error:', err); }
     finally { setSalvando(false); }
   };
 
@@ -1314,24 +1323,33 @@ export default function FolhaPagamento() {
     const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
     setSalvando(true);
     try {
+      // Registrar no logPagamentos quando marcar variável como pago
+      const existingLogs = folha.logPagamentos || [];
+      const newLogs = novoPago ? [
+        ...existingLogs,
+        { id: Date.now().toString(), data: dataPgtoFinal || hoje2, valor: folha.pgtosDia05, forma: 'PIX' as const, tipo: 'Variável' as const }
+      ] : existingLogs;
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
         pago: folha.pago,
         pagoVariavel: novoPago, dataPgtoVariavel: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
+        logPagamentos: newLogs,
         ...auditoriaCampos(),
       };
-      await fetchAuth(`${apiUrl}/folha-pagamento`, {
+      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
+      if (!resp?.ok) throw new Error(`HTTP ${resp?.status}: ${await resp?.text().catch(() => 'sem detalhe')}`);
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
-          ? { ...f, pagoVariavel: novoPago, dataPgtoVariavel: novoPago ? (dataOverride || hoje2) : undefined }
+          ? { ...f, pagoVariavel: novoPago, dataPgtoVariavel: novoPago ? (dataOverride || hoje2) : undefined,
+              logPagamentos: newLogs }
           : f
       ));
-    } catch { alert('Erro ao salvar status'); }
+    } catch (err: any) { alert(`Erro ao salvar pagamento vari\u00e1vel: ${err?.message || err}. Tente novamente.`); console.error('handleTogglePagoVariavel error:', err); }
     finally { setSalvando(false); }
   };
 
@@ -2773,11 +2791,15 @@ export default function FolhaPagamento() {
         saldoFinal: modalPagamento.saldoFinal,
         logPagamentos: newLogs,
       };
-      await fetchAuth(`${apiUrl}/folha-pagamento`, {
+      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
         body: JSON.stringify(payload),
       });
+      if (!resp?.ok) {
+        const errText = await resp?.text().catch(() => 'sem detalhe');
+        throw new Error(`Servidor retornou ${resp?.status}: ${errText}`);
+      }
       // Atualiza folhasLocais E folhasDB para que ao reabrir o modal o estado persista corretamente
       const atualizaFolha = (f: any) => {
         if (f.colaboradorId !== modalPagamento.colaboradorId) return f;
@@ -2818,7 +2840,10 @@ export default function FolhaPagamento() {
         }];
       });
       setModalPagamento(null);
-    } catch { alert('Erro ao salvar pagamento'); }
+    } catch (err: any) {
+      console.error('salvarPagamentoModal FALHOU:', err);
+      alert(`\u274c Erro ao registrar pagamento: ${err?.message || err}\n\nO pagamento N\u00c3O foi salvo. Tente novamente.`);
+    }
     finally { setSalvando(false); }
   };
 

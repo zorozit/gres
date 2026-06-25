@@ -2064,8 +2064,20 @@ exports.handler = async (event) => {
             ? [...((origItemPreserve?.logPagamentos) || []), ...logPagamentos]
             : (origItemPreserve?.logPagamentos || []),
           obs: obs !== undefined ? obs : (origItemPreserve?.obs || ''),
+          obsEMS: origItemPreserve?.obsEMS || null,
+          valorLiquidoContabil: origItemPreserve?.valorLiquidoContabil || null,
           updatedAt: now,
         };
+        // Deduplicar logPagamentos por id (evita duplicatas em race conditions)
+        if (Array.isArray(item.logPagamentos)) {
+          const seen = new Set();
+          item.logPagamentos = item.logPagamentos.filter(lp => {
+            if (!lp || !lp.id) return true;
+            if (seen.has(lp.id)) return false;
+            seen.add(lp.id);
+            return true;
+          });
+        }
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
 
         // Auditoria (usa origItemPreserve carregado acima)
