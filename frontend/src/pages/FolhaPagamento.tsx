@@ -2790,6 +2790,12 @@ export default function FolhaPagamento() {
         dataPgtoVariavel: isPagoVar ? dataPrimeiro : modalPagamento.dataPgtoVariavel,
         saldoFinal: modalPagamento.saldoFinal,
         logPagamentos: newLogs,
+        // Campos calculados para integridade do extrato
+        inssValor: modalPagamento.inss || undefined,
+        contrAssist: modalPagamento.contrAssistencial || undefined,
+        feriadoContabil: modalPagamento.feriadosValor || undefined,
+        salContrInss: modalPagamento.salContrInss || undefined,
+        valorBruto: modalPagamento.salarioBase || undefined,
       };
       const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
         method: 'POST',

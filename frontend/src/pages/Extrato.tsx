@@ -1235,7 +1235,9 @@ export const Extrato: React.FC = () => {
       const saidas = colabItems.filter(i => i.origem === 'saida');
 
       // Separar: PAGAMENTOS (dinheiro que foi pro colaborador) vs DESCONTOS (abatidos da remuneração)
-      const TIPOS_PAGAMENTO = ['Adiantamento Transporte', 'Adiantamento Salário', 'Adiantamento Especial'];
+      // Adiantamento Salário NÃO é pagamento separado — é parte do adiantamento dia 20 (já no logPagamentos)
+      const TIPOS_PAGAMENTO = ['Adiantamento Transporte', 'Adiantamento Especial'];
+      const TIPOS_INTERNOS = ['Adiantamento Salário'];  // registros internos, não são PIXs separados
       const saidasPagamento: { cat: string; items: ExtratoItem[]; total: number }[] = [];
       const saidasDesconto: { cat: string; items: ExtratoItem[]; total: number }[] = [];
       const saidasPorCat: Record<string, { items: ExtratoItem[]; total: number }> = {};
@@ -1250,7 +1252,8 @@ export const Extrato: React.FC = () => {
       for (const [cat, data] of Object.entries(saidasPorCat)) {
         if (TIPOS_PAGAMENTO.includes(cat)) {
           saidasPagamento.push({ cat, items: data.items, total: data.total });
-        } else {
+        } else if (!TIPOS_INTERNOS.includes(cat)) {
+          // Registros internos (Adiantamento Salário) não aparecem nem como pagamento nem como desconto
           saidasDesconto.push({ cat, items: data.items, total: data.total });
         }
       }
