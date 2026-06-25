@@ -1898,7 +1898,9 @@ exports.handler = async (event) => {
               valorDescSaidas, valorAbatEsp, valorLiquido,
               // NOVO: campos específicos CLT
               pagoAdiantamento, dataPgtoAdiantamento, pagoVariavel, dataPgtoVariavel,
-              logPagamentos } = body;
+              logPagamentos,
+              // Importação contábil (EMS): não sobrescrever dados operacionais
+              mergeMode, valorLiquidoContabil, obsEMS } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
         const now = new Date().toISOString();
@@ -2010,6 +2012,29 @@ exports.handler = async (event) => {
           const o = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
           origItemPreserve = o.Item || null;
         } catch {}
+
+        // ── mergeMode='contabil': importação EMS — só gravar campos contábeis sem pisar nos operacionais ──
+        if (mergeMode === 'contabil' && origItemPreserve) {
+          const contabUpdate = {
+            ...origItemPreserve,
+            valorBruto: valorBruto !== undefined ? (parseFloat(valorBruto) || 0) : origItemPreserve.valorBruto,
+            valorLiquidoContabil: valorLiquidoContabil !== undefined ? parseFloat(valorLiquidoContabil) || 0 : origItemPreserve.valorLiquidoContabil,
+            salContrInss: body.salContrInss !== undefined ? parseFloat(body.salContrInss) || 0 : origItemPreserve.salContrInss,
+            inssValor: body.inssValor !== undefined ? parseFloat(body.inssValor) || 0 : origItemPreserve.inssValor,
+            valeTransporteContabil: body.valeTransporte !== undefined ? parseFloat(body.valeTransporte) || 0 : origItemPreserve.valeTransporteContabil,
+            feriadoContabil: body.feriado !== undefined ? parseFloat(body.feriado) || 0 : origItemPreserve.feriadoContabil,
+            obsEMS: obsEMS || origItemPreserve.obsEMS || '',
+            // NAO sobrescrever: saldoFinal, totalFinal, pago, dataPagamento, logPagamentos, pagoAdiantamento, pagoVariavel
+            updatedAt: now,
+          };
+          await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: contabUpdate }).promise();
+          const audContab = extrairAuditoria(body, event);
+          await logAlteracaoGenerica({
+            tabela: 'folha-pagamento', entidadeId: itemId, evento: 'contabil-importado',
+            valoresAntes: origItemPreserve, valoresDepois: contabUpdate, ...audContab, unitId: normalizedUnitId,
+          });
+          return response(200, { success: true, id: itemId, mode: 'contabil-merge' });
+        }
 
         const item = {
           ...(origItemPreserve || {}),

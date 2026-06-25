@@ -233,21 +233,24 @@ export const ImportacoesContabeis: React.FC = () => {
   };
 
   const importarFolha = async (row: PreviewRow) => {
-    const body = {
+    // ⚠️ Não sobrescrever saldoFinal/totalFinal se já existe registro com logPagamentos
+    // O saldoFinal da contabilidade (EMS) não inclui variável de motoboy
+    // Enviar como campos separados (contabílidade) sem pisar nos dados operacionais
+    const body: Record<string, any> = {
       colaboradorId: row.colaboradorId,
       mes: row.competencia,
       unitId,
-      pago: true,
-      dataPagamento: paymentDate,
-      saldoFinal: row.valorLiquido,
+      // Não setar pago/dataPagamento — quem controla é o modal de pagamento
+      // Se já existe registro, o backend faz merge preservando campos existentes
       valorBruto: row.salarioBase,
-      totalFinal: row.valorLiquido,
-      // Campos extraídos do PDF (contabilidade)
+      // Campos contábeis (EMS) — separados dos operacionais
+      valorLiquidoContabil: row.valorLiquido,  // líquido do holerite (sem variável)
       salContrInss: row.salContrInss,
       inssValor: row.inssValor,
       valeTransporte: row.valeTransporte,
       feriado: row.feriado,
-      obs: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
+      obsEMS: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
+      mergeMode: 'contabil',  // Sinaliza ao backend: não sobrescrever saldoFinal/logPagamentos
     };
 
     const response = await fetchAuth(`${apiUrl}/folha-pagamento`, {
