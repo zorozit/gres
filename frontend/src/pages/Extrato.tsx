@@ -330,12 +330,32 @@ export const Extrato: React.FC = () => {
               ? (cltLogTotal > 0 ? cltLogTotal : R(item.totalFinal) || R(item.saldoFinal) || 0)
               : (R(item.valorBruto) > 0 ? R(item.valorBruto) : R(item.totalFinal) || R(item.saldoFinal) || 0);
 
-          // Para CLT: NÃO gerar items sintéticos (_adto, _var)
-          // O ModalColaborador CLT recalcula tudo a partir dos dados fonte
-          // Gerar apenas 1 item com o valor total dos logPagamentos (= total pago real)
-          // Isso evita dupla/tripla contagem no resumo por colaborador
+          // Para CLT com logPagamentos: gerar 1 item POR logPagamento (cada PIX separado)
+          // Assim os lançamentos detalhados mostram cada depósito individual
+          if (isCLT && Array.isArray(item.logPagamentos) && item.logPagamentos.length > 0) {
+            for (const lp of item.logPagamentos) {
+              const lpVal = parseFloat(lp.valor) || 0;
+              if (lpVal <= 0) continue;
+              allItems.push({
+                id: `${item.id}_lp_${lp.id || Date.now()}`,
+                colaboradorId: item.colaboradorId,
+                nomeColaborador: nome, tipoContrato: tc,
+                origem: 'folha', mes: item.mes, semana: undefined,
+                tipo: 'credito',
+                descricao: `PIX ${lp.tipo || 'Pagamento'} CLT – ${item.mes}`,
+                valor: lpVal,
+                pago: true,
+                dataPagamento: lp.data || item.dataPagamento,
+                formaPagamento: lp.forma || 'PIX',
+                logPagamentos: item.logPagamentos,
+                obs: item.obs || '', updatedAt: item.updatedAt, unitId: item.unitId,
+                raw: item,
+              });
+            }
+            continue; // pula a criação do item principal — já criou os PIXs individuais
+          }
 
-          // Linha principal: salário mensal CLT ou dobras freelancer
+          // Linha principal: salário mensal CLT (sem logPagamentos) ou dobras freelancer
           const confBadge = isGranular
             ? (item.confiabilidade === 'recalculado' ? ' ⚠️' : item.confiabilidade === 'real' ? '' : '')
             : '';
@@ -1508,18 +1528,40 @@ export const Extrato: React.FC = () => {
                 📱 PAGAMENTOS REALIZADOS
               </div>
 
-              {/* PIXs do logPagamentos */}
+              {/* PIXs do logPagamentos com detalhamento do cálculo */}
               {logPgtos.length > 0 && (<>
                 <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#1b5e20', marginBottom: '4px' }}>Depósitos (Folha):</div>
-                {logPgtos.map((lp: any, idx: number) => (
-                  <div key={lp.id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 8px', fontSize: '12px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '4px', marginBottom: '3px' }}>
-                    <span style={{ color: '#333' }}>
-                      {lp.data ? fmtDataBR(lp.data) : '—'} • {lp.forma || 'PIX'} • {lp.tipo || 'Pagamento'}
-                      {lp.obs && <span style={{ color: '#888', fontStyle: 'italic', marginLeft: '6px' }}>({lp.obs})</span>}
-                    </span>
-                    <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(parseFloat(lp.valor) || 0)}</span>
-                  </div>
-                ))}
+                {logPgtos.map((lp: any, idx: number) => {
+                  const lpVal = parseFloat(lp.valor) || 0;
+                  const isAdto = (lp.tipo || '').toLowerCase().includes('adiantamento');
+                  const isVar = (lp.tipo || '').toLowerCase().includes('variável') || (lp.tipo || '').toLowerCase().includes('saldo');
+                  // Calcular como o PIX foi composto
+                  let explicacao = '';
+                  if (isAdto && logPgtos.length >= 2) {
+                    // Dia 20: geralmente = líquido holerite (ou percentual)
+                    explicacao = `Adiantamento dia 20`;
+                  } else if (isVar || (!isAdto && idx === logPgtos.length - 1 && logPgtos.length >= 2)) {
+                    // Último PIX = Líquido do mês − anteriores − transporte
+                    const anteriores = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
+                    explicacao = `Líquido R$${liquidoMes.toFixed(2).replace('.',',')} − Adto R$${anteriores.toFixed(2).replace('.',',')} − Transp. R$${totalPagamentosSaidas.toFixed(2).replace('.',',')}`;
+                  }
+                  return (
+                    <div key={lp.id || idx} style={{ padding: '6px 8px', fontSize: '12px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '6px', marginBottom: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#333' }}>
+                          {lp.data ? fmtDataBR(lp.data) : '—'} • {lp.forma || 'PIX'} • {lp.tipo || 'Pagamento'}
+                          {lp.obs && <span style={{ color: '#888', fontStyle: 'italic', marginLeft: '6px' }}>({lp.obs})</span>}
+                        </span>
+                        <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(lpVal)}</span>
+                      </div>
+                      {explicacao && (
+                        <div style={{ fontSize: '10px', color: '#666', marginTop: '2px', fontStyle: 'italic' }}>
+                          💡 {explicacao}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </>)}
 
               {/* Pagamentos via saídas (transporte, adiantamentos) */}
