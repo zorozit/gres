@@ -141,6 +141,7 @@ export const Extrato: React.FC = () => {
   const [salvando, setSalvando] = useState(false);
   const [items, setItems] = useState<ExtratoItem[]>([]);
   const [itemsExcluidos, setItemsExcluidos] = useState<any[]>([]);
+  const [colabsState, setColabsState] = useState<any[]>([]);
 
   // Modals
   const [detalheItem, setDetalheItem]   = useState<ExtratoItem | null>(null);
@@ -201,6 +202,7 @@ export const Extrato: React.FC = () => {
 
       let colabs: any[] = [];
       if (rC?.ok) { const d = await rC.json(); colabs = Array.isArray(d) ? d : []; }
+      setColabsState(colabs);
 
       const allItems: ExtratoItem[] = [];
       const excluidosList: any[] = [];
@@ -1162,92 +1164,93 @@ export const Extrato: React.FC = () => {
     const isCLT = colabItems.some(i => i.tipoContrato === 'CLT') || !!folhaCLT;
 
     // ═══════════════════════════════════════════════════════
-    // CLT: Demonstrativo Mensal
-    // ═══════════════════════════════════════════════════════
-    // CLT: Demonstrativo Mensal (com abas)
+    // CLT: Demonstrativo Mensal (reescrito 2026-06-25)
     // ═══════════════════════════════════════════════════════
     if (isCLT) {
-      // --- Dados da folha ---
-      const folhaItem = colabItems.find(i => i.origem === 'folha' && (!i.semana || i.semana === undefined));
+      // --- Dados da folha (raw = registro do backend) ---
+      const folhaItem = colabItems.find(i => i.origem === 'folha' && (!i.semana || i.semana === undefined) && !i.id?.endsWith('_adto') && !i.id?.endsWith('_var'));
       const raw = folhaItem?.raw || {} as any;
-      const bruto = R(raw.valorBruto) || R(folhaItem?.valorBruto) || 0;
-      const saldoFinal = R(raw.saldoFinal) || R(raw.totalFinal) || R(folhaItem?.valor) || 0;
-      const pagoAdiantamento = raw.pagoAdiantamento === true;
-      const dataPgtoAdiantamento = raw.dataPgtoAdiantamento || '';
-      const dataPagamento = raw.dataPagamento || folhaItem?.dataPagamento || '';
-      const pagoVariavel = raw.pagoVariavel === true;
-      const dataPgtoVariavel = raw.dataPgtoVariavel && typeof raw.dataPgtoVariavel === 'string' ? raw.dataPgtoVariavel : '';
-      const logPgtos = raw.logPagamentos || [];
+      const logPgtos: any[] = raw.logPagamentos || [];
 
-      // --- Saídas do mês ---
-      const saidas = colabItems.filter(i => i.origem === 'saida');
+      // --- Dados do colaborador (para recalcular) ---
+      const colab = colabsState.find((c: any) => c.id === colabId) || {} as any;
+      const salarioBase = R(colab.salario) || R(raw.valorBruto) || 0;
+      const percPericulosidade = R(colab.periculosidade) || 0;
+      const valorPericulosidade = percPericulosidade > 0 ? salarioBase * (percPericulosidade / 100) : 0;
 
-      // Categorizar saídas
-      const saidasPorCategoria: Record<string, { items: ExtratoItem[]; total: number; isDebito: boolean }> = {};
-      for (const sa of saidas) {
-        const cat = sa.tipoSaida || sa.descricao || 'Outros';
-        if (!saidasPorCategoria[cat]) saidasPorCategoria[cat] = { items: [], total: 0, isDebito: false };
-        saidasPorCategoria[cat].items.push(sa);
-        saidasPorCategoria[cat].total += R(sa.valor);
-        saidasPorCategoria[cat].isDebito = sa.tipo === 'debito';
-      }
+      // INSS e contribuição (do EMS ou calculado)
+      const inssValor = R(raw.inssValor) || R(raw.salContrInss) ? (R(raw.inssValor) || 0) : 0;
+      const contrAssist = R(raw.contrAssist) || 0;
+      // Feriado trabalhado
+      const feriado = R(raw.feriadoContabil) || R(raw.feriado) || 0;
 
-      // Adiantamento salário
-      const saidaAdto = saidas.find(sa => sa.tipoSaida === 'Adiantamento Salário');
-      const adtoValor = saidaAdto ? R(saidaAdto.valor) : 0;
-      const adtoData = saidaAdto?.dataPagamento || dataPgtoAdiantamento || '';
+      const brutoHolerite = salarioBase + valorPericulosidade + feriado;
+      const descontosLegais = inssValor + contrAssist;
+      const liquidoHolerite = brutoHolerite - descontosLegais;
 
-      // Variável
-      const itemVariavel = colabItems.find(i => i.id?.endsWith('_var'));
-      const varValor = itemVariavel ? R(itemVariavel.valor) : 0;
-      const varData = itemVariavel?.dataPagamento || dataPgtoVariavel || '';
-
-      // Descontos e créditos
-      const categoriasDesconto: { cat: string; items: ExtratoItem[]; total: number }[] = [];
-      const categoriasCredito: { cat: string; items: ExtratoItem[]; total: number }[] = [];
-      for (const [cat, data] of Object.entries(saidasPorCategoria)) {
-        if (cat === 'Adiantamento Salário') continue;
-        if (data.isDebito || ['Consumo Interno','Desconto','Desconto Transporte','Desconto Adiantamento Especial','Sangria','A receber','Adiantamento Transporte','Adiantamento Especial'].includes(cat)) {
-          categoriasDesconto.push({ cat, items: data.items, total: data.total });
-        } else {
-          categoriasCredito.push({ cat, items: data.items, total: data.total });
-        }
-      }
-      const totalDescontos = categoriasDesconto.reduce((s, c) => s + c.total, 0);
-      const totalCreditosExtras = categoriasCredito.reduce((s, c) => s + c.total, 0);
-
-      // Motoboy summary
+      // --- Motoboy data ---
       const mbEntD = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entDia) || 0), 0) : 0;
       const mbEntN = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entNoite) || 0), 0) : 0;
       const mbCaixD = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.caixinhaDia) || 0), 0) : 0;
       const mbCaixN = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.caixinhaNoite) || 0), 0) : 0;
       const mbVlVar = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.vlVariavel) || 0), 0) : 0;
-      const mbPgto  = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.pgto) || 0), 0) : 0;
-      const mbDias  = motoboyData ? motoboyData.filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) > 0).length : 0;
+      const mbDias = motoboyData ? motoboyData.filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) > 0).length : 0;
       const temMotoboy = motoboyData && motoboyData.length > 0 && mbVlVar > 0;
+      const totalEntregas = mbEntD + mbEntN;
+      const totalCaixinhas = mbCaixD + mbCaixN;
+      const valorEntrega = R(colab.valorEntrega) || (totalEntregas > 0 ? Math.round((mbVlVar - totalCaixinhas) / totalEntregas * 100) / 100 : 0);
 
-      // Totais finais
-      const totalHolerite = saldoFinal + adtoValor;
-      const totalRecebido = totalHolerite + varValor + totalCreditosExtras;
-      const liquidoEfetivo = totalRecebido - totalDescontos;
+      // --- Saídas do mês (categorizadas) ---
+      const saidas = colabItems.filter(i => i.origem === 'saida');
 
-      const pendentes = colabItems.filter(i => !i.pago);
+      // Separar: PAGAMENTOS (dinheiro que foi pro colaborador) vs DESCONTOS (abatidos da remuneração)
+      const TIPOS_PAGAMENTO = ['Adiantamento Transporte', 'Adiantamento Salário', 'Adiantamento Especial'];
+      const saidasPagamento: { cat: string; items: ExtratoItem[]; total: number }[] = [];
+      const saidasDesconto: { cat: string; items: ExtratoItem[]; total: number }[] = [];
+      const saidasPorCat: Record<string, { items: ExtratoItem[]; total: number }> = {};
+
+      for (const sa of saidas) {
+        const cat = sa.tipoSaida || sa.descricao || 'Outros';
+        if (!saidasPorCat[cat]) saidasPorCat[cat] = { items: [], total: 0 };
+        saidasPorCat[cat].items.push(sa);
+        saidasPorCat[cat].total += R(sa.valor);
+      }
+
+      for (const [cat, data] of Object.entries(saidasPorCat)) {
+        if (TIPOS_PAGAMENTO.includes(cat)) {
+          saidasPagamento.push({ cat, items: data.items, total: data.total });
+        } else {
+          saidasDesconto.push({ cat, items: data.items, total: data.total });
+        }
+      }
+
+      const totalDescontos = saidasDesconto.reduce((s, c) => s + c.total, 0);
+      const totalPagamentosSaidas = saidasPagamento.reduce((s, c) => s + c.total, 0);
+
+      // --- Cálculos finais ---
+      const totalRemuneracao = liquidoHolerite + (temMotoboy ? mbVlVar : 0);
+      const liquidoMes = totalRemuneracao - totalDescontos;
+
+      // PIXs reais do logPagamentos
+      const totalPIXs = logPgtos.reduce((s: number, lp: any) => s + (parseFloat(lp.valor) || 0), 0);
+      // Pagamentos via saídas (transporte, adiantamento salário) que também são PIXs
+      const totalPagoGeral = totalPIXs + totalPagamentosSaidas;
+      const saldo = liquidoMes - totalPagoGeral;
+      const quitado = Math.abs(saldo) < 1;
+
       const [anoStr, mesStr] = mesAno.split('-');
       const nomeMes = new Date(parseInt(anoStr), parseInt(mesStr) - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-
-      // Aba ativa: demonstrativo ou detalhado
-      const [abaCLT, setAbaCLT] = React.useState<'demo' | 'detalhe'>('demo');
 
       return (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={onClose}>
-          <div style={{ ...s.card, maxWidth: '820px', width: '97%', maxHeight: '93vh', overflowY: 'auto', padding: 0 }}
+          <div style={{ ...s.card, maxWidth: '820px', width: '97%', maxHeight: '93vh', overflowY: 'auto', padding: '20px' }}
             onClick={e => e.stopPropagation()}>
 
-            {/* Header */}
-            <div style={{ padding: '18px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* ── Header ── */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
-                <h3 style={{ margin: 0, color: '#1565c0', fontSize: '16px' }}>📋 Demonstrativo CLT — {nome}</h3>
+                <h3 style={{ margin: 0, color: '#1565c0', fontSize: '16px' }}>📋 Demonstrativo — {nome}</h3>
                 <div style={{ marginTop: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e3f2fd', color: '#1565c0' }}>
                     📅 {nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)}
@@ -1255,383 +1258,329 @@ export const Extrato: React.FC = () => {
                   <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>
                     💼 CLT {temMotoboy ? '+ Motoboy' : ''}
                   </span>
-                  {folhaItem?.pago && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>✅ Quitado</span>}
+                  {quitado && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>✅ Quitado</span>}
+                  {!quitado && saldo > 0 && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#fff9c4', color: '#f57f17' }}>⏳ Saldo pendente</span>}
                 </div>
               </div>
               <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#999' }}>✕</button>
             </div>
 
-            {/* Abas */}
-            <div style={{ display: 'flex', borderBottom: '2px solid #e0e0e0', margin: '14px 20px 0' }}>
-              {(['demo', 'detalhe'] as const).map(tab => (
-                <button key={tab} onClick={() => setAbaCLT(tab)}
-                  style={{ flex: 1, padding: '10px 0', fontSize: '13px', fontWeight: 'bold', border: 'none', cursor: 'pointer', borderBottom: abaCLT === tab ? '3px solid #1565c0' : '3px solid transparent', color: abaCLT === tab ? '#1565c0' : '#999', backgroundColor: 'transparent', transition: 'all 0.2s' }}>
-                  {tab === 'demo' ? '📋 Demonstrativo' : '📊 Lançamentos Detalhados'}
-                </button>
-              ))}
+            {/* ═══ CARD RESUMO NO TOPO ═══ */}
+            <div style={{ padding: '16px', borderRadius: '12px', background: quitado ? 'linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%)' : 'linear-gradient(135deg, #fff9c4 0%, #fff176 100%)', borderLeft: `5px solid ${quitado ? '#2e7d32' : '#f9a825'}`, marginBottom: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>Líquido do Mês</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(liquidoMes)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Pago</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(totalPagoGeral)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>Saldo</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: quitado ? '#2e7d32' : saldo > 0 ? '#f57f17' : '#c62828' }}>
+                    {quitado ? '✅ R$ 0,00' : fmtMoeda(saldo)}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div style={{ padding: '16px 20px 20px' }}>
+            {/* ═══ BLOCO 1: REMUNERAÇÃO (HOLERITE) ═══ */}
+            <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #1a2236 0%, #243044 100%)', color: '#e8f0fe' }}>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#90caf9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
+                💼 HOLERITE — SALÁRIO
+              </div>
 
-            {/* ═══ ABA DEMONSTRATIVO ═══ */}
-            {abaCLT === 'demo' && (<>
-
-              {/* BLOCO 1: HOLERITE */}
-              <div style={{ marginBottom: '16px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #1a2236 0%, #243044 100%)', color: '#e8f0fe' }}>
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#90caf9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
-                  💼 HOLERITE — SALÁRIO
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                <span style={{ color: '#bbdefb' }}>Salário base</span>
+                <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(salarioBase)}</span>
+              </div>
+              {valorPericulosidade > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                  <span style={{ color: '#bbdefb' }}>Periculosidade ({percPericulosidade}%)</span>
+                  <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(valorPericulosidade)}</span>
                 </div>
-
-                {/* Bruto */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
-                  <span style={{ fontSize: '13px', color: '#bbdefb' }}>Salário Bruto</span>
-                  <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#fff' }}>{fmtMoeda(bruto)}</span>
+              )}
+              {feriado > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                  <span style={{ color: '#bbdefb' }}>Feriado trabalhado</span>
+                  <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(feriado)}</span>
                 </div>
+              )}
 
-                {/* Pagamentos do holerite */}
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#81c784', marginBottom: '6px' }}>Pagamentos:</div>
-                {pagoAdiantamento && adtoValor > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px' }}>
-                    <span style={{ color: '#a5d6a7' }}>  Adiantamento ({adtoData ? fmtDataBR(adtoData) : 'dia 20'})</span>
-                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(adtoValor)}</span>
-                  </div>
-                )}
-                {saldoFinal > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px' }}>
-                    <span style={{ color: '#a5d6a7' }}>  Saldo final ({dataPagamento ? fmtDataBR(dataPagamento) : 'dia 05'})</span>
-                    <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(saldoFinal)}</span>
-                  </div>
-                )}
-
-                {/* Descontos do holerite */}
-                {categoriasDesconto.length > 0 && (<>
-                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#ef9a9a', marginTop: '10px', marginBottom: '6px' }}>Descontos:</div>
-                  {categoriasDesconto.map(cd => (
-                    <div key={cd.cat} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#ef9a9a' }}>  {cd.cat} ({cd.items.length}x)</span>
-                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(cd.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontSize: '12px', borderTop: '1px dashed rgba(255,255,255,0.15)', marginTop: '4px' }}>
-                    <span style={{ color: '#ffcdd2', fontWeight: 'bold' }}>Total descontos</span>
-                    <span style={{ color: '#ffcdd2', fontWeight: 'bold' }}>−{fmtMoeda(totalDescontos)}</span>
-                  </div>
-                </>)}
-
-                {/* Líquido holerite */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid rgba(255,255,255,0.25)', marginTop: '10px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Líquido Holerite</span>
-                  <span style={{ fontSize: '18px', fontWeight: 'bold', color: (totalHolerite - totalDescontos) >= 0 ? '#69f0ae' : '#ff8a80' }}>
-                    {fmtMoeda(totalHolerite - totalDescontos)}
-                  </span>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                  <span style={{ color: '#bbdefb', fontWeight: 'bold' }}>Bruto</span>
+                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(brutoHolerite)}</span>
                 </div>
               </div>
 
-              {/* BLOCO 2: VARIÁVEL MOTOBOY */}
-              {temMotoboy && (
-                <div style={{ marginBottom: '16px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #3e2723 0%, #4e342e 100%)', color: '#efebe9' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#ffcc80', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
-                    🏍️ VARIÁVEL MOTOBOY — CORRIDAS
-                  </div>
-
-                  {/* Cards resumo */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '14px' }}>
-                    <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '10px', color: '#ffcc80' }}>Entregas</div>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff' }}>{(mbEntD + mbEntN).toFixed(0)}</div>
-                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>☀️{mbEntD.toFixed(0)} · 🌙{mbEntN.toFixed(0)}</div>
-                    </div>
-                    <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '10px', color: '#ffcc80' }}>Caixinhas</div>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#a5d6a7' }}>{fmtMoeda(mbCaixD + mbCaixN)}</div>
-                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>☀️R${fmt(mbCaixD)} · 🌙R${fmt(mbCaixN)}</div>
-                    </div>
-                    <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '10px', color: '#ffcc80' }}>{mbDias} dias</div>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#90caf9' }}>{fmtMoeda(mbVlVar)}</div>
-                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>variável total</div>
-                    </div>
-                  </div>
-
-                  {/* Pagamento do variável */}
-                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#81c784', marginBottom: '6px' }}>Pagamentos:</div>
-                  {pagoVariavel && varValor > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#a5d6a7' }}>  Variável pago ({varData ? fmtDataBR(varData) : '—'})</span>
-                      <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(varValor)}</span>
+              {/* Descontos legais */}
+              {descontosLegais > 0 && (
+                <div style={{ borderTop: '1px dashed rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ef9a9a', marginBottom: '4px' }}>DESCONTOS LEGAIS:</div>
+                  {inssValor > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#ef9a9a' }}>INSS</span>
+                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(inssValor)}</span>
                     </div>
                   )}
-                  {mbPgto > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#a5d6a7' }}>  Pgto durante o mês (controle)</span>
-                      <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(mbPgto)}</span>
-                    </div>
-                  )}
-                  {!pagoVariavel && !varValor && mbPgto <= 0 && (
-                    <div style={{ fontSize: '11px', color: '#ef9a9a', padding: '4px 0' }}>⏳ Variável ainda não pago</div>
-                  )}
-
-                  {/* Expandir diário */}
-                  <div style={{ cursor: 'pointer', padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '6px', fontSize: '11px', color: '#ffcc80', fontWeight: 'bold', marginTop: '10px' }}
-                    onClick={() => toggleExpandido('motoboy_detalhe')}>
-                    {expandidos.has('motoboy_detalhe') ? '▼' : '▶'} Ver detalhamento diário
-                  </div>
-                  {expandidos.has('motoboy_detalhe') && (
-                    <div style={{ maxHeight: '250px', overflowY: 'auto', marginTop: '6px' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#5d4037', color: '#ffcc80' }}>
-                            <th style={{ padding: '4px 6px', textAlign: 'left' }}>Data</th>
-                            <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent.☀️</th>
-                            <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent.🌙</th>
-                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix.☀️</th>
-                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix.🌙</th>
-                            <th style={{ padding: '4px 6px', textAlign: 'right' }}>Variável</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {motoboyData!
-                            .sort((a: any, b: any) => (a.data || '').localeCompare(b.data || ''))
-                            .filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) + (parseFloat(d.vlVariavel) || 0) > 0)
-                            .map((d: any, idx: number) => (
-                            <tr key={d.id || idx} style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                              <td style={{ padding: '3px 6px', color: '#efebe9' }}>{d.data ? fmtDataBR(d.data) : '—'}</td>
-                              <td style={{ padding: '3px 6px', textAlign: 'center', color: '#ffcc80', fontWeight: 'bold' }}>{parseFloat(d.entDia) || 0}</td>
-                              <td style={{ padding: '3px 6px', textAlign: 'center', color: '#ce93d8', fontWeight: 'bold' }}>{parseFloat(d.entNoite) || 0}</td>
-                              <td style={{ padding: '3px 6px', textAlign: 'right', color: '#a5d6a7' }}>{(parseFloat(d.caixinhaDia) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaDia)) : '—'}</td>
-                              <td style={{ padding: '3px 6px', textAlign: 'right', color: '#a5d6a7' }}>{(parseFloat(d.caixinhaNoite) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaNoite)) : '—'}</td>
-                              <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 'bold', color: '#90caf9' }}>{(parseFloat(d.vlVariavel) || 0) > 0 ? fmtMoeda(parseFloat(d.vlVariavel)) : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr style={{ backgroundColor: '#5d4037', color: '#fff', fontWeight: 'bold' }}>
-                            <td style={{ padding: '4px 6px' }}>TOTAL</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'center' }}>{mbEntD.toFixed(0)}</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'center' }}>{mbEntN.toFixed(0)}</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbCaixD)}</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbCaixN)}</td>
-                            <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbVlVar)}</td>
-                          </tr>
-                        </tfoot>
-                      </table>
+                  {contrAssist > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#ef9a9a' }}>Contr. Assistencial</span>
+                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(contrAssist)}</span>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* BLOCO 3: TOTAL GERAL */}
-              <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 100%)', color: '#fff', marginBottom: '14px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '10px', color: '#bbdefb', textTransform: 'uppercase' }}>Líquido Holerite</div>
-                    <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{fmtMoeda(totalHolerite - totalDescontos)}</div>
-                  </div>
-                  {temMotoboy && (
-                    <div>
-                      <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>Variável Motoboy</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(varValor || mbVlVar)}</div>
-                    </div>
-                  )}
-                  <div>
-                    <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase' }}>Total Recebido</div>
-                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(liquidoEfetivo)}</div>
-                  </div>
-                </div>
+              {/* Líquido holerite */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid rgba(255,255,255,0.25)', marginTop: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Líquido Holerite</span>
+                <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(liquidoHolerite)}</span>
               </div>
+            </div>
 
-              {/* Pendentes */}
-              {pendentes.length > 0 && (
-                <div style={{ backgroundColor: '#fff9c4', borderRadius: '6px', padding: '8px 12px', marginBottom: '10px', fontSize: '11px', borderLeft: '3px solid #f9a825', color: '#5d4037' }}>
-                  <strong>⏳ {pendentes.length} lançamento(s) pendente(s)</strong> — serão descontados no próximo pagamento.
+            {/* ═══ BLOCO 2: VARIÁVEL MOTOBOY ═══ */}
+            {temMotoboy && (
+              <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #3e2723 0%, #4e342e 100%)', color: '#efebe9' }}>
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#ffcc80', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
+                  🏍️ VARIÁVEL MOTOBOY — CORRIDAS
                 </div>
-              )}
 
-              {/* Glossário */}
-              <div style={{ padding: '8px 10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '10px', color: '#555', lineHeight: '1.6' }}>
-                <strong>📖 Como ler:</strong>{' '}
-                <strong>Holerite</strong> = salário base CLT + pagamentos (adiantamento dia 20, saldo dia 05) − descontos (transporte, marmitas, compras).{' '}
-                <strong>Variável Motoboy</strong> = comissão por entregas/corridas + caixinhas acumuladas no mês.{' '}
-                <strong>Total Recebido</strong> = soma de tudo que entrou líquido na conta.
-              </div>
-            </>)}
-
-            {/* ═══ ABA LANÇAMENTOS DETALHADOS ═══ */}
-            {abaCLT === 'detalhe' && (<>
-              {/* Todos os lançamentos em lista detalhada */}
-              <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1565c0', marginBottom: '8px', borderBottom: '2px solid #e3f2fd', paddingBottom: '4px' }}>
-                  💰 Folha de Pagamento
+                {/* Resumo cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '14px' }}>
+                  <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#ffcc80' }}>Entregas</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff' }}>{totalEntregas.toFixed(0)}</div>
+                    <div style={{ fontSize: '9px', color: '#bcaaa4' }}>☀️{mbEntD.toFixed(0)} · 🌙{mbEntN.toFixed(0)}</div>
+                  </div>
+                  <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#ffcc80' }}>Caixinhas</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#a5d6a7' }}>{fmtMoeda(totalCaixinhas)}</div>
+                    <div style={{ fontSize: '9px', color: '#bcaaa4' }}>☀️R${fmt(mbCaixD)} · 🌙R${fmt(mbCaixN)}</div>
+                  </div>
+                  <div style={{ padding: '8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#ffcc80' }}>Valor/entrega</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#90caf9' }}>{fmtMoeda(valorEntrega)}</div>
+                    <div style={{ fontSize: '9px', color: '#bcaaa4' }}>{mbDias} dias trabalhados</div>
+                  </div>
                 </div>
-                {colabItems.filter(i => i.origem === 'folha').map(item => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', marginBottom: '4px', backgroundColor: '#f5f9ff', borderRadius: '6px', borderLeft: '3px solid #1565c0' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#333' }}>{item.descricao || 'Pagamento CLT'}</div>
-                      <div style={{ fontSize: '10px', color: '#888' }}>
-                        {item.dataPagamento ? fmtDataBR(item.dataPagamento) : '—'} • {item.formaPagamento || 'PIX'}
-                        {item.obs && <span style={{ marginLeft: '6px', fontStyle: 'italic' }}>({item.obs})</span>}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(R(item.valor))}</div>
-                      <span style={{ padding: '1px 6px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold',
-                        backgroundColor: item.pago ? '#e8f5e9' : '#fff9c4', color: item.pago ? '#2e7d32' : '#f57f17' }}>
-                        {item.pago ? '✅ Pago' : '⏳ Pendente'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                {/* Log de pagamentos da folha */}
-                {logPgtos.length > 0 && (
-                  <div style={{ marginTop: '6px', paddingLeft: '12px' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#666', marginBottom: '4px' }}>Histórico de depósitos:</div>
-                    {logPgtos.map((lp: any, idx: number) => (
-                      <div key={lp.id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 8px', fontSize: '11px', backgroundColor: '#fafafa', borderRadius: '4px', marginBottom: '2px' }}>
-                        <span style={{ color: '#555' }}>{lp.tipo || 'Pagamento'} — {lp.data ? fmtDataBR(lp.data) : '—'} • {lp.forma || 'PIX'}</span>
-                        <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(parseFloat(lp.valor) || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
-              {/* Saídas por categoria */}
-              {Object.entries(saidasPorCategoria).length > 0 && (
-                <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#c62828', marginBottom: '8px', borderBottom: '2px solid #ffebee', paddingBottom: '4px' }}>
-                    📤 Saídas / Descontos
-                  </div>
-                  {Object.entries(saidasPorCategoria).map(([cat, data]) => (
-                    <div key={cat} style={{ marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', backgroundColor: '#fff5f5', borderRadius: '4px', cursor: 'pointer' }}
-                        onClick={() => toggleExpandido(`det_${cat}`)}>
-                        <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#c62828' }}>
-                          {expandidos.has(`det_${cat}`) ? '▼' : '▶'} {cat} ({data.items.length}x)
-                        </span>
-                        <span style={{ fontSize: '12px', fontWeight: 'bold', color: data.isDebito ? '#c62828' : '#2e7d32' }}>
-                          {data.isDebito ? '−' : '+'}{fmtMoeda(data.total)}
-                        </span>
-                      </div>
-                      {expandidos.has(`det_${cat}`) && data.items.map(di => (
-                        <div key={di.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px 5px 24px', borderBottom: '1px dashed #eee', fontSize: '11px' }}>
-                          <div style={{ flex: 1 }}>
-                            <span style={{ color: '#333' }}>{di.descricao || cat}</span>
-                            <span style={{ color: '#999', marginLeft: '8px' }}>{di.dataPagamento ? fmtDataBR(di.dataPagamento) : '—'}</span>
-                            {di.obs && di.obs !== di.descricao && <span style={{ color: '#bbb', marginLeft: '4px', fontStyle: 'italic' }}>({di.obs})</span>}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontWeight: 'bold', color: di.tipo === 'debito' ? '#c62828' : '#2e7d32' }}>
-                              {di.tipo === 'debito' ? '−' : '+'}{fmtMoeda(R(di.valor))}
-                            </span>
-                            <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '9px', fontWeight: 'bold',
-                              backgroundColor: di.pago ? '#e8f5e9' : '#fff9c4', color: di.pago ? '#2e7d32' : '#f57f17' }}>
-                              {di.pago ? '✅' : '⏳'}
-                            </span>
-                            {di.origem === 'saida' && (
-                              <div style={{ display: 'flex', gap: '3px' }}>
-                                <button onClick={() => { onClose(); abrirEdicao(di); }}
-                                  style={{ ...s.btn('#f57c00'), padding: '2px 5px', fontSize: '10px' }} title="Editar">✏️</button>
-                                <button onClick={() => excluirSaida(di)}
-                                  style={{ ...s.btn('#c62828'), padding: '2px 5px', fontSize: '10px' }} title="Excluir">🗑️</button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                {/* Total variável */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid rgba(255,255,255,0.25)' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Total Variável</span>
+                  <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</span>
                 </div>
-              )}
 
-              {/* Variável motoboy detalhado */}
-              {temMotoboy && (
-                <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#e65100', marginBottom: '8px', borderBottom: '2px solid #fff3e0', paddingBottom: '4px' }}>
-                    🏍️ Controle Motoboy — Diário
-                  </div>
-                  <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {/* Tabela diária expansível */}
+                <div style={{ cursor: 'pointer', padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '6px', fontSize: '11px', color: '#ffcc80', fontWeight: 'bold', marginTop: '10px' }}
+                  onClick={() => toggleExpandido('motoboy_diario')}>
+                  {expandidos.has('motoboy_diario') ? '▼' : '▶'} Ver detalhamento diário
+                </div>
+                {expandidos.has('motoboy_diario') && (
+                  <div style={{ maxHeight: '280px', overflowY: 'auto', marginTop: '6px' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                       <thead>
-                        <tr style={{ backgroundColor: '#e65100', color: 'white' }}>
+                        <tr style={{ backgroundColor: '#5d4037', color: '#ffcc80' }}>
                           <th style={{ padding: '4px 6px', textAlign: 'left' }}>Data</th>
-                          <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent. ☀️</th>
-                          <th style={{ padding: '4px 6px', textAlign: 'center' }}>Ent. 🌙</th>
-                          <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix. ☀️</th>
-                          <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix. 🌙</th>
+                          <th style={{ padding: '4px 6px', textAlign: 'center' }}>☀️</th>
+                          <th style={{ padding: '4px 6px', textAlign: 'center' }}>🌙</th>
+                          <th style={{ padding: '4px 6px', textAlign: 'right' }}>Caix.</th>
                           <th style={{ padding: '4px 6px', textAlign: 'right' }}>Variável</th>
-                          <th style={{ padding: '4px 6px', textAlign: 'right' }}>Pgto</th>
                         </tr>
                       </thead>
                       <tbody>
                         {motoboyData!
                           .sort((a: any, b: any) => (a.data || '').localeCompare(b.data || ''))
-                          .map((d: any, idx: number) => {
-                            const entD = parseFloat(d.entDia) || 0;
-                            const entN = parseFloat(d.entNoite) || 0;
-                            const vlVar = parseFloat(d.vlVariavel) || 0;
-                            const pgto = parseFloat(d.pgto) || 0;
-                            if (entD + entN + vlVar + pgto === 0) return null;
-                            return (
-                              <tr key={d.id || idx} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : '#fff', borderBottom: '1px solid #eee' }}>
-                                <td style={{ padding: '3px 6px' }}>{d.data ? fmtDataBR(d.data) : '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'center', color: '#e65100', fontWeight: 'bold' }}>{entD || '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'center', color: '#4a148c', fontWeight: 'bold' }}>{entN || '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'right', color: '#2e7d32' }}>{(parseFloat(d.caixinhaDia) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaDia)) : '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'right', color: '#2e7d32' }}>{(parseFloat(d.caixinhaNoite) || 0) > 0 ? fmtMoeda(parseFloat(d.caixinhaNoite)) : '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{vlVar > 0 ? fmtMoeda(vlVar) : '—'}</td>
-                                <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 'bold', color: '#7b1fa2' }}>{pgto > 0 ? fmtMoeda(pgto) : '—'}</td>
-                              </tr>
-                            );
-                          })}
+                          .filter((d: any) => (parseFloat(d.entDia) || 0) + (parseFloat(d.entNoite) || 0) + (parseFloat(d.vlVariavel) || 0) > 0)
+                          .map((d: any, idx: number) => (
+                          <tr key={d.id || idx} style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            <td style={{ padding: '3px 6px', color: '#efebe9' }}>{d.data ? fmtDataBR(d.data) : '—'}</td>
+                            <td style={{ padding: '3px 6px', textAlign: 'center', color: '#ffcc80', fontWeight: 'bold' }}>{parseFloat(d.entDia) || '—'}</td>
+                            <td style={{ padding: '3px 6px', textAlign: 'center', color: '#ce93d8', fontWeight: 'bold' }}>{parseFloat(d.entNoite) || '—'}</td>
+                            <td style={{ padding: '3px 6px', textAlign: 'right', color: '#a5d6a7' }}>
+                              {((parseFloat(d.caixinhaDia) || 0) + (parseFloat(d.caixinhaNoite) || 0)) > 0
+                                ? fmtMoeda((parseFloat(d.caixinhaDia) || 0) + (parseFloat(d.caixinhaNoite) || 0)) : '—'}
+                            </td>
+                            <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 'bold', color: '#90caf9' }}>
+                              {(parseFloat(d.vlVariavel) || 0) > 0 ? fmtMoeda(parseFloat(d.vlVariavel)) : '—'}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                       <tfoot>
-                        <tr style={{ backgroundColor: '#e65100', color: 'white', fontWeight: 'bold' }}>
+                        <tr style={{ backgroundColor: '#5d4037', color: '#fff', fontWeight: 'bold' }}>
                           <td style={{ padding: '4px 6px' }}>TOTAL</td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}>{mbEntD.toFixed(0)}</td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}>{mbEntN.toFixed(0)}</td>
-                          <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbCaixD)}</td>
-                          <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbCaixN)}</td>
+                          <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(totalCaixinhas)}</td>
                           <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbVlVar)}</td>
-                          <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtMoeda(mbPgto)}</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
-              {/* Totalizador */}
-              <div style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#e8eaf6', border: '1px solid #c5cae9' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '2px 0' }}>
-                  <span>Holerite (adiant. + saldo)</span><span style={{ fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(totalHolerite)}</span>
+            {/* ═══ BLOCO 3: DESCONTOS OPERACIONAIS ═══ */}
+            {saidasDesconto.length > 0 && (
+              <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #fbe9e7 0%, #ffccbc 100%)', border: '1px solid #ef9a9a' }}>
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#c62828', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
+                  📤 DESCONTOS — Abatidos da remuneração
                 </div>
-                {temMotoboy && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '2px 0' }}>
-                    <span>Variável motoboy</span><span style={{ fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(varValor || mbVlVar)}</span>
+
+                {saidasDesconto.map(({ cat, items: catItems, total }) => (
+                  <div key={cat} style={{ marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', backgroundColor: 'rgba(198,40,40,0.06)', borderRadius: '6px', cursor: 'pointer' }}
+                      onClick={() => toggleExpandido(`desc_${cat}`)}>
+                      <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#c62828' }}>
+                        {expandidos.has(`desc_${cat}`) ? '▼' : '▶'} {cat} ({catItems.length}x)
+                      </span>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(total)}</span>
+                    </div>
+                    {expandidos.has(`desc_${cat}`) && catItems.map(di => (
+                      <div key={di.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px 4px 24px', borderBottom: '1px dashed #ffcdd2', fontSize: '11px' }}>
+                        <div style={{ flex: 1 }}>
+                          <span style={{ color: '#333' }}>{di.descricao || cat}</span>
+                          <span style={{ color: '#999', marginLeft: '8px' }}>{di.dataPagamento ? fmtDataBR(di.dataPagamento) : '—'}</span>
+                          {di.obs && di.obs !== di.descricao && <span style={{ color: '#bbb', marginLeft: '4px', fontStyle: 'italic' }}>({di.obs})</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(R(di.valor))}</span>
+                          <span style={{ padding: '1px 5px', borderRadius: '8px', fontSize: '9px', fontWeight: 'bold',
+                            backgroundColor: di.pago ? '#e8f5e9' : '#fff9c4', color: di.pago ? '#2e7d32' : '#f57f17' }}>
+                            {di.pago ? '✅' : '⏳'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
-                {totalCreditosExtras > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '2px 0' }}>
-                    <span>Outros créditos</span><span style={{ fontWeight: 'bold', color: '#2e7d32' }}>+{fmtMoeda(totalCreditosExtras)}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '2px 0' }}>
-                  <span>Descontos</span><span style={{ fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(totalDescontos)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 'bold', padding: '6px 0 0', borderTop: '2px solid #7986cb', marginTop: '4px' }}>
-                  <span>LÍQUIDO TOTAL</span>
-                  <span style={{ color: liquidoEfetivo >= 0 ? '#2e7d32' : '#c62828' }}>{fmtMoeda(liquidoEfetivo)}</span>
+                ))}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', borderTop: '2px solid #ef9a9a', marginTop: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#c62828' }}>Total Descontos</span>
+                  <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(totalDescontos)}</span>
                 </div>
               </div>
-            </>)}
+            )}
 
-            </div>{/* end padding container */}
+            {/* ═══ BLOCO LÍQUIDO DO MÊS ═══ */}
+            <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 100%)', color: '#fff', marginBottom: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center', marginBottom: '8px' }}>
+                <div>
+                  <div style={{ fontSize: '10px', color: '#bbdefb', textTransform: 'uppercase' }}>Líquido Holerite</div>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{fmtMoeda(liquidoHolerite)}</div>
+                </div>
+                {temMotoboy && (
+                  <div>
+                    <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>Variável Motoboy</div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: '10px', color: '#ef9a9a', textTransform: 'uppercase' }}>Descontos</div>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ef9a9a' }}>−{fmtMoeda(totalDescontos)}</div>
+                </div>
+              </div>
+              <div style={{ borderTop: '2px solid rgba(255,255,255,0.3)', paddingTop: '8px', textAlign: 'center' }}>
+                <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>💵 Líquido do Mês</div>
+                <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(liquidoMes)}</div>
+              </div>
+            </div>
 
-            <div style={{ padding: '0 20px 16px', textAlign: 'right' }}>
+            {/* ═══ BLOCO 4: PAGAMENTOS REALIZADOS ═══ */}
+            <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%)', border: '1px solid #a5d6a7' }}>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2e7d32', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
+                📱 PAGAMENTOS REALIZADOS
+              </div>
+
+              {/* PIXs do logPagamentos */}
+              {logPgtos.length > 0 && (<>
+                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#1b5e20', marginBottom: '4px' }}>Depósitos (Folha):</div>
+                {logPgtos.map((lp: any, idx: number) => (
+                  <div key={lp.id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 8px', fontSize: '12px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '4px', marginBottom: '3px' }}>
+                    <span style={{ color: '#333' }}>
+                      {lp.data ? fmtDataBR(lp.data) : '—'} • {lp.forma || 'PIX'} • {lp.tipo || 'Pagamento'}
+                      {lp.obs && <span style={{ color: '#888', fontStyle: 'italic', marginLeft: '6px' }}>({lp.obs})</span>}
+                    </span>
+                    <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(parseFloat(lp.valor) || 0)}</span>
+                  </div>
+                ))}
+              </>)}
+
+              {/* Pagamentos via saídas (transporte, adiantamentos) */}
+              {saidasPagamento.length > 0 && saidasPagamento.map(({ cat, items: catItems, total }) => (
+                <div key={cat} style={{ marginTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '6px', cursor: 'pointer' }}
+                    onClick={() => toggleExpandido(`pgto_${cat}`)}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#2e7d32' }}>
+                      {expandidos.has(`pgto_${cat}`) ? '▼' : '▶'} {cat} ({catItems.length}x)
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(total)}</span>
+                  </div>
+                  {expandidos.has(`pgto_${cat}`) && catItems.map(di => (
+                    <div key={di.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px 4px 24px', borderBottom: '1px dashed #c8e6c9', fontSize: '11px' }}>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ color: '#333' }}>{di.descricao || cat}</span>
+                        <span style={{ color: '#999', marginLeft: '8px' }}>{di.dataPagamento ? fmtDataBR(di.dataPagamento) : '—'}</span>
+                      </div>
+                      <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(R(di.valor))}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+
+              {logPgtos.length === 0 && saidasPagamento.length === 0 && (
+                <div style={{ fontSize: '11px', color: '#888', padding: '6px 0' }}>Nenhum pagamento registrado neste mês.</div>
+              )}
+
+              {/* Total pago */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid #a5d6a7', marginTop: '10px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1b5e20' }}>Total Pago</span>
+                <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(totalPagoGeral)}</span>
+              </div>
+            </div>
+
+            {/* ═══ SALDO FINAL ═══ */}
+            <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '14px',
+              background: quitado ? '#e8f5e9' : saldo > 0 ? '#fff9c4' : '#ffebee',
+              border: `2px solid ${quitado ? '#4caf50' : saldo > 0 ? '#f9a825' : '#ef5350'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#555', textTransform: 'uppercase' }}>⚖️ Saldo</div>
+                  <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
+                    Líquido {fmtMoeda(liquidoMes)} − Pago {fmtMoeda(totalPagoGeral)}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '22px', fontWeight: 'bold', color: quitado ? '#2e7d32' : saldo > 0 ? '#f57f17' : '#c62828' }}>
+                    {quitado ? '✅ Quitado' : saldo > 0 ? `⏳ ${fmtMoeda(saldo)}` : fmtMoeda(saldo)}
+                  </div>
+                  {quitado && Math.abs(saldo) > 0 && (
+                    <div style={{ fontSize: '10px', color: '#888' }}>diferença de {fmtMoeda(Math.abs(saldo))} (arredondamento)</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Glossário */}
+            <div style={{ padding: '8px 10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '10px', color: '#555', lineHeight: '1.6', marginBottom: '10px' }}>
+              <strong>📖 Como ler:</strong>{' '}
+              <strong>Holerite</strong> = salário CLT (base + periculosidade + feriados − INSS − contribuições).{' '}
+              {temMotoboy && <><strong>Variável Motoboy</strong> = comissão por entregas + caixinhas do mês. </>}
+              <strong>Descontos</strong> = consumo interno, compras, etc — abatidos do valor a receber.{' '}
+              <strong>Pagamentos</strong> = PIXs e adiantamentos efetivamente depositados.{' '}
+              <strong>Saldo</strong> = diferença entre líquido e total pago.
+            </div>
+
+            <div style={{ textAlign: 'right' }}>
               <button onClick={onClose} style={s.btn('#9e9e9e')}>Fechar</button>
             </div>
           </div>
         </div>
+
       );
     }
 
