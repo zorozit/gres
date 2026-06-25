@@ -209,7 +209,7 @@ export const Extrato: React.FC = () => {
         fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
-        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}&incluirInativos=true`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
         // Current month saidas

@@ -97,11 +97,20 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Master check via localStorage (AuthContext seta is_master)
     if (localStorage.getItem('is_master') === 'true') return true;
 
-    const resolved = permissoes;
-    if (!resolved) return false;
     const perfil = (perfilRaw || '').toLowerCase();
+
+    // Fallback: se permissões não carregaram (API 401, erro de rede, etc.)
+    // admin tem acesso total como fallback de segurança
+    const resolved = permissoes;
+    if (!resolved) {
+      return perfil === 'admin' || perfil === 'administrador';
+    }
+
     const map = resolved[perfil];
-    if (!map) return false;
+    if (!map) {
+      // Perfil não encontrado na config — admin libera por padrão
+      return perfil === 'admin' || perfil === 'administrador';
+    }
     return map[moduloId] === true;
   };
 
