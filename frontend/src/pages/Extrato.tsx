@@ -652,7 +652,10 @@ export const Extrato: React.FC = () => {
       const v = item.valor;
       if (item.tipo === 'credito') { map[id].creditos += v; map[id].saldo += v; }
       else                         { map[id].debitos  += v; map[id].saldo -= v; }
-      if (item.pago) map[id].pago += v; else map[id].pendente += v;
+      // Pago e pendente: apenas créditos (débitos não são "pagos" ao colaborador)
+      if (item.tipo === 'credito') {
+        if (item.pago) map[id].pago += v; else map[id].pendente += v;
+      }
       map[id].count++;
       if (item.origem === 'folha') map[id].folhaItems.push(item);
       else                         map[id].saidaItems.push(item);
@@ -1534,29 +1537,40 @@ export const Extrato: React.FC = () => {
                 {logPgtos.map((lp: any, idx: number) => {
                   const lpVal = parseFloat(lp.valor) || 0;
                   const isAdto = (lp.tipo || '').toLowerCase().includes('adiantamento');
-                  const isVar = (lp.tipo || '').toLowerCase().includes('variável') || (lp.tipo || '').toLowerCase().includes('saldo');
-                  // Calcular como o PIX foi composto
-                  let explicacao = '';
-                  if (isAdto && logPgtos.length >= 2) {
-                    // Dia 20: geralmente = líquido holerite (ou percentual)
-                    explicacao = `Adiantamento dia 20`;
-                  } else if (isVar || (!isAdto && idx === logPgtos.length - 1 && logPgtos.length >= 2)) {
-                    // Último PIX = Líquido do mês − anteriores − transporte
-                    const anteriores = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
-                    explicacao = `Líquido R$${liquidoMes.toFixed(2).replace('.',',')} − Adto R$${anteriores.toFixed(2).replace('.',',')} − Transp. R$${totalPagamentosSaidas.toFixed(2).replace('.',',')}`;
+                  const isLast = idx === logPgtos.length - 1 && logPgtos.length >= 2;
+                  // Montar linhas de explicação do cálculo
+                  const explicacaoLinhas: string[] = [];
+                  if (isAdto) {
+                    explicacaoLinhas.push('Adiantamento salarial (dia 20)');
+                  } else if (isLast) {
+                    // PIX dia 05 = Líquido do mês - PIX(s) anteriores - Transporte
+                    const adtoTotal = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
+                    // Decomposição que o colaborador entende:
+                    // Holerith restante + Variável restante - Transporte - Consumo
+                    explicacaoLinhas.push(`Líquido do mês: ${fmtMoeda(liquidoMes)}`);
+                    explicacaoLinhas.push(`(-) Já recebido dia 20: ${fmtMoeda(adtoTotal)}`);
+                    if (totalPagamentosSaidas > 0) explicacaoLinhas.push(`(-) Transporte já recebido: ${fmtMoeda(totalPagamentosSaidas)}`);
+                    const calc = liquidoMes - adtoTotal - totalPagamentosSaidas;
+                    explicacaoLinhas.push(`(=) Saldo a receber: ${fmtMoeda(calc)}`);
+                    if (Math.abs(calc - lpVal) >= 0.01 && Math.abs(calc - lpVal) < 1) {
+                      explicacaoLinhas.push(`Diferença de ${fmtMoeda(Math.abs(calc - lpVal))} por arredondamento`);
+                    }
                   }
                   return (
-                    <div key={lp.id || idx} style={{ padding: '6px 8px', fontSize: '12px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '6px', marginBottom: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#333' }}>
+                    <div key={lp.id || idx} style={{ padding: '8px 10px', fontSize: '12px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '8px', marginBottom: '5px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#333', fontWeight: 600 }}>
                           {lp.data ? fmtDataBR(lp.data) : '—'} • {lp.forma || 'PIX'} • {lp.tipo || 'Pagamento'}
-                          {lp.obs && <span style={{ color: '#888', fontStyle: 'italic', marginLeft: '6px' }}>({lp.obs})</span>}
                         </span>
-                        <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(lpVal)}</span>
+                        <span style={{ fontWeight: 'bold', color: '#2e7d32', fontSize: '14px' }}>{fmtMoeda(lpVal)}</span>
                       </div>
-                      {explicacao && (
-                        <div style={{ fontSize: '10px', color: '#666', marginTop: '2px', fontStyle: 'italic' }}>
-                          💡 {explicacao}
+                      {lp.obs && <div style={{ fontSize: '10px', color: '#888', fontStyle: 'italic', marginTop: '2px' }}>{lp.obs}</div>}
+                      {explicacaoLinhas.length > 0 && (
+                        <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'rgba(27,94,32,0.05)', borderRadius: '6px', borderLeft: '3px solid #4caf50' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#1b5e20', marginBottom: '3px' }}>📁 Como foi calculado:</div>
+                          {explicacaoLinhas.map((ln, i) => (
+                            <div key={i} style={{ fontSize: '11px', color: ln.startsWith('(=)') ? '#1b5e20' : '#555', fontWeight: ln.startsWith('(=)') ? 'bold' : 'normal', padding: '1px 0' }}>{ln}</div>
+                          ))}
                         </div>
                       )}
                     </div>
