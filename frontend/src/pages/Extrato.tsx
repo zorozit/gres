@@ -82,6 +82,28 @@ const TIPOS_DEBITO = ['A receber', 'Consumo Interno', 'Desconto', 'Desconto Tran
 const R = (v: any) => parseFloat(v) || 0;
 const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
+
+/** Tabela progressiva INSS 2026 (mesma da FolhaPagamento) */
+function calcINSS(salarioBruto: number): number {
+  const tabela = [
+    { ate: 1621.00, aliq: 0.075 },
+    { ate: 2793.88, aliq: 0.09 },
+    { ate: 4190.83, aliq: 0.12 },
+    { ate: 8157.41, aliq: 0.14 },
+  ];
+  let inss = 0;
+  let base = salarioBruto;
+  let anterior = 0;
+  for (const faixa of tabela) {
+    if (base <= 0) break;
+    const faixaVal = Math.min(base, faixa.ate - anterior);
+    inss += faixaVal * faixa.aliq;
+    base -= faixaVal;
+    anterior = faixa.ate;
+    if (salarioBruto <= faixa.ate) break;
+  }
+  return parseFloat(inss.toFixed(2));
+}
 const fmtDataBR = (iso: string) => {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
@@ -1178,14 +1200,23 @@ export const Extrato: React.FC = () => {
       const percPericulosidade = R(colab.periculosidade) || 0;
       const valorPericulosidade = percPericulosidade > 0 ? salarioBase * (percPericulosidade / 100) : 0;
 
-      // INSS e contribuição (do EMS ou calculado)
-      const inssValor = R(raw.inssValor) || R(raw.salContrInss) ? (R(raw.inssValor) || 0) : 0;
-      const contrAssist = R(raw.contrAssist) || 0;
-      // Feriado trabalhado
+      // Feriado trabalhado (do registro contábil ou do campo valorChegadaDia × feriados)
       const feriado = R(raw.feriadoContabil) || R(raw.feriado) || 0;
 
       const brutoHolerite = salarioBase + valorPericulosidade + feriado;
-      const descontosLegais = inssValor + contrAssist;
+
+      // INSS: recalcular usando mesma fórmula da FolhaPagamento
+      // Base INSS = Math.floor(salBase*(1+peri) + feriado) — padrão contabilidade
+      const salContrInss = Math.floor(salarioBase * (1 + percPericulosidade / 100) + feriado);
+      const inssValor = R(raw.inssValor) || calcINSS(salContrInss);
+      // Contribuição assistencial: do cadastro do colaborador ou do raw
+      const contrAssist = R(raw.contrAssist) || R(colab.contribuicaoAssistencial) || 0;
+      // Vale transporte: desconto = min(6% salBase, VT diário × 22)
+      const vtDiario = R(colab.valorTransporte);
+      const vtMensal = parseFloat((vtDiario * 22).toFixed(2));
+      const vtDesconto = vtMensal > 0 ? parseFloat(Math.min(parseFloat((salarioBase * 0.06).toFixed(2)), vtMensal).toFixed(2)) : 0;
+
+      const descontosLegais = inssValor + contrAssist + vtDesconto;
       const liquidoHolerite = brutoHolerite - descontosLegais;
 
       // --- Motoboy data ---
@@ -1329,6 +1360,12 @@ export const Extrato: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
                       <span style={{ color: '#ef9a9a' }}>Contr. Assistencial</span>
                       <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(contrAssist)}</span>
+                    </div>
+                  )}
+                  {vtDesconto > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#ef9a9a' }}>Vale Transporte (6%)</span>
+                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(vtDesconto)}</span>
                     </div>
                   )}
                 </div>
