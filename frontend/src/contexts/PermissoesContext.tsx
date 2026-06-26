@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useAuth } from './AuthContext';
 
 // Tipo das permissões: perfil → moduloId → boolean
 export type PermissoesMap = Record<string, Record<string, boolean>>;
@@ -17,6 +18,7 @@ const PermissoesContext = createContext<PermissoesContextType | undefined>(undef
 const API_URL = 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
 export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated } = useAuth();
   const [permissoesGlobal, setPermissoesGlobal] = useState<PermissoesMap | null>(null);
   const [permissoesOverride, setPermissoesOverride] = useState<PermissoesMap | null>(null);
   const [isOverride, setIsOverride] = useState(false);
@@ -95,7 +97,8 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [getActiveUnitId, retryCount]);
 
-  useEffect(() => { carregar(); }, [carregar, retryCount]);
+  // Recarrega quando auth muda (login/logout) ou retry
+  useEffect(() => { carregar(); }, [carregar, retryCount, isAuthenticated]);
 
   // Recarrega quando a unidade ativa muda
   useEffect(() => {
