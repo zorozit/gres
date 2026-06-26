@@ -26,7 +26,7 @@ export async function fetchAuth(input: RequestInfo | URL, init?: RequestInit): P
     localStorage.removeItem('auth_token');
     // Salvar URL atual para redirect pós-login
     const currentPath = window.location.pathname + window.location.search;
-    if (currentPath !== '/login' && currentPath !== '/') {
+    if (!currentPath.startsWith('/login') && currentPath !== '/') {
       localStorage.setItem('redirect_after_login', currentPath);
     }
     window.location.href = '/login';

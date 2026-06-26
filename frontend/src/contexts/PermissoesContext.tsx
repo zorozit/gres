@@ -33,7 +33,12 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const carregar = useCallback(async () => {
     try {
       const token = localStorage.getItem('auth_token');
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      // Sem token = usuário não logado (tela de login) — não tentar buscar permissões
+      if (!token) {
+        setLoaded(true);
+        return;
+      }
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
 
       // 1. Buscar default global
       const rGlobal = await fetch(`${API_URL}/perfis-permissoes`, { headers });
@@ -41,8 +46,11 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         // Token expirado ou inválido — forçar relogin
         localStorage.removeItem('auth_token');
         localStorage.removeItem('is_master');
-        localStorage.setItem('redirect_after_login', window.location.pathname);
-        window.location.href = '/login';
+        // Só redirecionar se NÃO estiver já na tela de login (evita loop)
+        if (!window.location.pathname.startsWith('/login')) {
+          localStorage.setItem('redirect_after_login', window.location.pathname);
+          window.location.href = '/login';
+        }
         return;
       }
       let globalPerms: PermissoesMap | null = null;
