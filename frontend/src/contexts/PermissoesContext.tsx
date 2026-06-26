@@ -21,6 +21,7 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [permissoesOverride, setPermissoesOverride] = useState<PermissoesMap | null>(null);
   const [isOverride, setIsOverride] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   /** Retorna o CNPJ da unidade ativa (do localStorage) */
   const getActiveUnitId = useCallback((): string | null => {
@@ -84,12 +85,17 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setPermissoesGlobal(null);
       setPermissoesOverride(null);
       setIsOverride(false);
+      // Retry automático (máx 2 tentativas) após 2 segundos
+      const token = localStorage.getItem('auth_token');
+      if (token && retryCount < 2) {
+        setTimeout(() => setRetryCount(c => c + 1), 2000);
+      }
     } finally {
       setLoaded(true);
     }
-  }, [getActiveUnitId]);
+  }, [getActiveUnitId, retryCount]);
 
-  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { carregar(); }, [carregar, retryCount]);
 
   // Recarrega quando a unidade ativa muda
   useEffect(() => {
@@ -113,11 +119,21 @@ export const PermissoesProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Master check via localStorage (AuthContext seta is_master)
     if (localStorage.getItem('is_master') === 'true') return true;
 
-    const resolved = permissoes;
-    if (!resolved) return false;
     const perfil = (perfilRaw || '').toLowerCase();
+
+    const resolved = permissoes;
+    if (!resolved) {
+      // Fallback: se permissões não carregaram mas o perfil é admin, liberar acesso
+      // Isso evita que admins fiquem bloqueados por falha de rede
+      if (perfil === 'admin' || perfil === 'administrador') return true;
+      return false;
+    }
     const map = resolved[perfil];
-    if (!map) return false;
+    if (!map) {
+      // Perfil não encontrado nas permissões — admins ainda têm acesso
+      if (perfil === 'admin' || perfil === 'administrador') return true;
+      return false;
+    }
     return map[moduloId] === true;
   };
 
