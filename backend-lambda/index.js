@@ -1807,7 +1807,9 @@ exports.handler = async (event) => {
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           formaPagamento: formaPagamento || 'PIX',
-          pago: pago !== undefined ? pago : true,
+          // Caixinha (gorjeta a pagar) nasce como NÃO paga — será marcada paga quando
+          // incorporada ao pagamento semanal do freelancer na FolhaPagamento/FreelancerPagamento.
+          pago: pago !== undefined ? pago : ((tipo || origem || '') === 'Caixinha' ? false : true),
           obs: obs || observacao || '',
           ...(adiantamentoId ? { adiantamentoId } : {}),
           // Rastreabilidade de lote: amarra a saída auto-gerada ao pagamentoId do lote que a criou.

@@ -332,6 +332,23 @@ export const Saidas: React.FC = () => {
     } catch (err) { alert('Erro ao deletar saída'); }
   };
 
+  // Toggle pago/em-aberto para Caixinha (gorjeta)
+  const handleTogglePago = async (registro: any) => {
+    const novoPago = !(registro.pago === true || registro.pago === 'true');
+    const label = novoPago ? 'PAGA (já entregue ao colaborador)' : 'EM ABERTO (será somada na folha)';
+    if (!window.confirm(`Marcar esta caixinha como ${label}?`)) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetchAuth(`${apiUrl}/saidas/${registro.id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...registro, pago: novoPago }),
+      });
+      if (res.ok) { handleFiltrar(); }
+      else { alert('Erro ao atualizar status'); }
+    } catch (err) { alert('Erro ao atualizar status'); }
+  };
+
   const handleMudarData = (dias: number) => {
     const d = new Date(dataSelecionada + 'T12:00:00');
     d.setDate(d.getDate() + dias);
@@ -701,6 +718,21 @@ export const Saidas: React.FC = () => {
                           <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{r.responsavelNome || r.responsavel || '-'}</td>
                           <td style={{ ...s.td, fontSize: '10px', color: '#888', maxWidth: '100px' }}>{r.observacao || '—'}</td>
                           <td style={{ ...s.td, whiteSpace: 'nowrap' }}>
+                            {/* Badge de status para Caixinha */}
+                            {tipo === 'Caixinha' && (
+                              <span
+                                onClick={() => handleTogglePago(r)}
+                                title={r.pago === true || r.pago === 'true' ? 'Paga — clique para marcar em aberto' : 'Em aberto — clique para marcar como paga'}
+                                style={{
+                                  display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                  cursor: 'pointer', marginRight: '6px', transition: 'all .15s',
+                                  backgroundColor: (r.pago === true || r.pago === 'true') ? '#e8f5e9' : '#fff3e0',
+                                  color: (r.pago === true || r.pago === 'true') ? '#2e7d32' : '#e65100',
+                                  border: `1px solid ${(r.pago === true || r.pago === 'true') ? '#66bb6a' : '#ffb74d'}`,
+                                }}>
+                                {(r.pago === true || r.pago === 'true') ? '✅ Paga' : '⏳ Em aberto'}
+                              </span>
+                            )}
                             <button onClick={() => setRegistroEditando({ ...r, tipo: r.tipo || r.origem || r.referencia || 'A pagar' })}
                               style={{ padding: '4px 8px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginRight: '4px', fontSize: '11px' }}>
                               ✏️
@@ -797,6 +829,23 @@ export const Saidas: React.FC = () => {
                     onChange={e => setRegistroEditando({ ...registroEditando, observacao: e.target.value })}
                     style={s.input} />
                 </div>
+                {/* Toggle pago/em-aberto para Caixinha */}
+                {(registroEditando.tipo || registroEditando.origem || '') === 'Caixinha' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px',
+                    backgroundColor: (registroEditando.pago === true || registroEditando.pago === 'true') ? '#e8f5e9' : '#fff3e0',
+                    border: `1px solid ${(registroEditando.pago === true || registroEditando.pago === 'true') ? '#66bb6a' : '#ffb74d'}` }}>
+                    <span style={{ fontWeight: 'bold', fontSize: '13px' }}>🪙 Status da gorjeta:</span>
+                    <button
+                      onClick={() => setRegistroEditando({ ...registroEditando, pago: !(registroEditando.pago === true || registroEditando.pago === 'true') })}
+                      style={{
+                        padding: '6px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px',
+                        backgroundColor: (registroEditando.pago === true || registroEditando.pago === 'true') ? '#2e7d32' : '#e65100',
+                        color: 'white',
+                      }}>
+                      {(registroEditando.pago === true || registroEditando.pago === 'true') ? '✅ Paga (já entregue)' : '⏳ Em aberto (entra na folha)'}
+                    </button>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button onClick={handleSalvarEdicao} style={{ ...s.btn('#43a047'), flex: 2 }}>💾 Salvar</button>
                   <button onClick={() => setRegistroEditando(null)} style={{ ...s.btn('#9e9e9e'), flex: 1 }}>✕ Cancelar</button>
