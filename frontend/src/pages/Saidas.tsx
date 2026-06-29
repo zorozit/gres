@@ -272,6 +272,8 @@ export const Saidas: React.FC = () => {
           responsavelEmail: email || '',
           origem: novoRegistro.tipo,
           referencia: novoRegistro.tipo,
+          // Caixinha (gorjeta) nasce como não-paga; será marcada paga na folha de pagamento
+          ...(novoRegistro.tipo === 'Caixinha' ? { pago: false } : {}),
           unitId,
         }),
       });
