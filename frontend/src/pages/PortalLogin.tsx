@@ -94,7 +94,10 @@ export default function PortalLogin() {
     try {
       const res = await fetch(`${apiUrl}/portal/trocar-senha`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${loginData.token}`,
+        },
         body: JSON.stringify({
           colaboradorId: loginData.colaboradorId || loginData.colaborador?.id,
           senhaAtual: senha,
