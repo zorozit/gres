@@ -136,6 +136,7 @@ export default function LandingPage() {
           </ul>
 
           <div className="lp-nav-actions">
+            <Link to="/portal/login" className="lp-btn-login" style={{ marginRight: '8px' }}>👤 Portal Colaborador</Link>
             <Link to="/login" className="lp-btn-login">Login</Link>
             <a href="https://wa.me/5511999999999" className="lp-btn-cta" target="_blank" rel="noopener noreferrer">Começar agora</a>
           </div>
@@ -152,6 +153,7 @@ export default function LandingPage() {
         <a href="#modulos" onClick={closeMobile}>Módulos</a>
         <a href="#jornada" onClick={closeMobile}>Jornada</a>
         <a href="#faq" onClick={closeMobile}>FAQ</a>
+        <Link to="/portal/login" onClick={closeMobile}>👤 Portal Colaborador</Link>
         <Link to="/login" onClick={closeMobile}>Login</Link>
         <a href="https://wa.me/5511999999999" className="lp-btn-cta" target="_blank" rel="noopener noreferrer">Começar agora</a>
       </div>

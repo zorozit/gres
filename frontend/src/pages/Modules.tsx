@@ -30,6 +30,7 @@ const ALL_MODULES = [
   { id: 'payslips',               icon: '🧾', title: 'Payslips',                  description: 'Resumos consolidados de pagamento por colaborador e período',                     path: '/modulos/payslips',              color: '#00897b', group: 'folha' },
   { id: 'historico-remuneracoes',  icon: '📊', title: 'Histórico Remunerações',    description: 'Timeline de acordos e valores por colaborador ao longo do tempo',                 path: '/modulos/historico-remuneracoes', color: '#5c6bc0', group: 'rh' },
   { id: 'regras-sistema',          icon: '📋', title: 'Regras do Sistema',          description: 'Documentação das regras de negócio e cálculos do GIRES',                         path: '/modulos/regras-sistema',        color: '#546e7a', group: 'admin' },
+  { id: 'comunicados',              icon: '📢', title: 'Comunicados',                description: 'Publique avisos e comunicados para os colaboradores no Portal',                  path: '/modulos/comunicados',           color: '#1565c0', group: 'rh' },
 ];
 
 const GROUPS = [

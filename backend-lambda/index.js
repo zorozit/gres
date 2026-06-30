@@ -2792,6 +2792,492 @@ exports.handler = async (event) => {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ─── PORTAL DO COLABORADOR ─────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Helper: validar token do portal
+    function validarTokenPortal(evt) {
+      const authHeader = (evt.headers || {}).authorization || (evt.headers || {}).Authorization || '';
+      const tkn = authHeader.replace('Bearer ', '');
+      if (!tkn) return null;
+      try {
+        const decoded = JSON.parse(Buffer.from(tkn, 'base64').toString());
+        if (decoded.tipo !== 'portal') return null;
+        return decoded;
+      } catch { return null; }
+    }
+
+    // ─── POST /portal/login — Login do colaborador ────────────────────────────
+    if (rawPath === '/portal/login' && httpMethod === 'POST') {
+      try {
+        const { cpf, senha } = body;
+        if (!cpf || !senha) {
+          return response(400, { error: 'CPF e senha são obrigatórios' });
+        }
+
+        // Buscar colaborador ativo pelo CPF (normalizar para comparação)
+        const cpfLimpo = cpf.replace(/\D/g, '');
+        const colResult = await dynamodb.scan({
+          TableName: 'gres-prod-colaboradores',
+          FilterExpression: 'ativo = :ativo',
+          ExpressionAttributeValues: { ':ativo': true }
+        }).promise();
+
+        const colMatch = (colResult.Items || []).find(c => 
+          (c.cpf || '').replace(/\D/g, '') === cpfLimpo
+        );
+        if (!colMatch) {
+          return response(401, { error: 'CPF não encontrado' });
+        }
+
+        const col = colMatch;
+        let primeiroAcesso = false;
+
+        if (col.portalSenha) {
+          // Colaborador já tem senha do portal
+          const isBcryptPortal = col.portalSenha.startsWith('$2b$') || col.portalSenha.startsWith('$2a$');
+          let senhaOk = false;
+          if (isBcryptPortal) {
+            senhaOk = bcrypt.compareSync(senha, col.portalSenha);
+          } else {
+            senhaOk = (senha === col.portalSenha);
+          }
+          if (!senhaOk) {
+            return response(401, { error: 'Senha incorreta' });
+          }
+        } else {
+          // Primeiro acesso: validar com últimos 4 dígitos do celular
+          const celular = (col.celular || '').replace(/\D/g, '');
+          const ultimos4 = celular.slice(-4);
+          if (!ultimos4 || senha !== ultimos4) {
+            return response(401, { error: 'Senha incorreta' });
+          }
+          primeiroAcesso = true;
+        }
+
+        // Gerar token portal
+        const token = Buffer.from(JSON.stringify({
+          colaboradorId: col.id,
+          cpf: col.cpf,
+          nome: col.nome,
+          tipo: 'portal',
+          iat: Math.floor(Date.now() / 1000)
+        })).toString('base64');
+
+        return response(200, {
+          success: true,
+          token,
+          primeiroAcesso,
+          colaborador: {
+            id: col.id,
+            nome: col.nome,
+            cpf: col.cpf,
+            tipoContrato: col.tipoContrato,
+            cargo: col.cargo,
+            unitId: col.unitId,
+            celular: col.celular,
+            email: col.email,
+            chavePix: col.chavePix,
+            dataAdmissao: col.dataAdmissao
+          }
+        });
+      } catch (err) {
+        console.error('Erro portal/login:', err);
+        return response(500, { error: 'Erro ao fazer login: ' + err.message });
+      }
+    }
+
+    // ─── POST /portal/trocar-senha — Troca de senha do portal ─────────────────
+    if (rawPath === '/portal/trocar-senha' && httpMethod === 'POST') {
+      try {
+        const portalUser = validarTokenPortal(event);
+        if (!portalUser) {
+          return response(401, { error: 'Token inválido ou ausente' });
+        }
+
+        const { colaboradorId, senhaAtual, novaSenha } = body;
+        if (!colaboradorId || !senhaAtual || !novaSenha) {
+          return response(400, { error: 'colaboradorId, senhaAtual e novaSenha são obrigatórios' });
+        }
+        if (novaSenha.length < 6) {
+          return response(400, { error: 'Nova senha deve ter no mínimo 6 caracteres' });
+        }
+
+        // Buscar colaborador
+        const colGet = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId }
+        }).promise();
+        const col = colGet.Item;
+        if (!col) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        // Verificar senha atual
+        let senhaAtualOk = false;
+        if (col.portalSenha) {
+          const isBcryptAtual = col.portalSenha.startsWith('$2b$') || col.portalSenha.startsWith('$2a$');
+          if (isBcryptAtual) {
+            senhaAtualOk = bcrypt.compareSync(senhaAtual, col.portalSenha);
+          } else {
+            senhaAtualOk = (senhaAtual === col.portalSenha);
+          }
+        } else {
+          // Primeiro acesso: verificar com últimos 4 dígitos do celular
+          const celular = (col.celular || '').replace(/\D/g, '');
+          const ultimos4 = celular.slice(-4);
+          senhaAtualOk = (senhaAtual === ultimos4);
+        }
+
+        if (!senhaAtualOk) {
+          return response(401, { error: 'Senha atual incorreta' });
+        }
+
+        // Salvar nova senha com bcrypt
+        const hashedSenha = bcrypt.hashSync(novaSenha, 10);
+        await dynamodb.update({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId },
+          UpdateExpression: 'SET portalSenha = :ps',
+          ExpressionAttributeValues: { ':ps': hashedSenha }
+        }).promise();
+
+        return response(200, { success: true });
+      } catch (err) {
+        console.error('Erro portal/trocar-senha:', err);
+        return response(500, { error: 'Erro ao trocar senha: ' + err.message });
+      }
+    }
+
+    // ─── GET /portal/meus-dados — Dados do colaborador logado ─────────────────
+    if (rawPath === '/portal/meus-dados' && httpMethod === 'GET') {
+      try {
+        const portalUser = validarTokenPortal(event);
+        if (!portalUser) {
+          return response(401, { error: 'Token inválido ou ausente' });
+        }
+
+        const colGet = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: portalUser.colaboradorId }
+        }).promise();
+        const col = colGet.Item;
+        if (!col) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        // Buscar nome da unidade
+        let nomeUnidade = '';
+        if (col.unitId) {
+          try {
+            const uniResult = await dynamodb.scan({
+              TableName: 'gres-prod-unidades',
+              FilterExpression: 'cnpj = :cnpj',
+              ExpressionAttributeValues: { ':cnpj': col.unitId }
+            }).promise();
+            if (uniResult.Items && uniResult.Items.length > 0) {
+              nomeUnidade = uniResult.Items[0].nome || uniResult.Items[0].nomeFantasia || '';
+            }
+          } catch (e) { console.warn('Erro ao buscar unidade:', e.message); }
+        }
+
+        const dados = {
+          nome: col.nome,
+          cpf: col.cpf,
+          celular: col.celular,
+          email: col.email,
+          cargo: col.cargo,
+          tipoContrato: col.tipoContrato,
+          dataAdmissao: col.dataAdmissao,
+          dataNascimento: col.dataNascimento,
+          area: col.area,
+          unitId: col.unitId,
+          nomeUnidade,
+          chavePix: col.chavePix
+        };
+
+        // Incluir campos financeiros relevantes ao tipo de contrato
+        if (col.tipoContrato === 'CLT') {
+          dados.salario = col.salario;
+        }
+        if (col.valorDia !== undefined) dados.valorDia = col.valorDia;
+        if (col.valorNoite !== undefined) dados.valorNoite = col.valorNoite;
+
+        return response(200, dados);
+      } catch (err) {
+        console.error('Erro portal/meus-dados:', err);
+        return response(500, { error: 'Erro ao buscar dados: ' + err.message });
+      }
+    }
+
+    // ─── GET /portal/recebimentos — Payslips do colaborador ───────────────────
+    if (rawPath === '/portal/recebimentos' && httpMethod === 'GET') {
+      try {
+        const portalUser = validarTokenPortal(event);
+        if (!portalUser) {
+          return response(401, { error: 'Token inválido ou ausente' });
+        }
+
+        const qs = event.queryStringParameters || {};
+        let meses = parseInt(qs.meses) || 3;
+        if (meses > 12) meses = 12;
+        if (meses < 1) meses = 1;
+
+        const payResult = await dynamodb.scan({
+          TableName: 'gres-prod-payslips',
+          FilterExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':cid': portalUser.colaboradorId }
+        }).promise();
+
+        let payslips = payResult.Items || [];
+        // Ordenar por periodoFim desc
+        payslips.sort((a, b) => (b.periodoFim || '').localeCompare(a.periodoFim || ''));
+
+        // Limitar aos últimos N meses
+        const dataLimite = new Date();
+        dataLimite.setMonth(dataLimite.getMonth() - meses);
+        const limiteStr = dataLimite.toISOString().slice(0, 10);
+        payslips = payslips.filter(p => (p.periodoFim || '') >= limiteStr);
+
+        return response(200, payslips);
+      } catch (err) {
+        console.error('Erro portal/recebimentos:', err);
+        return response(500, { error: 'Erro ao buscar recebimentos: ' + err.message });
+      }
+    }
+
+    // ─── GET /portal/comunicados — Comunicados para o colaborador ──────────────
+    if (rawPath === '/portal/comunicados' && httpMethod === 'GET') {
+      try {
+        const portalUser = validarTokenPortal(event);
+        if (!portalUser) {
+          return response(401, { error: 'Token inválido ou ausente' });
+        }
+
+        // Buscar dados do colaborador para filtrar comunicados
+        const colGet = await dynamodb.get({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: portalUser.colaboradorId }
+        }).promise();
+        const col = colGet.Item;
+        if (!col) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        const comResult = await dynamodb.scan({
+          TableName: 'gres-prod-comunicados',
+          FilterExpression: 'ativo = :ativo',
+          ExpressionAttributeValues: { ':ativo': true }
+        }).promise();
+
+        let comunicados = (comResult.Items || []).filter(c => {
+          // Filtrar por destinatários
+          if (c.destinatarios === 'todos') return true;
+          if (c.destinatarios === col.tipoContrato) return true;
+          // Filtrar por unidade
+          if (c.unitIds && Array.isArray(c.unitIds) && c.unitIds.includes(col.unitId)) return true;
+          return false;
+        });
+
+        // Ordenar por criadoEm desc
+        comunicados.sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+
+        return response(200, comunicados);
+      } catch (err) {
+        console.error('Erro portal/comunicados:', err);
+        return response(500, { error: 'Erro ao buscar comunicados: ' + err.message });
+      }
+    }
+
+    // ─── GET /portal/vagas — Vagas abertas para colaboradores ──────────────────
+    if (rawPath === '/portal/vagas' && httpMethod === 'GET') {
+      try {
+        const portalUser = validarTokenPortal(event);
+        if (!portalUser) {
+          return response(401, { error: 'Token inválido ou ausente' });
+        }
+
+        const vagasResult = await dynamodb.scan({
+          TableName: 'gres-prod-vagas',
+          FilterExpression: '#st = :aberta',
+          ExpressionAttributeNames: { '#st': 'status' },
+          ExpressionAttributeValues: { ':aberta': 'aberta' }
+        }).promise();
+
+        // Enriquecer com nome da unidade
+        const vagas = await Promise.all((vagasResult.Items || []).map(async (v) => {
+          let nomeUnidade = '';
+          if (v.unitId) {
+            try {
+              const uniRes = await dynamodb.scan({
+                TableName: 'gres-prod-unidades',
+                FilterExpression: 'cnpj = :cnpj',
+                ExpressionAttributeValues: { ':cnpj': v.unitId }
+              }).promise();
+              if (uniRes.Items && uniRes.Items.length > 0) {
+                nomeUnidade = uniRes.Items[0].nome || uniRes.Items[0].nomeFantasia || '';
+              }
+            } catch (e) { /* ignore */ }
+          }
+          return {
+            id: v.id,
+            titulo: v.titulo,
+            descricao: v.descricao,
+            requisitos: v.requisitos,
+            beneficios: v.beneficios,
+            unitId: v.unitId,
+            nomeUnidade
+          };
+        }));
+
+        return response(200, vagas);
+      } catch (err) {
+        console.error('Erro portal/vagas:', err);
+        return response(500, { error: 'Erro ao buscar vagas: ' + err.message });
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ─── COMUNICADOS (ADMIN) ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // ─── POST /comunicados — Criar comunicado ─────────────────────────────────
+    if (rawPath === '/comunicados' && httpMethod === 'POST') {
+      try {
+        // Verificar token admin (não portal)
+        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
+        const tkn = authHeader.replace('Bearer ', '');
+        let adminUser = null;
+        try {
+          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
+        } catch { /* ignore */ }
+        if (!adminUser || adminUser.tipo === 'portal') {
+          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        }
+
+        const { titulo, conteudo, destinatarios, unitIds, ativo } = body;
+        if (!titulo || !conteudo) {
+          return response(400, { error: 'titulo e conteudo são obrigatórios' });
+        }
+
+        const now = new Date().toISOString();
+        const comId = 'com-' + require('crypto').randomBytes(4).toString('hex');
+        const item = {
+          id: comId,
+          titulo,
+          conteudo,
+          destinatarios: destinatarios || 'todos',
+          unitIds: unitIds || [],
+          ativo: ativo !== undefined ? ativo : true,
+          criadoEm: now,
+          atualizadoEm: now,
+          criadoPor: adminUser.email || adminUser.id || 'admin'
+        };
+
+        await dynamodb.put({ TableName: 'gres-prod-comunicados', Item: item }).promise();
+        return response(201, item);
+      } catch (err) {
+        console.error('Erro POST /comunicados:', err);
+        return response(500, { error: 'Erro ao criar comunicado: ' + err.message });
+      }
+    }
+
+    // ─── GET /comunicados — Listar comunicados (admin) ────────────────────────
+    if (rawPath === '/comunicados' && httpMethod === 'GET') {
+      try {
+        // Verificar token admin (não portal)
+        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
+        const tkn = authHeader.replace('Bearer ', '');
+        let adminUser = null;
+        try {
+          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
+        } catch { /* ignore */ }
+        if (!adminUser || adminUser.tipo === 'portal') {
+          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        }
+
+        const qs = event.queryStringParameters || {};
+        let params = { TableName: 'gres-prod-comunicados' };
+
+        if (qs.unitId) {
+          params.FilterExpression = 'contains(unitIds, :uid)';
+          params.ExpressionAttributeValues = { ':uid': qs.unitId };
+        }
+
+        const result = await dynamodb.scan(params).promise();
+        const comunicados = (result.Items || []).sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+        return response(200, comunicados);
+      } catch (err) {
+        console.error('Erro GET /comunicados:', err);
+        return response(500, { error: 'Erro ao listar comunicados: ' + err.message });
+      }
+    }
+
+    // ─── PUT /comunicados/:id — Atualizar comunicado ──────────────────────────
+    if (rawPath.match(/\/comunicados\/.+/) && httpMethod === 'PUT') {
+      try {
+        const comId = rawPath.split('/comunicados/')[1];
+        // Verificar token admin
+        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
+        const tkn = authHeader.replace('Bearer ', '');
+        let adminUser = null;
+        try {
+          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
+        } catch { /* ignore */ }
+        if (!adminUser || adminUser.tipo === 'portal') {
+          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        }
+
+        const now = new Date().toISOString();
+        const updates = { ...body, atualizadoEm: now };
+        delete updates.id;
+        delete updates.criadoEm;
+        delete updates.criadoPor;
+
+        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
+        const names = {};
+        const vals = {};
+        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
+
+        await dynamodb.update({
+          TableName: 'gres-prod-comunicados',
+          Key: { id: comId },
+          UpdateExpression: 'SET ' + exprs.join(', '),
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: vals
+        }).promise();
+
+        return response(200, { success: true, id: comId });
+      } catch (err) {
+        console.error('Erro PUT /comunicados:', err);
+        return response(500, { error: 'Erro ao atualizar comunicado: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /comunicados/:id — Excluir comunicado ─────────────────────────
+    if (rawPath.match(/\/comunicados\/.+/) && httpMethod === 'DELETE') {
+      try {
+        const comId = rawPath.split('/comunicados/')[1];
+        // Verificar token admin
+        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
+        const tkn = authHeader.replace('Bearer ', '');
+        let adminUser = null;
+        try {
+          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
+        } catch { /* ignore */ }
+        if (!adminUser || adminUser.tipo === 'portal') {
+          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        }
+
+        await dynamodb.delete({ TableName: 'gres-prod-comunicados', Key: { id: comId } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        console.error('Erro DELETE /comunicados:', err);
+        return response(500, { error: 'Erro ao excluir comunicado: ' + err.message });
+      }
+    }
+
     // Rota não encontrada
     return response(404, { error: `Rota não encontrada: ${rawPath}` });
 

@@ -34,7 +34,15 @@ import Payslips from './pages/Payslips';
 import HistoricoRemuneracoes from './pages/HistoricoRemuneracoes';
 import { UpdateBanner } from './components/UpdateBanner';
 import LandingPage from './pages/LandingPage';
+import React from 'react';
 import './App.css';
+
+// Portal do colaborador (lazy loading — bundle separado)
+const PortalLogin = React.lazy(() => import('./pages/PortalLogin'));
+const Portal = React.lazy(() => import('./pages/Portal'));
+
+// Comunicados admin
+const Comunicados = React.lazy(() => import('./pages/Comunicados'));
 
 // Helper: envolve children em ProtectedRoute + AppLayout
 function Protected({
@@ -159,6 +167,13 @@ function App() {
 
               <Route path="/modulos/regras-sistema"
                 element={<Protected moduloId="regras-sistema"><RegrasSistema /></Protected>} />
+
+              {/* Portal do Colaborador (auth própria, sem ProtectedRoute) */}
+              <Route path="/portal/login" element={<React.Suspense fallback={<div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100vh'}}>Carregando...</div>}><PortalLogin /></React.Suspense>} />
+              <Route path="/portal" element={<React.Suspense fallback={<div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100vh'}}>Carregando...</div>}><Portal /></React.Suspense>} />
+
+              {/* Comunicados admin */}
+              <Route path="/modulos/comunicados" element={<Protected moduloId="comunicados"><React.Suspense fallback={<div>Carregando...</div>}><Comunicados /></React.Suspense></Protected>} />
 
               {/* Landing page pública na raiz */}
               <Route path="/" element={<LandingPage />} />
