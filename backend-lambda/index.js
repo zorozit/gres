@@ -1,6 +1,7 @@
 // Import only specific services to avoid loading all AWS SDK clients
 const DynamoDB = require('aws-sdk/clients/dynamodb');
 const CognitoIdentityServiceProvider = require('aws-sdk/clients/cognitoidentityserviceprovider');
+const bcrypt = require('bcryptjs');
 
 const cognito = new CognitoIdentityServiceProvider({
   region: 'us-east-2'
@@ -327,9 +328,31 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
         
-        // Validar senha
-        if (user.senha !== password) {
+        // Validar senha — suporta bcrypt hash ($2b$) e texto puro (legado)
+        const senhaDB = user.senha || '';
+        let senhaValida = false;
+        const isBcrypt = senhaDB.startsWith('$2b$') || senhaDB.startsWith('$2a$');
+        if (isBcrypt) {
+          senhaValida = bcrypt.compareSync(password, senhaDB);
+        } else {
+          senhaValida = (senhaDB === password);
+        }
+        if (!senhaValida) {
           return response(401, { error: 'Senha incorreta' });
+        }
+
+        // Auto-migração: se senha era texto puro, regrava como bcrypt hash
+        if (!isBcrypt && senhaValida && senhaDB.length > 0) {
+          try {
+            const hashed = bcrypt.hashSync(password, 10);
+            await dynamodb.update({
+              TableName: 'gres-prod-usuarios',
+              Key: { id: user.id },
+              UpdateExpression: 'SET senha = :h',
+              ExpressionAttributeValues: { ':h': hashed }
+            }).promise();
+            console.log(`Auto-migração bcrypt: ${email}`);
+          } catch (e) { console.warn('Auto-migração bcrypt falhou:', e.message); }
         }
 
         // Gerar token JWT simples
@@ -386,13 +409,14 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
 
-        // Atualizar senha no DynamoDB
+        // Atualizar senha no DynamoDB (salvar como bcrypt hash)
+        const hashedPassword = bcrypt.hashSync(newPassword, 10);
         await dynamodb.update({
           TableName: 'gres-prod-usuarios',
           Key: { id: user.id },
           UpdateExpression: 'SET senha = :newPassword',
           ExpressionAttributeValues: {
-            ':newPassword': newPassword
+            ':newPassword': hashedPassword
           }
         }).promise();
 
@@ -495,7 +519,7 @@ exports.handler = async (event) => {
           unitIds: unitIds ? unitIds.map(resolveUnitId) : [unitIdClean],
           cpf: cpf || '',
           celular: celular || '',
-          senha: senha || '',
+          senha: senha ? bcrypt.hashSync(senha, 10) : '',
           ativo: ativo !== false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
