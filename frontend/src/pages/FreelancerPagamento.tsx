@@ -561,9 +561,10 @@ export default function FreelancerPagamento() {
         if (s.colaboradorId !== fr.id) return false;
         if (!TIPOS_DESC.includes(t)) return false;
         if (saidaData(s) < rangeIni || saidaData(s) > rangeFim) return false;
-        // Excluir parcelas de adiantamento especial já quitadas via AdiantamentosSaldos.
-        // Critério: adiantamentoId preenchido + pago=true → já foi baixado lá, não cobrar de novo.
-        if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+        // Excluir saídas já vinculadas a um pagamento anterior (pagamentoIdLigado)
+        if (s.pagamentoIdLigado) return false;
+        // Excluir saídas já marcadas como pagas (pago=true) — já foram descontadas em pagamento anterior
+        if (s.pago === true || s.pago === 'true') return false;
         return true;
       });
       const caixFr = saidasFrescas.filter((s:any)=>{
@@ -713,17 +714,18 @@ export default function FreelancerPagamento() {
         operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}` });
       }
 
-      // 5) Marcar caixinhas como pagas
-      if (caixinhaChecked > 0) {
+      // 5) Marcar saídas/descontos da semana como pagas (consumo, a receber, caixinhas)
+      {
         const rangeIni = fr.periodoInicio || fech.dataInicioBase;
         const rangeFim = fr.periodoFim || fech.dataFechamento;
-        const saidasCaixPagar = saidasPeriodo.filter((s:any) => {
+        const TIPOS_MARCAR = new Set(['A pagar','A receber','Consumo Interno','Caixinha']);
+        const saidasParaMarcar = saidasPeriodo.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
-          return s.colaboradorId===fr.id && t==='Caixinha' && dt>=rangeIni && dt<=rangeFim
+          return s.colaboradorId===fr.id && TIPOS_MARCAR.has(t) && dt>=rangeIni && dt<=rangeFim
             && s.pago !== true && s.pago !== 'true' && !s.pagamentoIdLigado;
         });
-        for (const sc of saidasCaixPagar) {
+        for (const sc of saidasParaMarcar) {
           operacoes.push({ tipo:'saida-atualizar', id:sc.id, obs:`${sc.obs||''} [Pago no lote sem. ${fech.semanaLabel}]`.trim() });
         }
       }
@@ -1292,16 +1294,6 @@ export default function FreelancerPagamento() {
           </div>
         ) : (
           <>
-            {/* Info transporte */}
-            <div style={{backgroundColor:'#e3f2fd',borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',fontSize:'12px',color:'#1565c0',borderLeft:'4px solid #1976d2'}}>
-              <strong>ℹ️ Como funciona o pagamento semanal de freelancers:</strong>
-              <ul style={{margin:'6px 0 0 16px',padding:0,lineHeight:'1.8'}}>
-                <li><strong>Transporte calculado</strong>: dias com presença confirmada × valor/dia do cadastro.</li>
-                <li><strong>🚗 Adiantamento de Transporte</strong>: lance em <strong>Saídas → Novo Registro → Adiantamento Transporte</strong>. O sistema abate automaticamente do saldo da semana.</li>
-                <li><strong>🔴 Descontos automáticos</strong>: lançamentos tipo <em>A receber / Consumo Interno</em> em Saídas são descontados do líquido da semana.</li>
-              </ul>
-            </div>
-
             {/* Pendências de meses anteriores */}
             {(() => {
               const comPend = freelancers.map((fr:any)=>({fr,pends:saidasPendentesAnt.filter((s:any)=>s.colaboradorId===fr.id)})).filter(x=>x.pends.length>0);
