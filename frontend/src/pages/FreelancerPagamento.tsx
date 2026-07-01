@@ -131,13 +131,18 @@ export default function FreelancerPagamento() {
       // Sempre buscar saídas do mês completo (necessário para cálculo de adiantamento de transporte)
       const rSMes = fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalIni}&dataFim=${mesalFim}`, auth).catch(()=>null);
 
+      // Para saldo de adiantamento especial, buscar até HOJE (não até dataFim do período)
+      // pois descontos podem ser lançados em data posterior ao período de trabalho
+      const hojeISO = new Date().toISOString().split('T')[0];
+      const histFim = dataFim > hojeISO ? dataFim : hojeISO;
+
       const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
         fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
         Promise.all(folhaFetches),
         Promise.all(escalaFetches),
         fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, auth).catch(()=>null),
         fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataInicio}`, auth).catch(()=>null),
-        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histIni}&dataFim=${dataFim}`, auth).catch(()=>null),
+        fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histIni}&dataFim=${histFim}`, auth).catch(()=>null),
         rSMes || Promise.resolve(null),
       ]);
 
