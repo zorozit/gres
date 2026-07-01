@@ -740,7 +740,7 @@ export default function FreelancerPagamento() {
         method:'POST',
         headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},
         body:JSON.stringify({
-          colaboradorId:fr.id, unitId, mes:mesAno, semana:fech.dataFechamento,
+          colaboradorId:fr.id, unitId, mes: (fech.dataInicioBase || fech.dataFechamento || '').slice(0,7) || mesAno, semana:fech.dataFechamento,
           dataPagamento:dataLocalPgto, formaPagamento:formaPgto,
           ...auditoriaCampos(),
           valorBruto:valorBrutoLote, valorDescSaidas, valorAbatEsp:valorAbatEsp2, valorLiquido,

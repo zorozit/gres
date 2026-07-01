@@ -1809,11 +1809,14 @@ exports.handler = async (event) => {
             // ── Turno da folha de pagamento ──
             case 'folha-turno': {
               const dayId = `folha-${colaboradorId}-${op.data}-${op.turno}`;
+              // SEMPRE derivar mes da data do turno (op.data) — nunca confiar no mes do body
+              // pois o seletor de mês do frontend pode estar no mês errado
+              const mesTurno = op.data?.slice(0,7) || mes;
               const item = {
                 id: dayId,
                 colaboradorId,
                 unitId,
-                mes: mes || op.data?.slice(0,7),
+                mes: mesTurno,
                 data: op.data,
                 turno: op.turno,
                 valor: Number(op.valor) || 0,
@@ -1836,11 +1839,13 @@ exports.handler = async (event) => {
             // ── Transporte (crédito) ──
             case 'folha-transporte': {
               const tId = `folha-${colaboradorId}-transp-${semana || dataPagamento}`;
+              // Derivar mes da data da operação (período de trabalho), não dataPagamento
+              const mesTransp = op.data?.slice(0,7) || op.periodoFim?.slice(0,7) || mes || dataPagamento?.slice(0,7);
               const item = {
                 id: tId,
                 colaboradorId,
                 unitId,
-                mes: mes || op.data?.slice(0,7) || dataPagamento?.slice(0,7),
+                mes: mesTransp,
                 data: op.data || dataPagamento,
                 turno: 'Transporte',
                 valor: Number(op.valor) || 0,
@@ -1915,12 +1920,14 @@ exports.handler = async (event) => {
 
             // ── Payslip (comprovante do pagamento) ──
             case 'payslip': {
-              const psId = `ps-${colaboradorId}-${mes}-${op.periodo || semana}`;
+              // Derivar mes do período de trabalho, não do seletor do frontend
+              const mesPayslip = op.periodoFim?.slice(0,7) || op.periodoInicio?.slice(0,7) || mes || dataPagamento?.slice(0,7);
+              const psId = `ps-${colaboradorId}-${mesPayslip}-${op.periodo || semana}`;
               const psItem = {
                 id: psId,
                 colaboradorId,
                 unitId,
-                mes: mes || op.periodoFim?.slice(0,7) || dataPagamento?.slice(0,7),
+                mes: mesPayslip,
                 periodo: op.periodo || '',
                 periodoInicio: op.periodoInicio || '',
                 periodoFim: op.periodoFim || '',
