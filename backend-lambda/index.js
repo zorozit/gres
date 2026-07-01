@@ -1786,6 +1786,198 @@ exports.handler = async (event) => {
       }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════════
+    // POST /pagamento-batch — pagamento atômico de freelancer (batch de operações)
+    // ══════════════════════════════════════════════════════════════════════════════
+    if (rawPath === '/pagamento-batch' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, mes, semana, dataPagamento, formaPagamento,
+              responsavel, responsavelId, valorBruto, valorDescSaidas, valorAbatEsp, valorLiquido,
+              obs, operacoes } = body;
+
+      if (!colaboradorId || !unitId || !operacoes || !Array.isArray(operacoes)) {
+        return response(400, { error: 'colaboradorId, unitId e operacoes[] são obrigatórios' });
+      }
+
+      const now = new Date().toISOString();
+      const pagamentoId = `pgto-${colaboradorId}-${now.replace(/[:.]/g, '').slice(0,17)}`;
+      const results = { folha: [], saidas: [], payslip: null, pagamentoId };
+
+      try {
+        for (const op of operacoes) {
+          switch (op.tipo) {
+
+            // ── Turno da folha de pagamento ──
+            case 'folha-turno': {
+              const dayId = `folha-${colaboradorId}-${op.data}-${op.turno}`;
+              const item = {
+                id: dayId,
+                colaboradorId,
+                unitId,
+                mes: mes || op.data?.slice(0,7),
+                data: op.data,
+                turno: op.turno,
+                valor: Number(op.valor) || 0,
+                tipoCodigo: op.tipoCodigo || '',
+                pago: true,
+                pagamentoId,
+                pagamentoData: dataPagamento || now.slice(0,10),
+                formaPagamento: formaPagamento || 'PIX',
+                obs: op.obs || obs || '',
+                responsavel: responsavel || '',
+                responsavelId: responsavelId || '',
+                createdAt: now,
+                updatedAt: now,
+              };
+              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
+              results.folha.push(dayId);
+              break;
+            }
+
+            // ── Transporte (crédito) ──
+            case 'folha-transporte': {
+              const tId = `folha-${colaboradorId}-transp-${semana || dataPagamento}`;
+              const item = {
+                id: tId,
+                colaboradorId,
+                unitId,
+                mes: mes || dataPagamento?.slice(0,7),
+                data: op.data || dataPagamento,
+                turno: 'Transporte',
+                valor: Number(op.valor) || 0,
+                tipoCodigo: 'transporte',
+                pago: true,
+                pagamentoId,
+                pagamentoData: dataPagamento || now.slice(0,10),
+                formaPagamento: formaPagamento || 'PIX',
+                obs: op.obs || '',
+                responsavel: responsavel || '',
+                responsavelId: responsavelId || '',
+                createdAt: now,
+                updatedAt: now,
+              };
+              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
+              results.folha.push(tId);
+              break;
+            }
+
+            // ── Criar saída (Desconto Transporte, Desconto Adiantamento Especial, etc.) ──
+            case 'saida-criar': {
+              const saidaId = `saida-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+              const sItem = {
+                id: saidaId,
+                colaboradorId,
+                colaboradorNome: op.nomeColaborador || body.nomeColaborador || '',
+                unitId,
+                tipo: op.tipoSaida || 'Consumo Interno',
+                descricao: op.descricao || '',
+                valor: Number(op.valor) || 0,
+                data: op.data || dataPagamento,
+                dataPagamento: op.dataPagamento || dataPagamento,
+                pago: op.pago !== undefined ? op.pago : true,
+                pagamentoIdLigado: pagamentoId,
+                excedeAdto: op.excedeAdto || false,
+                responsavel: op.responsavel || responsavel || '',
+                responsavelId: op.responsavelId || responsavelId || '',
+                obs: op.obs || '',
+                createdAt: now,
+                updatedAt: now,
+              };
+              await dynamodb.put({ TableName: 'gres-prod-saidas', Item: sItem }).promise();
+              results.saidas.push(saidaId);
+              break;
+            }
+
+            // ── Atualizar saída existente (marcar caixinha como paga) ──
+            case 'saida-atualizar': {
+              const updateExpr = 'SET pago = :t, pagamentoIdLigado = :pid, updatedAt = :now';
+              const exprVals = { ':t': true, ':pid': pagamentoId, ':now': now };
+              if (op.obs) {
+                // Append obs
+                const existing = await dynamodb.get({ TableName: 'gres-prod-saidas', Key: { id: op.id } }).promise();
+                const oldObs = existing.Item?.obs || '';
+                await dynamodb.update({
+                  TableName: 'gres-prod-saidas',
+                  Key: { id: op.id },
+                  UpdateExpression: updateExpr + ', obs = :obs',
+                  ExpressionAttributeValues: { ...exprVals, ':obs': op.obs },
+                }).promise();
+              } else {
+                await dynamodb.update({
+                  TableName: 'gres-prod-saidas',
+                  Key: { id: op.id },
+                  UpdateExpression: updateExpr,
+                  ExpressionAttributeValues: exprVals,
+                }).promise();
+              }
+              results.saidas.push(op.id);
+              break;
+            }
+
+            // ── Payslip (comprovante do pagamento) ──
+            case 'payslip': {
+              const psId = `ps-${colaboradorId}-${mes}-${op.periodo || semana}`;
+              const psItem = {
+                id: psId,
+                colaboradorId,
+                unitId,
+                mes: mes || dataPagamento?.slice(0,7),
+                periodo: op.periodo || '',
+                periodoInicio: op.periodoInicio || '',
+                periodoFim: op.periodoFim || '',
+                bruto: Number(op.bruto) || 0,
+                transporte: Number(op.transporte) || 0,
+                descontos: Number(op.descontos) || 0,
+                adiantamentos: Number(op.adiantamentos) || 0,
+                liquido: Number(op.liquido) || 0,
+                nomeColaborador: op.nomeColaborador || '',
+                formaPagamento: formaPagamento || 'PIX',
+                dataPagamento: dataPagamento || now.slice(0,10),
+                pagamentos: [pagamentoId],
+                status: 'pago',
+                criadoEm: now,
+                atualizadoEm: now,
+              };
+              await dynamodb.put({ TableName: 'gres-prod-payslips', Item: psItem }).promise();
+              results.payslip = psId;
+              break;
+            }
+
+            default:
+              console.warn(`pagamento-batch: tipo de operação desconhecido: ${op.tipo}`);
+          }
+        }
+
+        // Auditoria
+        try {
+          const logId = `log-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+          await dynamodb.put({
+            TableName: 'gres-prod-audit-logs',
+            Item: {
+              id: logId,
+              tabela: 'pagamento-batch',
+              entidadeId: pagamentoId,
+              acao: 'pagamento-batch',
+              responsavel: responsavel || '',
+              responsavelId: responsavelId || '',
+              detalhes: JSON.stringify({
+                colaboradorId, unitId, mes, semana,
+                valorBruto, valorDescSaidas, valorAbatEsp, valorLiquido,
+                formaPagamento, operacoesCount: operacoes.length,
+              }),
+              createdAt: now,
+            }
+          }).promise();
+        } catch (logErr) {
+          console.warn('Audit log failed (non-blocking):', logErr.message);
+        }
+
+        return response(200, { success: true, ...results });
+      } catch (err) {
+        console.error('pagamento-batch error:', err);
+        return response(500, { error: 'Erro ao processar pagamento: ' + err.message });
+      }
+    }
+
     // POST SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'POST') {
       const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
