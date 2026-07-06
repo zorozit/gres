@@ -2030,9 +2030,9 @@ exports.handler = async (event) => {
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           formaPagamento: formaPagamento || 'PIX',
-          // Caixinha (gorjeta a pagar) nasce como NÃO paga — será marcada paga quando
-          // incorporada ao pagamento semanal do freelancer na FolhaPagamento/FreelancerPagamento.
-          pago: pago !== undefined ? pago : ((tipo || origem || '') === 'Caixinha' ? false : true),
+          // Saídas manuais nascem como NÃO pagas por default.
+          // Saídas criadas pelo fluxo de pagamento (batch) enviam pago=true explicitamente.
+          pago: pago !== undefined ? pago : false,
           obs: obs || observacao || '',
           ...(adiantamentoId ? { adiantamentoId } : {}),
           // Rastreabilidade de lote: amarra a saída auto-gerada ao pagamentoId do lote que a criou.
@@ -2234,7 +2234,7 @@ exports.handler = async (event) => {
           observacao: observacao !== undefined ? observacao : (original.observacao || ''),
           obs: obs !== undefined ? obs : (original.obs || ''),
           adiantamentoId: adiantamentoId !== undefined ? adiantamentoId : (original.adiantamentoId || undefined),
-          pago: pago !== undefined ? pago : (original.pago !== undefined ? original.pago : true),
+          pago: pago !== undefined ? pago : (original.pago !== undefined ? original.pago : false),
           formaPagamento: formaPagamento !== undefined ? formaPagamento : (original.formaPagamento || 'PIX'),
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),

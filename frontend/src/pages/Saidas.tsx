@@ -272,8 +272,10 @@ export const Saidas: React.FC = () => {
           responsavelEmail: email || '',
           origem: novoRegistro.tipo,
           referencia: novoRegistro.tipo,
-          // Caixinha (gorjeta) nasce como não-paga; será marcada paga na folha de pagamento
-          ...(novoRegistro.tipo === 'Caixinha' ? { pago: false } : {}),
+          // Saídas que serão descontadas na folha de pagamento nascem como não-pagas.
+          // Só marcam pago=true quando efetivamente processadas no pagamento do freelancer/CLT.
+          // Tipos que entram no checklist de pagamento: Caixinha, A pagar, A receber, Consumo Interno, Desc. Adiantamento Especial
+          pago: false,
           unitId,
         }),
       });
