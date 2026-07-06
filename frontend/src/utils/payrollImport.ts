@@ -86,11 +86,16 @@ const moneyRegex = /\d{1,3}(?:\.\d{3})*,\d{2}/g;
 const findMoneyNear = (lines: string[], anchorMatcher: (line: string) => boolean) => {
   const anchorIndex = lines.findIndex(anchorMatcher);
   if (anchorIndex < 0) return 0;
-  const offsets = [-1, 1, -2, 2, -3, 3];
+  // Check the anchor line itself first (offset 0), then neighbours
+  const offsets = [0, -1, 1, -2, 2, -3, 3];
   for (const offset of offsets) {
     const line = lines[anchorIndex + offset];
     if (!line) continue;
-    const matches = line.match(moneyRegex);
+    // For offset 0, strip the anchor text so we only match the value portion
+    const searchText = offset === 0
+      ? line.replace(/Total\s*L[ií]quido[^\d]*/i, '')
+      : line;
+    const matches = searchText.match(moneyRegex);
     if (matches?.length) {
       return toMoney(matches[matches.length - 1]);
     }

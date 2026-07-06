@@ -24,6 +24,12 @@ interface PreviewRow extends ImportPayrollRecord {
   matchStatus: 'match' | 'unmatched';
   jaImportado: boolean;
   selecionado: boolean;
+  // Valores editáveis — inicializados a partir do PDF, podem ser ajustados pelo usuário
+  editSalarioBase: number;
+  editInssValor: number;
+  editValeTransporte: number;
+  editFeriado: number;
+  editValorLiquido: number;
 }
 
 const fmtMoeda = (value: number) =>
@@ -53,6 +59,9 @@ export const ImportacoesContabeis: React.FC = () => {
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [mensagem, setMensagem] = useState<string>('');
+  const [editingCell, setEditingCell] = useState<{ rowId: string; field: string } | null>(null);
+  const [editBuffer, setEditBuffer] = useState<string>('');
+  const [importResult, setImportResult] = useState<{ sucesso: number; falhas: string[] } | null>(null);
 
   useEffect(() => {
     if (!unitId || !authToken) return;
@@ -82,8 +91,18 @@ export const ImportacoesContabeis: React.FC = () => {
     const selected = rows.filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado).length;
     const totalSelecionado = rows
       .filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado)
+      .reduce((sum, row) => sum + row.editValorLiquido, 0);
+    const totalOriginal = rows
+      .filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado)
       .reduce((sum, row) => sum + row.valorLiquido, 0);
-    return { matched, unmatched, selected, totalSelecionado };
+    const temAlteracoes = rows.some((row) =>
+      row.editSalarioBase !== row.salarioBase ||
+      row.editInssValor !== row.inssValor ||
+      row.editValeTransporte !== row.valeTransporte ||
+      row.editFeriado !== row.feriado ||
+      row.editValorLiquido !== row.valorLiquido
+    );
+    return { matched, unmatched, selected, totalSelecionado, totalOriginal, temAlteracoes };
   }, [rows]);
 
   const reconcileRows = async (result: ImportPayrollParseResult) => {
@@ -149,6 +168,12 @@ export const ImportacoesContabeis: React.FC = () => {
         matchStatus: matched ? 'match' : 'unmatched',
         jaImportado,
         selecionado: Boolean(matched) && !jaImportado,
+        // Valores editáveis inicializados com valores do PDF
+        editSalarioBase: record.salarioBase,
+        editInssValor: record.inssValor,
+        editValeTransporte: record.valeTransporte,
+        editFeriado: record.feriado,
+        editValorLiquido: record.valorLiquido,
       };
     });
 
@@ -177,6 +202,8 @@ export const ImportacoesContabeis: React.FC = () => {
       const result = await parsePayrollPdf(file);
       setParseResult(result);
       await reconcileRows(result);
+      setImportResult(null);
+      setMensagem(`✅ PDF lido com sucesso! ${result.records.length} colaborador(es) encontrado(s) — ${result.tipoDocumento === 'adiantamento' ? 'Adiantamento' : 'Folha'} ${result.competencia}. Confira os valores abaixo e importe.`);
     } catch (error: any) {
       console.error(error);
       setMensagem(error?.message || 'Não foi possível ler o PDF enviado.');
@@ -201,6 +228,111 @@ export const ImportacoesContabeis: React.FC = () => {
     )));
   };
 
+  // --- Edição inline de células ---
+  type EditableField = 'editSalarioBase' | 'editInssValor' | 'editValeTransporte' | 'editFeriado' | 'editValorLiquido';
+
+  const startEditing = (rowId: string, field: EditableField, currentValue: number) => {
+    setEditingCell({ rowId, field });
+    setEditBuffer(currentValue.toFixed(2).replace('.', ','));
+  };
+
+  const commitEdit = () => {
+    if (!editingCell) return;
+    const parsed = parseFloat(editBuffer.replace(/\./g, '').replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setEditingCell(null);
+      return;
+    }
+    setRows((current) => current.map((row) => {
+      if (row.id !== editingCell.rowId) return row;
+      return { ...row, [editingCell.field]: parsed };
+    }));
+    setEditingCell(null);
+  };
+
+  const cancelEdit = () => setEditingCell(null);
+
+  const resetRowToOriginal = (rowId: string) => {
+    setRows((current) => current.map((row) => {
+      if (row.id !== rowId) return row;
+      return {
+        ...row,
+        editSalarioBase: row.salarioBase,
+        editInssValor: row.inssValor,
+        editValeTransporte: row.valeTransporte,
+        editFeriado: row.feriado,
+        editValorLiquido: row.valorLiquido,
+      };
+    }));
+  };
+
+  const resetAllToOriginal = () => {
+    setRows((current) => current.map((row) => ({
+      ...row,
+      editSalarioBase: row.salarioBase,
+      editInssValor: row.inssValor,
+      editValeTransporte: row.valeTransporte,
+      editFeriado: row.feriado,
+      editValorLiquido: row.valorLiquido,
+    })));
+  };
+
+  const isEdited = (row: PreviewRow, field: EditableField): boolean => {
+    const originalField = field.replace('edit', '').charAt(0).toLowerCase() + field.replace('edit', '').slice(1);
+    return (row as any)[field] !== (row as any)[originalField];
+  };
+
+  const renderEditableCell = (row: PreviewRow, field: EditableField, color?: string) => {
+    const isActive = editingCell?.rowId === row.id && editingCell?.field === field;
+    const value = (row as any)[field] as number;
+    const edited = isEdited(row, field);
+
+    if (isActive) {
+      return (
+        <input
+          autoFocus
+          type="text"
+          value={editBuffer}
+          onChange={(e) => setEditBuffer(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitEdit();
+            if (e.key === 'Escape') cancelEdit();
+          }}
+          style={{
+            width: '90px',
+            padding: '4px 6px',
+            fontSize: '13px',
+            textAlign: 'right' as const,
+            border: '2px solid #1565c0',
+            borderRadius: '4px',
+            outline: 'none',
+            backgroundColor: '#e3f2fd',
+          }}
+        />
+      );
+    }
+
+    return (
+      <span
+        onClick={() => !row.jaImportado && row.matchStatus === 'match' && startEditing(row.id, field, value)}
+        title={edited ? `Original: ${fmtMoeda((row as any)[field.replace('edit', '').charAt(0).toLowerCase() + field.replace('edit', '').slice(1)])} — Clique para editar` : 'Clique para editar'}
+        style={{
+          cursor: row.jaImportado ? 'default' : 'pointer',
+          color: edited ? '#e65100' : (color || '#37474f'),
+          fontWeight: edited ? 800 : (field === 'editValorLiquido' ? 700 : 400),
+          backgroundColor: edited ? '#fff3e0' : 'transparent',
+          padding: edited ? '2px 6px' : undefined,
+          borderRadius: edited ? '4px' : undefined,
+          borderBottom: row.jaImportado ? 'none' : '1px dashed #90a4ae',
+          display: 'inline-block',
+        }}
+      >
+        {value > 0 ? fmtMoeda(value) : '—'}
+      </span>
+    );
+  };
+
   const importarAdiantamento = async (row: PreviewRow) => {
     const responsavel = (user as any)?.email || localStorage.getItem('user_email') || 'importacao-contabil';
     const descricao = `Importação EMS ${row.competencia} - Adiantamento Salário`;
@@ -208,7 +340,7 @@ export const ImportacoesContabeis: React.FC = () => {
       responsavel,
       colaboradorId: row.colaboradorId,
       descricao,
-      valor: row.valorLiquido,
+      valor: row.editValorLiquido,
       data: paymentDate,
       dataPagamento: paymentDate,
       origem: 'Adiantamento Salário',
@@ -242,13 +374,13 @@ export const ImportacoesContabeis: React.FC = () => {
       unitId,
       // Não setar pago/dataPagamento — quem controla é o modal de pagamento
       // Se já existe registro, o backend faz merge preservando campos existentes
-      valorBruto: row.salarioBase,
+      valorBruto: row.editSalarioBase,
       // Campos contábeis (EMS) — separados dos operacionais
-      valorLiquidoContabil: row.valorLiquido,  // líquido do holerite (sem variável)
+      valorLiquidoContabil: row.editValorLiquido,  // líquido do holerite (sem variável)
       salContrInss: row.salContrInss,
-      inssValor: row.inssValor,
-      valeTransporte: row.valeTransporte,
-      feriado: row.feriado,
+      inssValor: row.editInssValor,
+      valeTransporte: row.editValeTransporte,
+      feriado: row.editFeriado,
       obsEMS: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
       mergeMode: 'contabil',  // Sinaliza ao backend: não sobrescrever saldoFinal/logPagamentos
     };
@@ -284,10 +416,23 @@ export const ImportacoesContabeis: React.FC = () => {
       return;
     }
 
+    // Confirmação se há valores editados
+    if (resumo.temAlteracoes) {
+      const confirma = window.confirm(
+        `Atenção: você alterou valores manualmente em algumas linhas.\n` +
+        `Total original: ${fmtMoeda(resumo.totalOriginal)}\n` +
+        `Total ajustado: ${fmtMoeda(resumo.totalSelecionado)}\n\n` +
+        `Deseja prosseguir com os valores ajustados?`
+      );
+      if (!confirma) return;
+    }
+
     setImportando(true);
     setMensagem('');
+    setImportResult(null);
 
     const falhas: string[] = [];
+    let sucesso = 0;
     for (const row of selecionados) {
       try {
         if (parseResult.tipoDocumento === 'adiantamento') {
@@ -295,16 +440,19 @@ export const ImportacoesContabeis: React.FC = () => {
         } else {
           await importarFolha(row);
         }
+        sucesso++;
       } catch (error: any) {
         console.error(error);
         falhas.push(`${row.nomeColaborador}: ${error?.message || 'erro ao importar'}`);
       }
     }
 
+    setImportResult({ sucesso, falhas });
+
     if (falhas.length) {
-      setMensagem(`Importação concluída com falhas em ${falhas.length} linha(s): ${falhas.join(' | ')}`);
+      setMensagem(`⚠️ Importação concluída com falhas em ${falhas.length} de ${selecionados.length} linha(s).`);
     } else {
-      setMensagem(`Importação concluída com sucesso: ${selecionados.length} lançamento(s) enviados para ${parseResult.tipoDocumento === 'adiantamento' ? 'Saídas' : 'Folha de Pagamento'}.`);
+      setMensagem(`✅ Importação concluída com sucesso! ${sucesso} lançamento(s) enviados para ${parseResult.tipoDocumento === 'adiantamento' ? 'Saídas' : 'Folha de Pagamento'}. Total: ${fmtMoeda(resumo.totalSelecionado)}`);
     }
 
     await reconcileRows(parseResult);
@@ -363,7 +511,17 @@ export const ImportacoesContabeis: React.FC = () => {
           </div>
 
           {loadingArquivo && <div style={styles.notice('#fff8e1', '#f57f17')}>⏳ Lendo PDF e identificando o layout da contabilidade...</div>}
-          {mensagem && <div style={styles.notice(mensagem.includes('sucesso') ? '#e8f5e9' : '#ffebee', mensagem.includes('sucesso') ? '#2e7d32' : '#c62828')}>{mensagem}</div>}
+          {mensagem && (
+            <div style={styles.notice(mensagem.includes('sucesso') || mensagem.includes('✅') ? '#e8f5e9' : '#ffebee', mensagem.includes('sucesso') || mensagem.includes('✅') ? '#2e7d32' : '#c62828')}>
+              {mensagem}
+            </div>
+          )}
+          {importResult && importResult.falhas.length > 0 && (
+            <div style={styles.notice('#ffebee', '#c62828')}>
+              <strong>Detalhes das falhas:</strong>
+              {importResult.falhas.map((f, i) => <div key={i}>• {f}</div>)}
+            </div>
+          )}
           {warnings.length > 0 && (
             <div style={styles.notice('#fff3e0', '#ef6c00')}>
               {warnings.map((warning) => <div key={warning}>• {warning}</div>)}
@@ -412,6 +570,11 @@ export const ImportacoesContabeis: React.FC = () => {
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button type="button" style={styles.secondaryButton} onClick={() => marcarTodos(true)}>Selecionar elegíveis</button>
                   <button type="button" style={styles.secondaryButton} onClick={() => marcarTodos(false)}>Limpar seleção</button>
+                  {resumo.temAlteracoes && (
+                    <button type="button" style={{ ...styles.secondaryButton, backgroundColor: '#fff3e0', color: '#e65100' }} onClick={resetAllToOriginal}>
+                      ↩️ Resetar valores originais
+                    </button>
+                  )}
                   <button type="button" style={styles.primaryButton} onClick={handleImportar} disabled={importando || resumo.selected === 0 || !unidadeConfere}>
                     {importando ? '⏳ Importando...' : `✅ Importar ${resumo.selected} linha(s)`}
                   </button>
@@ -423,6 +586,12 @@ export const ImportacoesContabeis: React.FC = () => {
                 <div style={styles.summaryPill('#ffebee', '#c62828')}>Sem match: {resumo.unmatched}</div>
                 <div style={styles.summaryPill('#e8f5e9', '#2e7d32')}>Selecionadas: {resumo.selected}</div>
                 <div style={styles.summaryPill('#fff8e1', '#ef6c00')}>Valor selecionado: {fmtMoeda(resumo.totalSelecionado)}</div>
+                {resumo.temAlteracoes && (
+                  <div style={styles.summaryPill('#fff3e0', '#e65100')}>✏️ Valores ajustados manualmente</div>
+                )}
+              </div>
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#78909c' }}>
+                💡 Clique em qualquer valor monetário na tabela para ajustar antes de importar.
               </div>
 
               <div style={{ overflowX: 'auto', marginTop: '16px' }}>
@@ -436,12 +605,13 @@ export const ImportacoesContabeis: React.FC = () => {
                       <th style={styles.th}>Cargo</th>
                       <th style={styles.th}>Competência</th>
                       <th style={styles.th}>Ref.</th>
-                      <th style={styles.th}>Sal. Base</th>
+                      <th style={{ ...styles.th, backgroundColor: '#1a237e' }}>Sal. Base ✏️</th>
                       <th style={styles.th}>Sal.Contr.INSS</th>
-                      <th style={styles.th}>INSS</th>
-                      <th style={styles.th}>VT</th>
-                      <th style={styles.th}>Líquido</th>
+                      <th style={{ ...styles.th, backgroundColor: '#1a237e' }}>INSS ✏️</th>
+                      <th style={{ ...styles.th, backgroundColor: '#1a237e' }}>VT ✏️</th>
+                      <th style={{ ...styles.th, backgroundColor: '#1a237e' }}>Líquido ✏️</th>
                       <th style={styles.th}>Status</th>
+                      <th style={styles.th}></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -469,13 +639,25 @@ export const ImportacoesContabeis: React.FC = () => {
                           <td style={styles.td}>{row.cargo || '—'}</td>
                           <td style={styles.td}>{row.competencia}</td>
                           <td style={styles.td}>{row.referencia ? `${row.referencia.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` : '—'}</td>
-                          <td style={{ ...styles.td, textAlign: 'right' }}>{fmtMoeda(row.salarioBase)}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{renderEditableCell(row, 'editSalarioBase')}</td>
                           <td style={{ ...styles.td, textAlign: 'right', color: '#37474f' }}>{row.salContrInss > 0 ? fmtMoeda(row.salContrInss) : '—'}</td>
-                          <td style={{ ...styles.td, textAlign: 'right', color: '#c62828' }}>{row.inssValor > 0 ? fmtMoeda(row.inssValor) : '—'}</td>
-                          <td style={{ ...styles.td, textAlign: 'right', color: '#c62828' }}>{row.valeTransporte > 0 ? fmtMoeda(row.valeTransporte) : '—'}</td>
-                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtMoeda(row.valorLiquido)}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{renderEditableCell(row, 'editInssValor', '#c62828')}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{renderEditableCell(row, 'editValeTransporte', '#c62828')}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{renderEditableCell(row, 'editValorLiquido')}</td>
                           <td style={styles.td}>
                             <span style={{ ...styles.statusBadge, backgroundColor: statusColors[0], color: statusColors[1] }}>{statusLabel}</span>
+                          </td>
+                          <td style={styles.tdCenter}>
+                            {(isEdited(row, 'editSalarioBase') || isEdited(row, 'editInssValor') || isEdited(row, 'editValeTransporte') || isEdited(row, 'editFeriado') || isEdited(row, 'editValorLiquido')) && (
+                              <button
+                                type="button"
+                                onClick={() => resetRowToOriginal(row.id)}
+                                title="Resetar valores originais do PDF"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}
+                              >
+                                ↩️
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
