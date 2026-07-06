@@ -841,18 +841,31 @@ export default function FolhaPagamento() {
         && f.tipo !== 'freelancer-dia'
         && f.tipo !== 'freelancer-noite'
       );
+      // ── Override contábil motoboy CLT: quando conferido pela contabilidade ──
+      const temContabM = salva?.conferido === true && salva?.valorLiquidoContabil != null;
+      const liquidoContabM = temContabM ? parseFloat(salva.valorLiquidoContabil) || 0 : 0;
+      const pgtosDia05M = temContabM ? liquidoContabM : pgtosDia05;
+      const saldoFinalM = temContabM ? liquidoContabM : saldoFinal;
+
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
-        salarioBase: salBase, periculosidade: periculosidadeValor, inss, salContrInss: salContrInssMot,
-        valeTransporte: valeTransporteMot, contrAssistencial: contrAssist,
+        salarioBase: salBase, periculosidade: periculosidadeValor,
+        inss: temContabM ? (parseFloat(salva.inssValor) || inss) : inss,
+        salContrInss: temContabM ? (parseFloat(salva.salContrInss) || salContrInssMot) : salContrInssMot,
+        valeTransporte: temContabM ? (parseFloat(salva.valeTransporteContabil) || valeTransporteMot) : valeTransporteMot,
+        contrAssistencial: contrAssist,
         feriadosTrab: feriadosTrabM, feriadosValor: feriadosValorM,
-        adiantamentoSalario: 40, adiantamentoValor: adiantValor, diferencaSalario: difSal,
+        adiantamentoSalario: 40, adiantamentoValor: adiantValor,
+        diferencaSalario: temContabM ? difSal : difSal,
         adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
         arredondamentoPos: arredPosMoto, arredondamentoNeg: arredNegMoto,
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
-        pgtosDia20: varAte19 + adiantValor, pgtosDia05,
-        outrosPgtos: totalPagoSaidas, saldoFinal,
+        pgtosDia20: varAte19 + adiantValor, pgtosDia05: pgtosDia05M,
+        outrosPgtos: totalPagoSaidas, saldoFinal: saldoFinalM,
+        conferido: temContabM,
+        valorLiquidoContabil: liquidoContabM || undefined,
+        fonteContabil: temContabM,
         saldoEspecialAberto: parseFloat((saldosEspeciais[m.id] || 0).toFixed(2)),
         // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
         // como adiantamento. Mantem-se como adto pago para nao perder histórico.
@@ -2700,9 +2713,14 @@ export default function FolhaPagamento() {
       const saidasCol = saidasFrescas.filter((s: any) => s.colaboradorId === f.colaboradorId);
       const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
       const saidasDesc = saidasCol.filter((s: any) => TIPOS_DESC.includes(s.tipo || s.origem || ''));
-      const adtoTransp = saidasCol
+      const adtoTranspBruto = saidasCol
         .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
         .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      // Compensar com descontos de transporte já efetuados (saídas "Desconto Transporte")
+      const descTranspJaPago = saidasCol
+        .filter((s: any) => (s.tipo || s.origem || '') === 'Desconto Transporte')
+        .reduce((sum: number, s: any) => sum + R(s.valor), 0);
+      const adtoTransp = Math.max(0, parseFloat((adtoTranspBruto - descTranspJaPago).toFixed(2)));
       // Adiantamento Especial — saídas a abater no Dia 5
       const adtoEspecialSaidas = saidasCol
         .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Especial');
