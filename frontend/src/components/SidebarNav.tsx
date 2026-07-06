@@ -43,6 +43,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
     color: '#2e7d32',
     modules: [
       { id: 'folha-pagamento',      icon: '💳', title: 'Folha CLT',           path: '/modulos/folha-pagamento' },
+      { id: 'conferencia-folha',    icon: '📋', title: 'Conferência Folha',    path: '/modulos/conferencia-folha' },
       { id: 'freelancer-pagamento', icon: '🎯', title: 'Freelancers',         path: '/modulos/freelancer-pagamento' },
       { id: 'adiantamentos-saldos', icon: '🧾', title: 'Adiantamentos',       path: '/modulos/adiantamentos-saldos' },
       { id: 'fechamento-dinheiro',  icon: '💵', title: 'Fechamento Dinheiro', path: '/modulos/fechamento-dinheiro' },

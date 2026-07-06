@@ -24,6 +24,7 @@ import MotoboyAuditoria from './pages/MotoboyAuditoria';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
+import ConferenciaFolha from './pages/ConferenciaFolha';
 import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
 import Vagas from './pages/Vagas';
 import FormularioVaga from './pages/FormularioVaga';
@@ -140,6 +141,9 @@ function App() {
 
               <Route path="/modulos/importacoes-contabeis"
                 element={<Protected moduloId="importacoes-contabeis"><ImportacoesContabeis /></Protected>} />
+
+              <Route path="/modulos/conferencia-folha"
+                element={<Protected moduloId="conferencia-folha"><ConferenciaFolha /></Protected>} />
 
               {/* RH & Pessoas */}
               <Route path="/modulos/vagas"
