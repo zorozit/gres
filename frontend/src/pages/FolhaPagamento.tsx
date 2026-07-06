@@ -1726,10 +1726,10 @@ export default function FolhaPagamento() {
     setFormaFreelancerPix('');
     setFormaFreelancerDin('');
     setCheckItems([]); // limpa enquanto recarrega
-    // Sugerir abatimento se tiver saldo especial em aberto
+    // Abatimento especial: checkbox desligado por padrão, usuário liga se quiser
     const saldo = modalFreelancerPgto.fr.saldoEspecialAberto || 0;
-    setAbaterEspecial(saldo > 0);
-    setValorAbatimento(saldo > 0 ? '' : '');
+    setAbaterEspecial(false);
+    setValorAbatimento(saldo > 0 ? saldo.toString() : '');
     setDataLocalFreelancer(new Date().toISOString().split('T')[0]);
 
     // ── Buscar saídas FRESCAS do banco antes de montar o checklist ──
@@ -2783,9 +2783,9 @@ export default function FolhaPagamento() {
     if (modalPagamento) {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
-      // Inicializar abatimento especial CLT
+      // Abatimento especial CLT: checkbox desligado por padrão, usuário liga se quiser
       const saldoEsp = modalPagamento.saldoEspecialAberto || 0;
-      setAbaterEspecialCLT(saldoEsp > 0);
+      setAbaterEspecialCLT(false);
       setValorAbatimentoCLT(saldoEsp > 0 ? saldoEsp.toString() : '');
     }
   }, [modalPagamento]);
@@ -3157,7 +3157,7 @@ export default function FolhaPagamento() {
       </div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modalPagamento, modalPgtoTipo, pgtoLinhas, checkItemsCLT, salvando, mesAno]);
+  }, [modalPagamento, modalPgtoTipo, pgtoLinhas, checkItemsCLT, salvando, mesAno, abaterEspecialCLT, valorAbatimentoCLT]);
 
   /* ── Modal Histórico de Pagamentos CLT (🔍) ──────────────────────────────── */
   const modalLogPgtoJSX = !modalLogPgto ? null : (() => {
