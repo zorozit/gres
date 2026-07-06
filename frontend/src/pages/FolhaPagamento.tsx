@@ -2799,7 +2799,9 @@ export default function FolhaPagamento() {
 
   useEffect(() => {
     if (modalPagamento) {
-      setModalPgtoTipo('Adiantamento');
+      // Abrir no tipo correto: se Dia 20 já pago, ir direto pro Dia 5
+      const tipoInicial = modalPagamento.pagoAdiantamento ? 'Variável' : 'Adiantamento';
+      setModalPgtoTipo(tipoInicial as 'Adiantamento' | 'Variável');
       setPgtoLinhas([novaPgtoLinha()]);
       // Abatimento especial CLT: checkbox desligado por padrão, usuário liga se quiser
       const saldoEsp = modalPagamento.saldoEspecialAberto || 0;
@@ -2964,15 +2966,31 @@ export default function FolhaPagamento() {
           <div style={{ marginBottom: '14px' }}>
             <label style={s.label}>Tipo de pagamento *</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              {(['Adiantamento', 'Variável'] as const).map(t => (
-                <button key={t} onClick={() => setModalPgtoTipo(t)}
-                  style={{ ...s.btn(modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e'), padding: '6px 16px', fontSize: '13px',
-                    outline: modalPgtoTipo === t ? '2px solid #1b5e20' : 'none' }}>
-                  {t === 'Adiantamento' ? '🏦 Dia 20 (Adiantamento)' : '💰 Dia 5 (Fechamento)'}
-                </button>
-              ))}
+              {(['Adiantamento', 'Variável'] as const).map(t => {
+                const jaPago = t === 'Adiantamento' ? f.pagoAdiantamento : f.pagoVariavel;
+                const dataPgto = t === 'Adiantamento' ? f.dataPgtoAdiantamento : f.dataPgtoVariavel;
+                return (
+                  <button key={t} onClick={() => !jaPago && setModalPgtoTipo(t)}
+                    style={{
+                      ...s.btn(jaPago ? '#4caf50' : (modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e')),
+                      padding: '6px 16px', fontSize: '13px',
+                      outline: modalPgtoTipo === t && !jaPago ? '2px solid #1b5e20' : 'none',
+                      opacity: jaPago ? 0.7 : 1,
+                      cursor: jaPago ? 'default' : 'pointer',
+                    }}>
+                    {jaPago ? '✅' : ''} {t === 'Adiantamento' ? '🏦 Dia 20' : '💰 Dia 5'}
+                    {jaPago ? ` (pago ${dataPgto || ''})` : (t === 'Adiantamento' ? ' (Adiantamento)' : ' (Fechamento)')}
+                  </button>
+                );
+              })}
             </div>
           </div>
+          {/* Aviso se tipo selecionado já foi pago */}
+          {((modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel)) && (
+            <div style={{ backgroundColor: '#fff3e0', border: '1px solid #ff9800', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px', color: '#e65100' }}>
+              ⚠️ Este pagamento já foi registrado. Selecione o outro tipo ou feche o modal.
+            </div>
+          )}
 
           {/* Checklist de itens */}
           <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', marginBottom: '14px', overflow: 'hidden' }}>
@@ -3166,9 +3184,9 @@ export default function FolhaPagamento() {
 
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
-            <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0}
-              style={s.btn('#43a047')}>
-              {salvando ? '⏳ Salvando...' : '✅ Confirmar Pagamento'}
+            <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0 || (modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel)}
+              style={s.btn((modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel) ? '#9e9e9e' : '#43a047')}>
+              {salvando ? '⏳ Salvando...' : (modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel) ? '🔒 Já pago' : '✅ Confirmar Pagamento'}
             </button>
           </div>
         </div>
