@@ -2810,7 +2810,6 @@ export default function FolhaPagamento() {
     }
   }, [modalPagamento]);
 
-  const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
   const toggleItemCLT = (key: string) =>
     setCheckItemsCLT(prev => prev.map(it =>
       it.key === key && it.tipo !== 'info' ? { ...it, checked: !it.checked } : it
@@ -2836,7 +2835,11 @@ export default function FolhaPagamento() {
     setSalvando(true);
     try {
       const existingLogs = modalPagamento.logPagamentos || [];
-      const newLogs = [...existingLogs, ...registros];
+      // Proteção contra duplicação: verificar se registro já existe (mesma data+valor+tipo)
+      const existingKeys = new Set(existingLogs.map((l: any) => `${l.data}__${l.valor}__${l.tipo}`));
+      const novos = registros.filter(r => !existingKeys.has(`${r.data}__${r.valor}__${r.tipo}`));
+      if (novos.length === 0) { alert('Esses lançamentos já foram registrados.'); setSalvando(false); return; }
+      const newLogs = [...existingLogs, ...novos];
       const isPagoAdto = modalPgtoTipo === 'Adiantamento' ? true : (modalPagamento.pagoAdiantamento);
       const isPagoVar = modalPgtoTipo === 'Variável' ? true : (modalPagamento.pagoVariavel);
       const payload = {
@@ -2936,259 +2939,308 @@ export default function FolhaPagamento() {
     finally { setSalvando(false); }
   };
 
-  // Modal CLT com checklist (igual ao Freelancer) — useMemo para evitar perda de foco
+  // ═══════════════════════════════════════════════════════════════════════
+  // MODAL UNIFICADO CLT — Extrato + Pagamento
+  // Mostra o que foi pago (com valores reais do log) e permite pagar o que falta
+  // ═══════════════════════════════════════════════════════════════════════
   const modalConfirmarPagamentoCLTJSX = useMemo(() => {
     if (!modalPagamento) return null;
     const f = modalPagamento;
-    // Total pelo checklist — itens tipo 'info' são apenas informativos, não entram no cálculo
+    const logs: any[] = f.logPagamentos || [];
+    const logsAdto = logs.filter(l => l.tipo === 'Adiantamento');
+    const logsVar = logs.filter(l => l.tipo === 'Variável');
+    const totalPagoAdto = logsAdto.reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
+    const totalPagoVar = logsVar.reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
+    const totalPagoGeral = totalPagoAdto + totalPagoVar;
+
+    // Checklist totals (para novos pagamentos)
     const totalChecklist = checkItemsCLT.reduce((sum, it) => {
-      if (!it.checked) return sum;
-      if (it.tipo === 'info') return sum; // racional informativo: não afeta total
+      if (!it.checked || it.tipo === 'info') return sum;
       return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
     }, 0);
     const vlAbateCLTModal = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
     const totalADesembolsar = Math.max(0, totalChecklist - vlAbateCLTModal);
+    const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
     const diff = totalPgtoLinhas - totalADesembolsar;
+
+    // Determinar qual tipo está pendente
+    const adtoPago = !!f.pagoAdiantamento;
+    const varPago = !!f.pagoVariavel;
+    const tudoPago = adtoPago && varPago;
+
+    // Se abrir e algo falta, selecionar o pendente
+    const tipoPendente = !adtoPago ? 'Adiantamento' : !varPago ? 'Variável' : null;
+
+    const renderLogEntry = (l: any, i: number) => (
+      <div key={i} style={{ display: 'flex', gap: '10px', padding: '8px 12px', backgroundColor: '#f9f9f9', borderRadius: '4px', marginBottom: '4px', fontSize: '13px', alignItems: 'center' }}>
+        <span style={{ color: '#2e7d32', fontWeight: 'bold', minWidth: 90 }}>{fmtMoeda(l.valor)}</span>
+        <span style={{ color: l.forma === 'PIX' ? '#1565c0' : '#2e7d32', fontSize: 12 }}>
+          {l.forma === 'PIX' ? '📱 PIX' : l.forma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+        </span>
+        <span style={{ color: '#666', fontSize: 12 }}>{l.data}</span>
+        {l.obs && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>{l.obs}</span>}
+      </div>
+    );
 
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         onClick={() => setModalPagamento(null)}>
         <div style={{ ...s.card, maxWidth: '580px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '24px' }}
           onClick={e => e.stopPropagation()}>
+
           {/* Cabeçalho */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, color: '#2e7d32' }}>💳 Registrar Pagamento — {f.nome}</h3>
+            <h3 style={{ margin: 0, color: '#2e7d32' }}>🔍 Extrato de Pagamentos — {f.nome}</h3>
             <button onClick={() => setModalPagamento(null)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
           </div>
-          {f.chavePix && <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>📲 PIX: <strong>{f.chavePix}</strong></div>}
+          {f.chavePix && <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>📲 PIX: <strong>{f.chavePix}</strong></div>}
 
-          {/* Tipo de pagamento */}
-          <div style={{ marginBottom: '14px' }}>
-            <label style={s.label}>Tipo de pagamento *</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(['Adiantamento', 'Variável'] as const).map(t => {
-                const jaPago = t === 'Adiantamento' ? f.pagoAdiantamento : f.pagoVariavel;
-                const dataPgto = t === 'Adiantamento' ? f.dataPgtoAdiantamento : f.dataPgtoVariavel;
-                return (
-                  <button key={t} onClick={() => !jaPago && setModalPgtoTipo(t)}
-                    style={{
-                      ...s.btn(jaPago ? '#4caf50' : (modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e')),
-                      padding: '6px 16px', fontSize: '13px',
-                      outline: modalPgtoTipo === t && !jaPago ? '2px solid #1b5e20' : 'none',
-                      opacity: jaPago ? 0.7 : 1,
-                      cursor: jaPago ? 'default' : 'pointer',
-                    }}>
-                    {jaPago ? '✅' : ''} {t === 'Adiantamento' ? '🏦 Dia 20' : '💰 Dia 5'}
-                    {jaPago ? ` (pago ${dataPgto || ''})` : (t === 'Adiantamento' ? ' (Adiantamento)' : ' (Fechamento)')}
-                  </button>
-                );
-              })}
+          {/* ═══ SEÇÃO 1: Dia 20 — Adiantamento ═══ */}
+          <div style={{ border: `2px solid ${adtoPago ? '#4caf50' : '#ff9800'}`, borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
+            <div style={{ backgroundColor: adtoPago ? '#e8f5e9' : '#fff3e0', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 'bold', fontSize: '14px' }}>
+                {adtoPago ? '✅' : '⏳'} Dia 20 — Adiantamento
+              </span>
+              {adtoPago && <span style={{ fontSize: '12px', color: '#2e7d32' }}>pago em {f.dataPgtoAdiantamento || '—'}</span>}
             </div>
-          </div>
-          {/* Aviso se tipo selecionado já foi pago */}
-          {((modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel)) && (
-            <div style={{ backgroundColor: '#fff3e0', border: '1px solid #ff9800', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px', color: '#e65100' }}>
-              ⚠️ Este pagamento já foi registrado. Selecione o outro tipo ou feche o modal.
-            </div>
-          )}
-
-          {/* Checklist de itens */}
-          <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', marginBottom: '14px', overflow: 'hidden' }}>
-            <div style={{ backgroundColor: '#f5f5f5', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', color: '#333', borderBottom: '1px solid #e0e0e0' }}>
-              📋 Itens do pagamento — marque/desmarque para incluir no total
-            </div>
-            {checkItemsCLT.length === 0 && (
-              <div style={{ padding: '16px', textAlign: 'center', color: '#999', fontSize: '13px' }}>⏳ Carregando itens...</div>
-            )}
-            {/* Painel de racional — itens info agrupados no topo (somente Dia 5) */}
-            {checkItemsCLT.some(it => it.tipo === 'info') && (() => {
-              const infoItems = checkItemsCLT.filter(it => it.tipo === 'info');
-              const racional100 = infoItems.find(it => it.key === 'racional_100');
-              const racional40  = infoItems.find(it => it.key === 'racional_40');
-              const difCalculada = racional100 && racional40 ? (racional100.valor - racional40.valor) : null;
-              return (
-                <div style={{ backgroundColor: '#e3f2fd', borderBottom: '2px solid #90caf9', padding: '10px 14px' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#1565c0', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📊 Racional do pagamento (informativo)</div>
-                  {infoItems.map(it => (
-                    <div key={it.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#37474f', padding: '2px 0' }}>
-                      <span>{it.label}</span>
-                      <span style={{ fontWeight: 'bold', color: it.key === 'racional_40' ? '#c62828' : '#1b5e20', minWidth: 80, textAlign: 'right' }}>
-                        {it.key === 'racional_40' ? '− ' : '  '}{fmtMoeda(it.valor)}
-                      </span>
-                    </div>
-                  ))}
-                  {difCalculada !== null && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1565c0', padding: '4px 0 0', borderTop: '1px dashed #90caf9', marginTop: '4px', fontWeight: 'bold' }}>
-                      <span>= Saldo a pagar (60% ± adicionais)</span>
-                      <span style={{ minWidth: 80, textAlign: 'right' }}>{fmtMoeda(difCalculada)}</span>
-                    </div>
-                  )}
+            {adtoPago ? (
+              <div style={{ padding: '10px 14px' }}>
+                {logsAdto.map(renderLogEntry)}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', borderTop: '1px solid #e0e0e0', marginTop: '4px' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '13px' }}>Total pago:</span>
+                  <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#2e7d32' }}>{fmtMoeda(totalPagoAdto)}</span>
                 </div>
-              );
-            })()}
-            {checkItemsCLT.filter(it => it.tipo !== 'info').map((item, i, arr) => (
-              <div key={item.key} onClick={() => toggleItemCLT(item.key)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '10px 14px', cursor: 'pointer',
-                  backgroundColor: item.checked ? (item.tipo === 'credito' ? '#f1f8e9' : '#fff8f8') : '#fafafa',
-                  borderBottom: i < arr.length - 1 ? '1px solid #eeeeee' : 'none',
-                  opacity: item.checked ? 1 : 0.5,
-                }}>
-                <input type="checkbox" checked={item.checked} onChange={() => toggleItemCLT(item.key)}
-                  onClick={e => e.stopPropagation()} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                <span style={{ flex: 1, fontSize: '13px' }}>{item.label}</span>
-                <span style={{ fontWeight: 'bold', fontSize: '14px', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', minWidth: 80, textAlign: 'right' }}>
-                  {item.tipo === 'credito' ? '+' : '-'} {fmtMoeda(item.valor)}
-                </span>
               </div>
-            ))}
-            {/* Abatimento de Adiantamento Especial CLT */}
-            {(f.saldoEspecialAberto || 0) > 0 && (
-              <div style={{ padding: '10px 14px', backgroundColor: '#f3e5f5', borderTop: '1px solid #ce93d8' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
-                  <input type="checkbox" checked={abaterEspecialCLT}
-                    onChange={e => { setAbaterEspecialCLT(e.target.checked); if (!e.target.checked) setValorAbatimentoCLT(''); }}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                  <span>➖ Abater Adiantamento Especial em aberto</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#7b1fa2' }}>
-                    Saldo: {fmtMoeda(f.saldoEspecialAberto)}
-                  </span>
-                </label>
-                {abaterEspecialCLT && (
-                  <div style={{ marginTop: '8px' }}>
-                    <input type="number" step="0.01" min="0"
-                      max={(f.saldoEspecialAberto || 0).toString()}
-                      value={valorAbatimentoCLT}
-                      placeholder={`máx. ${fmtMoeda(f.saldoEspecialAberto)}`}
-                      onChange={e => setValorAbatimentoCLT(e.target.value)}
-                      style={{ width: '160px', padding: '6px 10px', border: '1px solid #ce93d8', borderRadius: '4px', fontSize: '14px' }} />
-                    <div style={{ fontSize: '11px', color: '#7b1fa2', marginTop: '4px' }}>
-                      Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0, (f.saldoEspecialAberto || 0) - (parseFloat(valorAbatimentoCLT) || 0)))}</strong>
+            ) : (
+              <div style={{ padding: '10px 14px', fontSize: '13px', color: '#e65100' }}>
+                Pagamento pendente
+              </div>
+            )}
+          </div>
+
+          {/* ═══ SEÇÃO 2: Dia 5 — Fechamento ═══ */}
+          <div style={{ border: `2px solid ${varPago ? '#4caf50' : '#ff9800'}`, borderRadius: '8px', marginBottom: '16px', overflow: 'hidden' }}>
+            <div style={{ backgroundColor: varPago ? '#e8f5e9' : '#fff3e0', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 'bold', fontSize: '14px' }}>
+                {varPago ? '✅' : '⏳'} Dia 5 — Fechamento
+              </span>
+              {varPago && <span style={{ fontSize: '12px', color: '#2e7d32' }}>pago em {f.dataPgtoVariavel || '—'}</span>}
+            </div>
+            {varPago ? (
+              <div style={{ padding: '10px 14px' }}>
+                {logsVar.map(renderLogEntry)}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', borderTop: '1px solid #e0e0e0', marginTop: '4px' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '13px' }}>Total pago:</span>
+                  <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#2e7d32' }}>{fmtMoeda(totalPagoVar)}</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '10px 14px', fontSize: '13px', color: '#e65100' }}>
+                Pagamento pendente
+              </div>
+            )}
+          </div>
+
+          {/* ═══ CONSOLIDADO ═══ */}
+          <div style={{ backgroundColor: '#e3f2fd', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#1565c0' }}>📊 Total pago no mês</span>
+              <span style={{ fontWeight: 'bold', fontSize: '18px', color: '#1b5e20' }}>{fmtMoeda(totalPagoGeral)}</span>
+            </div>
+            {!tudoPago && (
+              <div style={{ fontSize: '12px', color: '#e65100', marginTop: '6px' }}>
+                ⚠️ Falta pagar: {!adtoPago ? 'Dia 20 (Adiantamento)' : ''}{!adtoPago && !varPago ? ' + ' : ''}{!varPago ? 'Dia 5 (Fechamento)' : ''}
+              </div>
+            )}
+          </div>
+
+          {/* ═══ FORMULÁRIO DE PAGAMENTO (só se algo pendente) ═══ */}
+          {!tudoPago && (<>
+            <div style={{ borderTop: '2px solid #1565c0', paddingTop: '16px', marginTop: '8px' }}>
+              <h4 style={{ margin: '0 0 12px', color: '#1565c0', fontSize: '14px' }}>
+                💳 Registrar Pagamento — {tipoPendente === 'Adiantamento' ? 'Dia 20 (Adiantamento)' : 'Dia 5 (Fechamento)'}
+              </h4>
+
+              {/* Tipo selector (só se ambos pendentes) */}
+              {!adtoPago && !varPago && (
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+                  {(['Adiantamento', 'Variável'] as const).map(t => (
+                    <button key={t} onClick={() => setModalPgtoTipo(t)}
+                      style={{ ...s.btn(modalPgtoTipo === t ? '#1b5e20' : '#9e9e9e'), padding: '6px 16px', fontSize: '13px',
+                        outline: modalPgtoTipo === t ? '2px solid #1b5e20' : 'none' }}>
+                      {t === 'Adiantamento' ? '🏦 Dia 20' : '💰 Dia 5'}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Checklist de itens */}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: '6px', marginBottom: '14px', overflow: 'hidden' }}>
+                <div style={{ backgroundColor: '#f5f5f5', padding: '8px 12px', fontSize: '12px', fontWeight: 'bold', color: '#333', borderBottom: '1px solid #e0e0e0' }}>
+                  📋 Composição do pagamento
+                </div>
+                {/* Racional informativo */}
+                {checkItemsCLT.some(it => it.tipo === 'info') && (() => {
+                  const infoItems = checkItemsCLT.filter(it => it.tipo === 'info');
+                  const racional100 = infoItems.find(it => it.key === 'racional_100');
+                  const racional40  = infoItems.find(it => it.key === 'racional_40');
+                  const difCalculada = racional100 && racional40 ? (racional100.valor - racional40.valor) : null;
+                  return (
+                    <div style={{ backgroundColor: '#e3f2fd', borderBottom: '2px solid #90caf9', padding: '10px 14px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#1565c0', marginBottom: '6px', textTransform: 'uppercase' }}>📊 Racional (informativo)</div>
+                      {infoItems.map(it => (
+                        <div key={it.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#37474f', padding: '2px 0' }}>
+                          <span>{it.label}</span>
+                          <span style={{ fontWeight: 'bold', color: it.key === 'racional_40' ? '#c62828' : '#1b5e20', minWidth: 80, textAlign: 'right' }}>
+                            {it.key === 'racional_40' ? '− ' : '  '}{fmtMoeda(it.valor)}
+                          </span>
+                        </div>
+                      ))}
+                      {difCalculada !== null && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#1565c0', padding: '4px 0 0', borderTop: '1px dashed #90caf9', marginTop: '4px', fontWeight: 'bold' }}>
+                          <span>= Saldo a pagar</span>
+                          <span style={{ minWidth: 80, textAlign: 'right' }}>{fmtMoeda(difCalculada)}</span>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
-                      ℹ️ O desconto será lançado automaticamente como <strong>Desconto Adiantamento Especial</strong> nas Saídas.
-                    </div>
+                  );
+                })()}
+                {checkItemsCLT.filter(it => it.tipo !== 'info').map((item, i, arr) => (
+                  <div key={item.key} onClick={() => toggleItemCLT(item.key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '10px 14px', cursor: 'pointer',
+                      backgroundColor: item.checked ? (item.tipo === 'credito' ? '#f1f8e9' : '#fff8f8') : '#fafafa',
+                      borderBottom: i < arr.length - 1 ? '1px solid #eeeeee' : 'none',
+                      opacity: item.checked ? 1 : 0.5,
+                    }}>
+                    <input type="checkbox" checked={item.checked} onChange={() => toggleItemCLT(item.key)}
+                      onClick={e => e.stopPropagation()} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                    <span style={{ flex: 1, fontSize: '13px' }}>{item.label}</span>
+                    <span style={{ fontWeight: 'bold', fontSize: '14px', color: item.tipo === 'credito' ? '#2e7d32' : '#c62828', minWidth: 80, textAlign: 'right' }}>
+                      {item.tipo === 'credito' ? '+' : '-'} {fmtMoeda(item.valor)}
+                    </span>
+                  </div>
+                ))}
+                {/* Abatimento Adiantamento Especial */}
+                {(f.saldoEspecialAberto || 0) > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#f3e5f5', borderTop: '1px solid #ce93d8' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+                      <input type="checkbox" checked={abaterEspecialCLT}
+                        onChange={e => { setAbaterEspecialCLT(e.target.checked); if (!e.target.checked) setValorAbatimentoCLT(''); }}
+                        style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                      <span>➖ Abater Adiantamento Especial</span>
+                      <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#7b1fa2' }}>Saldo: {fmtMoeda(f.saldoEspecialAberto)}</span>
+                    </label>
+                    {abaterEspecialCLT && (
+                      <div style={{ marginTop: '8px' }}>
+                        <input type="number" step="0.01" min="0" max={(f.saldoEspecialAberto||0).toString()}
+                          value={valorAbatimentoCLT} placeholder={`máx. ${fmtMoeda(f.saldoEspecialAberto)}`}
+                          onChange={e => setValorAbatimentoCLT(e.target.value)}
+                          style={{ width: '160px', padding: '6px 10px', border: '1px solid #ce93d8', borderRadius: '4px', fontSize: '14px' }} />
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-            {checkItemsCLT.length > 0 && (
-              <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '2px solid #c8e6c9' }}>
-                <span style={{ fontSize: '13px', color: '#555' }}>Total a desembolsar:</span>
-                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                {/* Total */}
+                <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '2px solid #c8e6c9' }}>
+                  <span style={{ fontSize: '13px', color: '#555' }}>Total a pagar:</span>
                   <strong style={{ fontSize: '18px', color: '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
-                  {vlAbateCLTModal > 0 && (
-                    <span style={{ fontSize: '11px', color: '#7b1fa2' }}>
-                      (incl. abatimento adto. esp.: −{fmtMoeda(vlAbateCLTModal)})
-                    </span>
-                  )}
-                </span>
+                </div>
               </div>
-            )}
-          </div>
 
-          {/* Linhas de pagamento */}
-          <div style={{ marginBottom: '10px' }}>
-            <label style={s.label}>💰 Lançamentos de pagamento</label>
-            {pgtoLinhas.map((linha, idx) => (
-              <div key={linha.id} style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', marginBottom: '8px', backgroundColor: '#fafafa' }}>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div style={{ flex: '0 0 120px' }}>
-                    <label style={{ ...s.label, fontSize: '11px' }}>Data</label>
-                    <input type="date" value={linha.data}
-                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, data: e.target.value } : l))}
-                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                  </div>
-                  <div style={{ flex: '0 0 110px' }}>
-                    <label style={{ ...s.label, fontSize: '11px' }}>Forma *</label>
-                    <select value={linha.forma}
-                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, forma: e.target.value as any } : l))}
-                      style={{ ...s.select, fontSize: '12px', padding: '6px' }}>
-                      <option value="PIX">📱 PIX</option>
-                      <option value="Dinheiro">💵 Dinheiro</option>
-                      <option value="Misto">🔄 Misto</option>
-                    </select>
-                  </div>
-                  <div style={{ flex: '0 0 130px' }}>
-                    <label style={{ ...s.label, fontSize: '11px' }}>Valor (R$) *</label>
-                    <input type="number" step="0.01" min="0" value={linha.valor} placeholder="0,00"
-                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valor: e.target.value } : l))}
-                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                  </div>
-                  {linha.forma === 'Misto' && (<>
-                    <div style={{ flex: '0 0 95px' }}>
-                      <label style={{ ...s.label, fontSize: '11px' }}>PIX</label>
-                      <input type="number" step="0.01" min="0" value={linha.valorPix} placeholder="0,00"
-                        onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorPix: e.target.value } : l))}
-                        style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+              {/* Lançamentos de pagamento */}
+              <div style={{ marginBottom: '10px' }}>
+                <label style={s.label}>💰 Lançamentos</label>
+                {pgtoLinhas.map((linha, idx) => (
+                  <div key={linha.id} style={{ border: '1px solid #e0e0e0', borderRadius: '6px', padding: '10px', marginBottom: '8px', backgroundColor: '#fafafa' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div style={{ flex: '0 0 120px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>Data</label>
+                        <input type="date" value={linha.data}
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, data: e.target.value } : l))}
+                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                      </div>
+                      <div style={{ flex: '0 0 110px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>Forma</label>
+                        <select value={linha.forma}
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, forma: e.target.value as any } : l))}
+                          style={{ ...s.select, fontSize: '12px', padding: '6px' }}>
+                          <option value="PIX">📱 PIX</option>
+                          <option value="Dinheiro">💵 Dinheiro</option>
+                          <option value="Misto">🔄 Misto</option>
+                        </select>
+                      </div>
+                      <div style={{ flex: '0 0 130px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>Valor (R$)</label>
+                        <input type="number" step="0.01" min="0" value={linha.valor} placeholder="0,00"
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valor: e.target.value } : l))}
+                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                      </div>
+                      {linha.forma === 'Misto' && (<>
+                        <div style={{ flex: '0 0 95px' }}>
+                          <label style={{ ...s.label, fontSize: '11px' }}>PIX</label>
+                          <input type="number" step="0.01" min="0" value={linha.valorPix} placeholder="0,00"
+                            onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorPix: e.target.value } : l))}
+                            style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                        </div>
+                        <div style={{ flex: '0 0 95px' }}>
+                          <label style={{ ...s.label, fontSize: '11px' }}>Dinheiro</label>
+                          <input type="number" step="0.01" min="0" value={linha.valorDinheiro} placeholder="0,00"
+                            onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorDinheiro: e.target.value } : l))}
+                            style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                        </div>
+                      </>)}
+                      <div style={{ flex: '1', minWidth: '100px' }}>
+                        <label style={{ ...s.label, fontSize: '11px' }}>Obs</label>
+                        <input type="text" value={linha.obs} placeholder="opcional"
+                          onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, obs: e.target.value } : l))}
+                          style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                      </div>
+                      {pgtoLinhas.length > 1 && (
+                        <button onClick={() => setPgtoLinhas(prev => prev.filter((_, i) => i !== idx))}
+                          style={{ ...s.btn('#e53935'), padding: '6px 10px', fontSize: '12px', alignSelf: 'flex-end' }}>🗑</button>
+                      )}
                     </div>
-                    <div style={{ flex: '0 0 95px' }}>
-                      <label style={{ ...s.label, fontSize: '11px' }}>Dinheiro</label>
-                      <input type="number" step="0.01" min="0" value={linha.valorDinheiro} placeholder="0,00"
-                        onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, valorDinheiro: e.target.value } : l))}
-                        style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                    </div>
-                  </>)}
-                  <div style={{ flex: '1', minWidth: '120px' }}>
-                    <label style={{ ...s.label, fontSize: '11px' }}>Obs</label>
-                    <input type="text" value={linha.obs} placeholder="opcional"
-                      onChange={e => setPgtoLinhas(prev => prev.map((l, i) => i === idx ? { ...l, obs: e.target.value } : l))}
-                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
                   </div>
-                  {pgtoLinhas.length > 1 && (
-                    <button onClick={() => setPgtoLinhas(prev => prev.filter((_, i) => i !== idx))}
-                      style={{ ...s.btn('#e53935'), padding: '6px 10px', fontSize: '12px', alignSelf: 'flex-end' }}>🗑</button>
+                ))}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button onClick={() => setPgtoLinhas(prev => [...prev, novaPgtoLinha()])}
+                    style={{ ...s.btn('#1565c0'), padding: '6px 14px', fontSize: '12px' }}>+ Adicionar lançamento</button>
+                  {totalADesembolsar > 0 && pgtoLinhas[0]?.valor === '' && (
+                    <button onClick={() => setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: totalADesembolsar.toFixed(2) } : l))}
+                      style={{ ...s.btn('#43a047'), padding: '6px 14px', fontSize: '12px' }}>↓ Preencher total ({fmtMoeda(totalADesembolsar)})</button>
                   )}
                 </div>
               </div>
-            ))}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={() => setPgtoLinhas(prev => [...prev, novaPgtoLinha()])}
-                style={{ ...s.btn('#1565c0'), padding: '6px 14px', fontSize: '12px' }}>+ Adicionar lançamento</button>
-              {totalADesembolsar > 0 && pgtoLinhas[0]?.valor === '' && (
-                <button onClick={() => setPgtoLinhas(prev => prev.map((l, i) => i === 0 ? { ...l, valor: totalADesembolsar.toFixed(2) } : l))}
-                  style={{ ...s.btn('#43a047'), padding: '6px 14px', fontSize: '12px' }}>↓ Preencher total ({fmtMoeda(totalADesembolsar)})</button>
-              )}
-            </div>
-          </div>
 
-          {/* Conferência */}
-          <div style={{ backgroundColor: Math.abs(diff) < 0.05 ? '#e8f5e9' : '#fff3e0', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-              <span>Total lançado: <strong>{fmtMoeda(totalPgtoLinhas)}</strong></span>
-              <span>Total itens marcados: <strong>{fmtMoeda(totalADesembolsar)}</strong></span>
-              <span style={{ color: Math.abs(diff) < 0.05 ? '#2e7d32' : diff > 0 ? '#c62828' : '#e65100', fontWeight: 'bold' }}>
-                {Math.abs(diff) < 0.05 ? '✅ Confere' : diff > 0 ? `⚠️ +${fmtMoeda(diff)} a mais` : `⚠️ ${fmtMoeda(Math.abs(diff))} faltando`}
-              </span>
-            </div>
-          </div>
-
-          {/* Histórico de pagamentos já registrados */}
-          {(modalPagamento.logPagamentos || []).length > 0 && (
-            <div style={{ marginBottom: '14px' }}>
-              <label style={s.label}>📜 Histórico de pagamentos</label>
-              {(modalPagamento.logPagamentos || []).map((p, i) => (
-                <div key={i} style={{ display: 'flex', gap: '8px', padding: '6px 10px', backgroundColor: '#f5f5f5', borderRadius: '4px', marginBottom: '4px', fontSize: '12px', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 'bold', color: '#1b5e20' }}>{fmtMoeda(p.valor)}</span>
-                  <span style={{ color: p.forma === 'PIX' ? '#1565c0' : p.forma === 'Dinheiro' ? '#2e7d32' : '#e65100' }}>
-                    {p.forma === 'PIX' ? '📱 PIX' : p.forma === 'Dinheiro' ? '💵 Dinheiro' : '🔄 Misto'}
+              {/* Conferência */}
+              <div style={{ backgroundColor: Math.abs(diff) < 0.05 ? '#e8f5e9' : '#fff3e0', borderRadius: '6px', padding: '10px 14px', marginBottom: '14px', fontSize: '13px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  <span>Lançado: <strong>{fmtMoeda(totalPgtoLinhas)}</strong></span>
+                  <span>Esperado: <strong>{fmtMoeda(totalADesembolsar)}</strong></span>
+                  <span style={{ color: Math.abs(diff) < 0.05 ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
+                    {Math.abs(diff) < 0.05 ? '✅ Confere' : diff > 0 ? `⚠️ +${fmtMoeda(diff)} a mais` : `⚠️ ${fmtMoeda(Math.abs(diff))} faltando`}
                   </span>
-                  <span style={{ color: '#666' }}>{p.data}</span>
-                  <span style={{ color: '#9e9e9e', fontSize: '11px' }}>{p.tipo}</span>
-                  {p.obs && <span style={{ color: '#888', fontStyle: 'italic' }}>{p.obs}</span>}
                 </div>
-              ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Fechar</button>
+                <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0}
+                  style={s.btn('#43a047')}>
+                  {salvando ? '⏳ Salvando...' : '✅ Confirmar Pagamento'}
+                </button>
+              </div>
+            </div>
+          </>)}
+
+          {/* Se tudo pago: só botão fechar */}
+          {tudoPago && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setModalPagamento(null)} style={s.btn('#1565c0')}>Fechar</button>
             </div>
           )}
-
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Cancelar</button>
-            <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0 || (modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel)}
-              style={s.btn((modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel) ? '#9e9e9e' : '#43a047')}>
-              {salvando ? '⏳ Salvando...' : (modalPgtoTipo === 'Adiantamento' && f.pagoAdiantamento) || (modalPgtoTipo === 'Variável' && f.pagoVariavel) ? '🔒 Já pago' : '✅ Confirmar Pagamento'}
-            </button>
-          </div>
         </div>
       </div>
     );
