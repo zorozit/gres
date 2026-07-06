@@ -143,6 +143,10 @@ interface FolhaMensal {
   adtoLiquido: number;         // Líquido que a contabilidade paga (número inteiro)
   // Log de pagamentos (PIX/Dinheiro/Misto)
   logPagamentos?: PagamentoRegistrado[];
+  // Conferência contábil (importação EMS)
+  conferido?: boolean;          // Conferido pela contabilidade
+  valorLiquidoContabil?: number; // Líquido do holerite (fonte: contabilidade)
+  fonteContabil?: boolean;       // true = valores vieram da contabilidade, não calculados
   raw?: any;
 }
 
@@ -700,17 +704,32 @@ export default function FolhaPagamento() {
         && f.tipo !== 'freelancer-dia'
         && f.tipo !== 'freelancer-noite'
       );
+      // ── Override contábil: quando conferido pela contabilidade, usar líquido do holerite ──
+      const temContab = salva?.conferido === true && salva?.valorLiquidoContabil != null;
+      const liquidoContab = temContab ? parseFloat(salva.valorLiquidoContabil) || 0 : 0;
+      // Se contab conferido: pgto dia 5 = líquido contabilidade (já desconta INSS/VT/adiantamento/faltas/etc)
+      // Se não: pgto dia 5 = cálculo interno (difSal - inss - contrAssist - valeTransporte)
+      const pgtosDia05Final = temContab ? liquidoContab : parseFloat(Math.max(0, saldoFinal).toFixed(2));
+      const saldoFinalFinal = temContab ? liquidoContab : parseFloat(saldoFinal.toFixed(2));
+
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
-        salarioBase: salBase, periculosidade: salBase * peri, inss, salContrInss, valeTransporte,
+        salarioBase: salBase, periculosidade: salBase * peri,
+        inss: temContab ? (parseFloat(salva.inssValor) || inss) : inss,
+        salContrInss: temContab ? (parseFloat(salva.salContrInss) || salContrInss) : salContrInss,
+        valeTransporte: temContab ? (parseFloat(salva.valeTransporteContabil) || valeTransporte) : valeTransporte,
         contrAssistencial: contrAssist,
         adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
         adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
-        diferencaSalario: difSal, feriadosTrab, feriadosValor,
+        diferencaSalario: temContab ? (liquidoContab + (parseFloat(salva.inssValor) || inss) + contrAssist + (parseFloat(salva.valeTransporteContabil) || valeTransporte)) : difSal,
+        feriadosTrab, feriadosValor,
         variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
-        pgtosDia20: adiantValor, pgtosDia05: parseFloat(Math.max(0, saldoFinal).toFixed(2)),
-        outrosPgtos: 0, saldoFinal: parseFloat(saldoFinal.toFixed(2)),
+        pgtosDia20: adiantValor, pgtosDia05: pgtosDia05Final,
+        outrosPgtos: 0, saldoFinal: saldoFinalFinal,
+        conferido: temContab,
+        valorLiquidoContabil: liquidoContab || undefined,
+        fonteContabil: temContab,
         // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
         // como adiantamento. Mantem-se como adto pago para nao perder histórico.
         // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
@@ -2689,7 +2708,18 @@ export default function FolhaPagamento() {
           ...(adtoTransp > 0 ? [{ key: 'transp', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
           ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
         ];
+      } else if (f.fonteContabil && f.valorLiquidoContabil) {
+        // ── MODO CONTABILIDADE: líquido do holerite como base ──────────
+        items = [
+          { key: 'liq_contab', label: `💰 Líquido Contabilidade (holerite conferido)`,
+            valor: f.valorLiquidoContabil, tipo: 'credito', checked: true },
+          { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
+          ...(adtoTransp > 0 ? [{ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
+          ...adtoEspecialSaidas.map((s: any, i: number) => ({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
+          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
+        ];
       } else {
+        // ── MODO CÁLCULO INTERNO (sem contabilidade conferida) ──────────
         // Monta label da DifSal dinamicamente: só menciona peri/feriado se existirem
         const temPeri    = f.periculosidade > 0;
         const temFeriado = (f.feriadosValor || 0) > 0;
