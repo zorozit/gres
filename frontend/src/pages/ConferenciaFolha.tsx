@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useUnit } from '../contexts/UnitContext';
+import { fetchAuth, authHeaders } from '../utils/fetchAuth';
 
 /* ════════════════════════════════════════════════════════════════════════════════
    ConferenciaFolha — Grid editável para conferência de valores antes do pagamento
@@ -48,13 +49,13 @@ interface FolhaRow {
 
 type EditableField = 'final_salarioBase' | 'final_inss' | 'final_valeTransporte' | 'final_liquido';
 
-const fetchAuth = (url: string, opts: any) => fetch(url, opts);
-
 export default function ConferenciaFolha() {
-  const { token, user } = useAuth() as any;
-  const { unitId, unitName } = useUnit() as any;
+  const { user } = useAuth() as any;
+  const { activeUnit } = useUnit();
+  const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
+  const unitName = activeUnit?.nome || '';
   const apiUrl = import.meta.env.VITE_API_ENDPOINT;
-  const authHeaders = () => ({ headers: { Authorization: `Bearer ${token()}` } });
+  const token = () => localStorage.getItem('auth_token') || '';
 
   const [mesAno, setMesAno] = useState(() => {
     const d = new Date();
@@ -73,20 +74,26 @@ export default function ConferenciaFolha() {
   // Carrega dados: colaboradores + folha-pagamento do mês
   // ──────────────────────────────────────────────────────────────────────────
   const carregarDados = async () => {
-    if (!unitId) return;
+    console.log('[ConferenciaFolha] carregarDados', { unitId, mesAno, apiUrl });
+    if (!unitId) { console.warn('[ConferenciaFolha] unitId vazio, abortando'); return; }
     setLoading(true);
     setMensagem('');
     try {
+      const auth = authHeaders();
+      console.log('[ConferenciaFolha] auth headers:', JSON.stringify(auth).slice(0,80));
       const [rColab, rFolha] = await Promise.all([
-        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, authHeaders()),
-        fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, authHeaders()),
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
+        fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, auth),
       ]);
+      console.log('[ConferenciaFolha] rColab status:', rColab.status, 'rFolha status:', rFolha.status);
 
       const colabs = rColab.ok ? await rColab.json() : [];
       const folhas = rFolha.ok ? await rFolha.json() : [];
+      console.log('[ConferenciaFolha] colabs:', colabs.length, 'folhas:', folhas.length);
 
       const cltColabs = (Array.isArray(colabs) ? colabs : [])
         .filter((c: any) => c.ativo !== false && (c.tipoContrato === 'CLT' || c.tipoContrato === 'clt'));
+      console.log('[ConferenciaFolha] cltColabs:', cltColabs.length, cltColabs.map((c:any) => c.nome));
 
       const folhaMap = new Map<string, any>();
       (Array.isArray(folhas) ? folhas : []).forEach((f: any) => {
@@ -141,7 +148,7 @@ export default function ConferenciaFolha() {
     setLoading(false);
   };
 
-  useEffect(() => { carregarDados(); }, [unitId, mesAno]);
+  useEffect(() => { carregarDados(); }, [activeUnit, mesAno]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Edição inline
@@ -214,6 +221,7 @@ export default function ConferenciaFolha() {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
           body: JSON.stringify(body),
         });
+        console.log('[ConferenciaFolha] Aprovação resposta:', res.status);
         if (!res.ok) throw new Error(await res.text());
         ok++;
       } catch (e: any) {
