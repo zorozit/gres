@@ -1253,7 +1253,11 @@ export const Extrato: React.FC = () => {
       const vtDesconto = vtMensal > 0 ? parseFloat(Math.min(parseFloat((salarioBase * 0.06).toFixed(2)), vtMensal).toFixed(2)) : 0;
 
       const descontosLegais = inssValor + contrAssist + vtDesconto;
-      const liquidoHolerite = brutoHolerite - descontosLegais;
+      // Usar valor contábil quando conferido (fonte de verdade)
+      const isConferido = raw.conferido === true || raw.conferido === 'true';
+      const liquidoContabil = R(raw.valorLiquidoContabil);
+      const liquidoHolerite = (isConferido && liquidoContabil > 0) ? liquidoContabil : (brutoHolerite - descontosLegais);
+      const fonteHolerite = (isConferido && liquidoContabil > 0) ? 'contabil' : 'calculado';
 
       // --- Motoboy data ---
       const mbEntD = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entDia) || 0), 0) : 0;
@@ -1359,55 +1363,88 @@ export const Extrato: React.FC = () => {
             <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #1a2236 0%, #243044 100%)', color: '#e8f0fe' }}>
               <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#90caf9', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
                 💼 HOLERITE — SALÁRIO
+                {fonteHolerite === 'contabil' && <span style={{ fontSize: '9px', color: '#81c784', marginLeft: '8px' }}>✅ Conferido (contabilidade)</span>}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                <span style={{ color: '#bbdefb' }}>Salário base</span>
-                <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(salarioBase)}</span>
-              </div>
-              {valorPericulosidade > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                  <span style={{ color: '#bbdefb' }}>Periculosidade ({percPericulosidade}%)</span>
-                  <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(valorPericulosidade)}</span>
-                </div>
-              )}
-              {feriado > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                  <span style={{ color: '#bbdefb' }}>Feriado trabalhado</span>
-                  <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(feriado)}</span>
-                </div>
-              )}
-
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                  <span style={{ color: '#bbdefb', fontWeight: 'bold' }}>Bruto</span>
-                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(brutoHolerite)}</span>
-                </div>
-              </div>
-
-              {/* Descontos legais */}
-              {descontosLegais > 0 && (
-                <div style={{ borderTop: '1px dashed rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ef9a9a', marginBottom: '4px' }}>DESCONTOS LEGAIS:</div>
-                  {inssValor > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#ef9a9a' }}>INSS</span>
-                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(inssValor)}</span>
+              {/* Se tem rubricas e é conferido, mostrar rubricas reais */}
+              {fonteHolerite === 'contabil' && Array.isArray(raw.rubricas) && raw.rubricas.length > 0 ? (
+                <>
+                  {/* Vencimentos */}
+                  {raw.rubricas.filter((r: any) => parseFloat(r.vencimento) > 0).map((r: any, i: number) => (
+                    <div key={`v${i}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#bbdefb' }}>{r.descricao}{r.referencia ? ` (ref: ${r.referencia})` : ''}</span>
+                      <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(parseFloat(r.vencimento))}</span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#bbdefb', fontWeight: 'bold' }}>Total Vencimentos</span>
+                      <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(raw.rubricas.reduce((s: number, r: any) => s + (parseFloat(r.vencimento) || 0), 0))}</span>
+                    </div>
+                  </div>
+                  {/* Descontos */}
+                  <div style={{ borderTop: '1px dashed rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ef9a9a', marginBottom: '4px' }}>DESCONTOS:</div>
+                    {raw.rubricas.filter((r: any) => parseFloat(r.desconto) > 0).map((r: any, i: number) => (
+                      <div key={`d${i}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                        <span style={{ color: '#ef9a9a' }}>{r.descricao}{r.referencia ? ` (ref: ${r.referencia})` : ''}</span>
+                        <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(parseFloat(r.desconto))}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0 0', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                      <span style={{ fontSize: '11px', color: '#ef9a9a', fontWeight: 'bold' }}>Total Descontos</span>
+                      <span style={{ fontSize: '11px', color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(raw.rubricas.reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0))}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                    <span style={{ color: '#bbdefb' }}>Salário base</span>
+                    <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(salarioBase)}</span>
+                  </div>
+                  {valorPericulosidade > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#bbdefb' }}>Periculosidade ({percPericulosidade}%)</span>
+                      <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(valorPericulosidade)}</span>
                     </div>
                   )}
-                  {contrAssist > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#ef9a9a' }}>Contr. Assistencial</span>
-                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(contrAssist)}</span>
+                  {feriado > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#bbdefb' }}>Feriado trabalhado</span>
+                      <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(feriado)}</span>
                     </div>
                   )}
-                  {vtDesconto > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#ef9a9a' }}>Vale Transporte (6%)</span>
-                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(vtDesconto)}</span>
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#bbdefb', fontWeight: 'bold' }}>Bruto</span>
+                      <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(brutoHolerite)}</span>
+                    </div>
+                  </div>
+                  {descontosLegais > 0 && (
+                    <div style={{ borderTop: '1px dashed rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ef9a9a', marginBottom: '4px' }}>DESCONTOS LEGAIS:</div>
+                      {inssValor > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                          <span style={{ color: '#ef9a9a' }}>INSS</span>
+                          <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(inssValor)}</span>
+                        </div>
+                      )}
+                      {contrAssist > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                          <span style={{ color: '#ef9a9a' }}>Contr. Assistencial</span>
+                          <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(contrAssist)}</span>
+                        </div>
+                      )}
+                      {vtDesconto > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
+                          <span style={{ color: '#ef9a9a' }}>Vale Transporte (6%)</span>
+                          <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(vtDesconto)}</span>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
 
               {/* Líquido holerite */}
