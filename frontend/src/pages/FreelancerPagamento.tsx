@@ -456,13 +456,13 @@ export default function FreelancerPagamento() {
         const transp_adt      = Math.min(transpAdtMes, transp);
         const transp_saldo    = Math.max(0, transp - transp_adt);
 
-        /* caixinha total (controle-motoboy + saídas Caixinha) — exclui já pagas */
+        /* caixinha total (controle-motoboy + saídas Caixinha) — exclui já vinculadas a batch */
         const saidasCaixFr = saidasPer.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
           if (s.colaboradorId!==cid || t!=='Caixinha' || dt<isoInicio || dt>isoFim2) return false;
-          // Excluir caixinhas já incorporadas a um pagamento anterior
-          if (s.pago === true || s.pago === 'true' || s.pagamentoIdLigado) return false;
+          // Excluir caixinhas já incorporadas a um pagamento anterior (vinculadas ao batch)
+          if (s.pagamentoIdLigado) return false;
           return true;
         });
         const caixinhaSaidas = parseFloat(saidasCaixFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
@@ -564,15 +564,19 @@ export default function FreelancerPagamento() {
       const saidaData = (s:any) => s.dataPagamento||s.data||'';
       const rangeIni = fech.dataInicioBase;
       const rangeFim = fech.dataFimEfetivo||fech.dataFechamentoBase;
+      // Range expandido +2 dias para pegar descontos criados no dia do pagamento
+      const rangeFimDescExp = new Date(new Date(rangeFim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
       const descFr = saidasFrescas.filter((s:any) => {
         const t = s.tipo||s.origem||s.referencia||'';
         if (s.colaboradorId !== fr.id) return false;
         if (!TIPOS_DESC.includes(t)) return false;
-        if (saidaData(s) < rangeIni || saidaData(s) > rangeFim) return false;
-        // Excluir saídas já vinculadas a um pagamento anterior (pagamentoIdLigado)
+        if (saidaData(s) < rangeIni || saidaData(s) > rangeFimDescExp) return false;
+        // Excluir saídas já vinculadas a um pagamento anterior (batch já processou)
         if (s.pagamentoIdLigado) return false;
-        // Excluir saídas já marcadas como pagas (pago=true) — já foram descontadas em pagamento anterior
-        if (s.pago === true || s.pago === 'true') return false;
+        // Desc Adto Especial já abatido: não cobrar de novo
+        if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+        // Consumo Interno e A pagar/receber nascem com pago=true — DEVEM aparecer como desconto
+        // Só excluir se pagamentoIdLigado (já processado no batch)
         return true;
       });
       const caixFr = saidasFrescas.filter((s:any)=>{
@@ -580,8 +584,8 @@ export default function FreelancerPagamento() {
         if (!TIPOS_CAIX.includes(s.tipo||s.origem||s.referencia||'')) return false;
         const d = saidaData(s);
         if (d<rangeIni || d>rangeFim) return false;
-        // Excluir caixinhas já incorporadas a um pagamento anterior
-        if (s.pago === true || s.pago === 'true' || s.pagamentoIdLigado) return false;
+        // Excluir caixinhas já incorporadas a um pagamento anterior (vinculada ao batch)
+        if (s.pagamentoIdLigado) return false;
         return true;
       });
       const obsValor = fr.isValorTurno
