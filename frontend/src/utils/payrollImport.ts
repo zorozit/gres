@@ -179,16 +179,14 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayroll
   const salContrInss = toMoney(salContrInssMatch?.[1]) || salarioBase;
 
   // INSS (Cód. 11) — valor efetivamente descontado no holerite
-  // Estratégia: localizar "INSS Sobre Salário" e pegar o valor monetário seguinte
+  // Estratégia: localizar "INSS Sobre Salário" e pegar o último valor monetário da MESMA linha
   const inssLineIdx = compactLines.findIndex((l) => /INSS Sobre Sal/i.test(l));
   let inssValor = 0;
   if (inssLineIdx >= 0) {
-    // O valor pode estar na mesma linha ou nas próximas 3
-    const candidates = compactLines.slice(inssLineIdx, inssLineIdx + 4).join(' ');
-    const allMoney = candidates.match(moneyRegex);
-    if (allMoney) {
-      // Pega o último valor monetário do bloco (valor do desconto)
-      inssValor = toMoney(allMoney[allMoney.length - 1]);
+    const inssLine = compactLines[inssLineIdx];
+    const inssMoneyMatches = inssLine.match(moneyRegex);
+    if (inssMoneyMatches?.length) {
+      inssValor = toMoney(inssMoneyMatches[inssMoneyMatches.length - 1]);
     }
   }
   // Fallback: calcular via tabela progressiva 2026 sobre Sal.Contr.INSS
@@ -213,20 +211,22 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number): ImportPayroll
   }
 
   // Vale Transporte (Cód. 109) — Desc. Vale Transporte
+  // Pega o último valor monetário da MESMA linha (não de um bloco multi-linha)
   const vtLineIdx = compactLines.findIndex((l) => /Desc\.?\s*Vale Transp/i.test(l) || /Vale Transporte/i.test(l));
   let valeTransporte = 0;
   if (vtLineIdx >= 0) {
-    const vtBlock = compactLines.slice(vtLineIdx, vtLineIdx + 4).join(' ');
-    const vtMoney = vtBlock.match(moneyRegex);
+    const vtLine = compactLines[vtLineIdx];
+    const vtMoney = vtLine.match(moneyRegex);
     if (vtMoney) valeTransporte = toMoney(vtMoney[vtMoney.length - 1]);
   }
 
   // Feriado (Cód. 1311)
+  // Pega o último valor monetário da MESMA linha
   const ferLineIdx = compactLines.findIndex((l) => /Feriado/i.test(l));
   let feriado = 0;
   if (ferLineIdx >= 0) {
-    const ferBlock = compactLines.slice(ferLineIdx, ferLineIdx + 3).join(' ');
-    const ferMoney = ferBlock.match(moneyRegex);
+    const ferLine = compactLines[ferLineIdx];
+    const ferMoney = ferLine.match(moneyRegex);
     if (ferMoney) feriado = toMoney(ferMoney[ferMoney.length - 1]);
   }
 
