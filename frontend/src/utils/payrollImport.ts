@@ -188,22 +188,24 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number, pdfRows?: PdfR
   const employeeMatch = compactLines[employeeLineIndex].match(/^(\d+)\s+(.+?)\s+(\d{6})\s+\d+\s+\d+\s+\d+\s+\d+$/i);
   if (!employeeMatch) return null;
 
-  // Detectar coluna X de Vencimentos vs Descontos pelo header
-  // No PDF EMS o header é: "Código Descrição  Referência  Vencimentos  Descontos"
-  let xVencimentos = 380; // defaults razoáveis
-  let xDescontos = 500;
+  // Detectar colunas X pelo header: Código | Descrição | Referência | Vencimentos | Descontos
+  let xReferencia = 280;
+  let xVencimentos = 434;
+  let xDescontos = 526;
   if (pdfRows) {
     const headerRow = pdfRows.find(r => /Vencimentos/i.test(r.text) && /Descontos/i.test(r.text));
     if (headerRow) {
+      const refItem = headerRow.items.find(it => /Refer/i.test(it.str));
       const vencItem = headerRow.items.find(it => /Vencimentos/i.test(it.str));
       const descItem = headerRow.items.find(it => /Descontos/i.test(it.str));
+      if (refItem) xReferencia = refItem.x;
       if (vencItem) xVencimentos = vencItem.x;
       if (descItem) xDescontos = descItem.x;
     }
   }
-  // Limiar: um valor monetário cuja posição X está mais perto de xVencimentos é vencimento,
-  // mais perto de xDescontos é desconto. Midpoint:
-  const xMid = (xVencimentos + xDescontos) / 2;
+  // Limiar entre colunas
+  const xMidRefVenc = (xReferencia + xVencimentos) / 2; // entre Referência e Vencimentos
+  const xMidVencDesc = (xVencimentos + xDescontos) / 2; // entre Vencimentos e Descontos
 
   const companyLine = compactLines[0] || '';
   const companyName = companyLine.replace(/\s+RECIBO DE PAGAMENTO$/i, '').trim() || 'Empresa não identificada';
@@ -284,11 +286,17 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number, pdfRows?: PdfR
   const totalVencLineIdx = compactLines.findIndex((l) => /Total Vencimentos/i.test(l));
   const rubricaEndIdx = totalVencLineIdx > 0 ? totalVencLineIdx : compactLines.length;
 
-  // Mapear linhas compact -> PdfRow para pegar coordenadas X
-  const compactRows: PdfRow[] = pdfRows ? collapseDuplicateBlock(pdfRows.map(r => r.text)).map((text) => {
-    const orig = pdfRows.find(r => r.text === text);
-    return orig || { y: 0, items: [{ x: 0, str: text }], text };
-  }) : [];
+  // Mapear compactLines[i] -> PdfRow pela posição (collapseDuplicateBlock pode ter cortado)
+  // Usamos pdfRows cortado da mesma forma
+  const compactPdfRows: PdfRow[] = pdfRows
+    ? (() => {
+        const allTexts = pdfRows.map(r => r.text);
+        const firstText = allTexts[0];
+        const repeatedIndex = firstText ? allTexts.findIndex((t, idx) => idx > 3 && t === firstText) : -1;
+        const cut = repeatedIndex > 0 ? pdfRows.slice(0, repeatedIndex) : pdfRows;
+        return cut;
+      })()
+    : [];
 
   for (let i = rubricaStartIdx; i < rubricaEndIdx; i++) {
     const line = compactLines[i];
@@ -299,55 +307,62 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number, pdfRows?: PdfR
     const codMatch = line.match(/^(\d+)\s+/);
     if (!codMatch) continue;
     const codigo = codMatch[1];
-    // Extrair todos os valores monetários da linha
-    const moneyMatches = line.match(moneyRegex) || [];
-    // A descrição é o texto entre o código e o primeiro valor monetário (ou ref)
-    const firstMoneyIdx = moneyMatches.length > 0 ? line.indexOf(moneyMatches[0]!) : line.length;
-    let descPart = line.slice(codMatch[0].length, firstMoneyIdx).trim();
-    // Separar referência (número curto no final da descrição)
-    let referencia = '';
-    const refMatch = descPart.match(/\s+(\d{1,3}(?:,\d{2})?)$/);
-    if (refMatch && refMatch[1]) {
-      referencia = refMatch[1];
-      descPart = descPart.slice(0, -refMatch[0].length).trim();
-    }
 
-    // Classificar valores usando posição X do PDF (se disponível)
+    // Buscar PdfRow correspondente
+    const pdfRow = compactPdfRows[i];
+
+    let descPart = '';
+    let referencia = '';
     let vencimento = 0;
     let descontoVal = 0;
 
-    // Buscar o PdfRow correspondente para pegar coordenadas X
-    const pdfRow = compactRows[i];
     if (pdfRow && pdfRow.items.length > 1) {
-      // Encontrar itens que são valores monetários e classificar pela posição X
-      for (const item of pdfRow.items) {
-        if (moneyRegex.test(item.str)) {
-          moneyRegex.lastIndex = 0; // reset regex
+      // Usar coordenadas X para separar: descrição, referência, vencimento, desconto
+      const sortedItems = pdfRow.items.sort((a, b) => a.x - b.x);
+      const descItems: string[] = [];
+
+      for (const item of sortedItems) {
+        // Pular o código (primeiro item numérico no início)
+        if (item.str === codigo) continue;
+
+        if (item.x >= xMidVencDesc) {
+          // Zona de Descontos
           const val = toMoney(item.str);
-          if (val > 0) {
-            if (item.x >= xMid) {
-              descontoVal = val; // mais perto da coluna Descontos
-            } else if (item.x >= xVencimentos - 30) {
-              vencimento = val;  // mais perto da coluna Vencimentos
-            }
-          }
+          if (val > 0) descontoVal = val;
+        } else if (item.x >= xMidRefVenc) {
+          // Zona de Vencimentos
+          const val = toMoney(item.str);
+          if (val > 0) vencimento = val;
+        } else if (item.x >= xReferencia - 10 && moneyRegex.test(item.str)) {
+          // Zona de Referência (valor numérico na zona de ref)
+          moneyRegex.lastIndex = 0;
+          referencia = item.str;
+        } else if (item.x >= xReferencia - 10 && /^\d{1,3}(?:,\d{2})?$/.test(item.str)) {
+          referencia = item.str;
+        } else {
+          // Zona de Descrição
+          descItems.push(item.str);
         }
       }
-    }
-
-    // Fallback: se não temos PdfRow, usar heurística de nomes
-    if (vencimento === 0 && descontoVal === 0 && moneyMatches.length > 0) {
+      descPart = descItems.join(' ').trim();
+    } else {
+      // Fallback: text parsing
+      const moneyMatches = line.match(moneyRegex) || [];
+      const firstMoneyIdx = moneyMatches.length > 0 ? line.indexOf(moneyMatches[0]!) : line.length;
+      descPart = line.slice(codMatch[0].length, firstMoneyIdx).trim();
+      const refMatch = descPart.match(/\s+(\d{1,3}(?:,\d{2})?)$/);
+      if (refMatch && refMatch[1]) {
+        referencia = refMatch[1];
+        descPart = descPart.slice(0, -refMatch[0].length).trim();
+      }
       const descNames = /INSS|Adiantamento|Arredondamento Anterior|Faltas|Vale Transp|Contr\.?\s*Assist/i;
       const isDesconto = descNames.test(descPart) || descNames.test(line);
       if (moneyMatches.length >= 2) {
         vencimento = toMoney(moneyMatches[0]!);
         descontoVal = toMoney(moneyMatches[1]!);
-      } else {
-        if (isDesconto) {
-          descontoVal = toMoney(moneyMatches[0]!);
-        } else {
-          vencimento = toMoney(moneyMatches[0]!);
-        }
+      } else if (moneyMatches.length === 1) {
+        if (isDesconto) descontoVal = toMoney(moneyMatches[0]!);
+        else vencimento = toMoney(moneyMatches[0]!);
       }
     }
 

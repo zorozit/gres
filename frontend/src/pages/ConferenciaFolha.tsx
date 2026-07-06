@@ -197,7 +197,7 @@ export default function ConferenciaFolha() {
   const aprovarTodos = async () => {
     setSalvando(true);
     setMensagem('');
-    const elegíveis = rows.filter(r => !r.pago && r.contabImportado);
+    const elegíveis = rows.filter(r => !r.pago && !r.conferido && r.contabImportado);
     let ok = 0;
     const falhas: string[] = [];
 
@@ -251,7 +251,7 @@ export default function ConferenciaFolha() {
     const conferidos = rows.filter(r => r.conferido).length;
     const editados = rows.filter(r => hasEdits(r)).length;
     const totalLiquido = rows.reduce((s, r) => s + (r.contabImportado ? calcLiquido(r.editRubricas) : 0), 0);
-    const pendentes = rows.filter(r => r.contabImportado && !r.pago).length;
+    const pendentes = rows.filter(r => r.contabImportado && !r.pago && !r.conferido).length;
     return { total, importados, pagos, conferidos, editados, totalLiquido, pendentes };
   }, [rows]);
 
