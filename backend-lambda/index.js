@@ -1606,7 +1606,11 @@ exports.handler = async (event) => {
               valorDescSaidas, valorAbatEsp, valorLiquido,
               // NOVO: campos específicos CLT
               pagoAdiantamento, dataPgtoAdiantamento, pagoVariavel, dataPgtoVariavel,
-              logPagamentos } = body;
+              logPagamentos,
+              // Campos contábeis (importação EMS / conferência folha)
+              valorLiquidoContabil, salContrInss, inssValor,
+              feriado, obsEMS, mergeMode,
+              conferido, conferidoPor, conferidoEm } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
         const now = new Date().toISOString();
@@ -1708,8 +1712,29 @@ exports.handler = async (event) => {
             ? [...((origItemPreserve?.logPagamentos) || []), ...logPagamentos]
             : (origItemPreserve?.logPagamentos || []),
           obs: obs !== undefined ? obs : (origItemPreserve?.obs || ''),
+          // Campos contábeis (importação EMS / conferência folha)
+          // mergeMode='contabil': só atualiza campos contábeis, preserva operacionais
+          ...(valorLiquidoContabil !== undefined ? { valorLiquidoContabil: parseFloat(valorLiquidoContabil) || 0 } : (origItemPreserve?.valorLiquidoContabil !== undefined ? { valorLiquidoContabil: origItemPreserve.valorLiquidoContabil } : {})),
+          ...(salContrInss !== undefined ? { salContrInss: parseFloat(salContrInss) || 0 } : (origItemPreserve?.salContrInss !== undefined ? { salContrInss: origItemPreserve.salContrInss } : {})),
+          ...(inssValor !== undefined ? { inssValor: parseFloat(inssValor) || 0 } : (origItemPreserve?.inssValor !== undefined ? { inssValor: origItemPreserve.inssValor } : {})),
+          ...(body.valeTransporte !== undefined && mergeMode === 'contabil' ? { valeTransporteContabil: parseFloat(body.valeTransporte) || 0 } : (origItemPreserve?.valeTransporteContabil !== undefined ? { valeTransporteContabil: origItemPreserve.valeTransporteContabil } : {})),
+          ...(feriado !== undefined ? { feriado: parseFloat(feriado) || 0 } : (origItemPreserve?.feriado !== undefined ? { feriado: origItemPreserve.feriado } : {})),
+          ...(obsEMS !== undefined ? { obsEMS } : (origItemPreserve?.obsEMS !== undefined ? { obsEMS: origItemPreserve.obsEMS } : {})),
+          ...(conferido !== undefined ? { conferido: !!conferido } : (origItemPreserve?.conferido !== undefined ? { conferido: origItemPreserve.conferido } : {})),
+          ...(conferidoPor !== undefined ? { conferidoPor } : (origItemPreserve?.conferidoPor !== undefined ? { conferidoPor: origItemPreserve.conferidoPor } : {})),
+          ...(conferidoEm !== undefined ? { conferidoEm } : (origItemPreserve?.conferidoEm !== undefined ? { conferidoEm: origItemPreserve.conferidoEm } : {})),
           updatedAt: now,
         };
+
+        // mergeMode='contabil': se já existe registro, preservar pago/saldoFinal/logPagamentos
+        if (mergeMode === 'contabil' && origItemPreserve) {
+          item.pago = origItemPreserve.pago;
+          item.dataPagamento = origItemPreserve.dataPagamento;
+          item.saldoFinal = origItemPreserve.saldoFinal;
+          item.totalFinal = origItemPreserve.totalFinal;
+          if (origItemPreserve.logPagamentos) item.logPagamentos = origItemPreserve.logPagamentos;
+        }
+
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
 
         // Auditoria (usa origItemPreserve carregado acima)

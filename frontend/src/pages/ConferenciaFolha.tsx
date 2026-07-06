@@ -101,7 +101,7 @@ export default function ConferenciaFolha() {
         const contab_salarioBase = f?.valorBruto || 0;
         const contab_salContrInss = f?.salContrInss || 0;
         const contab_inss = f?.inssValor || 0;
-        const contab_valeTransporte = f?.valeTransporte || 0;
+        const contab_valeTransporte = f?.valeTransporteContabil || f?.valeTransporte || 0;
         const contab_feriado = f?.feriado || 0;
         const contab_liquido = f?.valorLiquidoContabil || 0;
 
