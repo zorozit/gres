@@ -147,6 +147,8 @@ interface FolhaMensal {
   conferido?: boolean;          // Conferido pela contabilidade
   valorLiquidoContabil?: number; // Líquido do holerite (fonte: contabilidade)
   fonteContabil?: boolean;       // true = valores vieram da contabilidade, não calculados
+  // Adiantamento especial
+  saldoEspecialAberto: number;    // Saldo de adiantamento especial em aberto
   raw?: any;
 }
 
@@ -730,6 +732,7 @@ export default function FolhaPagamento() {
         conferido: temContab,
         valorLiquidoContabil: liquidoContab || undefined,
         fonteContabil: temContab,
+        saldoEspecialAberto: parseFloat((saldosEspeciais[c.id] || 0).toFixed(2)),
         // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
         // como adiantamento. Mantem-se como adto pago para nao perder histórico.
         // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
@@ -850,6 +853,7 @@ export default function FolhaPagamento() {
         variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
         pgtosDia20: varAte19 + adiantValor, pgtosDia05,
         outrosPgtos: totalPagoSaidas, saldoFinal,
+        saldoEspecialAberto: parseFloat((saldosEspeciais[m.id] || 0).toFixed(2)),
         // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
         // como adiantamento. Mantem-se como adto pago para nao perder histórico.
         // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
@@ -2681,6 +2685,9 @@ export default function FolhaPagamento() {
   interface LinhaPgto { id: string; data: string; forma: 'PIX' | 'Dinheiro' | 'Misto'; valor: string; valorPix: string; valorDinheiro: string; obs: string; }
   const novaPgtoLinha = (): LinhaPgto => ({ id: Date.now().toString(), data: new Date().toISOString().split('T')[0], forma: 'PIX', valor: '', valorPix: '', valorDinheiro: '', obs: '' });
   const [pgtoLinhas, setPgtoLinhas] = useState<LinhaPgto[]>([novaPgtoLinha()]);
+  // Abatimento de adiantamento especial no pagamento CLT
+  const [abaterEspecialCLT, setAbaterEspecialCLT] = useState(false);
+  const [valorAbatimentoCLT, setValorAbatimentoCLT] = useState('');
   // overrides e descontosIncluidos removidos — modal CLT agora usa checklist igual ao Freelancer
 
   // Monta checklist CLT ao abrir o modal (busca saídas frescas)
@@ -2776,7 +2783,10 @@ export default function FolhaPagamento() {
     if (modalPagamento) {
       setModalPgtoTipo('Adiantamento');
       setPgtoLinhas([novaPgtoLinha()]);
-      // overrides e descontosIncluidos removidos com a refatoração para checklist
+      // Inicializar abatimento especial CLT
+      const saldoEsp = modalPagamento.saldoEspecialAberto || 0;
+      setAbaterEspecialCLT(saldoEsp > 0);
+      setValorAbatimentoCLT(saldoEsp > 0 ? saldoEsp.toString() : '');
     }
   }, [modalPagamento]);
 
@@ -2836,6 +2846,29 @@ export default function FolhaPagamento() {
         const errText = await resp?.text().catch(() => 'sem detalhe');
         throw new Error(`Servidor retornou ${resp?.status}: ${errText}`);
       }
+      // Abatimento de adiantamento especial: cria saída de desconto
+      const vlAbateCLT = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
+      if (vlAbateCLT > 0) {
+        const hoje3 = new Date().toISOString().split('T')[0];
+        try {
+          await fetchAuth(`${apiUrl}/saidas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+            body: JSON.stringify({
+              unitId,
+              colaboradorId: modalPagamento.colaboradorId,
+              tipo: 'Desconto Adiantamento Especial',
+              descricao: `Abatimento adto. especial - folha CLT ${mesAno}`,
+              valor: vlAbateCLT,
+              data: hoje3,
+              dataPagamento: hoje3,
+              pago: true,
+              responsavel: localStorage.getItem('user_email') || '',
+              obs: `Abatido no pagamento ${modalPgtoTipo} da folha CLT ${mesAno}`,
+            }),
+          });
+        } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
+      }
       // Atualiza folhasLocais E folhasDB para que ao reabrir o modal o estado persista corretamente
       const atualizaFolha = (f: any) => {
         if (f.colaboradorId !== modalPagamento.colaboradorId) return f;
@@ -2893,7 +2926,8 @@ export default function FolhaPagamento() {
       if (it.tipo === 'info') return sum; // racional informativo: não afeta total
       return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
     }, 0);
-    const totalADesembolsar = Math.max(0, totalChecklist);
+    const vlAbateCLTModal = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
+    const totalADesembolsar = Math.max(0, totalChecklist - vlAbateCLTModal);
     const diff = totalPgtoLinhas - totalADesembolsar;
 
     return (
@@ -2973,10 +3007,47 @@ export default function FolhaPagamento() {
                 </span>
               </div>
             ))}
+            {/* Abatimento de Adiantamento Especial CLT */}
+            {(f.saldoEspecialAberto || 0) > 0 && (
+              <div style={{ padding: '10px 14px', backgroundColor: '#f3e5f5', borderTop: '1px solid #ce93d8' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+                  <input type="checkbox" checked={abaterEspecialCLT}
+                    onChange={e => { setAbaterEspecialCLT(e.target.checked); if (!e.target.checked) setValorAbatimentoCLT(''); }}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                  <span>➖ Abater Adiantamento Especial em aberto</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#7b1fa2' }}>
+                    Saldo: {fmtMoeda(f.saldoEspecialAberto)}
+                  </span>
+                </label>
+                {abaterEspecialCLT && (
+                  <div style={{ marginTop: '8px' }}>
+                    <input type="number" step="0.01" min="0"
+                      max={(f.saldoEspecialAberto || 0).toString()}
+                      value={valorAbatimentoCLT}
+                      placeholder={`máx. ${fmtMoeda(f.saldoEspecialAberto)}`}
+                      onChange={e => setValorAbatimentoCLT(e.target.value)}
+                      style={{ width: '160px', padding: '6px 10px', border: '1px solid #ce93d8', borderRadius: '4px', fontSize: '14px' }} />
+                    <div style={{ fontSize: '11px', color: '#7b1fa2', marginTop: '4px' }}>
+                      Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0, (f.saldoEspecialAberto || 0) - (parseFloat(valorAbatimentoCLT) || 0)))}</strong>
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+                      ℹ️ O desconto será lançado automaticamente como <strong>Desconto Adiantamento Especial</strong> nas Saídas.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {checkItemsCLT.length > 0 && (
               <div style={{ padding: '10px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '2px solid #c8e6c9' }}>
                 <span style={{ fontSize: '13px', color: '#555' }}>Total a desembolsar:</span>
-                <strong style={{ fontSize: '18px', color: '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                  <strong style={{ fontSize: '18px', color: '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
+                  {vlAbateCLTModal > 0 && (
+                    <span style={{ fontSize: '11px', color: '#7b1fa2' }}>
+                      (incl. abatimento adto. esp.: −{fmtMoeda(vlAbateCLTModal)})
+                    </span>
+                  )}
+                </span>
               </div>
             )}
           </div>
