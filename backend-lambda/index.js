@@ -1843,6 +1843,7 @@ exports.handler = async (event) => {
               const mesTurno = op.data?.slice(0,7) || mes;
               const item = {
                 id: dayId,
+                tipo: 'freelancer-dia',
                 colaboradorId,
                 unitId,
                 mes: mesTurno,
@@ -1872,13 +1873,14 @@ exports.handler = async (event) => {
               const mesTransp = op.data?.slice(0,7) || op.periodoFim?.slice(0,7) || mes || dataPagamento?.slice(0,7);
               const item = {
                 id: tId,
+                tipo: 'freelancer-dia',
                 colaboradorId,
                 unitId,
                 mes: mesTransp,
                 data: op.data || dataPagamento,
                 turno: 'Transporte',
                 valor: Number(op.valor) || 0,
-                tipoCodigo: 'transporte',
+                tipoCodigo: 'transporte-freelancer',
                 pago: true,
                 pagamentoId,
                 pagamentoData: dataPagamento || now.slice(0,10),

@@ -205,7 +205,7 @@ export const Extrato: React.FC = () => {
       const prevDate = new Date(parseInt(ano), parseInt(mes) - 4, 1);
       const prevIni  = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-01`;
 
-      const [rF, rC, rS, rSPend] = await Promise.all([
+      const [rF, rC, rS, rSPend, rPS] = await Promise.all([
         fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mesAno}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
@@ -220,11 +220,27 @@ export const Extrato: React.FC = () => {
         fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${prevIni}&dataFim=${dataIni}`, {
           headers: { Authorization: `Bearer ${token()}` },
         }).catch(() => null),
+        // Payslips — fonte de verdade dos valores pagos
+        fetchAuth(`${apiUrl}/payslips?unitId=${unitId}`, {
+          headers: { Authorization: `Bearer ${token()}` },
+        }).catch(() => null),
       ]);
 
       let colabs: any[] = [];
       if (rC?.ok) { const d = await rC.json(); colabs = Array.isArray(d) ? d : []; }
       setColabsState(colabs);
+
+      // ── Payslips (comprovantes reais de pagamento) ───────────────────────
+      let payslipsAll: any[] = [];
+      if (rPS?.ok) { const d = await rPS.json(); payslipsAll = Array.isArray(d) ? d : []; }
+      // Filtrar payslips do mês selecionado e indexar por colaboradorId
+      const payslipsMes = payslipsAll.filter((ps: any) => (ps.mes || ps.periodoInicio?.slice(0,7)) === mesAno);
+      const payslipsMap: Record<string, any[]> = {};
+      for (const ps of payslipsMes) {
+        if (!ps.colaboradorId) continue;
+        if (!payslipsMap[ps.colaboradorId]) payslipsMap[ps.colaboradorId] = [];
+        payslipsMap[ps.colaboradorId].push(ps);
+      }
 
       const allItems: ExtratoItem[] = [];
       const excluidosList: any[] = [];
@@ -240,7 +256,16 @@ export const Extrato: React.FC = () => {
         const isEstornado = (i: any) => i.estornado === true || i.estornado === 'True' || i.estornado === 'true';
         // ─ Separar granulares (tipo='freelancer-dia') dos legados
         const granulares  = rawFolha.filter((i: any) => i.tipo === 'freelancer-dia' && i.data && !isEstornado(i));
-        const legadoFolha = rawFolha.filter((i: any) => i.tipo !== 'freelancer-dia' && !isMigrado(i) && !isEstornado(i));
+        // Coletar colaboradores que têm granulares para excluir fechamentos legados duplicados
+        const colabsComGranulares = new Set(granulares.map((g: any) => g.colaboradorId));
+        const legadoFolha = rawFolha.filter((i: any) => {
+          if (i.tipo === 'freelancer-dia') return false;
+          if (isMigrado(i) || isEstornado(i)) return false;
+          // Excluir registros de fechamento semanal (col-xxx_mes_semana) quando já temos granulares
+          // Esses registros são criados pelo FreelancerPagamento como marcadores, sem valores reais
+          if (i.id && i.id.match(/^col-[^_]+_\d{4}-\d{2}_\d{4}-\d{2}-\d{2}$/) && colabsComGranulares.has(i.colaboradorId)) return false;
+          return true;
+        });
 
         // ─ Agrupar granulares por lote de pagamento:
         //   1º preferência: pagamentoId (registros novos — amarra turnos do mesmo ato de pagar)
@@ -277,6 +302,20 @@ export const Extrato: React.FC = () => {
             || dias.find((d: any) => /L[íi]quido/i.test(d.obs || '') || /Desc\. sa/i.test(d.obs || ''))
             || ref;
 
+          // ── Buscar payslip correspondente (fonte de verdade dos valores pagos) ──
+          const colPayslips = payslipsMap[ref.colaboradorId] || [];
+          const matchPayslip = colPayslips.find((ps: any) => {
+            if (ref.pagamentoId && Array.isArray(ps.pagamentos) && ps.pagamentos.includes(ref.pagamentoId)) return true;
+            if (ref.semana && ps.periodoInicio && ps.periodoFim) {
+              return ref.semana >= ps.periodoInicio && ref.semana <= ps.periodoFim;
+            }
+            return false;
+          });
+          const psLiquido   = matchPayslip ? parseFloat(matchPayslip.liquido)   || 0 : 0;
+          const psBruto     = matchPayslip ? parseFloat(matchPayslip.bruto)     || 0 : 0;
+          const psDescontos = matchPayslip ? parseFloat(matchPayslip.descontos) || 0 : 0;
+          const psTransp    = matchPayslip ? parseFloat(matchPayslip.transporte)|| 0 : 0;
+
           return {
             id: `grp__${ref.colaboradorId}__${ref.semana}__${ref.pagamentoId || 'legado'}`,
             colaboradorId: ref.colaboradorId,
@@ -285,21 +324,23 @@ export const Extrato: React.FC = () => {
             pagamentoId: ref.pagamentoId || null,
             pago: todosPagos && algumPago,
             pagoParcial: algumPago && !todosPagos,
-            valorBruto: totalPago + totalPend,
-            totalFinal: totalPago,
-            totalPendente: totalPend,
-            dataPagamento: pagos[0]?.dataPagamento || null,
+            valorBruto: matchPayslip ? psBruto : (totalPago + totalPend),
+            totalFinal: matchPayslip ? psLiquido : totalPago,
+            totalPendente: matchPayslip ? 0 : totalPend,
+            desconto: matchPayslip ? psDescontos : 0,
+            valorTransporte: matchPayslip ? psTransp : diasTransp.reduce((s: number, d: any) => s + R(d.valor), 0),
+            dataPagamento: (matchPayslip?.dataPagamento) || pagos[0]?.dataPagamento || pagos[0]?.pagamentoData || null,
             formaPagamento: ref.formaPagamento || 'PIX',
             unitId: ref.unitId,
-            confiabilidade,
-            // ── Campos de auditoria propagados do registro individual ──────────
-            valorLiquido:    refComAudit.valorLiquido    ?? null,
-            valorDescSaidas: refComAudit.valorDescSaidas ?? null,
+            confiabilidade: matchPayslip ? 'real' : confiabilidade,
+            payslip: matchPayslip || null,
+            valorLiquido:    matchPayslip ? psLiquido : (refComAudit.valorLiquido    ?? null),
+            valorDescSaidas: matchPayslip ? psDescontos : (refComAudit.valorDescSaidas ?? null),
             valorAbatEsp:    refComAudit.valorAbatEsp    ?? null,
             obsAudit:        refComAudit.obs             || '',
-            // ─────────────────────────────────────────────────────────────────
             obs: diasDobras.map((d: any) => `${d.data?.substring(8)}/${d.turno?.[0] || '?'}`).join(' · ')
-              + (diasTransp.length > 0 ? ` + Transp. R$${diasTransp.reduce((s: number,d: any)=>s+R(d.valor),0).toFixed(2)}` : ''),
+              + (diasTransp.length > 0 ? ` + Transp. R$${diasTransp.reduce((s: number,d: any)=>s+R(d.valor),0).toFixed(2)}` : '')
+              + (matchPayslip ? ` — Líq. R$${psLiquido.toFixed(2)}` : ''),
             tipo: 'freelancer-dia-grupo',
             diasDetalhe: dias,
             diasDobras,
