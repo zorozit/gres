@@ -381,6 +381,9 @@ export const ImportacoesContabeis: React.FC = () => {
       inssValor: row.editInssValor,
       valeTransporte: row.editValeTransporte,
       feriado: row.editFeriado,
+      totalVencimentos: row.totalVencimentos || 0,
+      totalDescontos: row.totalDescontos || 0,
+      rubricas: row.rubricas || [],
       obsEMS: `Importação EMS folha mensal | código ${row.codigoColaborador} | ${row.cargo} | página ${row.pagina}`,
       mergeMode: 'contabil',  // Sinaliza ao backend: não sobrescrever saldoFinal/logPagamentos
     };

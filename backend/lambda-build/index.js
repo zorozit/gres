@@ -1587,6 +1587,7 @@ exports.handler = async (event) => {
               // Campos contábeis (importação EMS / conferência folha)
               valorLiquidoContabil, salContrInss, inssValor,
               feriado, obsEMS, mergeMode,
+              totalVencimentos, totalDescontos, rubricas,
               conferido, conferidoPor, conferidoEm } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
@@ -1696,6 +1697,9 @@ exports.handler = async (event) => {
           ...(body.valeTransporte !== undefined && mergeMode === 'contabil' ? { valeTransporteContabil: parseFloat(body.valeTransporte) || 0 } : (origItemPreserve?.valeTransporteContabil !== undefined ? { valeTransporteContabil: origItemPreserve.valeTransporteContabil } : {})),
           ...(feriado !== undefined ? { feriado: parseFloat(feriado) || 0 } : (origItemPreserve?.feriado !== undefined ? { feriado: origItemPreserve.feriado } : {})),
           ...(obsEMS !== undefined ? { obsEMS } : (origItemPreserve?.obsEMS !== undefined ? { obsEMS: origItemPreserve.obsEMS } : {})),
+          ...(totalVencimentos !== undefined ? { totalVencimentos: parseFloat(totalVencimentos) || 0 } : (origItemPreserve?.totalVencimentos !== undefined ? { totalVencimentos: origItemPreserve.totalVencimentos } : {})),
+          ...(totalDescontos !== undefined ? { totalDescontos: parseFloat(totalDescontos) || 0 } : (origItemPreserve?.totalDescontos !== undefined ? { totalDescontos: origItemPreserve.totalDescontos } : {})),
+          ...(Array.isArray(rubricas) ? { rubricas } : (origItemPreserve?.rubricas ? { rubricas: origItemPreserve.rubricas } : {})),
           ...(conferido !== undefined ? { conferido: !!conferido } : (origItemPreserve?.conferido !== undefined ? { conferido: origItemPreserve.conferido } : {})),
           ...(conferidoPor !== undefined ? { conferidoPor } : (origItemPreserve?.conferidoPor !== undefined ? { conferidoPor: origItemPreserve.conferidoPor } : {})),
           ...(conferidoEm !== undefined ? { conferidoEm } : (origItemPreserve?.conferidoEm !== undefined ? { conferidoEm: origItemPreserve.conferidoEm } : {})),
