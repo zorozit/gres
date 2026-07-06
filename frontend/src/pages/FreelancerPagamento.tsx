@@ -472,15 +472,18 @@ export default function FreelancerPagamento() {
           ...caixinhaCtrlDetalhe,
         ];
 
-        /* saídas desconto da semana */
+        /* saídas desconto da semana — usar fonte expandida (mês completo se disponível)
+           Range expandido +2 dias para incluir saídas criadas no dia do pagamento (Desconto Adto Esp, Desconto Transporte) */
         const TIPOS_DESC = new Set(['A pagar','A receber','Consumo Interno','Desconto Adiantamento Especial']);
-        const saidasDescFr = saidasPer.filter((s:any) => {
+        const fonteSaidas = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPer;
+        const fimExp = new Date(new Date(isoFim2+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
+        const saidasDescFr = fonteSaidas.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
           if (!TIPOS_DESC.has(t)) return false;
           if (s.colaboradorId !== cid) return false;
-          if (dt < isoInicio || dt > isoFim2) return false;
-          if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+          if (dt < isoInicio || dt > fimExp) return false;
+          // Desc Adto Especial com adiantamentoId + pago = já abatido — MOSTRAR como info (não excluir)
           return true;
         });
         const saidasDesconto = parseFloat(saidasDescFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
@@ -1485,7 +1488,11 @@ export default function FreelancerPagamento() {
                                     const isoIni=fr.periodoInicio||fech.dataInicioBase;
                                     const isoFimDet=fr.periodoFim||fech.dataFechamento;
                                     const escsSemana=escalas.filter((e:any)=>e.colaboradorId===fr.id&&e.data>=isoIni&&e.data<=isoFimDet);
-                                    const saidasSemana=saidasPeriodo.filter((s2:any)=>{const cid=s2.colaboradorId||s2.colabId;if(cid!==fr.id)return false;const dt=s2.dataPagamento||s2.data||'';return dt>=isoIni&&dt<=isoFimDet;});
+                                    /* Usar saidasMesCompleto para incluir saídas fora do range da semana (ex: Desconto Adto Esp criado no dia do pagamento)
+                                       + filtrar por pagamentoIdLigado ou range de datas expandido (+2 dias) */
+                                    const fonteSaidas = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                                    const fimExpandido = new Date(new Date(isoFimDet+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
+                                    const saidasSemana=fonteSaidas.filter((s2:any)=>{const cid=s2.colaboradorId||s2.colabId;if(cid!==fr.id)return false;const dt=s2.dataPagamento||s2.data||'';return dt>=isoIni&&dt<=fimExpandido;});
                                     setDetalhe({fr,fech,escsSemana,saidasSemana});
                                   }} style={{...s.btn('#c2185b'),padding:'3px 8px',fontSize:'11px'}}>📋 Ver</button>
                                   {semDetalhe && <button disabled={salvando} onClick={async()=>{

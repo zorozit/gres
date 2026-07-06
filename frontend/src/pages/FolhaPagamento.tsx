@@ -1198,15 +1198,16 @@ export default function FolhaPagamento() {
 
         // Descontos reais do colaborador: vale/empréstimo, consumo e parcelas de adiantamento especial
         // 'Caixinha' permanece como crédito e não entra nesta lista
+        // Usar fonte expandida (mês completo) + range +2 dias para pegar saídas criadas no dia do pagamento
         const TIPOS_DESCONTO_FREELANCER = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
-        const saidasDescFreelancer = saidasPeriodo.filter((s: any) => {
+        const fonteSaidasDesc = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+        const fimExpandido = new Date(new Date(isoFim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
+        const saidasDescFreelancer = fonteSaidasDesc.filter((s: any) => {
           const t = s.tipo || s.origem || s.referencia || '';
           if (s.colaboradorId !== f.id) return false;
           if (!TIPOS_DESCONTO_FREELANCER.includes(t)) return false;
-          if (saidaData(s) < isoInicio || saidaData(s) > isoFim) return false;
-          // Parcelas de adiantamento especial já quitadas via AdiantamentosSaldos não devem
-          // ser cobradas novamente: adiantamentoId preenchido + pago=true = já baixado.
-          if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
+          if (saidaData(s) < isoInicio || saidaData(s) > fimExpandido) return false;
+          // Mostrar Desconto Adiantamento Especial sempre (inclusive já abatido) — é informação real do pagamento
           return true;
         });
         const saidasDesconto = parseFloat(
@@ -1762,13 +1763,15 @@ export default function FolhaPagamento() {
       const rangeIni = fech.dataInicioBase;  // início efetivo (clipado se período global)
       const rangeFim = (fech as any).dataFimEfetivo || fech.dataFechamentoBase; // fim efetivo
 
+      // Range expandido +2 dias para pegar saídas do dia do pagamento
+      const rangeFimExp = new Date(new Date(rangeFim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
       const saidasDescFr = saidasFrescas.filter((s: any) => {
         const t = s.tipo || s.origem || s.referencia || '';
         if (s.colaboradorId !== fr.id) return false;
         if (!TIPOS_DESCONTO.includes(t)) return false;
-        if (saidaData(s) < rangeIni || saidaData(s) > rangeFim) return false;
-        // Parcelas de adiantamento especial já quitadas via AdiantamentosSaldos não devem
-        // ser cobradas novamente: adiantamentoId preenchido + pago=true = já baixado.
+        if (saidaData(s) < rangeIni || saidaData(s) > rangeFimExp) return false;
+        // Parcelas de adiantamento especial já quitadas: para checklist de pagamento,
+        // excluir se já pago (não cobrar de novo); no grid/detalhamento mostramos como info
         if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
         return true;
       });
