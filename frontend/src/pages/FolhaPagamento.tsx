@@ -2183,7 +2183,21 @@ export default function FolhaPagamento() {
 
                   // 4) Abatimento especial
                   if (abaterEspecial && vlAbate > 0) {
-                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}` });
+                    // Encontrar adiantamentoId do contrato em aberto mais antigo
+                    const fonteSaidas = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                    const adtosEspCol = fonteSaidas
+                      .filter((ss: any) => ss.colaboradorId === fr.id && (ss.tipo||'') === 'Adiantamento Especial')
+                      .sort((a: any, b: any) => (a.data||'').localeCompare(b.data||''));
+                    const descEspCol = fonteSaidas
+                      .filter((ss: any) => ss.colaboradorId === fr.id && (ss.tipo||'') === 'Desconto Adiantamento Especial' && ss.pago);
+                    // Calcular saldo por contrato
+                    let adtoIdTarget = '';
+                    for (const ae of adtosEspCol) {
+                      const cId = ae.adiantamentoId || ae.id;
+                      const totalDesc = descEspCol.filter((d: any) => d.adiantamentoId === cId).reduce((s2: number, d: any) => s2 + (parseFloat(d.valor)||0), 0);
+                      if ((parseFloat(ae.valor)||0) - totalDesc > 0) { adtoIdTarget = cId; break; }
+                    }
+                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdTarget || undefined });
                   }
 
                   // 5) Payslip
@@ -2873,6 +2887,18 @@ export default function FolhaPagamento() {
       const vlAbateCLT = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
       if (vlAbateCLT > 0) {
         const hoje3 = new Date().toISOString().split('T')[0];
+        // Encontrar adiantamentoId do contrato em aberto mais antigo
+        const adtosEspCLT = saidasMesCompleto
+          .filter((ss: any) => ss.colaboradorId === modalPagamento.colaboradorId && (ss.tipo||'') === 'Adiantamento Especial')
+          .sort((a: any, b: any) => (a.data||'').localeCompare(b.data||''));
+        const descEspCLT = saidasMesCompleto
+          .filter((ss: any) => ss.colaboradorId === modalPagamento.colaboradorId && (ss.tipo||'') === 'Desconto Adiantamento Especial' && ss.pago);
+        let adtoIdCLT = '';
+        for (const ae of adtosEspCLT) {
+          const cId = ae.adiantamentoId || ae.id;
+          const totalDesc = descEspCLT.filter((d: any) => d.adiantamentoId === cId).reduce((s2: number, d: any) => s2 + (parseFloat(d.valor)||0), 0);
+          if ((parseFloat(ae.valor)||0) - totalDesc > 0) { adtoIdCLT = cId; break; }
+        }
         try {
           await fetchAuth(`${apiUrl}/saidas`, {
             method: 'POST',
@@ -2888,6 +2914,7 @@ export default function FolhaPagamento() {
               pago: true,
               responsavel: localStorage.getItem('user_email') || '',
               obs: `Abatido no pagamento ${modalPgtoTipo} da folha CLT ${mesAno}`,
+              adiantamentoId: adtoIdCLT || undefined,
             }),
           });
         } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
