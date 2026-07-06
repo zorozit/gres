@@ -75,6 +75,7 @@ export default function FreelancerPagamento() {
   const [saldosEspeciais,     setSaldosEspeciais]     = useState<Record<string,number>>({});
   const [motoboysFr,          setMotoboysFr]          = useState<any[]>([]);
   const [controlesMap,        setControlesMap]        = useState<Record<string, any[]>>({});
+  const [payslipsMap,         setPayslipsMap]         = useState<Record<string, any[]>>({});
   const [fechamentos,         setFechamentos]         = useState<any[]>([]);
   const [editFechamento, setEditFechamento] = useState<Record<string, any>>({});
 
@@ -198,6 +199,22 @@ export default function FreelancerPagamento() {
       if (rSMesResult?.ok) { const d = await rSMesResult.json(); saidasMesComp = Array.isArray(d)?d:[]; setSaidasMesCompleto(saidasMesComp); } else setSaidasMesCompleto([]);
       if (rSPend?.ok) { const d = await rSPend.json(); saidasPendAnt = (Array.isArray(d)?d:[]).filter((s:any)=>s.pago===false); setSaidasPendentesAnt(saidasPendAnt); } else setSaidasPendentesAnt([]);
 
+      /* payslips — buscar para usar como fonte de verdade quando pago */
+      let psMapLocal: Record<string, any[]> = {};
+      try {
+        const psResp = await fetchAuth(`${apiUrl}/payslips?unitId=${unitId}&colaboradorId=all`, auth);
+        if (psResp.ok) {
+          const psData = await psResp.json();
+          const psArr = Array.isArray(psData) ? psData : psData.payslips || [];
+          for (const ps of psArr) {
+            const cid2 = ps.colaboradorId;
+            if (!psMapLocal[cid2]) psMapLocal[cid2] = [];
+            psMapLocal[cid2].push(ps);
+          }
+          setPayslipsMap(psMapLocal);
+        }
+      } catch(e) { console.warn('Payslips fetch failed', e); }
+
       /* saldos especiais */
       let saldos: Record<string,number> = {};
       if (rSHist?.ok) {
@@ -217,7 +234,8 @@ export default function FreelancerPagamento() {
         saidasPendAnt,
         saldos,
         motos,
-        ctrlMap
+        ctrlMap,
+        psMapLocal
       );
     } catch(e) { console.error('[FreelancerPagamento] fetch error', e); }
     finally { setLoading(false); }
@@ -236,7 +254,8 @@ export default function FreelancerPagamento() {
     saidasPendAnt: any[],
     saldos: Record<string,number>,
     motos: any[] = [],
-    ctrlMap: Record<string, any[]> = {}
+    ctrlMap: Record<string, any[]> = {},
+    payslipsMap: Record<string, any[]> = {}
   ) => {
     if (!frs.length) { setFechamentos([]); return; }
 
@@ -504,6 +523,18 @@ export default function FreelancerPagamento() {
 
         if (dobras===0 && diasJaPagosDetalhe.length===0) return null;
 
+        /* Quando pago, usar payslip como fonte de verdade para bruto/descontos/líquido */
+        let liquidoFinal = totalLiquido;
+        let descontosFinal = saidasDesconto;
+        let brutoFinal = total + transp_saldo + caixinhaTotal;
+        const psArr = payslipsMap[cid] || [];
+        const psMatch = psArr.find((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
+        if (pago && psMatch) {
+          liquidoFinal = parseFloat(psMatch.liquido || '0');
+          descontosFinal = parseFloat(psMatch.descontos || '0');
+          brutoFinal = parseFloat(psMatch.bruto || '0');
+        }
+
         return {
           id: cid, nome: fr.nome, chavePix: fr.chavePix, telefone: fr.telefone||fr.celular,
           valorDia: vDia, valorNoite: vNoite, valorDobra: vDobra, valorTransporte: valorTransp,
@@ -515,8 +546,8 @@ export default function FreelancerPagamento() {
           ctrlLinhasDetalhe,  // detalhe chegada+entregas por linha (motoboy)
           totalTransporte: transp_saldo,
           transporteAdiantado: transp_adt, transporteAdiantadoBruto: transpAdtBruto, transporteAdiantadoMes: transpAdtMes, transporteJaConsumido: transpJaConsumido, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
-          saidasDesconto, saidasDetalhe,
-          totalLiquido, pago, pagoParcial,
+          saidasDesconto: descontosFinal, saidasDetalhe,
+          totalLiquido: liquidoFinal, brutoPayslip: brutoFinal, pago, pagoParcial, payslip: psMatch || null,
           pendentesAnteriores, saldoEspecialAberto,
           periodoInicio: isoInicio, periodoFim: isoFim2,
           caixinhaTotal, caixinhaDetalhe,
@@ -544,7 +575,7 @@ export default function FreelancerPagamento() {
   /* recalcular quando deps mudam */
   useEffect(() => {
     if (freelancers.length>0) {
-      calcularFechamentos(freelancers, escalas, folhasDB, saidasPeriodo, saidasPendentesAnt, saldosEspeciais, motoboysFr, controlesMap);
+      calcularFechamentos(freelancers, escalas, folhasDB, saidasPeriodo, saidasPendentesAnt, saldosEspeciais, motoboysFr, controlesMap, payslipsMap);
     }
   }, [freelancers, escalas, mesAno, periodoIni, periodoFim, saidasPendentesAnt, folhasDB, saidasPeriodo, editFechamento, motoboysFr, controlesMap]);
 

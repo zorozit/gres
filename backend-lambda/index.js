@@ -2334,6 +2334,24 @@ exports.handler = async (event) => {
     }
 
     // DELETE CAIXA - Deletar registro (apenas admin)
+    // ═══ GET /payslips — admin: buscar payslips por unitId ═══
+    if (rawPath === '/payslips' && httpMethod === 'GET') {
+      const qs = event.queryStringParameters || {};
+      const unitId = qs.unitId;
+      if (!unitId) return response(400, { error: 'unitId obrigatório' });
+      try {
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-payslips',
+          FilterExpression: 'unitId = :u',
+          ExpressionAttributeValues: { ':u': unitId }
+        }).promise();
+        const items = (result.Items || []).sort((a, b) => (b.periodoFim || '').localeCompare(a.periodoFim || ''));
+        return response(200, items);
+      } catch (err) {
+        return response(500, { error: 'Erro ao buscar payslips', details: err.message });
+      }
+    }
+
     if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'DELETE') {
       const caixaId = rawPath.split('/').pop();
 
