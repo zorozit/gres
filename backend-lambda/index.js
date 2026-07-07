@@ -2351,10 +2351,17 @@ exports.handler = async (event) => {
       const unitId = qs.unitId;
       if (!unitId) return response(400, { error: 'unitId obrigatório' });
       try {
+        const mesFilter = qs.mes;
+        let filterExpr = 'unitId = :u';
+        const exprValues = { ':u': unitId };
+        if (mesFilter) {
+          filterExpr += ' AND mes = :m';
+          exprValues[':m'] = mesFilter;
+        }
         const result = await dynamodb.scan({
           TableName: 'gres-prod-payslips',
-          FilterExpression: 'unitId = :u',
-          ExpressionAttributeValues: { ':u': unitId }
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprValues
         }).promise();
         const items = (result.Items || []).sort((a, b) => (b.periodoFim || '').localeCompare(a.periodoFim || ''));
         return response(200, items);
