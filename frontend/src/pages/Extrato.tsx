@@ -1582,13 +1582,13 @@ export const Extrato: React.FC = () => {
             )}
 
             {/* ═══ BLOCO 3: DESCONTOS OPERACIONAIS ═══ */}
-            {saidasDesconto.length > 0 && (
+            {descontosSemCaixinha.length > 0 && (
               <div style={{ marginBottom: '14px', padding: '16px 18px', borderRadius: '12px', background: 'linear-gradient(135deg, #fbe9e7 0%, #ffccbc 100%)', border: '1px solid #ef9a9a' }}>
                 <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#c62828', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
                   📤 DESCONTOS — Abatidos da remuneração
                 </div>
 
-                {saidasDesconto.map(({ cat, items: catItems, total }) => (
+                {saidasDesconto.filter(sd => !sd.cat.toLowerCase().includes('caixinha')).map(({ cat, items: catItems, total }) => (
                   <div key={cat} style={{ marginBottom: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', backgroundColor: 'rgba(198,40,40,0.06)', borderRadius: '6px', cursor: 'pointer' }}
                       onClick={() => toggleExpandido(`desc_${cat}`)}>
@@ -1618,7 +1618,7 @@ export const Extrato: React.FC = () => {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', borderTop: '2px solid #ef9a9a', marginTop: '8px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#c62828' }}>Total Descontos</span>
-                  <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(totalDescontos)}</span>
+                  <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#c62828' }}>−{fmtMoeda(totalDescontosSemCaixinha)}</span>
                 </div>
               </div>
             )}
@@ -1759,7 +1759,19 @@ export const Extrato: React.FC = () => {
                 </div>
               ))}
 
-              {logPgtos.length === 0 && saidasPagamento.length === 0 && (
+              {/* Caixinha (dinheiro recebido em mãos) */}
+              {caixinhaSaida > 0 && (
+                <div style={{ marginTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', backgroundColor: 'rgba(46,125,50,0.06)', borderRadius: '6px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#2e7d32' }}>
+                      💵 Caixinha (dinheiro)
+                    </span>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(caixinhaSaida)}</span>
+                  </div>
+                </div>
+              )}
+
+              {logPgtos.length === 0 && saidasPagamento.length === 0 && caixinhaSaida === 0 && (
                 <div style={{ fontSize: '11px', color: '#888', padding: '6px 0' }}>Nenhum pagamento registrado neste mês.</div>
               )}
 
