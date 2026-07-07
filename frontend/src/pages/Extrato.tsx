@@ -6,7 +6,7 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 import { fetchAuth } from '../utils/fetchAuth';
-import { calcINSS as calcINSSEngine } from '../engine';
+import { calcularFolhaCLT } from '../engine';
 
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
@@ -84,8 +84,7 @@ const R = (v: any) => parseFloat(v) || 0;
 const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 
-/** INSS: usa engine centralizado (engine/inss.ts) */
-const calcINSS = calcINSSEngine;
+// calcINSS: usado internamente pelo engine (calcularFolhaCLT). Não é necessário importar aqui.
 const fmtDataBR = (iso: string) => {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
@@ -1212,34 +1211,39 @@ export const Extrato: React.FC = () => {
       const raw = folhaItem?.raw || {} as any;
       const logPgtos: any[] = raw.logPagamentos || [];
 
-      // --- Dados do colaborador (para recalcular) ---
+      // --- Dados do colaborador + cálculo via ENGINE CENTRALIZADO ---
       const colab = colabsState.find((c: any) => c.id === colabId) || {} as any;
-      const salarioBase = R(colab.salario) || R(raw.valorBruto) || 0;
-      const percPericulosidade = R(colab.periculosidade) || 0;
-      const valorPericulosidade = percPericulosidade > 0 ? salarioBase * (percPericulosidade / 100) : 0;
-
-      // Feriado trabalhado (do registro contábil ou do campo valorChegadaDia × feriados)
+      const isMotoboy = motoboyData && motoboyData.length > 0;
       const feriado = R(raw.feriadoContabil) || R(raw.feriado) || 0;
+      const feriadosTrab = feriado > 0 ? Math.round(feriado / ((R(colab.salario) || 1) / 30)) || 1 : 0;
 
-      const brutoHolerite = salarioBase + valorPericulosidade + feriado;
+      // Chamar engine centralizado (FONTE ÚNICA de cálculo)
+      const engineResult = calcularFolhaCLT({
+        colaborador: {
+          id: colabId,
+          nome: nome,
+          salario: R(colab.salario) || R(raw.valorBruto) || 0,
+          periculosidade: R(colab.periculosidade) || 0,
+          contribuicaoAssistencial: R(raw.contrAssist) || R(colab.contribuicaoAssistencial) || 0,
+          valorTransporte: R(colab.valorTransporte),
+          isMotoboy: !!isMotoboy,
+        },
+        mesAno,
+        feriadosTrab,
+        folhaSalva: raw.id ? raw : null,
+      });
 
-      // INSS: recalcular usando mesma fórmula da FolhaPagamento
-      // Base INSS = Math.floor(salBase*(1+peri) + feriado) — padrão contabilidade
-      const salContrInss = Math.floor(salarioBase * (1 + percPericulosidade / 100) + feriado);
-      const inssValor = R(raw.inssValor) || calcINSS(salContrInss);
-      // Contribuição assistencial: do cadastro do colaborador ou do raw
-      const contrAssist = R(raw.contrAssist) || R(colab.contribuicaoAssistencial) || 0;
-      // Vale transporte: desconto = min(6% salBase, VT diário × 22)
-      const vtDiario = R(colab.valorTransporte);
-      const vtMensal = parseFloat((vtDiario * 22).toFixed(2));
-      const vtDesconto = vtMensal > 0 ? parseFloat(Math.min(parseFloat((salarioBase * 0.06).toFixed(2)), vtMensal).toFixed(2)) : 0;
-
+      // Extrair variáveis para compat com render existente
+      const salarioBase = engineResult.salarioBase;
+      const percPericulosidade = R(colab.periculosidade) || 0;
+      const valorPericulosidade = engineResult.periculosidadeValor;
+      const brutoHolerite = engineResult.holerite.bruto;
+      const inssValor = engineResult.inss;
+      const contrAssist = engineResult.contrAssistencial;
+      const vtDesconto = engineResult.valeTransporte;
       const descontosLegais = inssValor + contrAssist + vtDesconto;
-      // Usar valor contábil quando conferido (fonte de verdade)
-      const isConferido = raw.conferido === true || raw.conferido === 'true';
-      const liquidoContabil = R(raw.valorLiquidoContabil);
-      const liquidoHolerite = (isConferido && liquidoContabil > 0) ? liquidoContabil : (brutoHolerite - descontosLegais);
-      const fonteHolerite = (isConferido && liquidoContabil > 0) ? 'contabil' : 'calculado';
+      const liquidoHolerite = engineResult.holerite.liquido;
+      const fonteHolerite = engineResult.holerite.fonte;
 
       // --- Motoboy data ---
       const mbEntD = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entDia) || 0), 0) : 0;
