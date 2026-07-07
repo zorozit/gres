@@ -1344,7 +1344,9 @@ export const Extrato: React.FC = () => {
       const descontosFinais = descontosHoleriteReais + totalDescontosSemCaixinha;
 
       const saldo = brutoRealMes - descontosFinais - totalPagoGeral;
-      const quitado = Math.abs(saldo) < 2; // tolerância arredondamento
+      // Tolerância de arredondamento: até 0.5% do bruto ou R$20 (o menor)
+      const tolerancia = Math.min(brutoRealMes * 0.005, 20);
+      const quitado = Math.abs(saldo) <= Math.max(tolerancia, 1);
 
       // Compat com variáveis usadas no render
       const liquidoMes = brutoRealMes - descontosFinais;
