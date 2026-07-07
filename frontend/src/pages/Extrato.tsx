@@ -1288,13 +1288,27 @@ export const Extrato: React.FC = () => {
       const totalPagamentosSaidas = saidasPagamento.reduce((s, c) => s + c.total, 0);
 
       // --- Cálculos finais ---
-      const totalRemuneracao = liquidoHolerite + (temMotoboy ? mbVlVar : 0);
+      // Compensação de transporte para motoboy CLT:
+      // Adiantamentos de transporte são antecipações do variável motoboy.
+      // Devem ser SUBTRAÍDOS do variável, não somados como "pago separado".
+      const adtoTransporte = saidasPagamento
+        .filter(sp => sp.cat === 'Adiantamento Transporte')
+        .reduce((s, sp) => s + sp.total, 0);
+      const variavelLiquido = temMotoboy
+        ? Math.max(0, mbVlVar - (isMotoboy ? adtoTransporte : 0))
+        : 0;
+
+      const totalRemuneracao = liquidoHolerite + variavelLiquido;
       const liquidoMes = totalRemuneracao - totalDescontos;
 
       // PIXs reais do logPagamentos
       const totalPIXs = logPgtos.reduce((s: number, lp: any) => s + (parseFloat(lp.valor) || 0), 0);
-      // Pagamentos via saídas (transporte, adiantamento salário) que também são PIXs
-      const totalPagoGeral = totalPIXs + totalPagamentosSaidas;
+      // Pagamentos via saídas: para motoboy CLT, transporte já foi compensado no variável,
+      // então não entra no totalPagoGeral. Outros pagamentos (Adiantamento Especial) sim.
+      const pagtosSaidasSemTransp = isMotoboy
+        ? saidasPagamento.filter(sp => sp.cat !== 'Adiantamento Transporte').reduce((s, sp) => s + sp.total, 0)
+        : totalPagamentosSaidas;
+      const totalPagoGeral = totalPIXs + pagtosSaidasSemTransp;
       const saldo = liquidoMes - totalPagoGeral;
       const quitado = Math.abs(saldo) < 1;
 
@@ -1466,11 +1480,24 @@ export const Extrato: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Total variável */}
+                {/* Total variável bruto */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid rgba(255,255,255,0.25)' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Total Variável</span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Total Variável Bruto</span>
                   <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</span>
                 </div>
+                {/* Compensação transporte (se motoboy CLT) */}
+                {isMotoboy && adtoTransporte > 0 && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
+                      <span style={{ color: '#ef9a9a' }}>(-) Adiant. Transporte ({saidasPagamento.filter(sp => sp.cat === 'Adiantamento Transporte').reduce((s, sp) => s + sp.items.length, 0)}×)</span>
+                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(adtoTransporte)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', borderTop: '1px solid rgba(255,255,255,0.15)', marginTop: '4px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#69f0ae' }}>Variável Líquido</span>
+                      <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(variavelLiquido)}</span>
+                    </div>
+                  </>
+                )}
 
                 {/* Tabela diária expansível */}
                 <div style={{ cursor: 'pointer', padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '6px', fontSize: '11px', color: '#ffcc80', fontWeight: 'bold', marginTop: '10px' }}
@@ -1574,8 +1601,13 @@ export const Extrato: React.FC = () => {
                 </div>
                 {temMotoboy && (
                   <div>
-                    <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>Variável Motoboy</div>
-                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</div>
+                    <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>
+                      Variável Motoboy{isMotoboy && adtoTransporte > 0 ? ' (líq.)' : ''}
+                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(variavelLiquido)}</div>
+                    {isMotoboy && adtoTransporte > 0 && (
+                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>bruto {fmtMoeda(mbVlVar)} − transp {fmtMoeda(adtoTransporte)}</div>
+                    )}
                   </div>
                 )}
                 <div>
