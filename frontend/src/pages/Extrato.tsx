@@ -1289,8 +1289,6 @@ export const Extrato: React.FC = () => {
 
       // --- Cálculos finais ---
       // Compensação de transporte para motoboy CLT:
-      // Adiantamentos de transporte são antecipações do variável motoboy.
-      // Devem ser SUBTRAÍDOS do variável, não somados como "pago separado".
       const adtoTransporte = saidasPagamento
         .filter(sp => sp.cat === 'Adiantamento Transporte')
         .reduce((s, sp) => s + sp.total, 0);
@@ -1303,13 +1301,36 @@ export const Extrato: React.FC = () => {
 
       // PIXs reais do logPagamentos
       const totalPIXs = logPgtos.reduce((s: number, lp: any) => s + (parseFloat(lp.valor) || 0), 0);
-      // Pagamentos via saídas: para motoboy CLT, transporte já foi compensado no variável,
-      // então não entra no totalPagoGeral. Outros pagamentos (Adiantamento Especial) sim.
+
+      // Para motoboy CLT com holerite conferido:
+      // O holerite contábil já desconta o adiantamento anterior (~40% salário).
+      // O PIX dia 20 inclui adto salarial + variável até dia 19.
+      // Então o "total pago" relevante pra conferir com o líquido do mês:
+      //   totalPago = PIXs do log (sem transporte, já compensado no variável)
+      //              mas precisamos subtrair o adto salarial do PIX dia 20
+      //              porque o holerite já desconta ele.
+      //
+      // Simplificação: totalPagoGeral = soma dos PIXs (log) + saídas sem transporte.
+      // O saldo pode não ser zero porque o adto salarial está embutido no PIX dia 20
+      // e também descontado no holerite. Para motoboy CLT conferido, mostramos
+      // a conciliação por período.
       const pagtosSaidasSemTransp = isMotoboy
         ? saidasPagamento.filter(sp => sp.cat !== 'Adiantamento Transporte').reduce((s, sp) => s + sp.total, 0)
         : totalPagamentosSaidas;
+
+      // Para CLT conferido: o líquido do holerite JÁ é após desconto do adiantamento.
+      // Logo o bruto real do mês = holerite líquido + adto já recebido (rubrica "Adiantamento Anterior")
+      //                          + variável líquido (bruto - transporte)
+      //                          - descontos operacionais
+      const adtoAnteriorHolerite = engineResult.conferido && engineResult.holerite.rubricas
+        ? engineResult.holerite.rubricas
+            .filter((r: any) => (r.descricao || '').toLowerCase().includes('adiantamento'))
+            .reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0)
+        : 0;
+      // Bruto total real (antes de todos os pagamentos/descontos)
+      const brutoRealMes = liquidoHolerite + adtoAnteriorHolerite + variavelLiquido - totalDescontos;
       const totalPagoGeral = totalPIXs + pagtosSaidasSemTransp;
-      const saldo = liquidoMes - totalPagoGeral;
+      const saldo = brutoRealMes - totalPagoGeral;
       const quitado = Math.abs(saldo) < 1;
 
       const [anoStr, mesStr] = mesAno.split('-');
@@ -1343,8 +1364,13 @@ export const Extrato: React.FC = () => {
             <div style={{ padding: '16px', borderRadius: '12px', background: quitado ? 'linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%)' : 'linear-gradient(135deg, #fff9c4 0%, #fff176 100%)', borderLeft: `5px solid ${quitado ? '#2e7d32' : '#f9a825'}`, marginBottom: '16px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
                 <div>
-                  <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>Líquido do Mês</div>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(liquidoMes)}</div>
+                  <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                    {adtoAnteriorHolerite > 0 ? 'Bruto Real do Mês' : 'Líquido do Mês'}
+                  </div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(brutoRealMes)}</div>
+                  {adtoAnteriorHolerite > 0 && (
+                    <div style={{ fontSize: '9px', color: '#888' }}>holéquido {fmtMoeda(liquidoHolerite)} + adto {fmtMoeda(adtoAnteriorHolerite)}</div>
+                  )}
                 </div>
                 <div>
                   <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Pago</div>
@@ -1616,8 +1642,15 @@ export const Extrato: React.FC = () => {
                 </div>
               </div>
               <div style={{ borderTop: '2px solid rgba(255,255,255,0.3)', paddingTop: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>💵 Líquido do Mês</div>
-                <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(liquidoMes)}</div>
+                <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                  💵 {adtoAnteriorHolerite > 0 ? 'Bruto Real do Mês' : 'Líquido do Mês'}
+                </div>
+                <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(brutoRealMes)}</div>
+                {adtoAnteriorHolerite > 0 && (
+                  <div style={{ fontSize: '10px', color: '#b2dfdb', marginTop: '2px' }}>
+                    Líq. holerite {fmtMoeda(liquidoHolerite)} + adto ant. {fmtMoeda(adtoAnteriorHolerite)} + var. líq. {fmtMoeda(variavelLiquido)} − desc {fmtMoeda(totalDescontos)}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1715,7 +1748,7 @@ export const Extrato: React.FC = () => {
                 <div>
                   <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#555', textTransform: 'uppercase' }}>⚖️ Saldo</div>
                   <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
-                    Líquido {fmtMoeda(liquidoMes)} − Pago {fmtMoeda(totalPagoGeral)}
+                    {adtoAnteriorHolerite > 0 ? 'Bruto Real' : 'Líquido'} {fmtMoeda(brutoRealMes)} − Pago {fmtMoeda(totalPagoGeral)}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
