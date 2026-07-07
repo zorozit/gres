@@ -777,10 +777,26 @@ export default function FreelancerPagamento() {
         }
       }
 
-      // 6) Payslip automático
+      // 6) Payslip automático com composição
       const semLabel = fech.semanaLabel || `${fech.dataInicioBase}-${fech.dataFechamento}`;
       const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
-      operacoes.push({ tipo:'payslip', periodo:periodoKey, periodoInicio:fech.dataInicioBase||fech.dataFechamento, periodoFim:fech.dataFechamento, bruto:valorBrutoLote, transporte:valorTranspSaldo, descontos:valorDescSaidas+valorAbatEsp2, adiantamentos:R(fr.transporteAdiantado)||0, liquido:valorLiquido, nomeColaborador:fr.nome });
+      // Composição: detalha cada componente do pagamento
+      const composicaoFr: Array<{descricao:string;valor:number;tipo:string}> = [];
+      if (fr.total > 0) composicaoFr.push({ descricao: fr.isMotoboy ? 'Entregas + Chegadas' : 'Turnos trabalhados', valor: fr.total, tipo: 'vencimento' });
+      if (valorTranspSaldo > 0) composicaoFr.push({ descricao: 'Transporte (saldo)', valor: valorTranspSaldo, tipo: 'vencimento' });
+      if ((fr.caixinhaTotal || 0) > 0) composicaoFr.push({ descricao: 'Caixinhas', valor: fr.caixinhaTotal, tipo: 'variavel' });
+      if (valorDescSaidas > 0) composicaoFr.push({ descricao: 'Descontos operacionais', valor: -valorDescSaidas, tipo: 'desconto-operacional' });
+      if (valorAbatEsp2 > 0) composicaoFr.push({ descricao: 'Desconto Adiantamento Especial', valor: -valorAbatEsp2, tipo: 'desconto-operacional' });
+      operacoes.push({
+        tipo:'payslip', periodo:periodoKey,
+        periodoInicio:fech.dataInicioBase||fech.dataFechamento, periodoFim:fech.dataFechamento,
+        bruto:valorBrutoLote, transporte:valorTranspSaldo,
+        descontos:valorDescSaidas+valorAbatEsp2, adiantamentos:R(fr.transporteAdiantado)||0,
+        liquido:valorLiquido, nomeColaborador:fr.nome,
+        tipoContrato: 'Freelancer',
+        cargo: fr.isMotoboy ? 'Motoboy' : (fr.cargo || ''),
+        composicao: composicaoFr,
+      });
 
       // ── Enviar tudo de uma vez (atômico) ──
       const resp = await fetchAuth(`${apiUrl}/pagamento-batch`,{

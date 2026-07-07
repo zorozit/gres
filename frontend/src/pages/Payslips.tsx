@@ -7,6 +7,20 @@ import { fetchAuth } from '../utils/fetchAuth';
 const apiUrl = (import.meta as any).env?.VITE_API_ENDPOINT || '';
 const fmtMoeda = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+interface ComposicaoItem {
+  descricao: string;
+  valor: number;
+  tipo: string; // 'vencimento' | 'variavel' | 'desconto-operacional' | 'adiantamento'
+}
+
+interface RubricaItem {
+  codigo?: string;
+  descricao: string;
+  referencia?: string;
+  vencimento?: number;
+  desconto?: number;
+}
+
 interface Payslip {
   id: string;
   colaboradorId: string;
@@ -25,6 +39,17 @@ interface Payslip {
   pagamentos: string[];
   criadoEm: string;
   atualizadoEm: string;
+  // Fase 3
+  tipoContrato?: string;
+  cargo?: string;
+  cpf?: string;
+  chavePix?: string;
+  tipoPagamento?: string;
+  conferido?: boolean;
+  composicao?: ComposicaoItem[];
+  rubricas?: RubricaItem[];
+  formaPagamento?: string;
+  dataPagamento?: string;
 }
 
 export default function Payslips() {
@@ -187,8 +212,8 @@ export default function Payslips() {
             <thead>
               <tr style={{ background: '#f5f5f5' }}>
                 <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Período</th>
+                <th style={{ padding: '6px 8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Tipo</th>
                 <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Bruto</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Transporte</th>
                 <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Descontos</th>
                 <th style={{ padding: '6px 8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Líquido</th>
                 <th style={{ padding: '6px 8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Status</th>
@@ -199,11 +224,17 @@ export default function Payslips() {
               {grupo.payslips.map(p => (
                 <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
                   <td style={{ padding: '6px 8px' }}>
-                    <div>{p.periodo}</div>
-                    <div style={{ fontSize: '10px', color: '#999' }}>{p.periodoInicio} → {p.periodoFim}</div>
+                    <div>{p.periodoInicio?.slice(8)}/{p.periodoInicio?.slice(5,7)} → {p.periodoFim?.slice(8)}/{p.periodoFim?.slice(5,7)}</div>
+                    <div style={{ fontSize: '10px', color: '#999' }}>{p.tipoPagamento || p.periodo}</div>
+                  </td>
+                  <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                    <span style={{
+                      background: p.tipoContrato === 'CLT' ? '#e3f2fd' : '#f3e5f5',
+                      color: p.tipoContrato === 'CLT' ? '#1565c0' : '#7b1fa2',
+                      padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                    }}>{p.tipoContrato || 'Freelancer'}</span>
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(p.bruto)}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1565c0' }}>{p.transporte > 0 ? fmtMoeda(p.transporte) : '-'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>{p.descontos > 0 ? `-${fmtMoeda(p.descontos)}` : '-'}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold', color: '#2e7d32' }}>{fmtMoeda(p.liquido)}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'center' }}>{statusBadge(p.status)}</td>
@@ -232,25 +263,76 @@ export default function Payslips() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px' }}>
               <div><span style={{ color: '#666' }}>Colaborador:</span><br /><strong>{detalhe.nomeColaborador}</strong></div>
-              <div><span style={{ color: '#666' }}>Período:</span><br /><strong>{detalhe.periodo}</strong></div>
-              <div><span style={{ color: '#666' }}>Início:</span><br />{detalhe.periodoInicio}</div>
-              <div><span style={{ color: '#666' }}>Fim:</span><br />{detalhe.periodoFim}</div>
+              <div><span style={{ color: '#666' }}>Período:</span><br /><strong>{detalhe.periodoInicio} → {detalhe.periodoFim}</strong></div>
+              <div><span style={{ color: '#666' }}>Contrato:</span><br />
+                <span style={{
+                  background: detalhe.tipoContrato === 'CLT' ? '#e3f2fd' : '#f3e5f5',
+                  color: detalhe.tipoContrato === 'CLT' ? '#1565c0' : '#7b1fa2',
+                  padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
+                }}>{detalhe.tipoContrato || 'Freelancer'}</span>
+                {detalhe.tipoPagamento && <span style={{ fontSize: '11px', color: '#999', marginLeft: 6 }}>{detalhe.tipoPagamento}</span>}
+              </div>
+              <div><span style={{ color: '#666' }}>Pagamento:</span><br />
+                {detalhe.formaPagamento || 'PIX'} {detalhe.dataPagamento && `em ${detalhe.dataPagamento.split('-').reverse().join('/')}`}
+              </div>
+              {detalhe.conferido && <div style={{ gridColumn: '1/3' }}><span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px' }}>✅ Conferido (contabilidade)</span></div>}
             </div>
 
             <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #eee' }} />
 
+            {/* Composição detalhada */}
+            {detalhe.composicao && detalhe.composicao.length > 0 && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#333', marginBottom: '6px' }}>📊 Composição do Pagamento</div>
+                {detalhe.composicao.map((item: ComposicaoItem, i: number) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0',
+                    color: item.valor < 0 ? '#c62828' : item.tipo === 'variavel' ? '#e65100' : '#333' }}>
+                    <span>{item.valor < 0 ? '🔴' : '🟢'} {item.descricao}</span>
+                    <strong>{item.valor < 0 ? '-' : '+'}{fmtMoeda(Math.abs(item.valor))}</strong>
+                  </div>
+                ))}
+                <hr style={{ margin: '6px 0', border: 'none', borderTop: '1px dashed #ddd' }} />
+              </div>
+            )}
+
+            {/* Rubricas do holerite (CLT conferido) */}
+            {detalhe.rubricas && detalhe.rubricas.length > 0 && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#1565c0', marginBottom: '6px' }}>📄 Rubricas do Holerite</div>
+                <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f5f5f5' }}>
+                      <th style={{ padding: '3px 6px', textAlign: 'left' }}>Cód.</th>
+                      <th style={{ padding: '3px 6px', textAlign: 'left' }}>Descrição</th>
+                      <th style={{ padding: '3px 6px', textAlign: 'right' }}>Ref</th>
+                      <th style={{ padding: '3px 6px', textAlign: 'right', color: '#2e7d32' }}>Venc.</th>
+                      <th style={{ padding: '3px 6px', textAlign: 'right', color: '#c62828' }}>Desc.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalhe.rubricas.map((r: RubricaItem, i: number) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '2px 6px', color: '#666' }}>{r.codigo || ''}</td>
+                        <td style={{ padding: '2px 6px' }}>{r.descricao}</td>
+                        <td style={{ padding: '2px 6px', textAlign: 'right', color: '#999' }}>{r.referencia || ''}</td>
+                        <td style={{ padding: '2px 6px', textAlign: 'right', color: '#2e7d32', fontWeight: (r.vencimento||0)>0?'bold':'normal' }}>{(r.vencimento||0)>0 ? fmtMoeda(r.vencimento!) : ''}</td>
+                        <td style={{ padding: '2px 6px', textAlign: 'right', color: '#c62828', fontWeight: (r.desconto||0)>0?'bold':'normal' }}>{(r.desconto||0)>0 ? fmtMoeda(r.desconto!) : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <hr style={{ margin: '6px 0', border: 'none', borderTop: '1px dashed #ddd' }} />
+              </div>
+            )}
+
+            {/* Resumo financeiro */}
             <div style={{ fontSize: '14px', lineHeight: '2' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>💰 Bruto (dobras)</span> <strong>{fmtMoeda(detalhe.bruto)}</strong>
+                <span>💰 Bruto</span> <strong>{fmtMoeda(detalhe.bruto)}</strong>
               </div>
               {detalhe.transporte > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1565c0' }}>
                   <span>🚗 Transporte</span> <strong>+{fmtMoeda(detalhe.transporte)}</strong>
-                </div>
-              )}
-              {detalhe.adiantamentos > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#7b1fa2' }}>
-                  <span>📥 Adiantamentos</span> <strong>-{fmtMoeda(detalhe.adiantamentos)}</strong>
                 </div>
               )}
               {detalhe.descontos > 0 && (
@@ -265,9 +347,9 @@ export default function Payslips() {
             </div>
 
             <div style={{ marginTop: '12px', fontSize: '11px', color: '#999' }}>
-              <div>Status: {statusBadge(detalhe.status)}</div>
+              <div>Status: {statusBadge(detalhe.status)} &nbsp; {detalhe.formaPagamento && `• ${detalhe.formaPagamento}`}</div>
               <div>Criado: {detalhe.criadoEm ? new Date(detalhe.criadoEm).toLocaleString('pt-BR') : '-'}</div>
-              <div>Atualizado: {detalhe.atualizadoEm ? new Date(detalhe.atualizadoEm).toLocaleString('pt-BR') : '-'}</div>
+              {detalhe.chavePix && <div>Chave PIX: {detalhe.chavePix}</div>}
               {detalhe.pagamentos?.length > 0 && <div>IDs: {detalhe.pagamentos.join(', ')}</div>}
             </div>
           </div>

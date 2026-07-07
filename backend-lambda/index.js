@@ -1974,6 +1974,15 @@ exports.handler = async (event) => {
                 status: 'pago',
                 criadoEm: now,
                 atualizadoEm: now,
+                // ── Fase 3: campos extras ──
+                ...(op.tipoContrato && { tipoContrato: op.tipoContrato }),  // 'CLT' | 'Freelancer'
+                ...(op.cargo && { cargo: op.cargo }),
+                ...(op.cpf && { cpf: op.cpf }),
+                ...(op.chavePix && { chavePix: op.chavePix }),
+                ...(Array.isArray(op.composicao) && op.composicao.length > 0 && { composicao: op.composicao }),
+                ...(Array.isArray(op.rubricas) && op.rubricas.length > 0 && { rubricas: op.rubricas }),
+                ...(op.conferido != null && { conferido: op.conferido }),
+                ...(op.tipoPagamento && { tipoPagamento: op.tipoPagamento }), // 'adiantamento' | 'variavel' | 'dia05' | 'semanal'
               };
               await dynamodb.put({ TableName: 'gres-prod-payslips', Item: psItem }).promise();
               results.payslip = psId;

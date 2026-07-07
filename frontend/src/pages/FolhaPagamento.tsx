@@ -2114,10 +2114,23 @@ export default function FolhaPagamento() {
                     operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdTarget || undefined });
                   }
 
-                  // 5) Payslip
+                  // 5) Payslip com composição
                   const semLabel2 = fech.semanaLabel || mesAno;
                   const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
-                  operacoes.push({ tipo:'payslip', periodo:periodoKey2, periodoInicio:periodoIni||mesAno+'-01', periodoFim:periodoFim||mesAno+'-31', bruto:valorBrutoLote, transporte:fr.transporteSaldo||0, descontos:totalDebito+vlAbate, liquido:valorLiquido, nomeColaborador:fr.nome });
+                  const composicaoFr2: Array<{descricao:string;valor:number;tipo:string}> = [];
+                  if (fr.total > 0) composicaoFr2.push({ descricao: 'Turnos trabalhados', valor: fr.total, tipo: 'vencimento' });
+                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: 'Transporte (saldo)', valor: fr.transporteSaldo, tipo: 'vencimento' });
+                  if (totalDebito > 0) composicaoFr2.push({ descricao: 'Descontos operacionais', valor: -totalDebito, tipo: 'desconto-operacional' });
+                  if (vlAbate > 0) composicaoFr2.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbate, tipo: 'desconto-operacional' });
+                  operacoes.push({
+                    tipo:'payslip', periodo:periodoKey2,
+                    periodoInicio:periodoIni||mesAno+'-01', periodoFim:periodoFim||mesAno+'-31',
+                    bruto:valorBrutoLote, transporte:fr.transporteSaldo||0,
+                    descontos:totalDebito+vlAbate, liquido:valorLiquido,
+                    nomeColaborador:fr.nome,
+                    tipoContrato: 'Freelancer',
+                    composicao: composicaoFr2,
+                  });
 
                   // ── Enviar tudo de uma vez (atômico) ──
                   const resp = await fetchAuth(`${apiUrl}/pagamento-batch`, {
@@ -2833,6 +2846,65 @@ export default function FolhaPagamento() {
           });
         } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
       }
+      // ── Fase 3: Gerar Payslip CLT ──
+      try {
+        const mp = modalPagamento;
+        const tipoPs = modalPgtoTipo === 'Adiantamento' ? 'adiantamento' : 'variavel';
+        // Composição: detalha o que compõe este pagamento
+        const composicaoPs: Array<{descricao:string;valor:number;tipo:string}> = [];
+        for (const reg of novos) {
+          composicaoPs.push({
+            descricao: `${reg.forma} — ${reg.tipo}${reg.obs ? ' ('+reg.obs+')' : ''}`,
+            valor: reg.valor,
+            tipo: reg.tipo === 'Adiantamento' ? 'adiantamento' : 'variavel',
+          });
+        }
+        if (vlAbateCLT > 0) {
+          composicaoPs.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbateCLT, tipo: 'desconto-operacional' });
+        }
+        // Rubricas do holerite (quando conferido)
+        const rubricasPs = mp.raw?.rubricas || [];
+        const brutoPs = novos.reduce((s: number, r: any) => s + r.valor, 0);
+        const descontosPs = vlAbateCLT;
+        const liquidoPs = parseFloat((brutoPs - descontosPs).toFixed(2));
+
+        const psOps = [{
+          tipo: 'payslip' as const,
+          periodo: `${mesAno}-clt-${tipoPs}`,
+          periodoInicio: `${mesAno}-01`,
+          periodoFim: `${mesAno}-${new Date(parseInt(mesAno.split('-')[0]), parseInt(mesAno.split('-')[1]), 0).getDate()}`,
+          bruto: brutoPs,
+          transporte: mp.valeTransporte || 0,
+          descontos: descontosPs,
+          adiantamentos: 0,
+          liquido: liquidoPs,
+          nomeColaborador: mp.nome,
+          tipoContrato: 'CLT',
+          cargo: mp.cargo || '',
+          cpf: mp.cpf || '',
+          chavePix: mp.chavePix || '',
+          tipoPagamento: tipoPs,
+          conferido: mp.conferido || false,
+          composicao: composicaoPs,
+          ...(rubricasPs.length > 0 ? { rubricas: rubricasPs } : {}),
+        }];
+
+        await fetchAuth(`${apiUrl}/pagamento-batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+          body: JSON.stringify({
+            colaboradorId: mp.colaboradorId,
+            unitId,
+            mes: mesAno,
+            dataPagamento: dataPrimeiro,
+            formaPagamento: novos[0]?.forma || 'PIX',
+            operacoes: psOps,
+          }),
+        });
+      } catch (psErr) {
+        console.warn('Payslip CLT não gerado (pagamento OK):', psErr);
+      }
+
       // Atualiza folhasLocais E folhasDB para que ao reabrir o modal o estado persista corretamente
       const atualizaFolha = (f: any) => {
         if (f.colaboradorId !== modalPagamento.colaboradorId) return f;
