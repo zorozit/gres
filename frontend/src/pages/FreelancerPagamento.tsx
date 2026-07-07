@@ -22,6 +22,8 @@ import { fetchAuth } from '../utils/fetchAuth';
 import {
   semanasFechamento as semanasFechamentoEngine,
   fmtDataISO as fmtDataISOEngine,
+  calcularTransporteFreelancerPeriodo,
+  calcularLiquidoFreelancer,
 } from '../engine';
 
 
@@ -451,10 +453,9 @@ export default function FreelancerPagamento() {
 
         const totalBrutoPeriodo = parseFloat((total + totalJaPago).toFixed(2));
 
-        /* transporte */
+        /* transporte — via engine */
         const valorTransp = R(fr.valorTransporte);
         const transpAdtBruto  = calcTransporteAdiantado(cid, mesIni2, mesFim2, saidasTranspMes);
-        // Calcular quanto do adiantamento já foi consumido (saídas "Desconto Transporte" já pagas no mês)
         const transpJaConsumido = saidasTranspMes.filter((s:any) => {
           const t = s.tipo||s.origem||s.referencia||'';
           const dt = s.dataPagamento||s.data||'';
@@ -462,10 +463,15 @@ export default function FreelancerPagamento() {
             && dt>=mesIni2 && dt<=mesFim2
             && (s.pago===true || s.pago==='true' || s.pagamentoIdLigado);
         }).reduce((acc:number,s:any)=>acc+R(s.valor),0);
-        const transpAdtMes   = Math.max(0, transpAdtBruto - transpJaConsumido);
-        const transp          = valorTransp>0 ? diasTrabalhados * valorTransp : 0;
-        const transp_adt      = Math.min(transpAdtMes, transp);
-        const transp_saldo    = Math.max(0, transp - transp_adt);
+        const transpResult = calcularTransporteFreelancerPeriodo({
+          diasTrabalhados,
+          valorTransporteDiario: valorTransp,
+          adiantamentoTransporteMes: transpAdtBruto,
+          descontoTransporteJaConsumido: transpJaConsumido,
+        });
+        const transpAdtMes   = transpResult.adiantamentoDisponivel;
+        const transp_adt      = transpResult.adiantamentoAbatido;
+        const transp_saldo    = transpResult.saldo;
 
         /* caixinha total (controle-motoboy + saídas Caixinha) — exclui já vinculadas a batch */
         const saidasCaixFr = saidasPer.filter((s:any) => {
@@ -506,8 +512,14 @@ export default function FreelancerPagamento() {
         /* saldo especial */
         const saldoEspecialAberto = saldos[cid] || 0;
 
-        /* total líquido */
-        const totalLiquido = parseFloat(Math.max(0, total + transp_saldo + caixinhaTotal - saidasDesconto).toFixed(2));
+        /* total líquido — via engine */
+        const liqResult = calcularLiquidoFreelancer({
+          totalTurnos: total,
+          transporteSaldo: transp_saldo,
+          caixinhaTotal,
+          descontos: saidasDesconto,
+        });
+        const totalLiquido = liqResult.liquido;
 
         /* pago? */
         const pago = diasJaPagosDetalhe.length>0 && dobras===0;

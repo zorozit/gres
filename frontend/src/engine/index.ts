@@ -57,6 +57,22 @@ export type {
 export { calcularVariavelMotoboy } from './motoboy';
 export type { MotoboyVariavelInput, MotoboyVariavelResult } from './motoboy';
 
+// Folha Freelancer
+export {
+  calcularTransporteFreelancerPeriodo,
+  calcularDescontosFreelancer,
+  calcularLiquidoFreelancer,
+  TIPOS_DESCONTO_FREELANCER,
+  TIPOS_EXCLUIDOS_DESCONTO_FREELANCER,
+} from './folhaFreelancer';
+export type {
+  TransporteFreelancerInput as TranspFreelancerPeriodoInput,
+  TransporteFreelancerResult as TranspFreelancerPeriodoResult,
+  DescontosFreelancerInput,
+  DescontosFreelancerResult,
+  LiquidoFreelancerInput,
+} from './folhaFreelancer';
+
 // Demonstrativo (composição completa)
 export { montarDemonstrativo } from './demonstrativo';
 export type { DemonstrativoInput, DemonstrativoResult, DemonstrativoSecao } from './demonstrativo';
