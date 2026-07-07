@@ -8,11 +8,13 @@ import * as XLSX from 'xlsx';
 import { isFeriado } from '../utils/feriados';
 import { fetchAuth } from '../utils/fetchAuth';
 import {
-  calcINSS as calcINSSEngine,
   semanasFechamento as semanasFechamentoEngine,
   fmtDataBR as fmtDataBREngine,
   fmtDataISO as fmtDataISOEngine,
+  calcularFolhaCLT,
+  calcularVariavelMotoboy,
 } from '../engine';
+import type { ControleDiaMotoboy } from '../engine';
 
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
@@ -240,7 +242,6 @@ const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
  * Tabela progressiva INSS 2026 — faixa 1 = R$ 1.621,00.
  * Referência: engine/inss.ts (FONTE ÚNICA)
  */
-const calcINSS = calcINSSEngine;
 const semanasFechamento = semanasFechamentoEngine;
 const fmtDataBR = (d: Date) => fmtDataBREngine(d);
 const fmtDataISO = (d: Date) => fmtDataISOEngine(d);
@@ -621,100 +622,87 @@ export default function FolhaPagamento() {
   const calcularTodasFolhas = (): FolhaMensal[] => {
     const folhas: FolhaMensal[] = [];
 
+    // ── Helper: buscar registro salvo no DDB (CLT mensal, sem semana, sem freelancer) ──
+    const buscarSalva = (colabId: string) => folhasDB.find(f =>
+      f.colaboradorId === colabId
+      && f.mes === mesAno
+      && !f.semana
+      && f.tipo !== 'freelancer-dia'
+      && f.tipo !== 'freelancer-noite'
+    );
+
+    // ── Helper: montar campos de estado/pagamento a partir do registro salvo ──
+    const montarEstadoPagamento = (colabId: string, salva: any) => ({
+      saldoEspecialAberto: parseFloat((saldosEspeciais[colabId] || 0).toFixed(2)),
+      pago: salva?.pago === true,
+      dataPagamento: salva?.dataPagamento,
+      pagoAdiantamento: salva?.pagoAdiantamento === true
+        || (salva?.pago === true && salva?.pagoAdiantamento === undefined && salva?.pagoVariavel === undefined),
+      dataPgtoAdiantamento: salva?.dataPgtoAdiantamento
+        || (salva?.pago === true && salva?.pagoAdiantamento === undefined ? salva?.dataPagamento : undefined),
+      pagoVariavel: salva?.pagoVariavel === true,
+      dataPgtoVariavel: salva?.dataPgtoVariavel,
+      logPagamentos: salva?.logPagamentos || [],
+    });
+
+    // ═══ CLT NÃO-MOTOBOY ═══
     for (const c of colaboradores) {
       const isMotoboy = motoboys.some(m => m.id === c.id || m.cpf === c.cpf);
       if (isMotoboy) continue;
-      const salBase = R(c.salario);
-      const peri = R(c.periculosidade) / 100;
-      // Detectar feriados trabalhados (presença confirmada em data de feriado)
+
+      // Feriados trabalhados (do componente: escalas + isFeriado)
       const escalasMes = escalas.filter(e =>
         e.colaboradorId === c.id && (e.data || '').startsWith(mesAno)
       );
       const feriadosTrab = escalasMes.filter(e =>
         isFeriado(e.data) && (e.presenca === 'presente' || e.presencaNoite === 'presente')
       ).length;
-      // Salário por dia (igual PDF: salBase/30) - dobra de feriado = 1 dia adicional
-      const salDiaCLT = salBase / 30;
-      const feriadosValor = parseFloat((feriadosTrab * salDiaCLT).toFixed(2));
-      // Sal.Contr.INSS = truncado no inteiro (padrão da contabilidade)
-      const salContrInss = Math.floor(salBase * (1 + peri) + feriadosValor);
-      const inss = calcINSS(salContrInss);
-      // Contr. Assist. agora vem do cadastro (cod 1000 da folha). Default 0.
-      const contrAssist = R((c as any).contribuicaoAssistencial);
-      // Vale Transporte: desconto = mín(6% salBase, VT mensal = vtDiário × 22 dias)
-      const vtDiario = R((c as any).valorTransporte);
-      const vtMensal = parseFloat((vtDiario * 22).toFixed(2));
-      const vtDesconto6pct = parseFloat((salBase * 0.06).toFixed(2));
-      const valeTransporte = vtMensal > 0 ? parseFloat(Math.min(vtDesconto6pct, vtMensal).toFixed(2)) : 0;
-      const adiantPct = 0.40;
-      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - padrão contabilidade
-      const adiantValor = parseFloat((salBase * adiantPct).toFixed(2));
-      // Diferença = 60% salBase + periculosidade + feriados (paga no dia 05)
-      const periBruto = salBase * peri;
-      const difSal = parseFloat((salBase * (1 - adiantPct) + periBruto + feriadosValor).toFixed(2));
-      const saldoFinal = difSal - inss - contrAssist - valeTransporte;
-      // Cálculo contábil: Cód.16 = 40% do salário BASE (sem periculosidade)
-      const adtoContabil = parseFloat((salBase * 0.40).toFixed(2));
-      const adtoLiquido = Math.floor(adtoContabil); // número inteiro (liquido real)
-      const arredPos = parseFloat((adtoLiquido + 1 - adtoContabil > 0 && adtoContabil % 1 !== 0 ? adtoLiquido + 1 - adtoContabil : 0).toFixed(2));
-      const arredNeg = parseFloat((adtoContabil - adtoLiquido > 0 ? adtoContabil - adtoLiquido : 0).toFixed(2));
-      // CRÍTICO: filtra por (mes, sem semana, sem tipo='freelancer-dia').
-      // Folha CLT é mensal — ignora pagamentos de freelancer/dia/semana que vazariam aqui.
-      const salva = folhasDB.find(f =>
-        f.colaboradorId === c.id
-        && f.mes === mesAno
-        && !f.semana
-        && f.tipo !== 'freelancer-dia'
-        && f.tipo !== 'freelancer-noite'
-      );
-      // ── Override contábil: quando conferido pela contabilidade, usar líquido do holerite ──
-      const temContab = salva?.conferido === true && salva?.valorLiquidoContabil != null;
-      const liquidoContab = temContab ? parseFloat(salva.valorLiquidoContabil) || 0 : 0;
-      // Se contab conferido: pgto dia 5 = líquido contabilidade (já desconta INSS/VT/adiantamento/faltas/etc)
-      // Se não: pgto dia 5 = cálculo interno (difSal - inss - contrAssist - valeTransporte)
-      const pgtosDia05Final = temContab ? liquidoContab : parseFloat(Math.max(0, saldoFinal).toFixed(2));
-      const saldoFinalFinal = temContab ? liquidoContab : parseFloat(saldoFinal.toFixed(2));
+
+      const salva = buscarSalva(c.id);
+
+      // ── ENGINE: cálculo puro ──
+      const calc = calcularFolhaCLT({
+        colaborador: {
+          id: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
+          salario: R(c.salario),
+          periculosidade: R(c.periculosidade),
+          contribuicaoAssistencial: R((c as any).contribuicaoAssistencial),
+          valorTransporte: R((c as any).valorTransporte),
+          isMotoboy: false,
+        },
+        mesAno,
+        feriadosTrab,
+        folhaSalva: salva as any,
+      });
 
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
-        salarioBase: salBase, periculosidade: salBase * peri,
-        inss: temContab ? (parseFloat(salva.inssValor) || inss) : inss,
-        salContrInss: temContab ? (parseFloat(salva.salContrInss) || salContrInss) : salContrInss,
-        valeTransporte: temContab ? (parseFloat(salva.valeTransporteContabil) || valeTransporte) : valeTransporte,
-        contrAssistencial: contrAssist,
-        adiantamentoSalario: adiantPct * 100, adiantamentoValor: adiantValor,
-        adtoContabil, adtoLiquido, arredondamentoPos: arredPos, arredondamentoNeg: arredNeg,
-        diferencaSalario: temContab ? (liquidoContab + (parseFloat(salva.inssValor) || inss) + contrAssist + (parseFloat(salva.valeTransporteContabil) || valeTransporte)) : difSal,
-        feriadosTrab, feriadosValor,
+        salarioBase: calc.salarioBase, periculosidade: calc.periculosidadeValor,
+        inss: calc.inss, salContrInss: calc.salContrInss,
+        valeTransporte: calc.valeTransporte, contrAssistencial: calc.contrAssistencial,
+        adiantamentoSalario: 40, adiantamentoValor: calc.adiantamentoValor,
+        adtoContabil: calc.adtoContabil, adtoLiquido: calc.adtoLiquido,
+        arredondamentoPos: calc.arredondamentoPos, arredondamentoNeg: calc.arredondamentoNeg,
+        diferencaSalario: calc.diferencaSalario,
+        feriadosTrab, feriadosValor: calc.feriadosValor,
         variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
-        pgtosDia20: adiantValor, pgtosDia05: pgtosDia05Final,
-        outrosPgtos: 0, saldoFinal: saldoFinalFinal,
-        conferido: temContab,
-        valorLiquidoContabil: liquidoContab || undefined,
-        fonteContabil: temContab,
-        saldoEspecialAberto: parseFloat((saldosEspeciais[c.id] || 0).toFixed(2)),
-        // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
-        // como adiantamento. Mantem-se como adto pago para nao perder histórico.
-        // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
-        pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento === true
-          || (salva?.pago === true && salva?.pagoAdiantamento === undefined && salva?.pagoVariavel === undefined),
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || (salva?.pago === true && salva?.pagoAdiantamento === undefined ? salva?.dataPagamento : undefined),
-        pagoVariavel: salva?.pagoVariavel === true,
-        dataPgtoVariavel: salva?.dataPgtoVariavel,
-        logPagamentos: salva?.logPagamentos || [],
+        pgtosDia20: calc.adiantamentoValor, pgtosDia05: calc.pgtosDia05,
+        outrosPgtos: 0, saldoFinal: calc.saldoFinal,
+        conferido: calc.conferido,
+        valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
+        fonteContabil: calc.fonteContabil,
+        ...montarEstadoPagamento(c.id, salva),
         raw: c,
       });
     }
 
+    // ═══ MOTOBOY CLT ═══
     for (const m of motoboys) {
-      // Apenas motoboys CLT entram na folha CLT; Freelancers são tratados na aba de Freelancers
       if (m.vinculo === 'Freelancer') continue;
       const controle: ControleDia[] = controlesMap[m.id] || [];
-      const salBase = R(m.salario);
-      const peri = R(m.periculosidade ?? 30) / 100;
-      // Detectar feriados trabalhados
+
+      // Feriados trabalhados
       const colabIdMot = m.colaboradorId || m.id;
       const escalasMesM = escalas.filter(e =>
         (e.colaboradorId === m.id || e.colaboradorId === colabIdMot)
@@ -723,121 +711,83 @@ export default function FolhaPagamento() {
       const feriadosTrabM = escalasMesM.filter(e =>
         isFeriado(e.data) && (e.presenca === 'presente' || e.presencaNoite === 'presente')
       ).length;
-      const salDiaMot = salBase / 30;
-      const feriadosValorM = parseFloat((feriadosTrabM * salDiaMot).toFixed(2));
-      // Sal.Contr.INSS = truncado no inteiro (padrão da contabilidade)
-      const salContrInssMot = Math.floor(salBase * (1 + peri) + feriadosValorM);
-      const periculosidadeValor = salBase * peri;
-      const inss = calcINSS(salContrInssMot);
-      // Vale Transporte motoboy CLT
-      const vtDiarioMot = R((m as any).valorTransporte);
-      const vtMensalMot = parseFloat((vtDiarioMot * 22).toFixed(2));
-      const vtDesc6pctMot = parseFloat((salBase * 0.06).toFixed(2));
-      const valeTransporteMot = vtMensalMot > 0 ? parseFloat(Math.min(vtDesc6pctMot, vtMensalMot).toFixed(2)) : 0;
-      // Contr. Assist. (Sindimoto cod 1305) agora do cadastro. Fallback 32.62 para motoboys legados.
-      const contrAssist = R((m as any).contribuicaoAssistencial) || 32.62;
-      const dia19 = `${mesAno}-19`;
 
-      // Mês anterior (para o pagamento Dia 5)
-      const [aMA, mMA] = mesAno.split('-').map(Number);
-      const dMesAnt = new Date(aMA, mMA - 2, 1);
-      const mesAnt = `${dMesAnt.getFullYear()}-${String(dMesAnt.getMonth() + 1).padStart(2, '0')}`;
-      const dia19MesAnt = `${mesAnt}-19`;
-      const ultimoDiaMesAnt = `${mesAnt}-31`; // string compare é ok pra YYYY-MM-DD
+      const salva = buscarSalva(m.id);
 
-      // Saídas do motoboy no período - complementam o controle quando não há dados salvos
+      // ── ENGINE: cálculo CLT puro (salário, INSS, VT, adiantamento, override contábil) ──
+      const calc = calcularFolhaCLT({
+        colaborador: {
+          id: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
+          salario: R(m.salario),
+          periculosidade: R(m.periculosidade ?? 30),
+          contribuicaoAssistencial: R((m as any).contribuicaoAssistencial) || 32.62,
+          valorTransporte: R((m as any).valorTransporte),
+          isMotoboy: true,
+        },
+        mesAno,
+        feriadosTrab: feriadosTrabM,
+        folhaSalva: salva as any,
+      });
+
+      // ── ENGINE: variável motoboy (entregas + caixinhas por período) ──
+      // Converter controle local (ControleDia) para engine format (ControleDiaMotoboy)
+      const controlesEngine: ControleDiaMotoboy[] = controle.map(l => ({
+        data: l.data,
+        entDia: R(l.entDia), entNoite: R(l.entNoite),
+        caixinhaDia: R(l.caixinhaDia), caixinhaNoite: R(l.caixinhaNoite),
+      }));
+      const varResult = calcularVariavelMotoboy({
+        controles: controlesEngine,
+        valorEntrega: R(m.valorEntrega),
+        mesAno,
+        dividirPorPeriodo: true,
+      });
+
+      // Fallback: saídas do motoboy quando não há controle
+      let { varAte19, varDe20a31, varDe20a31MesAnt, totalMesAtual: totalVariavel } = varResult;
       const saidasMotoboy = saidasPeriodo.filter(s => s.colaboradorId === m.id);
       const totalPagoSaidas = saidasMotoboy.reduce((sum: number, s: any) => sum + R(s.valor), 0);
 
-      let varAte19 = 0, varDe20a31 = 0;
-      // Variável 20-31 do MÊS ANTERIOR (entra no Pgto Dia 5)
-      let varDe20a31MesAnt = 0;
-      const vEntregaCLT = R(m.valorEntrega);
-      if (controle.length > 0) {
-        // Usar controle salvo
-        // Para CLT motoboy: variável = (entDia+entNoite)×valorEntrega + caixinhaDia + caixinhaNoite
-        // NÃO usar vlVariavel salvo — pode estar zerado em registros antigos
-        for (const linha of controle) {
-          const entregas = (R(linha.entDia) + R(linha.entNoite)) * vEntregaCLT;
-          const caixinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
-          const vlEfetivo = parseFloat((entregas + caixinha).toFixed(2));
-          // Linhas do mês atual: dividir entre até 19 e 20-31
-          if (linha.data >= `${mesAno}-01` && linha.data <= `${mesAno}-31`) {
-            if (linha.data <= dia19) varAte19 += vlEfetivo;
-            else varDe20a31 += vlEfetivo;
-          } else if (linha.data > dia19MesAnt && linha.data <= ultimoDiaMesAnt) {
-            // Linhas do mês anterior 20-31: entram no pgto dia 5
-            varDe20a31MesAnt += vlEfetivo;
-          }
-        }
-      } else if (saidasMotoboy.length > 0) {
-        // Fallback: calcular variável a partir das saídas (só mês atual)
+      if (controle.length === 0 && saidasMotoboy.length > 0) {
+        const dia19 = `${mesAno}-19`;
+        varAte19 = 0; varDe20a31 = 0;
         for (const s of saidasMotoboy) {
           if ((s.data || '') <= dia19) varAte19 += R(s.valor);
           else varDe20a31 += R(s.valor);
         }
+        varAte19 = parseFloat(varAte19.toFixed(2));
+        varDe20a31 = parseFloat(varDe20a31.toFixed(2));
+        totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
       }
-      varAte19 = parseFloat(varAte19.toFixed(2));
-      varDe20a31 = parseFloat(varDe20a31.toFixed(2));
-      varDe20a31MesAnt = parseFloat(varDe20a31MesAnt.toFixed(2));
-      const totalVariavel = parseFloat((varAte19 + varDe20a31).toFixed(2));
-      // Adiantamento = 40% do SALÁRIO BASE (sem periculosidade) - igual ao PDF Cód.16
-      const adiantValor = parseFloat((salBase * 0.40).toFixed(2));
-      // Diferença = 60% salBase + periculosidade total (paga no dia 05)
-      const difSal = parseFloat((salBase * 0.60 + periculosidadeValor + feriadosValorM).toFixed(2));
-      const descontos = inss + contrAssist + valeTransporteMot;
-      const salBrutoMot = salBase * (1 + peri) + feriadosValorM;
+
+      // Motoboy: pgto dia 05 = variável 20-31 + difSal - descontos (ou contábil)
+      const descontos = calc.inss + calc.contrAssistencial + calc.valeTransporte;
+      const difSal = calc.diferencaSalario;
+      const salBrutoMot = calc.salarioBase * (1 + R(m.periculosidade ?? 30) / 100) + calc.feriadosValor;
       const saldoFinal = parseFloat((totalVariavel + salBrutoMot - descontos).toFixed(2));
       const pgtosDia05 = parseFloat(Math.max(0, varDe20a31 + difSal - descontos).toFixed(2));
-      // Cálculo contábil motoboy: Cód.16 = 40% do salário BASE (sem periculosidade)
-      const adtoContabilMoto = parseFloat((salBase * 0.40).toFixed(2));
-      const adtoLiquidoMoto = Math.floor(adtoContabilMoto);
-      const arredPosMoto = parseFloat((adtoLiquidoMoto + 1 - adtoContabilMoto > 0 && adtoContabilMoto % 1 !== 0 ? adtoLiquidoMoto + 1 - adtoContabilMoto : 0).toFixed(2));
-      const arredNegMoto = parseFloat((adtoContabilMoto - adtoLiquidoMoto > 0 ? adtoContabilMoto - adtoLiquidoMoto : 0).toFixed(2));
-      // CRÍTICO: filtra por (mes, sem semana, sem tipo='freelancer-dia/noite')
-      const salva = folhasDB.find(f =>
-        f.colaboradorId === m.id
-        && f.mes === mesAno
-        && !f.semana
-        && f.tipo !== 'freelancer-dia'
-        && f.tipo !== 'freelancer-noite'
-      );
-      // ── Override contábil motoboy CLT: quando conferido pela contabilidade ──
-      const temContabM = salva?.conferido === true && salva?.valorLiquidoContabil != null;
-      const liquidoContabM = temContabM ? parseFloat(salva.valorLiquidoContabil) || 0 : 0;
-      const pgtosDia05M = temContabM ? liquidoContabM : pgtosDia05;
-      const saldoFinalM = temContabM ? liquidoContabM : saldoFinal;
+      const pgtosDia05Final = calc.conferido ? calc.valorLiquidoContabil : pgtosDia05;
+      const saldoFinalFinal = calc.conferido ? calc.valorLiquidoContabil : saldoFinal;
 
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
-        salarioBase: salBase, periculosidade: periculosidadeValor,
-        inss: temContabM ? (parseFloat(salva.inssValor) || inss) : inss,
-        salContrInss: temContabM ? (parseFloat(salva.salContrInss) || salContrInssMot) : salContrInssMot,
-        valeTransporte: temContabM ? (parseFloat(salva.valeTransporteContabil) || valeTransporteMot) : valeTransporteMot,
-        contrAssistencial: contrAssist,
-        feriadosTrab: feriadosTrabM, feriadosValor: feriadosValorM,
-        adiantamentoSalario: 40, adiantamentoValor: adiantValor,
-        diferencaSalario: temContabM ? difSal : difSal,
-        adtoContabil: adtoContabilMoto, adtoLiquido: adtoLiquidoMoto,
-        arredondamentoPos: arredPosMoto, arredondamentoNeg: arredNegMoto,
-        variavelAte19: varAte19, variavelDe20a31: varDe20a31, variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
-        pgtosDia20: varAte19 + adiantValor, pgtosDia05: pgtosDia05M,
-        outrosPgtos: totalPagoSaidas, saldoFinal: saldoFinalM,
-        conferido: temContabM,
-        valorLiquidoContabil: liquidoContabM || undefined,
-        fonteContabil: temContabM,
-        saldoEspecialAberto: parseFloat((saldosEspeciais[m.id] || 0).toFixed(2)),
-        // Compat: registros LEGADOS (pago=true sem pagoAdto/pagoVar) eram tratados
-        // como adiantamento. Mantem-se como adto pago para nao perder histórico.
-        // Novos pagamentos sempre setam pagoAdto e pagoVar explicitamente.
-        pago: salva?.pago === true, dataPagamento: salva?.dataPagamento,
-        pagoAdiantamento: salva?.pagoAdiantamento === true
-          || (salva?.pago === true && salva?.pagoAdiantamento === undefined && salva?.pagoVariavel === undefined),
-        dataPgtoAdiantamento: salva?.dataPgtoAdiantamento || (salva?.pago === true && salva?.pagoAdiantamento === undefined ? salva?.dataPagamento : undefined),
-        pagoVariavel: salva?.pagoVariavel === true,
-        dataPgtoVariavel: salva?.dataPgtoVariavel,
-        logPagamentos: salva?.logPagamentos || [],
+        salarioBase: calc.salarioBase, periculosidade: calc.periculosidadeValor,
+        inss: calc.inss, salContrInss: calc.salContrInss,
+        valeTransporte: calc.valeTransporte, contrAssistencial: calc.contrAssistencial,
+        feriadosTrab: feriadosTrabM, feriadosValor: calc.feriadosValor,
+        adiantamentoSalario: 40, adiantamentoValor: calc.adiantamentoValor,
+        diferencaSalario: difSal,
+        adtoContabil: calc.adtoContabil, adtoLiquido: calc.adtoLiquido,
+        arredondamentoPos: calc.arredondamentoPos, arredondamentoNeg: calc.arredondamentoNeg,
+        variavelAte19: varAte19, variavelDe20a31: varDe20a31,
+        variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
+        pgtosDia20: varAte19 + calc.adiantamentoValor, pgtosDia05: pgtosDia05Final,
+        outrosPgtos: totalPagoSaidas, saldoFinal: saldoFinalFinal,
+        conferido: calc.conferido,
+        valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
+        fonteContabil: calc.fonteContabil,
+        ...montarEstadoPagamento(m.id, salva),
         raw: m,
       });
     }
