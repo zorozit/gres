@@ -19,6 +19,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { fetchAuth } from '../utils/fetchAuth';
+import {
+  semanasFechamento as semanasFechamentoEngine,
+  fmtDataISO as fmtDataISOEngine,
+} from '../engine';
 
 
 /* ─── Helpers (idênticos à FolhaPagamento) ────────────────────────────────── */
@@ -28,21 +32,9 @@ const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 const isMigradoReg  = (r: any) => r.migrado   === true || r.migrado   === 'True' || r.migrado   === 'true';
 const isEstornadoReg = (r: any) => r.estornado === true || r.estornado === 'True' || r.estornado === 'true';
 
-function semanasFechamento(ano: number, mes: number): { inicio: Date; fim: Date }[] {
-  const semanas: { inicio: Date; fim: Date }[] = [];
-  const primeiro = new Date(ano, mes - 1, 1);
-  const ultimo   = new Date(ano, mes, 0);
-  let cur = new Date(primeiro);
-  while (cur <= ultimo) {
-    const inicio = new Date(cur);
-    const fim    = new Date(cur);
-    while (fim.getDay() !== 0 && fim < ultimo) fim.setDate(fim.getDate() + 1);
-    semanas.push({ inicio, fim: new Date(Math.min(fim.getTime(), ultimo.getTime())) });
-    cur = new Date(fim); cur.setDate(cur.getDate() + 1);
-  }
-  return semanas;
-}
-function fmtDataISO(d: Date) { return d.toISOString().split('T')[0]; }
+/** Semanas e formatadores: importados do engine centralizado */
+const semanasFechamento = semanasFechamentoEngine;
+const fmtDataISO = (d: Date) => fmtDataISOEngine(d);
 
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export default function FreelancerPagamento() {

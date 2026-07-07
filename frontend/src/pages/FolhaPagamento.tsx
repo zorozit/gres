@@ -7,6 +7,12 @@ import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 import { isFeriado } from '../utils/feriados';
 import { fetchAuth } from '../utils/fetchAuth';
+import {
+  calcINSS as calcINSSEngine,
+  semanasFechamento as semanasFechamentoEngine,
+  fmtDataBR as fmtDataBREngine,
+  fmtDataISO as fmtDataISOEngine,
+} from '../engine';
 
 
 /* ─── Tipos ──────────────────────────────────────────────────────────────── */
@@ -227,62 +233,17 @@ const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 /**
+/**
+ * INSS, semanas, formatadores: importados do engine centralizado.
+ * Não definir funções de cálculo localmente — usar engine/.
+ *
  * Tabela progressiva INSS 2026 — faixa 1 = R$ 1.621,00.
- * A Portaria MPS 1.730/2025 publicou R$ 1.518,00, porém o sistema EMS da
- * contabilidade utiliza R$ 1.621,00 como limite da 1ª faixa (salário mínimo
- * 2026 = R$ 1.622,00 menos arredondamento de centavos), conforme verificado
- * cruzando os INSS de todos os funcionários do holerite Maio/2026.
- * Base: Sal.Contr.INSS = Math.floor(salBase*(1+peri) + feriadosValor).
+ * Referência: engine/inss.ts (FONTE ÚNICA)
  */
-function calcINSS(salarioBruto: number): number {
-  const tabela = [
-    { ate: 1621.00, aliq: 0.075 },   // faixa usada pelo EMS (≈ salário mínimo 2026)
-    { ate: 2793.88, aliq: 0.09 },
-    { ate: 4190.83, aliq: 0.12 },
-    { ate: 8157.41, aliq: 0.14 },
-  ];
-  let inss = 0;
-  let base = salarioBruto;
-  let anterior = 0;
-  for (const faixa of tabela) {
-    if (base <= 0) break;
-    const faixaVal = Math.min(base, faixa.ate - anterior);
-    inss += faixaVal * faixa.aliq;
-    base -= faixaVal;
-    anterior = faixa.ate;
-    if (salarioBruto <= faixa.ate) break;
-  }
-  return parseFloat(inss.toFixed(2));
-}
-
-/** Calcula as semanas de fechamento de um mês (domingo = final de semana) */
-function semanasFechamento(ano: number, mes: number): { inicio: Date; fim: Date }[] {
-  const semanas: { inicio: Date; fim: Date }[] = [];
-  const primeiro = new Date(ano, mes - 1, 1);
-  const ultimo = new Date(ano, mes, 0);
-
-  let cur = new Date(primeiro);
-  while (cur <= ultimo) {
-    const inicio = new Date(cur);
-    // Fim = próximo domingo (ou fim do mês)
-    const fim = new Date(cur);
-    while (fim.getDay() !== 0 && fim < ultimo) {
-      fim.setDate(fim.getDate() + 1);
-    }
-    semanas.push({ inicio, fim: new Date(Math.min(fim.getTime(), ultimo.getTime())) });
-    cur = new Date(fim);
-    cur.setDate(cur.getDate() + 1);
-  }
-  return semanas;
-}
-
-function fmtDataBR(d: Date) {
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function fmtDataISO(d: Date) {
-  return d.toISOString().split('T')[0];
-}
+const calcINSS = calcINSSEngine;
+const semanasFechamento = semanasFechamentoEngine;
+const fmtDataBR = (d: Date) => fmtDataBREngine(d);
+const fmtDataISO = (d: Date) => fmtDataISOEngine(d);
 
 /**
  * Conta dobras e dias trabalhados de um freelancer em um conjunto de escalas.

@@ -6,6 +6,7 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import * as XLSX from 'xlsx';
 import { fetchAuth } from '../utils/fetchAuth';
+import { calcINSS as calcINSSEngine } from '../engine';
 
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
@@ -83,27 +84,8 @@ const R = (v: any) => parseFloat(v) || 0;
 const fmt = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtMoeda = (v: number) => 'R$ ' + fmt(v);
 
-/** Tabela progressiva INSS 2026 (mesma da FolhaPagamento) */
-function calcINSS(salarioBruto: number): number {
-  const tabela = [
-    { ate: 1621.00, aliq: 0.075 },
-    { ate: 2793.88, aliq: 0.09 },
-    { ate: 4190.83, aliq: 0.12 },
-    { ate: 8157.41, aliq: 0.14 },
-  ];
-  let inss = 0;
-  let base = salarioBruto;
-  let anterior = 0;
-  for (const faixa of tabela) {
-    if (base <= 0) break;
-    const faixaVal = Math.min(base, faixa.ate - anterior);
-    inss += faixaVal * faixa.aliq;
-    base -= faixaVal;
-    anterior = faixa.ate;
-    if (salarioBruto <= faixa.ate) break;
-  }
-  return parseFloat(inss.toFixed(2));
-}
+/** INSS: usa engine centralizado (engine/inss.ts) */
+const calcINSS = calcINSSEngine;
 const fmtDataBR = (iso: string) => {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
