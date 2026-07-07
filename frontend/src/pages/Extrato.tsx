@@ -1288,50 +1288,66 @@ export const Extrato: React.FC = () => {
       const totalPagamentosSaidas = saidasPagamento.reduce((s, c) => s + c.total, 0);
 
       // --- Cálculos finais ---
-      // Compensação de transporte para motoboy CLT:
+      // Lógica de conciliação:
+      //   BRUTO = holerite vencimentos + variável bruto (entregas + caixinhas)
+      //   DESCONTOS = tudo que ele NÃO recebe (INSS, faltas, contrib, consumo operacional)
+      //   TOTAL PAGO = tudo que ele RECEBEU (PIXs + transporte + caixinha dinheiro)
+      //   SALDO = BRUTO - DESCONTOS - TOTAL PAGO
+
+      // Adiantamento transporte (saídas)
       const adtoTransporte = saidasPagamento
         .filter(sp => sp.cat === 'Adiantamento Transporte')
         .reduce((s, sp) => s + sp.total, 0);
-      const variavelLiquido = temMotoboy
-        ? Math.max(0, mbVlVar - (isMotoboy ? adtoTransporte : 0))
+
+
+      // BRUTO do mês
+      // Se conferido: vencimentos do holerite (soma de rubricas de vencimento)
+      // Senão: holerite líquido padrão
+      const vencimentosHolerite = engineResult.conferido && engineResult.holerite.rubricas
+        ? engineResult.holerite.rubricas
+            .filter((r: any) => parseFloat(r.vencimento) > 0)
+            .reduce((s: number, r: any) => s + (parseFloat(r.vencimento) || 0), 0)
+        : liquidoHolerite;
+
+      // Descontos do holerite (INSS, faltas, contribuição sindical, etc.)
+      // EXCLUI "Adiantamento Anterior" e "Arredondamento Anterior" (são pagamentos, não descontos reais)
+      const descontosHoleriteReais = engineResult.conferido && engineResult.holerite.rubricas
+        ? engineResult.holerite.rubricas
+            .filter((r: any) => {
+              const d = (r.descricao || '').toLowerCase();
+              const isAdto = d.includes('adiantamento') || d.includes('arredondamento anterior');
+              return parseFloat(r.desconto) > 0 && !isAdto;
+            })
+            .reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0)
         : 0;
 
-      const totalRemuneracao = liquidoHolerite + variavelLiquido;
-      const liquidoMes = totalRemuneracao - totalDescontos;
+      // Bruto total = vencimentos do holerite + variável bruto
+      const brutoRealMes = vencimentosHolerite + (temMotoboy ? mbVlVar : 0);
+
 
       // PIXs reais do logPagamentos
       const totalPIXs = logPgtos.reduce((s: number, lp: any) => s + (parseFloat(lp.valor) || 0), 0);
 
-      // Para motoboy CLT com holerite conferido:
-      // O holerite contábil já desconta o adiantamento anterior (~40% salário).
-      // O PIX dia 20 inclui adto salarial + variável até dia 19.
-      // Então o "total pago" relevante pra conferir com o líquido do mês:
-      //   totalPago = PIXs do log (sem transporte, já compensado no variável)
-      //              mas precisamos subtrair o adto salarial do PIX dia 20
-      //              porque o holerite já desconta ele.
-      //
-      // Simplificação: totalPagoGeral = soma dos PIXs (log) + saídas sem transporte.
-      // O saldo pode não ser zero porque o adto salarial está embutido no PIX dia 20
-      // e também descontado no holerite. Para motoboy CLT conferido, mostramos
-      // a conciliação por período.
-      const pagtosSaidasSemTransp = isMotoboy
-        ? saidasPagamento.filter(sp => sp.cat !== 'Adiantamento Transporte').reduce((s, sp) => s + sp.total, 0)
-        : totalPagamentosSaidas;
+      // Total pago = PIXs + TODAS as saídas tipo pagamento (incluindo transporte)
+      // Caixinha (saída operacional) conta como paga também — é dinheiro recebido em mãos
+      // Buscar caixinha nas saídas desconto (foi categorizada como desconto, mas é pagamento)
+      const caixinhaSaida = saidasDesconto
+        .filter(sd => sd.cat.toLowerCase().includes('caixinha'))
+        .reduce((s, sd) => s + sd.total, 0);
+      const descontosSemCaixinha = saidasDesconto
+        .filter(sd => !sd.cat.toLowerCase().includes('caixinha'));
+      const totalDescontosSemCaixinha = descontosSemCaixinha.reduce((s, sd) => s + sd.total, 0);
 
-      // Para CLT conferido: o líquido do holerite JÁ é após desconto do adiantamento.
-      // Logo o bruto real do mês = holerite líquido + adto já recebido (rubrica "Adiantamento Anterior")
-      //                          + variável líquido (bruto - transporte)
-      //                          - descontos operacionais
-      const adtoAnteriorHolerite = engineResult.conferido && engineResult.holerite.rubricas
-        ? engineResult.holerite.rubricas
-            .filter((r: any) => (r.descricao || '').toLowerCase().includes('adiantamento'))
-            .reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0)
-        : 0;
-      // Bruto total real (antes de todos os pagamentos/descontos)
-      const brutoRealMes = liquidoHolerite + adtoAnteriorHolerite + variavelLiquido - totalDescontos;
-      const totalPagoGeral = totalPIXs + pagtosSaidasSemTransp;
-      const saldo = brutoRealMes - totalPagoGeral;
-      const quitado = Math.abs(saldo) < 1;
+      const totalPagoGeral = totalPIXs + totalPagamentosSaidas + caixinhaSaida;
+
+      // Descontos totais reais = holerite reais + operacionais sem caixinha
+      const descontosFinais = descontosHoleriteReais + totalDescontosSemCaixinha;
+
+      const saldo = brutoRealMes - descontosFinais - totalPagoGeral;
+      const quitado = Math.abs(saldo) < 2; // tolerância arredondamento
+
+      // Compat com variáveis usadas no render
+      const liquidoMes = brutoRealMes - descontosFinais;
 
       const [anoStr, mesStr] = mesAno.split('-');
       const nomeMes = new Date(parseInt(anoStr), parseInt(mesStr) - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -1365,11 +1381,13 @@ export const Extrato: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
                 <div>
                   <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>
-                    {adtoAnteriorHolerite > 0 ? 'Bruto Real do Mês' : 'Líquido do Mês'}
+                    {engineResult.conferido ? 'Bruto do Mês' : 'Líquido do Mês'}
                   </div>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(brutoRealMes)}</div>
-                  {adtoAnteriorHolerite > 0 && (
-                    <div style={{ fontSize: '9px', color: '#888' }}>holéquido {fmtMoeda(liquidoHolerite)} + adto {fmtMoeda(adtoAnteriorHolerite)}</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>
+                    {fmtMoeda(engineResult.conferido ? brutoRealMes : liquidoMes)}
+                  </div>
+                  {engineResult.conferido && (
+                    <div style={{ fontSize: '9px', color: '#888' }}>venc {fmtMoeda(vencimentosHolerite)} + var {fmtMoeda(mbVlVar)}</div>
                   )}
                 </div>
                 <div>
@@ -1506,24 +1524,11 @@ export const Extrato: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Total variável bruto */}
+                {/* Total variável */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', borderTop: '2px solid rgba(255,255,255,0.25)' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Total Variável Bruto</span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>Total Variável</span>
                   <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</span>
                 </div>
-                {/* Compensação transporte (se motoboy CLT) */}
-                {isMotoboy && adtoTransporte > 0 && (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
-                      <span style={{ color: '#ef9a9a' }}>(-) Adiant. Transporte ({saidasPagamento.filter(sp => sp.cat === 'Adiantamento Transporte').reduce((s, sp) => s + sp.items.length, 0)}×)</span>
-                      <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(adtoTransporte)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', borderTop: '1px solid rgba(255,255,255,0.15)', marginTop: '4px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#69f0ae' }}>Variável Líquido</span>
-                      <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(variavelLiquido)}</span>
-                    </div>
-                  </>
-                )}
 
                 {/* Tabela diária expansível */}
                 <div style={{ cursor: 'pointer', padding: '6px 10px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '6px', fontSize: '11px', color: '#ffcc80', fontWeight: 'bold', marginTop: '10px' }}
@@ -1618,40 +1623,63 @@ export const Extrato: React.FC = () => {
               </div>
             )}
 
-            {/* ═══ BLOCO LÍQUIDO DO MÊS ═══ */}
+            {/* ═══ BLOCO RESUMO DO MÊS ═══ */}
             <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 100%)', color: '#fff', marginBottom: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center', marginBottom: '8px' }}>
-                <div>
-                  <div style={{ fontSize: '10px', color: '#bbdefb', textTransform: 'uppercase' }}>Líquido Holerite</div>
-                  <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{fmtMoeda(liquidoHolerite)}</div>
-                </div>
-                {temMotoboy && (
-                  <div>
-                    <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>
-                      Variável Motoboy{isMotoboy && adtoTransporte > 0 ? ' (líq.)' : ''}
+              {engineResult.conferido ? (
+                /* Modo conferido: mostra vencimentos + variável - descontos reais */
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: '#bbdefb', textTransform: 'uppercase' }}>Vencimentos Holerite</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{fmtMoeda(vencimentosHolerite)}</div>
                     </div>
-                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(variavelLiquido)}</div>
-                    {isMotoboy && adtoTransporte > 0 && (
-                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>bruto {fmtMoeda(mbVlVar)} − transp {fmtMoeda(adtoTransporte)}</div>
+                    {temMotoboy && (
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>Variável Motoboy</div>
+                        <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</div>
+                      </div>
                     )}
+                    <div>
+                      <div style={{ fontSize: '10px', color: '#ef9a9a', textTransform: 'uppercase' }}>Descontos Reais</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ef9a9a' }}>−{fmtMoeda(descontosFinais)}</div>
+                      <div style={{ fontSize: '9px', color: '#bcaaa4' }}>
+                        holerite {fmtMoeda(descontosHoleriteReais)} + op {fmtMoeda(totalDescontosSemCaixinha)}
+                      </div>
+                    </div>
                   </div>
-                )}
-                <div>
-                  <div style={{ fontSize: '10px', color: '#ef9a9a', textTransform: 'uppercase' }}>Descontos</div>
-                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ef9a9a' }}>−{fmtMoeda(totalDescontos)}</div>
-                </div>
-              </div>
-              <div style={{ borderTop: '2px solid rgba(255,255,255,0.3)', paddingTop: '8px', textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>
-                  💵 {adtoAnteriorHolerite > 0 ? 'Bruto Real do Mês' : 'Líquido do Mês'}
-                </div>
-                <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(brutoRealMes)}</div>
-                {adtoAnteriorHolerite > 0 && (
-                  <div style={{ fontSize: '10px', color: '#b2dfdb', marginTop: '2px' }}>
-                    Líq. holerite {fmtMoeda(liquidoHolerite)} + adto ant. {fmtMoeda(adtoAnteriorHolerite)} + var. líq. {fmtMoeda(variavelLiquido)} − desc {fmtMoeda(totalDescontos)}
+                  <div style={{ borderTop: '2px solid rgba(255,255,255,0.3)', paddingTop: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>💵 Bruto do Mês</div>
+                    <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(brutoRealMes)}</div>
+                    <div style={{ fontSize: '10px', color: '#b2dfdb', marginTop: '2px' }}>
+                      venc {fmtMoeda(vencimentosHolerite)}{temMotoboy ? ` + var ${fmtMoeda(mbVlVar)}` : ''}
+                    </div>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                /* Modo não-conferido: mostra líquido holerite + variável - descontos */
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <div style={{ fontSize: '10px', color: '#bbdefb', textTransform: 'uppercase' }}>Líquido Holerite</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold' }}>{fmtMoeda(liquidoHolerite)}</div>
+                    </div>
+                    {temMotoboy && (
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#ffcc80', textTransform: 'uppercase' }}>Variável Motoboy</div>
+                        <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ffcc80' }}>{fmtMoeda(mbVlVar)}</div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontSize: '10px', color: '#ef9a9a', textTransform: 'uppercase' }}>Descontos</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ef9a9a' }}>−{fmtMoeda(totalDescontos)}</div>
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '2px solid rgba(255,255,255,0.3)', paddingTop: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#69f0ae', textTransform: 'uppercase', fontWeight: 'bold' }}>💵 Líquido do Mês</div>
+                    <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#69f0ae' }}>{fmtMoeda(liquidoMes)}</div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* ═══ BLOCO 4: PAGAMENTOS REALIZADOS ═══ */}
@@ -1670,19 +1698,21 @@ export const Extrato: React.FC = () => {
                   // Montar linhas de explicação do cálculo
                   const explicacaoLinhas: string[] = [];
                   if (isAdto) {
-                    explicacaoLinhas.push('Adiantamento salarial (dia 20)');
+                    explicacaoLinhas.push('Adiantamento salarial + variável até dia 19');
                   } else if (isLast) {
-                    // PIX dia 05 = Líquido do mês - PIX(s) anteriores - Transporte
-                    const adtoTotal = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
-                    // Decomposição que o colaborador entende:
-                    // Holerith restante + Variável restante - Transporte - Consumo
-                    explicacaoLinhas.push(`Líquido do mês: ${fmtMoeda(liquidoMes)}`);
-                    explicacaoLinhas.push(`(-) Já recebido dia 20: ${fmtMoeda(adtoTotal)}`);
-                    if (totalPagamentosSaidas > 0) explicacaoLinhas.push(`(-) Transporte já recebido: ${fmtMoeda(totalPagamentosSaidas)}`);
-                    const calc = liquidoMes - adtoTotal - totalPagamentosSaidas;
-                    explicacaoLinhas.push(`(=) Saldo a receber: ${fmtMoeda(calc)}`);
-                    if (Math.abs(calc - lpVal) >= 0.01 && Math.abs(calc - lpVal) < 1) {
-                      explicacaoLinhas.push(`Diferença de ${fmtMoeda(Math.abs(calc - lpVal))} por arredondamento`);
+                    // PIX dia 05 = Bruto - Descontos - Já pago (PIXs anteriores + transporte + caixinha)
+                    const pixsAnteriores = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
+                    const base = engineResult.conferido ? brutoRealMes : liquidoMes;
+                    const baseLabel = engineResult.conferido ? 'Bruto do mês' : 'Líquido do mês';
+                    explicacaoLinhas.push(`${baseLabel}: ${fmtMoeda(base)}`);
+                    if (descontosFinais > 0) explicacaoLinhas.push(`(-) Descontos: ${fmtMoeda(descontosFinais)}`);
+                    explicacaoLinhas.push(`(-) Já recebido dia 20: ${fmtMoeda(pixsAnteriores)}`);
+                    if (adtoTransporte > 0) explicacaoLinhas.push(`(-) Transporte recebido: ${fmtMoeda(adtoTransporte)}`);
+                    if (caixinhaSaida > 0) explicacaoLinhas.push(`(-) Caixinha (dinheiro): ${fmtMoeda(caixinhaSaida)}`);
+                    const calc = base - descontosFinais - pixsAnteriores - adtoTransporte - caixinhaSaida;
+                    explicacaoLinhas.push(`(=) Esperado dia 05: ${fmtMoeda(calc)}`);
+                    if (Math.abs(calc - lpVal) >= 0.01) {
+                      explicacaoLinhas.push(`Pago: ${fmtMoeda(lpVal)} (dif: ${fmtMoeda(Math.abs(calc - lpVal))})`);
                     }
                   }
                   return (
@@ -1748,7 +1778,7 @@ export const Extrato: React.FC = () => {
                 <div>
                   <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#555', textTransform: 'uppercase' }}>⚖️ Saldo</div>
                   <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
-                    {adtoAnteriorHolerite > 0 ? 'Bruto Real' : 'Líquido'} {fmtMoeda(brutoRealMes)} − Pago {fmtMoeda(totalPagoGeral)}
+                    {engineResult.conferido ? 'Bruto' : 'Líquido'} {fmtMoeda(engineResult.conferido ? brutoRealMes : liquidoMes)} − Desc {fmtMoeda(descontosFinais)} − Pago {fmtMoeda(totalPagoGeral)}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
