@@ -157,6 +157,7 @@ export const Extrato: React.FC = () => {
   const [modalExcluir, setModalExcluir] = useState<ExtratoItem | null>(null);
   const [excluirMotivo, setExcluirMotivo] = useState('');
   const [colaboradorSelecionado, setColaboradorSelecionado] = useState<string | null>(null);
+  const [payslipsMapState, setPayslipsMapState] = useState<Record<string, any[]>>({});
 
   // Filters
   const [filtroColaborador, setFiltroColaborador] = useState('');
@@ -222,6 +223,7 @@ export const Extrato: React.FC = () => {
         if (!payslipsMap[ps.colaboradorId]) payslipsMap[ps.colaboradorId] = [];
         payslipsMap[ps.colaboradorId].push(ps);
       }
+      setPayslipsMapState(payslipsMap);
 
       const allItems: ExtratoItem[] = [];
       const excluidosList: any[] = [];
@@ -1204,6 +1206,7 @@ export const Extrato: React.FC = () => {
 
     // ═══════════════════════════════════════════════════════
     // CLT: Demonstrativo Mensal (reescrito 2026-06-25)
+    // Fase 6: quando payslip existe, usar composição gravada (read-only)
     // ═══════════════════════════════════════════════════════
     if (isCLT) {
       // --- Dados da folha (raw = registro do backend) ---
@@ -1211,39 +1214,73 @@ export const Extrato: React.FC = () => {
       const raw = folhaItem?.raw || {} as any;
       const logPgtos: any[] = raw.logPagamentos || [];
 
-      // --- Dados do colaborador + cálculo via ENGINE CENTRALIZADO ---
+      // --- Verificar se existem payslips CLT com composição gravada (Fase 6) ---
+      const colPayslipsCLT = (payslipsMapState[colabId] || []).filter((ps: any) =>
+        ps.tipoContrato === 'CLT' && Array.isArray(ps.composicao) && ps.composicao.length > 0
+      );
+      const temPayslipComComposicao = colPayslipsCLT.length > 0;
+
+      // --- Dados do colaborador ---
       const colab = colabsState.find((c: any) => c.id === colabId) || {} as any;
       const isMotoboy = motoboyData && motoboyData.length > 0;
       const feriado = R(raw.feriadoContabil) || R(raw.feriado) || 0;
       const feriadosTrab = feriado > 0 ? Math.round(feriado / ((R(colab.salario) || 1) / 30)) || 1 : 0;
 
-      // Chamar engine centralizado (FONTE ÚNICA de cálculo)
-      const engineResult = calcularFolhaCLT({
-        colaborador: {
-          id: colabId,
-          nome: nome,
-          salario: R(colab.salario) || R(raw.valorBruto) || 0,
-          periculosidade: R(colab.periculosidade) || 0,
-          contribuicaoAssistencial: R(raw.contrAssist) || R(colab.contribuicaoAssistencial) || 0,
-          valorTransporte: R(colab.valorTransporte),
-          isMotoboy: !!isMotoboy,
-        },
-        mesAno,
-        feriadosTrab,
-        folhaSalva: raw.id ? raw : null,
-      });
+      // Fase 6: engine só é chamado quando NÃO há payslip com composição gravada
+      let salarioBase: number;
+      let percPericulosidade: number;
+      let valorPericulosidade: number;
+      let brutoHolerite: number;
+      let inssValor: number;
+      let contrAssist: number;
+      let vtDesconto: number;
+      let descontosLegais: number;
+      let liquidoHolerite: number;
+      let fonteHolerite: string;
 
-      // Extrair variáveis para compat com render existente
-      const salarioBase = engineResult.salarioBase;
-      const percPericulosidade = R(colab.periculosidade) || 0;
-      const valorPericulosidade = engineResult.periculosidadeValor;
-      const brutoHolerite = engineResult.holerite.bruto;
-      const inssValor = engineResult.inss;
-      const contrAssist = engineResult.contrAssistencial;
-      const vtDesconto = engineResult.valeTransporte;
-      const descontosLegais = inssValor + contrAssist + vtDesconto;
-      const liquidoHolerite = engineResult.holerite.liquido;
-      const fonteHolerite = engineResult.holerite.fonte;
+      if (temPayslipComComposicao) {
+        // 📄 Fonte: payslip gravado (imutável) — engine NÃO é chamado
+        const ps = colPayslipsCLT[colPayslipsCLT.length - 1];
+        const comp: any[] = ps.composicao || [];
+
+        // Extrair valores da composição gravada (sem fallback para engine)
+        salarioBase = ps.salarioBase ?? (comp.find((c: any) => c.descricao === 'Salário base')?.valor ?? 0);
+        percPericulosidade = R(colab.periculosidade) || 0;
+        valorPericulosidade = ps.periculosidadeValor ?? (comp.find((c: any) => c.descricao === 'Periculosidade')?.valor ?? 0);
+        inssValor = ps.inssValor ?? Math.abs(comp.find((c: any) => c.descricao === 'INSS')?.valor || 0);
+        contrAssist = ps.contrAssistencial ?? Math.abs((comp.find((c: any) => (c.descricao || '').includes('Assistencial'))?.valor || 0));
+        vtDesconto = (ps.valeTransporteValor ?? ps.transporte) ?? Math.abs((comp.find((c: any) => (c.descricao || '').includes('Vale Transporte'))?.valor || 0));
+        descontosLegais = inssValor + contrAssist + vtDesconto;
+        brutoHolerite = ps.bruto ?? comp.filter((c: any) => c.tipo === 'vencimento').reduce((s: number, c: any) => s + (c.valor || 0), 0);
+        liquidoHolerite = ps.liquido ?? (brutoHolerite - descontosLegais);
+        fonteHolerite = ps.fonteHolerite ?? (ps.conferido ? 'contabil' : 'calculado');
+      } else {
+        // Fonte: engine (cálculo em tempo real) — sem payslip gravado
+        const engineResult = calcularFolhaCLT({
+          colaborador: {
+            id: colabId,
+            nome: nome,
+            salario: R(colab.salario) || R(raw.valorBruto) || 0,
+            periculosidade: R(colab.periculosidade) || 0,
+            contribuicaoAssistencial: R(raw.contrAssist) || R(colab.contribuicaoAssistencial) || 0,
+            valorTransporte: R(colab.valorTransporte),
+            isMotoboy: !!isMotoboy,
+          },
+          mesAno,
+          feriadosTrab,
+          folhaSalva: raw.id ? raw : null,
+        });
+        salarioBase = engineResult.salarioBase;
+        percPericulosidade = R(colab.periculosidade) || 0;
+        valorPericulosidade = engineResult.periculosidadeValor;
+        brutoHolerite = engineResult.holerite.bruto;
+        inssValor = engineResult.inss;
+        contrAssist = engineResult.contrAssistencial;
+        vtDesconto = engineResult.valeTransporte;
+        descontosLegais = inssValor + contrAssist + vtDesconto;
+        liquidoHolerite = engineResult.holerite.liquido;
+        fonteHolerite = engineResult.holerite.fonte;
+      }
 
       // --- Motoboy data ---
       const mbEntD = motoboyData ? motoboyData.reduce((s: number, d: any) => s + (parseFloat(d.entDia) || 0), 0) : 0;
@@ -1301,25 +1338,31 @@ export const Extrato: React.FC = () => {
 
 
       // BRUTO do mês
+      // Se payslip com composição: usar bruto do payslip
       // Se conferido: vencimentos do holerite (soma de rubricas de vencimento)
       // Senão: holerite líquido padrão
-      const vencimentosHolerite = engineResult.conferido && engineResult.holerite.rubricas
-        ? engineResult.holerite.rubricas
+      // Rubricas: do payslip quando gravado, ou da folha salva (raw) quando conferido
+      const rubricasParaCalc = temPayslipComComposicao
+        ? colPayslipsCLT[colPayslipsCLT.length - 1]?.rubricas
+        : (Array.isArray(raw.rubricas) && raw.rubricas.length > 0 ? raw.rubricas : null);
+      const temRubricasCalc = Array.isArray(rubricasParaCalc) && rubricasParaCalc.length > 0;
+      const vencimentosHolerite = (fonteHolerite === 'contabil' || temPayslipComComposicao) && temRubricasCalc
+        ? rubricasParaCalc!
             .filter((r: any) => parseFloat(r.vencimento) > 0)
             .reduce((s: number, r: any) => s + (parseFloat(r.vencimento) || 0), 0)
-        : liquidoHolerite;
+        : (temPayslipComComposicao ? brutoHolerite : liquidoHolerite);
 
       // Descontos do holerite (INSS, faltas, contribuição sindical, etc.)
       // EXCLUI "Adiantamento Anterior" e "Arredondamento Anterior" (são pagamentos, não descontos reais)
-      const descontosHoleriteReais = engineResult.conferido && engineResult.holerite.rubricas
-        ? engineResult.holerite.rubricas
+      const descontosHoleriteReais = (fonteHolerite === 'contabil' || temPayslipComComposicao) && temRubricasCalc
+        ? rubricasParaCalc!
             .filter((r: any) => {
               const d = (r.descricao || '').toLowerCase();
               const isAdto = d.includes('adiantamento') || d.includes('arredondamento anterior');
               return parseFloat(r.desconto) > 0 && !isAdto;
             })
             .reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0)
-        : 0;
+        : (temPayslipComComposicao ? descontosLegais : 0);
 
       // Bruto total = vencimentos do holerite + variável bruto
       const brutoRealMes = vencimentosHolerite + (temMotoboy ? mbVlVar : 0);
@@ -1351,6 +1394,15 @@ export const Extrato: React.FC = () => {
       // Compat com variáveis usadas no render
       const liquidoMes = brutoRealMes - descontosFinais;
 
+      // Rubricas: prioridade raw (folha salva), fallback payslip gravado
+      const rubricasFonte = (Array.isArray(raw.rubricas) && raw.rubricas.length > 0)
+        ? raw.rubricas
+        : (temPayslipComComposicao && Array.isArray(colPayslipsCLT[colPayslipsCLT.length - 1]?.rubricas) && colPayslipsCLT[colPayslipsCLT.length - 1].rubricas.length > 0
+          ? colPayslipsCLT[colPayslipsCLT.length - 1].rubricas
+          : null);
+      // Efetivo "conferido" para render: true se contábil OU se payslip com rubricas
+      const isConferido = fonteHolerite === 'contabil' || (temPayslipComComposicao && temRubricasCalc);
+
       const [anoStr, mesStr] = mesAno.split('-');
       const nomeMes = new Date(parseInt(anoStr), parseInt(mesStr) - 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
@@ -1373,6 +1425,7 @@ export const Extrato: React.FC = () => {
                   </span>
                   {quitado && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e8f5e9', color: '#2e7d32' }}>✅ Quitado</span>}
                   {!quitado && saldo > 0 && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#fff9c4', color: '#f57f17' }}>⏳ Saldo pendente</span>}
+                  {temPayslipComComposicao && <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e1f5fe', color: '#0277bd' }}>📄 Fonte: Payslip gravado</span>}
                 </div>
               </div>
               <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#999' }}>✕</button>
@@ -1383,12 +1436,12 @@ export const Extrato: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
                 <div>
                   <div style={{ fontSize: '10px', color: '#555', textTransform: 'uppercase', fontWeight: 'bold' }}>
-                    {engineResult.conferido ? 'Bruto do Mês' : 'Líquido do Mês'}
+                    {isConferido ? 'Bruto do Mês' : 'Líquido do Mês'}
                   </div>
                   <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>
-                    {fmtMoeda(engineResult.conferido ? brutoRealMes : liquidoMes)}
+                    {fmtMoeda(isConferido ? brutoRealMes : liquidoMes)}
                   </div>
-                  {engineResult.conferido && (
+                  {isConferido && (
                     <div style={{ fontSize: '9px', color: '#888' }}>venc {fmtMoeda(vencimentosHolerite)} + var {fmtMoeda(mbVlVar)}</div>
                   )}
                 </div>
@@ -1413,10 +1466,10 @@ export const Extrato: React.FC = () => {
               </div>
 
               {/* Se tem rubricas e é conferido, mostrar rubricas reais */}
-              {fonteHolerite === 'contabil' && Array.isArray(raw.rubricas) && raw.rubricas.length > 0 ? (
+              {fonteHolerite === 'contabil' && Array.isArray(rubricasFonte) && rubricasFonte.length > 0 ? (
                 <>
                   {/* Vencimentos */}
-                  {raw.rubricas.filter((r: any) => parseFloat(r.vencimento) > 0).map((r: any, i: number) => (
+                  {rubricasFonte!.filter((r: any) => parseFloat(r.vencimento) > 0).map((r: any, i: number) => (
                     <div key={`v${i}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
                       <span style={{ color: '#bbdefb' }}>{r.descricao}{r.referencia ? ` (ref: ${r.referencia})` : ''}</span>
                       <span style={{ color: '#a5d6a7', fontWeight: 'bold' }}>+{fmtMoeda(parseFloat(r.vencimento))}</span>
@@ -1425,13 +1478,13 @@ export const Extrato: React.FC = () => {
                   <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' }}>
                       <span style={{ color: '#bbdefb', fontWeight: 'bold' }}>Total Vencimentos</span>
-                      <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(raw.rubricas.reduce((s: number, r: any) => s + (parseFloat(r.vencimento) || 0), 0))}</span>
+                      <span style={{ color: '#fff', fontWeight: 'bold' }}>{fmtMoeda(rubricasFonte!.reduce((s: number, r: any) => s + (parseFloat(r.vencimento) || 0), 0))}</span>
                     </div>
                   </div>
                   {/* Descontos */}
                   <div style={{ borderTop: '1px dashed rgba(255,255,255,0.12)', marginTop: '6px', paddingTop: '6px' }}>
                     <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ef9a9a', marginBottom: '4px' }}>DESCONTOS:</div>
-                    {raw.rubricas.filter((r: any) => parseFloat(r.desconto) > 0).map((r: any, i: number) => (
+                    {rubricasFonte!.filter((r: any) => parseFloat(r.desconto) > 0).map((r: any, i: number) => (
                       <div key={`d${i}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', fontSize: '12px' }}>
                         <span style={{ color: '#ef9a9a' }}>{r.descricao}{r.referencia ? ` (ref: ${r.referencia})` : ''}</span>
                         <span style={{ color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(parseFloat(r.desconto))}</span>
@@ -1439,7 +1492,7 @@ export const Extrato: React.FC = () => {
                     ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0 0', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                       <span style={{ fontSize: '11px', color: '#ef9a9a', fontWeight: 'bold' }}>Total Descontos</span>
-                      <span style={{ fontSize: '11px', color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(raw.rubricas.reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0))}</span>
+                      <span style={{ fontSize: '11px', color: '#ef9a9a', fontWeight: 'bold' }}>−{fmtMoeda(rubricasFonte!.reduce((s: number, r: any) => s + (parseFloat(r.desconto) || 0), 0))}</span>
                     </div>
                   </div>
                 </>
@@ -1627,7 +1680,7 @@ export const Extrato: React.FC = () => {
 
             {/* ═══ BLOCO RESUMO DO MÊS ═══ */}
             <div style={{ padding: '14px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 100%)', color: '#fff', marginBottom: '14px' }}>
-              {engineResult.conferido ? (
+              {isConferido ? (
                 /* Modo conferido: mostra vencimentos + variável - descontos reais */
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: temMotoboy ? '1fr 1fr 1fr' : '1fr 1fr', gap: '12px', textAlign: 'center', marginBottom: '8px' }}>
@@ -1704,8 +1757,8 @@ export const Extrato: React.FC = () => {
                   } else if (isLast) {
                     // PIX dia 05 = Bruto - Descontos - Já pago (PIXs anteriores + transporte + caixinha)
                     const pixsAnteriores = logPgtos.slice(0, idx).reduce((s: number, l: any) => s + (parseFloat(l.valor) || 0), 0);
-                    const base = engineResult.conferido ? brutoRealMes : liquidoMes;
-                    const baseLabel = engineResult.conferido ? 'Bruto do mês' : 'Líquido do mês';
+                    const base = isConferido ? brutoRealMes : liquidoMes;
+                    const baseLabel = isConferido ? 'Bruto do mês' : 'Líquido do mês';
                     explicacaoLinhas.push(`${baseLabel}: ${fmtMoeda(base)}`);
                     if (descontosFinais > 0) explicacaoLinhas.push(`(-) Descontos: ${fmtMoeda(descontosFinais)}`);
                     explicacaoLinhas.push(`(-) Já recebido dia 20: ${fmtMoeda(pixsAnteriores)}`);
@@ -1792,7 +1845,7 @@ export const Extrato: React.FC = () => {
                 <div>
                   <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#555', textTransform: 'uppercase' }}>⚖️ Saldo</div>
                   <div style={{ fontSize: '10px', color: '#888', marginTop: '2px' }}>
-                    {engineResult.conferido ? 'Bruto' : 'Líquido'} {fmtMoeda(engineResult.conferido ? brutoRealMes : liquidoMes)} − Desc {fmtMoeda(descontosFinais)} − Pago {fmtMoeda(totalPagoGeral)}
+                    {isConferido ? 'Bruto' : 'Líquido'} {fmtMoeda(isConferido ? brutoRealMes : liquidoMes)} − Desc {fmtMoeda(descontosFinais)} − Pago {fmtMoeda(totalPagoGeral)}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>

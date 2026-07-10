@@ -149,6 +149,8 @@ interface FolhaMensal {
   arredondamentoPos: number;   // Cód.19: centavos positivos para fechar no inteiro
   arredondamentoNeg: number;   // Cód.20: centavos negativos do período anterior
   adtoLiquido: number;         // Líquido que a contabilidade paga (número inteiro)
+  // Rubricas do holerite (importadas do PDF quando conferido)
+  rubricas?: Array<{ codigo: string; descricao: string; referencia: string; vencimento: number; desconto: number }>;
   // Log de pagamentos (PIX/Dinheiro/Misto)
   logPagamentos?: PagamentoRegistrado[];
   // Conferência contábil (importação EMS)
@@ -692,6 +694,7 @@ export default function FolhaPagamento() {
         conferido: calc.conferido,
         valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
         fonteContabil: calc.fonteContabil,
+        rubricas: calc.holerite.rubricas,
         ...montarEstadoPagamento(c.id, salva),
         raw: c,
       });
@@ -787,6 +790,7 @@ export default function FolhaPagamento() {
         conferido: calc.conferido,
         valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
         fonteContabil: calc.fonteContabil,
+        rubricas: calc.holerite.rubricas,
         ...montarEstadoPagamento(m.id, salva),
         raw: m,
       });
@@ -2846,36 +2850,96 @@ export default function FolhaPagamento() {
           });
         } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
       }
-      // ── Fase 3: Gerar Payslip CLT ──
+      // ── Fase 3: Gerar Payslip CLT (composição completa — Fase 5) ──
       try {
         const mp = modalPagamento;
         const tipoPs = modalPgtoTipo === 'Adiantamento' ? 'adiantamento' : 'variavel';
-        // Composição: detalha o que compõe este pagamento
-        const composicaoPs: Array<{descricao:string;valor:number;tipo:string}> = [];
-        for (const reg of novos) {
+
+        // ── Composição completa: holerite + variável + descontos operacionais + pagamentos ──
+        const composicaoPs: Array<{descricao:string;valor:number;tipo:string;referencia?:string;codigo?:string}> = [];
+
+        // 1) Vencimentos do holerite (salário base, periculosidade, feriado)
+        if (mp.conferido && mp.rubricas && mp.rubricas.length > 0) {
+          // Fonte contábil: usar rubricas reais do PDF
+          for (const r of mp.rubricas) {
+            const venc = R(r.vencimento);
+            const desc = R(r.desconto);
+            if (venc > 0) {
+              composicaoPs.push({ descricao: r.descricao, valor: venc, tipo: 'vencimento', referencia: r.referencia, codigo: r.codigo });
+            }
+            if (desc > 0) {
+              composicaoPs.push({ descricao: r.descricao, valor: -desc, tipo: 'desconto-legal', referencia: r.referencia, codigo: r.codigo });
+            }
+          }
+        } else {
+          // Fonte calculada: montar a partir dos campos do engine
+          composicaoPs.push({ descricao: 'Salário base', valor: mp.salarioBase, tipo: 'vencimento' });
+          if (mp.periculosidade > 0) {
+            composicaoPs.push({ descricao: 'Periculosidade', valor: mp.periculosidade, tipo: 'vencimento' });
+          }
+          if ((mp.feriadosValor || 0) > 0) {
+            composicaoPs.push({ descricao: 'Feriado trabalhado', valor: mp.feriadosValor!, tipo: 'vencimento' });
+          }
+          // Descontos legais
+          if (mp.inss > 0) {
+            composicaoPs.push({ descricao: 'INSS', valor: -mp.inss, tipo: 'desconto-legal' });
+          }
+          if (mp.contrAssistencial > 0) {
+            composicaoPs.push({ descricao: 'Contr. Assistencial', valor: -mp.contrAssistencial, tipo: 'desconto-legal' });
+          }
+          if ((mp.valeTransporte || 0) > 0) {
+            composicaoPs.push({ descricao: 'Vale Transporte (6%)', valor: -mp.valeTransporte, tipo: 'desconto-legal' });
+          }
+        }
+
+        // 2) Variável motoboy (se aplicável — entregas + caixinhas)
+        if ((mp.variavelAte19 || 0) > 0) {
+          composicaoPs.push({ descricao: 'Variável motoboy (até dia 19)', valor: mp.variavelAte19, tipo: 'variavel' });
+        }
+        if ((mp.variavelDe20a31 || 0) > 0) {
+          composicaoPs.push({ descricao: 'Variável motoboy (20-31)', valor: mp.variavelDe20a31, tipo: 'variavel' });
+        }
+
+        // 3) Descontos operacionais (consumo interno, a pagar, adto especial)
+        const saidasColPs = saidasMesCompleto.filter((s: any) => s.colaboradorId === mp.colaboradorId);
+        const TIPOS_DESC_PS = ['A pagar', 'A receber', 'Consumo Interno'];
+        const saidasDescPs = saidasColPs.filter((s: any) => TIPOS_DESC_PS.includes(s.tipo || s.origem || ''));
+        for (const sd of saidasDescPs) {
           composicaoPs.push({
-            descricao: `${reg.forma} — ${reg.tipo}${reg.obs ? ' ('+reg.obs+')' : ''}`,
-            valor: reg.valor,
-            tipo: reg.tipo === 'Adiantamento' ? 'adiantamento' : 'variavel',
+            descricao: `${sd.tipo || 'Desconto'}: ${sd.descricao || ''}`.trim(),
+            valor: -(parseFloat(sd.valor) || 0),
+            tipo: 'desconto-operacional',
           });
         }
         if (vlAbateCLT > 0) {
           composicaoPs.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbateCLT, tipo: 'desconto-operacional' });
         }
+
+        // 4) Pagamentos registrados (log)
+        for (const reg of newLogs) {
+          composicaoPs.push({
+            descricao: `${reg.forma} — ${reg.tipo}${reg.obs ? ' ('+reg.obs+')' : ''}`,
+            valor: reg.valor,
+            tipo: 'adiantamento',
+          });
+        }
+
         // Rubricas do holerite (quando conferido)
-        const rubricasPs = mp.raw?.rubricas || [];
-        const brutoPs = novos.reduce((s: number, r: any) => s + r.valor, 0);
-        const descontosPs = vlAbateCLT;
-        const liquidoPs = parseFloat((brutoPs - descontosPs).toFixed(2));
+        const rubricasPs = mp.rubricas || [];
+
+        // Totais: bruto = vencimentos, descontos = legais + operacionais
+        const vencimentosTotal = composicaoPs.filter(c => c.tipo === 'vencimento' || c.tipo === 'variavel').reduce((s, c) => s + c.valor, 0);
+        const descontosTotal = composicaoPs.filter(c => c.tipo === 'desconto-legal' || c.tipo === 'desconto-operacional').reduce((s, c) => s + Math.abs(c.valor), 0);
+        const liquidoPs = parseFloat((vencimentosTotal - descontosTotal).toFixed(2));
 
         const psOps = [{
           tipo: 'payslip' as const,
           periodo: `${mesAno}-clt-${tipoPs}`,
           periodoInicio: `${mesAno}-01`,
           periodoFim: `${mesAno}-${new Date(parseInt(mesAno.split('-')[0]), parseInt(mesAno.split('-')[1]), 0).getDate()}`,
-          bruto: brutoPs,
+          bruto: parseFloat(vencimentosTotal.toFixed(2)),
           transporte: mp.valeTransporte || 0,
-          descontos: descontosPs,
+          descontos: parseFloat(descontosTotal.toFixed(2)),
           adiantamentos: 0,
           liquido: liquidoPs,
           nomeColaborador: mp.nome,
@@ -2887,6 +2951,14 @@ export default function FolhaPagamento() {
           conferido: mp.conferido || false,
           composicao: composicaoPs,
           ...(rubricasPs.length > 0 ? { rubricas: rubricasPs } : {}),
+          // Campos adicionais para reconstrução no extrato
+          salarioBase: mp.salarioBase,
+          periculosidadeValor: mp.periculosidade,
+          feriadosValor: mp.feriadosValor || 0,
+          inssValor: mp.inss,
+          contrAssistencial: mp.contrAssistencial,
+          valeTransporteValor: mp.valeTransporte,
+          fonteHolerite: mp.conferido ? 'contabil' : 'calculado',
         }];
 
         await fetchAuth(`${apiUrl}/pagamento-batch`, {
