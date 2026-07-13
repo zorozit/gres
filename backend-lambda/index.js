@@ -1983,6 +1983,9 @@ exports.handler = async (event) => {
                 ...(Array.isArray(op.rubricas) && op.rubricas.length > 0 && { rubricas: op.rubricas }),
                 ...(op.conferido != null && { conferido: op.conferido }),
                 ...(op.tipoPagamento && { tipoPagamento: op.tipoPagamento }), // 'adiantamento' | 'variavel' | 'dia05' | 'semanal'
+                ...(op.diasTrabalhados != null && { diasTrabalhados: Number(op.diasTrabalhados) }),
+                ...(op.dobras != null && { dobras: Number(op.dobras) }),
+                ...(op.dataPagamento2 && { dataPagamento: op.dataPagamento2 }),
               };
               await dynamodb.put({ TableName: 'gres-prod-payslips', Item: psItem }).promise();
               results.payslip = psId;

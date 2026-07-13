@@ -11,6 +11,7 @@ interface ComposicaoItem {
   descricao: string;
   valor: number;
   tipo: string; // 'vencimento' | 'variavel' | 'desconto-operacional' | 'adiantamento'
+  data?: string;
 }
 
 interface RubricaItem {
@@ -50,6 +51,8 @@ interface Payslip {
   rubricas?: RubricaItem[];
   formaPagamento?: string;
   dataPagamento?: string;
+  diasTrabalhados?: number;
+  dobras?: number;
 }
 
 export default function Payslips() {
@@ -275,6 +278,12 @@ export default function Payslips() {
               <div><span style={{ color: '#666' }}>Pagamento:</span><br />
                 {detalhe.formaPagamento || 'PIX'} {detalhe.dataPagamento && `em ${detalhe.dataPagamento.split('-').reverse().join('/')}`}
               </div>
+              {(detalhe.diasTrabalhados || detalhe.dobras) ? (
+                <div><span style={{ color: '#666' }}>Trabalho:</span><br />
+                  {detalhe.dobras && <span>{detalhe.dobras} turnos</span>}
+                  {detalhe.diasTrabalhados ? <span style={{ marginLeft: 4 }}>({detalhe.diasTrabalhados} dias)</span> : null}
+                </div>
+              ) : null}
               {detalhe.conferido && <div style={{ gridColumn: '1/3' }}><span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '10px', fontSize: '11px' }}>✅ Conferido (contabilidade)</span></div>}
             </div>
 
@@ -287,7 +296,10 @@ export default function Payslips() {
                 {detalhe.composicao.map((item: ComposicaoItem, i: number) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0',
                     color: item.valor < 0 ? '#c62828' : item.tipo === 'variavel' ? '#e65100' : '#333' }}>
-                    <span>{item.valor < 0 ? '🔴' : '🟢'} {item.descricao}</span>
+                    <span>
+                      {item.valor < 0 ? '🔴' : '🟢'} {item.descricao}
+                      {item.data && <span style={{ fontSize: '10px', color: '#999', marginLeft: 4 }}>({item.data.split('-').reverse().join('/')})</span>}
+                    </span>
                     <strong>{item.valor < 0 ? '-' : '+'}{fmtMoeda(Math.abs(item.valor))}</strong>
                   </div>
                 ))}

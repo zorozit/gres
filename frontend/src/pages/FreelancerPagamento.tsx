@@ -781,11 +781,18 @@ export default function FreelancerPagamento() {
       const semLabel = fech.semanaLabel || `${fech.dataInicioBase}-${fech.dataFechamento}`;
       const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
       // Composição: detalha cada componente do pagamento
-      const composicaoFr: Array<{descricao:string;valor:number;tipo:string}> = [];
-      if (fr.total > 0) composicaoFr.push({ descricao: fr.isMotoboy ? 'Entregas + Chegadas' : 'Turnos trabalhados', valor: fr.total, tipo: 'vencimento' });
-      if (valorTranspSaldo > 0) composicaoFr.push({ descricao: 'Transporte (saldo)', valor: valorTranspSaldo, tipo: 'vencimento' });
-      if ((fr.caixinhaTotal || 0) > 0) composicaoFr.push({ descricao: 'Caixinhas', valor: fr.caixinhaTotal, tipo: 'variavel' });
-      if (valorDescSaidas > 0) composicaoFr.push({ descricao: 'Descontos operacionais', valor: -valorDescSaidas, tipo: 'desconto-operacional' });
+      const composicaoFr: Array<{descricao:string;valor:number;tipo:string;data?:string}> = [];
+      if (fr.total > 0) composicaoFr.push({ descricao: fr.isMotoboy ? 'Entregas + Chegadas' : `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
+      if (valorTranspSaldo > 0) composicaoFr.push({ descricao: `Transporte (${fr.diasTrabalhados} dias)`, valor: valorTranspSaldo, tipo: 'vencimento' });
+      if ((fr.caixinhaTotal || 0) > 0) {
+        for (const cx of (fr.caixinhaDetalhe || [])) {
+          composicaoFr.push({ descricao: cx.descricao || 'Caixinha', valor: cx.valor, tipo: 'variavel', data: cx.data });
+        }
+      }
+      // Descontos individuais (cada saída)
+      for (const sd of (fr.saidasDetalhe || [])) {
+        composicaoFr.push({ descricao: sd.descricao || 'Desconto', valor: -sd.valor, tipo: 'desconto-operacional', data: sd.data });
+      }
       if (valorAbatEsp2 > 0) composicaoFr.push({ descricao: 'Desconto Adiantamento Especial', valor: -valorAbatEsp2, tipo: 'desconto-operacional' });
       operacoes.push({
         tipo:'payslip', periodo:periodoKey,
@@ -796,6 +803,8 @@ export default function FreelancerPagamento() {
         tipoContrato: 'Freelancer',
         cargo: fr.isMotoboy ? 'Motoboy' : (fr.cargo || ''),
         composicao: composicaoFr,
+        diasTrabalhados: fr.diasTrabalhados || 0,
+        dobras: fr.dobras || 0,
       });
 
       // ── Enviar tudo de uma vez (atômico) ──

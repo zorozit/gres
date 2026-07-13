@@ -2122,9 +2122,12 @@ export default function FolhaPagamento() {
                   const semLabel2 = fech.semanaLabel || mesAno;
                   const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
                   const composicaoFr2: Array<{descricao:string;valor:number;tipo:string}> = [];
-                  if (fr.total > 0) composicaoFr2.push({ descricao: 'Turnos trabalhados', valor: fr.total, tipo: 'vencimento' });
-                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: 'Transporte (saldo)', valor: fr.transporteSaldo, tipo: 'vencimento' });
-                  if (totalDebito > 0) composicaoFr2.push({ descricao: 'Descontos operacionais', valor: -totalDebito, tipo: 'desconto-operacional' });
+                  if (fr.total > 0) composicaoFr2.push({ descricao: `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
+                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: `Transporte (saldo)`, valor: fr.transporteSaldo, tipo: 'vencimento' });
+                  // Descontos individuais
+                  for (const di of debitoItems) {
+                    composicaoFr2.push({ descricao: di.label || 'Desconto', valor: -di.valor, tipo: 'desconto-operacional' });
+                  }
                   if (vlAbate > 0) composicaoFr2.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbate, tipo: 'desconto-operacional' });
                   operacoes.push({
                     tipo:'payslip', periodo:periodoKey2,
