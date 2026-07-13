@@ -74,6 +74,38 @@ export interface DescontosResult {
  * - tipo (exclui TIPOS_EXCLUIDOS_DESCONTO)
  * - NÃO tenha pagamentoIdLigado (já processada em batch anterior)
  */
+/**
+ * Encontra o adiantamentoId do contrato em aberto mais antigo de um colaborador.
+ *
+ * Regra: percorre saídas tipo "Adiantamento Especial" ordenadas por data.
+ * Para cada uma, calcula saldo = valor - sum(Desconto Adiantamento Especial com mesmo adiantamentoId já pago).
+ * Retorna o primeiro com saldo > 0.
+ *
+ * DEVE SER USADA por todos os fluxos de pagamento que abatam adiantamento especial.
+ */
+export function encontrarAdiantamentoIdAlvo(
+  saidas: SaidaCalc[],
+  colaboradorId: string,
+): string | undefined {
+  // Adiantamentos Especiais do colaborador, mais antigo primeiro
+  const adtosEsp = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Adiantamento Especial')
+    .sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+
+  // Descontos já abatidos (pago=true)
+  const descEsp = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Desconto Adiantamento Especial' && s.pago);
+
+  for (const ae of adtosEsp) {
+    const cId = ae.adiantamentoId || ae.id;
+    const totalDesc = descEsp
+      .filter(d => d.adiantamentoId === cId)
+      .reduce((sum, d) => sum + (d.valor || 0), 0);
+    if ((ae.valor || 0) - totalDesc > 0) return cId;
+  }
+  return undefined;
+}
+
 export function calcularDescontos(input: DescontosInput): DescontosResult {
   const { saidas, colaboradorId, dataInicio, dataFim } = input;
 

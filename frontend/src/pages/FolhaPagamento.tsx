@@ -14,6 +14,7 @@ import {
   calcularFolhaCLT,
   calcularVariavelMotoboy,
   montarPayslipFreelancer,
+  encontrarAdiantamentoIdAlvo,
 } from '../engine';
 import type { ControleDiaMotoboy } from '../engine';
 
@@ -2114,21 +2115,12 @@ export default function FolhaPagamento() {
 
                   // 4) Abatimento especial
                   if (abaterEspecial && vlAbate > 0) {
-                    // Encontrar adiantamentoId do contrato em aberto mais antigo
-                    const fonteSaidas = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
-                    const adtosEspCol = fonteSaidas
-                      .filter((ss: any) => ss.colaboradorId === fr.id && (ss.tipo||'') === 'Adiantamento Especial')
-                      .sort((a: any, b: any) => (a.data||'').localeCompare(b.data||''));
-                    const descEspCol = fonteSaidas
-                      .filter((ss: any) => ss.colaboradorId === fr.id && (ss.tipo||'') === 'Desconto Adiantamento Especial' && ss.pago);
-                    // Calcular saldo por contrato
-                    let adtoIdTarget = '';
-                    for (const ae of adtosEspCol) {
-                      const cId = ae.adiantamentoId || ae.id;
-                      const totalDesc = descEspCol.filter((d: any) => d.adiantamentoId === cId).reduce((s2: number, d: any) => s2 + (parseFloat(d.valor)||0), 0);
-                      if ((parseFloat(ae.valor)||0) - totalDesc > 0) { adtoIdTarget = cId; break; }
-                    }
-                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdTarget || undefined });
+                    const fonteSaidas3 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                    const adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
+                      fonteSaidas3.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                      fr.id,
+                    );
+                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo2 || undefined });
                   }
 
                   // 5) Payslip com composição (vem do engine — mesma função que FreelancerPagamento)
@@ -2826,18 +2818,10 @@ export default function FolhaPagamento() {
       const vlAbateCLT = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
       if (vlAbateCLT > 0) {
         const hoje3 = new Date().toISOString().split('T')[0];
-        // Encontrar adiantamentoId do contrato em aberto mais antigo
-        const adtosEspCLT = saidasMesCompleto
-          .filter((ss: any) => ss.colaboradorId === modalPagamento.colaboradorId && (ss.tipo||'') === 'Adiantamento Especial')
-          .sort((a: any, b: any) => (a.data||'').localeCompare(b.data||''));
-        const descEspCLT = saidasMesCompleto
-          .filter((ss: any) => ss.colaboradorId === modalPagamento.colaboradorId && (ss.tipo||'') === 'Desconto Adiantamento Especial' && ss.pago);
-        let adtoIdCLT = '';
-        for (const ae of adtosEspCLT) {
-          const cId = ae.adiantamentoId || ae.id;
-          const totalDesc = descEspCLT.filter((d: any) => d.adiantamentoId === cId).reduce((s2: number, d: any) => s2 + (parseFloat(d.valor)||0), 0);
-          if ((parseFloat(ae.valor)||0) - totalDesc > 0) { adtoIdCLT = cId; break; }
-        }
+        const adtoIdCLT = encontrarAdiantamentoIdAlvo(
+          saidasMesCompleto.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+          modalPagamento.colaboradorId,
+        );
         try {
           await fetchAuth(`${apiUrl}/saidas`, {
             method: 'POST',

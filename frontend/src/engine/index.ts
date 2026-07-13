@@ -38,7 +38,7 @@ export { calcularFolhaCLT } from './folhaCLT';
 export type { FolhaCLTInput, FolhaCLTCalcResult, ColaboradorCLTInput } from './folhaCLT';
 
 // Descontos operacionais
-export { calcularDescontos, TIPOS_EXCLUIDOS_DESCONTO, TIPOS_CREDITO } from './descontos';
+export { calcularDescontos, encontrarAdiantamentoIdAlvo, TIPOS_EXCLUIDOS_DESCONTO, TIPOS_CREDITO } from './descontos';
 export type { DescontosInput, DescontosResult } from './descontos';
 
 // Transporte

@@ -25,6 +25,7 @@ import {
   calcularTransporteFreelancerPeriodo,
   calcularLiquidoFreelancer,
   montarPayslipFreelancer,
+  encontrarAdiantamentoIdAlvo,
 } from '../engine';
 
 
@@ -772,7 +773,12 @@ export default function FreelancerPagamento() {
 
       // 4) Abatimento especial
       if (abaterEsp && vlAbate>0) {
-        operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}` });
+        const fonteSaidas2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+        const adtoIdAlvo = encontrarAdiantamentoIdAlvo(
+          fonteSaidas2.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
+          fr.id,
+        );
+        operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo || undefined });
       }
 
       // 5) Marcar saídas/descontos da semana como pagas (consumo, a receber, caixinhas)
