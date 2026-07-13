@@ -782,8 +782,33 @@ export default function FreelancerPagamento() {
       const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
       // Composição: detalha cada componente do pagamento
       const composicaoFr: Array<{descricao:string;valor:number;tipo:string;data?:string}> = [];
-      if (fr.total > 0) composicaoFr.push({ descricao: fr.isMotoboy ? 'Entregas + Chegadas' : `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
-      if (valorTranspSaldo > 0) composicaoFr.push({ descricao: `Transporte (${fr.diasTrabalhados} dias)`, valor: valorTranspSaldo, tipo: 'vencimento' });
+      // Créditos individuais: cada turno/dia
+      if (fr.diasPagos && fr.diasPagos.length > 0) {
+        // Agrupar por data (dobra = 2 turnos no mesmo dia)
+        const porData: Record<string, {valor:number;turnos:string[]}> = {};
+        for (const dp of fr.diasPagos) {
+          if (!porData[dp.data]) porData[dp.data] = {valor:0, turnos:[]};
+          porData[dp.data].valor += dp.valor;
+          if (dp.turno) porData[dp.data].turnos.push(dp.turno);
+        }
+        for (const d of Object.keys(porData).sort()) {
+          const info = porData[d];
+          const dd = d.slice(8) + '/' + d.slice(5,7);
+          const label = info.turnos.length > 1
+            ? `Dobra ${dd} (${info.turnos.join(' + ')})`
+            : info.turnos.length === 1 ? `Turno ${dd} (${info.turnos[0]})` : `Turno ${dd}`;
+          composicaoFr.push({ descricao: label, valor: info.valor, tipo: 'vencimento', data: d });
+        }
+      } else if (fr.total > 0) {
+        composicaoFr.push({ descricao: fr.isMotoboy ? 'Entregas + Chegadas' : `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
+      }
+      // Transporte individual por dia
+      if (valorTranspSaldo > 0 && fr.diasPagos && fr.diasPagos.length > 0) {
+        const diasUnicos = [...new Set(fr.diasPagos.map((dp:any) => dp.data))].sort() as string[];
+        composicaoFr.push({ descricao: `Transporte (${diasUnicos.length} dias)`, valor: valorTranspSaldo, tipo: 'vencimento' });
+      } else if (valorTranspSaldo > 0) {
+        composicaoFr.push({ descricao: `Transporte (${fr.diasTrabalhados} dias)`, valor: valorTranspSaldo, tipo: 'vencimento' });
+      }
       if ((fr.caixinhaTotal || 0) > 0) {
         for (const cx of (fr.caixinhaDetalhe || [])) {
           composicaoFr.push({ descricao: cx.descricao || 'Caixinha', valor: cx.valor, tipo: 'variavel', data: cx.data });

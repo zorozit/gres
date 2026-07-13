@@ -2121,10 +2121,28 @@ export default function FolhaPagamento() {
                   // 5) Payslip com composição
                   const semLabel2 = fech.semanaLabel || mesAno;
                   const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
-                  const composicaoFr2: Array<{descricao:string;valor:number;tipo:string}> = [];
-                  if (fr.total > 0) composicaoFr2.push({ descricao: `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
-                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: `Transporte (saldo)`, valor: fr.transporteSaldo, tipo: 'vencimento' });
-                  // Descontos individuais
+                  const composicaoFr2: Array<{descricao:string;valor:number;tipo:string;data?:string}> = [];
+                  // Créditos individuais: cada turno
+                  if (fr.diasPagos && fr.diasPagos.length > 0) {
+                    const porData: Record<string, {valor:number;turnos:string[]}> = {};
+                    for (const dp of fr.diasPagos) {
+                      if (!porData[dp.data]) porData[dp.data] = {valor:0, turnos:[]};
+                      porData[dp.data].valor += dp.valor;
+                      if (dp.turno) porData[dp.data].turnos.push(dp.turno);
+                    }
+                    for (const d of Object.keys(porData).sort()) {
+                      const info = porData[d];
+                      const dd = d.slice(8) + '/' + d.slice(5,7);
+                      const label = info.turnos.length > 1
+                        ? `Dobra ${dd} (${info.turnos.join(' + ')})`
+                        : info.turnos.length === 1 ? `Turno ${dd} (${info.turnos[0]})` : `Turno ${dd}`;
+                      composicaoFr2.push({ descricao: label, valor: info.valor, tipo: 'vencimento', data: d });
+                    }
+                  } else if (fr.total > 0) {
+                    composicaoFr2.push({ descricao: `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
+                  }
+                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: `Transporte (${fr.diasPagos?.length ? [...new Set(fr.diasPagos.map((dp:any)=>dp.data))].length+' dias' : 'saldo'})`, valor: fr.transporteSaldo, tipo: 'vencimento' });
+                  // Débitos individuais
                   for (const di of debitoItems) {
                     composicaoFr2.push({ descricao: di.label || 'Desconto', valor: -di.valor, tipo: 'desconto-operacional' });
                   }
