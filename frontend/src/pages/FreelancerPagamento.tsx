@@ -720,12 +720,17 @@ export default function FreelancerPagamento() {
         }
       }
 
-      const valorBrutoDobras  = diasParaPagar.reduce((s:number,d:any)=>s+d.valor,0);
+      void diasParaPagar.reduce((s:number,d:any)=>s+d.valor,0); // diasParaPagar usado só para gravar turnos individuais
       const valorTranspSaldo  = (inclTransp&&fr.transporteSaldo>0)?fr.transporteSaldo:0;
-      const valorBrutoLote    = valorBrutoDobras + valorTranspSaldo + caixinhaChecked;
       const valorDescSaidas   = totalDebito;
       const valorAbatEsp2     = vlAbate;
-      const valorLiquido      = Math.max(0, valorBrutoLote - valorDescSaidas - valorAbatEsp2);
+
+      // ── VALOR DO PAYSLIP = exatamente o que o modal mostra ──
+      // Para motoboy: fr.total já inclui chegada + entregas (não apenas turnos)
+      // totalCredito = soma de todos os checkItems crédito selecionados (= fr.total + transporte + caixinha)
+      const totalCreditoFinal = creditoItems.reduce((s:number,it:any)=>s+it.valor,0);
+      const valorBrutoLote    = totalCreditoFinal;
+      const valorLiquido      = Math.max(0, totalCreditoFinal - valorDescSaidas - valorAbatEsp2);
       const obsLabel = fr.isValorTurno
         ? `tabela variável (${diasParaPagar.map((d:any)=>`${d.data.slice(8)}/${d.data.slice(5,7)}${d.turno==='Dia'?'D':'N'}=R$${fmt(d.valor)}`).join(', ')})`
         : (fr.valorDia>0||fr.valorNoite>0)?`D=R$${fmt(fr.valorDia)} N=R$${fmt(fr.valorNoite)}`:`R$${fmt(fr.valorDobra)}/dobra`;
@@ -782,9 +787,20 @@ export default function FreelancerPagamento() {
       const periodoKey = `${mesAno}-${semLabel.replace(/[^\w]/g,'')}`;
       // Composição: detalha cada componente do pagamento
       const composicaoFr: Array<{descricao:string;valor:number;tipo:string;data?:string}> = [];
-      // Créditos individuais: cada turno/dia
-      if (fr.diasPagos && fr.diasPagos.length > 0) {
-        // Agrupar por data (dobra = 2 turnos no mesmo dia)
+      // Créditos individuais
+      const ctrlDet = (fr.ctrlLinhasDetalhe || []).filter((l:any) => !l.pago);
+      if (fr.isMotoboy && ctrlDet.length > 0) {
+        // Motoboy: usar ctrlLinhasDetalhe que inclui chegada + entregas
+        for (const l of ctrlDet) {
+          const dd = l.data.slice(8) + '/' + l.data.slice(5,7);
+          const partes: string[] = [];
+          if (l.chegada > 0) partes.push(`chegada R$${l.chegada.toFixed(0)}`);
+          if (l.qtdEntregas > 0) partes.push(`${l.qtdEntregas}×R$${l.vlEntrega} entregas`);
+          const label = `🏍️ ${dd} (${partes.join(' + ')})`;
+          composicaoFr.push({ descricao: label, valor: l.vlLinha, tipo: 'vencimento', data: l.data });
+        }
+      } else if (fr.diasPagos && fr.diasPagos.length > 0) {
+        // Freelancer padrão: agrupar por data
         const porData: Record<string, {valor:number;turnos:string[]}> = {};
         for (const dp of fr.diasPagos) {
           if (!porData[dp.data]) porData[dp.data] = {valor:0, turnos:[]};
