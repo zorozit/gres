@@ -13,6 +13,7 @@ import {
   fmtDataISO as fmtDataISOEngine,
   calcularFolhaCLT,
   calcularVariavelMotoboy,
+  montarPayslipFreelancer,
 } from '../engine';
 import type { ControleDiaMotoboy } from '../engine';
 
@@ -2065,16 +2066,24 @@ export default function FolhaPagamento() {
 
                   // ── Campos estruturados para auditoria do PIX (Opção B) ──────────────
                   // Calculados aqui e enviados no payload para evitar dependência do campo obs
-                  void diasParaPagar.reduce((s:number, d:any) => s + d.valor, 0); // diasParaPagar usado só para gravar turnos individuais
-                  void ((inclTransporte && fr.transporteSaldo > 0) ? fr.transporteSaldo : 0); // transporte já incluído no totalCredito
-                  const valorDescSaidas   = totalDebito;   // consumo interno + desconto transporte
-                  const valorAbatEsp      = vlAbate;        // abatimento adiantamento especial
+                  const valorAbatEsp      = vlAbate;
 
-                  // ── VALOR DO PAYSLIP = exatamente o que o modal mostra ──
-                  // Para motoboy: totalCredito já inclui chegada + entregas (não apenas turnos)
-                  const totalCreditoFinal2 = creditoItems.reduce((s:number, it:any) => s + it.valor, 0);
-                  const valorBrutoLote    = totalCreditoFinal2;
-                  const valorLiquido      = Math.max(0, totalCreditoFinal2 - valorDescSaidas - valorAbatEsp);
+                  // ── PAYSLIP: engine calcula tudo (mesma função que FreelancerPagamento usa) ──
+                  const psResult2 = montarPayslipFreelancer({
+                    checkItems: checkItems.map(it => ({...it, tipo: it.tipo as 'credito'|'debito'})),
+                    abatimentoEspecial: valorAbatEsp,
+                    isMotoboy: fr.isMotoboy === true,
+                    ctrlLinhasDetalhe: fr.ctrlLinhasDetalhe,
+                    diasPagos: fr.diasPagos,
+                    caixinhaDetalhe: fr.caixinhaDetalhe,
+                    saidasDetalhe: debitoItems.map((di: any) => ({ descricao: di.label || 'Desconto', valor: di.valor })),
+                    transporteSaldo: fr.transporteSaldo || 0,
+                    inclTransporte: inclTransporte,
+                    diasTrabalhados: fr.diasTrabalhados || 0,
+                  });
+                  const valorBrutoLote = psResult2.bruto;
+                  const valorDescSaidas = psResult2.descontos;
+                  const valorLiquido = psResult2.liquido;
 
                   const obsText2 = `Freelancer sem. ${fech.semanaLabel} - ${fr.dobras} dobras - ${obsLabel2} - ${formaFreelancer}${fr.transporteAdiantado > 0 ? ` - Transp. adiant.: R$${fmt(fr.transporteAdiantado)}` : ''}${caixinhaChecked > 0 ? ` - Caixinha: +R$${fmt(caixinhaChecked)}` : ''}${totalDebito > 0 ? ` - Desc. saídas: R$${fmt(totalDebito)}` : ''}${vlAbate > 0 ? ` - Abat. adto.esp.: R$${fmt(vlAbate)}` : ''} - Líquido: R$${fmt(valorLiquido)}`;
 
@@ -2122,54 +2131,17 @@ export default function FolhaPagamento() {
                     operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdTarget || undefined });
                   }
 
-                  // 5) Payslip com composição
+                  // 5) Payslip com composição (vem do engine — mesma função que FreelancerPagamento)
                   const semLabel2 = fech.semanaLabel || mesAno;
                   const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
-                  const composicaoFr2: Array<{descricao:string;valor:number;tipo:string;data?:string}> = [];
-                  // Créditos individuais
-                  const ctrlDet2 = (fr.ctrlLinhasDetalhe || []).filter((l:any) => !l.pago);
-                  if (fr.isMotoboy && ctrlDet2.length > 0) {
-                    // Motoboy: usar ctrlLinhasDetalhe que inclui chegada + entregas
-                    for (const l of ctrlDet2) {
-                      const dd = l.data.slice(8) + '/' + l.data.slice(5,7);
-                      const partes: string[] = [];
-                      if (l.chegada > 0) partes.push(`chegada R$${l.chegada.toFixed(0)}`);
-                      if (l.qtdEntregas > 0) partes.push(`${l.qtdEntregas}×R$${l.vlEntrega} entregas`);
-                      const label = `🏍️ ${dd} (${partes.join(' + ')})`;
-                      composicaoFr2.push({ descricao: label, valor: l.vlLinha, tipo: 'vencimento', data: l.data });
-                    }
-                  } else if (fr.diasPagos && fr.diasPagos.length > 0) {
-                    const porData: Record<string, {valor:number;turnos:string[]}> = {};
-                    for (const dp of fr.diasPagos) {
-                      if (!porData[dp.data]) porData[dp.data] = {valor:0, turnos:[]};
-                      porData[dp.data].valor += dp.valor;
-                      if (dp.turno) porData[dp.data].turnos.push(dp.turno);
-                    }
-                    for (const d of Object.keys(porData).sort()) {
-                      const info = porData[d];
-                      const dd = d.slice(8) + '/' + d.slice(5,7);
-                      const label = info.turnos.length > 1
-                        ? `Dobra ${dd} (${info.turnos.join(' + ')})`
-                        : info.turnos.length === 1 ? `Turno ${dd} (${info.turnos[0]})` : `Turno ${dd}`;
-                      composicaoFr2.push({ descricao: label, valor: info.valor, tipo: 'vencimento', data: d });
-                    }
-                  } else if (fr.total > 0) {
-                    composicaoFr2.push({ descricao: `Turnos trabalhados (${fr.dobras} turno${fr.dobras>1?'s':''})`, valor: fr.total, tipo: 'vencimento' });
-                  }
-                  if ((fr.transporteSaldo||0) > 0) composicaoFr2.push({ descricao: `Transporte (${fr.diasPagos?.length ? [...new Set(fr.diasPagos.map((dp:any)=>dp.data))].length+' dias' : 'saldo'})`, valor: fr.transporteSaldo, tipo: 'vencimento' });
-                  // Débitos individuais
-                  for (const di of debitoItems) {
-                    composicaoFr2.push({ descricao: di.label || 'Desconto', valor: -di.valor, tipo: 'desconto-operacional' });
-                  }
-                  if (vlAbate > 0) composicaoFr2.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbate, tipo: 'desconto-operacional' });
                   operacoes.push({
                     tipo:'payslip', periodo:periodoKey2,
                     periodoInicio:periodoIni||mesAno+'-01', periodoFim:periodoFim||mesAno+'-31',
-                    bruto:valorBrutoLote, transporte:fr.transporteSaldo||0,
-                    descontos:totalDebito+vlAbate, liquido:valorLiquido,
+                    bruto:valorBrutoLote, transporte:psResult2.transporte,
+                    descontos:valorDescSaidas, liquido:valorLiquido,
                     nomeColaborador:fr.nome,
                     tipoContrato: 'Freelancer',
-                    composicao: composicaoFr2,
+                    composicao: psResult2.composicao,
                   });
 
                   // ── Enviar tudo de uma vez (atômico) ──

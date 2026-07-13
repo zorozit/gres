@@ -15,6 +15,7 @@
 export interface ComposicaoItem {
   descricao: string;
   valor: number;              // positivo = vencimento, negativo = desconto
+  data?: string;              // data ISO opcional (para detalhe por dia)
   tipo:
     | 'vencimento'            // salário, periculosidade, feriado
     | 'desconto-legal'        // INSS, contr.assistencial, VT, adiantamento anterior, faltas

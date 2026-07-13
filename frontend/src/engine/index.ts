@@ -76,3 +76,15 @@ export type {
 // Demonstrativo (composição completa)
 export { montarDemonstrativo } from './demonstrativo';
 export type { DemonstrativoInput, DemonstrativoResult, DemonstrativoSecao } from './demonstrativo';
+
+// Payslip (gravação do pagamento — Única função que gera bruto/desc/liquido/composicao)
+export { montarPayslipFreelancer } from './payslip';
+export type {
+  CheckItemInput,
+  CtrlLinhaDetalhe,
+  DiaPago,
+  CaixinhaDetalhe,
+  SaidaDetalhe,
+  MontarPayslipFreelancerInput,
+  PayslipFreelancerResult,
+} from './payslip';
