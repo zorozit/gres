@@ -17,6 +17,7 @@ import {
   encontrarAdiantamentoIdAlvo,
   montarPayslipCLT,
   montarPayslipDobrasCLT,
+  montarChecklistCLT,
 } from '../engine';
 import type { ControleDiaMotoboy } from '../engine';
 
@@ -2667,78 +2668,17 @@ export default function FolhaPagamento() {
     const f = modalPagamento;
 
     const buildChecklistCLT = (saidasFrescas: any[], tipo: 'Adiantamento' | 'Variável') => {
-      const saidasCol = saidasFrescas.filter((s: any) => s.colaboradorId === f.colaboradorId);
-      const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
-      const saidasDesc = saidasCol.filter((s: any) => TIPOS_DESC.includes(s.tipo || s.origem || ''));
-      const adtoTranspBruto = saidasCol
-        .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Transporte')
-        .reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      // Compensar com descontos de transporte já efetuados (saídas "Desconto Transporte")
-      const descTranspJaPago = saidasCol
-        .filter((s: any) => (s.tipo || s.origem || '') === 'Desconto Transporte')
-        .reduce((sum: number, s: any) => sum + R(s.valor), 0);
-      const adtoTransp = Math.max(0, parseFloat((adtoTranspBruto - descTranspJaPago).toFixed(2)));
-      // Adiantamento Especial — saídas a abater no Dia 5
-      const adtoEspecialSaidas = saidasCol
-        .filter((s: any) => (s.tipo || s.origem || '') === 'Adiantamento Especial');
+      const saidasCol = saidasFrescas
+        .filter((s: any) => s.colaboradorId === f.colaboradorId)
+        .map((s: any) => ({ tipo: s.tipo || s.origem || '', descricao: s.descricao || '', valor: R(s.valor), data: s.data || '', pagamentoIdLigado: s.pagamentoIdLigado }));
 
-      let items: CheckItemCLT[];
-      if (tipo === 'Adiantamento') {
-        items = [
-          { key: 'adto', label: `💵 Adiantamento Salário (Cód.16 — 40%)`, valor: f.adtoLiquido, tipo: 'credito', checked: true },
-          { key: 'variavel19', label: `📦 Variável ≤19 (entregas + caixinha)`, valor: f.variavelAte19 || 0, tipo: 'credito', checked: (f.variavelAte19 || 0) > 0 },
-          ...(adtoTransp > 0 ? [{ key: 'transp', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
-          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
-        ];
-      } else if (f.fonteContabil && f.valorLiquidoContabil) {
-        // ── MODO CONTABILIDADE: líquido do holerite como base ──────────
-        items = [
-          { key: 'liq_contab', label: `💰 Líquido Contabilidade (holerite conferido)`,
-            valor: f.valorLiquidoContabil, tipo: 'credito', checked: true },
-          { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
-          ...(adtoTransp > 0 ? [{ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
-          ...adtoEspecialSaidas.map((s: any, i: number) => ({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
-          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
-        ];
-      } else {
-        // ── MODO CÁLCULO INTERNO (sem contabilidade conferida) ──────────
-        // Monta label da DifSal dinamicamente: só menciona peri/feriado se existirem
-        const temPeri    = f.periculosidade > 0;
-        const temFeriado = (f.feriadosValor || 0) > 0;
-        const adtoAnteriorValor = parseFloat((f.adtoLiquido || f.adiantamentoValor || 0).toString());
-        // Racional: sal100% = salBase + peri + feriado; adto40% = adtoAnteriorValor
-        const sal100 = parseFloat((f.salarioBase + f.periculosidade + (f.feriadosValor || 0)).toFixed(2));
-        const difSalLabel = temPeri
-          ? `💰 Diferença Salário (60% sal. + periculosidade${temFeriado ? ' + feriado' : ''})`
-          : `💰 Diferença Salário (60% sal. base${temFeriado ? ' + feriado' : ''})`;
-
-        items = [
-          // ── Racional informativo (não entra no total) ──────────────────
-          { key: 'racional_100', label: `ℹ️ Salário 100% (base${temPeri?' + peri':''}${temFeriado?' + feriado':''})`,
-            valor: sal100, tipo: 'info', checked: false },
-          { key: 'racional_40', label: `ℹ️ (−) Adiantamento 40% já pago no Dia 20 (Cód.12)`,
-            valor: adtoAnteriorValor, tipo: 'info', checked: false },
-          // ── Vencimentos ────────────────────────────────────────────────
-          { key: 'difsal', label: difSalLabel,
-            valor: parseFloat((f.salarioBase * 0.60 + f.periculosidade + (temFeriado ? (f.feriadosValor || 0) : 0)).toFixed(2)),
-            tipo: 'credito', checked: true },
-          // Cod.1311: Feriado — item separado para casos onde feriado = 0 mas pode ocorrer
-          ...(!temFeriado ? [{ key: 'feriado',
-            label: `🟣 Feriado trabalhado (Cód.1311) — marque se houver`,
-            valor: 0, tipo: 'credito' as const, checked: false }] : []),
-          { key: 'variavel2031', label: `📦 Variável 20-31`, valor: f.variavelDe20a31 || 0, tipo: 'credito', checked: (f.variavelDe20a31 || 0) > 0 },
-          // ── Descontos ──────────────────────────────────────────────────
-          { key: 'inss', label: `🟥 INSS`, valor: f.inss, tipo: 'debito', checked: true },
-          ...(f.contrAssistencial > 0 ? [{ key: 'contr', label: `🟥 Contr. Assistencial`, valor: f.contrAssistencial, tipo: 'debito' as const, checked: true }] : []),
-          ...((f.valeTransporte || 0) > 0 ? [{ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: f.valeTransporte, tipo: 'debito' as const, checked: true }] : []),
-          // Adiantamento Transporte — abater no Dia 5 (igual ao Dia 20)
-          ...(adtoTransp > 0 ? [{ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito' as const, checked: true }] : []),
-          // Adiantamento Especial — saídas registradas a abater
-          ...adtoEspecialSaidas.map((s: any, i: number) => ({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
-          // Outros descontos (A pagar, Consumo Interno, etc.)
-          ...saidasDesc.map((s: any, i: number) => ({ key: `desc_${i}`, label: `🔴 ${s.tipo || 'Desconto'}: ${s.descricao || ''} (${s.data || ''})`, valor: R(s.valor), tipo: 'debito' as const, checked: true })),
-        ];
-      }
+      const items = montarChecklistCLT({
+        calc: f,
+        tipoPagamento: tipo,
+        variavelAte19: f.variavelAte19 || 0,
+        variavelDe20a31: f.variavelDe20a31 || 0,
+        saidasColaborador: saidasCol,
+      });
       setCheckItemsCLT(items);
     };
 

@@ -34,8 +34,8 @@ export { TABELA_INSS_2026, calcINSS } from './inss';
 export { semanasFechamento, fmtDataBR, fmtDataISO } from './semanas';
 
 // Folha CLT
-export { calcularFolhaCLT } from './folhaCLT';
-export type { FolhaCLTInput, FolhaCLTCalcResult, ColaboradorCLTInput } from './folhaCLT';
+export { calcularFolhaCLT, montarChecklistCLT } from './folhaCLT';
+export type { FolhaCLTInput, FolhaCLTCalcResult, ColaboradorCLTInput, CheckItemCLT, CalcParaChecklist, SaidaParaChecklist, MontarChecklistCLTInput } from './folhaCLT';
 
 // Descontos operacionais
 export { calcularDescontos, encontrarAdiantamentoIdAlvo, TIPOS_EXCLUIDOS_DESCONTO, TIPOS_CREDITO } from './descontos';

@@ -211,6 +211,160 @@ export function calcularFolhaCLT(input: FolhaCLTInput): FolhaCLTCalcResult {
 }
 
 /* ══════════════════════════════════════════════════════════════
+ *  CHECKLIST CLT (modal de pagamento)
+ * ══════════════════════════════════════════════════════════════ */
+
+export interface CheckItemCLT {
+  key: string;
+  label: string;
+  valor: number;
+  tipo: 'credito' | 'debito' | 'info';
+  checked: boolean;
+}
+
+export interface SaidaParaChecklist {
+  tipo: string;
+  descricao?: string;
+  valor: number;
+  data?: string;
+  pagamentoIdLigado?: string;
+}
+
+/** Campos mínimos do calc que montarChecklistCLT precisa */
+export interface CalcParaChecklist {
+  adtoLiquido: number;
+  salarioBase: number;
+  /** periculosidadeValor (R$) — aceita nome do engine ou do grid */
+  periculosidadeValor?: number;
+  periculosidade?: number;
+  feriadosValor?: number;
+  diferencaSalario: number;
+  inss: number;
+  contrAssistencial: number;
+  valeTransporte: number;
+  fonteContabil?: boolean;
+  valorLiquidoContabil?: number;
+  conferido?: boolean;
+  adiantamentoValor?: number;
+}
+
+export interface MontarChecklistCLTInput {
+  /** Campos calculados (do engine ou do grid FolhaMensal) */
+  calc: CalcParaChecklist;
+  /** Tipo: Adiantamento (dia 20) ou Variável (dia 5) */
+  tipoPagamento: 'Adiantamento' | 'Variável';
+  /** Variável motoboy até dia 19 */
+  variavelAte19: number;
+  /** Variável motoboy 20-31 */
+  variavelDe20a31: number;
+  /** Saídas do colaborador no mês */
+  saidasColaborador: SaidaParaChecklist[];
+}
+
+/**
+ * Monta checklist para o modal de pagamento CLT.
+ * TODAS as regras de quais itens exibir e com qual valor estão aqui.
+ * O componente só renderiza — não decide valores nem lógica.
+ */
+export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT[] {
+  const { calc, tipoPagamento, variavelAte19, variavelDe20a31, saidasColaborador } = input;
+  // Compatibilidade: grid usa 'periculosidade' (R$), engine usa 'periculosidadeValor' (R$)
+  const periValor = calc.periculosidadeValor ?? calc.periculosidade ?? 0;
+
+  // --- Saídas processadas ---
+  const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
+  const saidasDesc = saidasColaborador.filter(s =>
+    TIPOS_DESC.includes(s.tipo) && !s.pagamentoIdLigado
+  );
+
+  // Adiantamento Transporte (bruto - descontos já pagos)
+  const adtoTranspBruto = saidasColaborador
+    .filter(s => s.tipo === 'Adiantamento Transporte')
+    .reduce((sum, s) => sum + s.valor, 0);
+  const descTranspJaPago = saidasColaborador
+    .filter(s => s.tipo === 'Desconto Transporte')
+    .reduce((sum, s) => sum + s.valor, 0);
+  const adtoTransp = Math.max(0, parseFloat((adtoTranspBruto - descTranspJaPago).toFixed(2)));
+
+  // Adiantamento Especial (saídas para abater)
+  const adtoEspecialSaidas = saidasColaborador
+    .filter(s => s.tipo === 'Adiantamento Especial');
+
+  const items: CheckItemCLT[] = [];
+
+  if (tipoPagamento === 'Adiantamento') {
+    // --- DIA 20 ---
+    items.push(
+      { key: 'adto', label: `💵 Adiantamento Salário (Cód.16 — 40%)`, valor: calc.adtoLiquido, tipo: 'credito', checked: true },
+      { key: 'variavel19', label: `📦 Variável ≤19 (entregas + caixinha)`, valor: variavelAte19, tipo: 'credito', checked: variavelAte19 > 0 },
+    );
+    if (adtoTransp > 0) {
+      items.push({ key: 'transp', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito', checked: true });
+    }
+    for (let i = 0; i < saidasDesc.length; i++) {
+      const s = saidasDesc[i];
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
+  } else if (calc.fonteContabil && calc.valorLiquidoContabil) {
+    // --- DIA 5 MODO CONTABILIDADE ---
+    items.push(
+      { key: 'liq_contab', label: `💰 Líquido Contabilidade (holerite conferido)`, valor: calc.valorLiquidoContabil, tipo: 'credito', checked: true },
+      { key: 'variavel2031', label: `📦 Variável 20-31`, valor: variavelDe20a31, tipo: 'credito', checked: variavelDe20a31 > 0 },
+    );
+    if (adtoTransp > 0) {
+      items.push({ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito', checked: true });
+    }
+    for (let i = 0; i < adtoEspecialSaidas.length; i++) {
+      const s = adtoEspecialSaidas[i];
+      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
+    for (let i = 0; i < saidasDesc.length; i++) {
+      const s = saidasDesc[i];
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
+  } else {
+    // --- DIA 5 MODO CÁLCULO INTERNO ---
+    const temPeri = periValor > 0;
+    const temFeriado = (calc.feriadosValor || 0) > 0;
+    const sal100 = parseFloat((calc.salarioBase + periValor + (calc.feriadosValor || 0)).toFixed(2));
+    const difSalLabel = temPeri
+      ? `💰 Diferença Salário (60% sal. + periculosidade${temFeriado ? ' + feriado' : ''})`
+      : `💰 Diferença Salário (60% sal. base${temFeriado ? ' + feriado' : ''})`;
+
+    // Info racional (não entra no total)
+    items.push(
+      { key: 'racional_100', label: `ℹ️ Salário 100% (base${temPeri ? ' + peri' : ''}${temFeriado ? ' + feriado' : ''})`, valor: sal100, tipo: 'info', checked: false },
+      { key: 'racional_40', label: `ℹ️ (−) Adiantamento 40% já pago no Dia 20 (Cód.12)`, valor: calc.adtoLiquido, tipo: 'info', checked: false },
+    );
+    // Créditos
+    items.push(
+      { key: 'difsal', label: difSalLabel, valor: calc.diferencaSalario, tipo: 'credito', checked: true },
+    );
+    if (!temFeriado) {
+      items.push({ key: 'feriado', label: `🟣 Feriado trabalhado (Cód.1311) — marque se houver`, valor: 0, tipo: 'credito', checked: false });
+    }
+    items.push(
+      { key: 'variavel2031', label: `📦 Variável 20-31`, valor: variavelDe20a31, tipo: 'credito', checked: variavelDe20a31 > 0 },
+    );
+    // Descontos legais
+    if (calc.inss > 0) items.push({ key: 'inss', label: `🟥 INSS`, valor: calc.inss, tipo: 'debito', checked: true });
+    if (calc.contrAssistencial > 0) items.push({ key: 'contr', label: `🟥 Contr. Assistencial`, valor: calc.contrAssistencial, tipo: 'debito', checked: true });
+    if (calc.valeTransporte > 0) items.push({ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: calc.valeTransporte, tipo: 'debito', checked: true });
+    if (adtoTransp > 0) items.push({ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito', checked: true });
+    for (let i = 0; i < adtoEspecialSaidas.length; i++) {
+      const s = adtoEspecialSaidas[i];
+      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
+    for (let i = 0; i < saidasDesc.length; i++) {
+      const s = saidasDesc[i];
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
+  }
+
+  return items;
+}
+
+/* ══════════════════════════════════════════════════════════════
  *  MONTAR HOLERITE (composição detalhada)
  * ══════════════════════════════════════════════════════════════ */
 
