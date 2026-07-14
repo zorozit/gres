@@ -77,7 +77,7 @@ export type {
 export { montarDemonstrativo } from './demonstrativo';
 export type { DemonstrativoInput, DemonstrativoResult, DemonstrativoSecao } from './demonstrativo';
 
-// Payslip (gravação do pagamento — Única função que gera bruto/desc/liquido/composicao)
+// Payslip Freelancer (gravação — Única função que gera bruto/desc/liquido/composicao freelancer)
 export { montarPayslipFreelancer } from './payslip';
 export type {
   CheckItemInput,
@@ -88,3 +88,16 @@ export type {
   MontarPayslipFreelancerInput,
   PayslipFreelancerResult,
 } from './payslip';
+
+// Payslip CLT (gravação — Única função que gera bruto/desc/liquido/composicao CLT)
+export { montarPayslipCLT, montarPayslipDobrasCLT } from './payslipCLT';
+export type {
+  CheckItemCLTInput,
+  RubricaInput,
+  LogPagamentoInput,
+  SaidaDescInput,
+  MontarPayslipCLTInput,
+  PayslipCLTResult,
+  MontarPayslipDobrasCLTInput,
+  PayslipDobrasCLTResult,
+} from './payslipCLT';

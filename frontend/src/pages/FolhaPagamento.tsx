@@ -15,6 +15,8 @@ import {
   calcularVariavelMotoboy,
   montarPayslipFreelancer,
   encontrarAdiantamentoIdAlvo,
+  montarPayslipCLT,
+  montarPayslipDobrasCLT,
 } from '../engine';
 import type { ControleDiaMotoboy } from '../engine';
 
@@ -2852,98 +2854,50 @@ export default function FolhaPagamento() {
           });
         } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
       }
-      // ── Fase 3: Gerar Payslip CLT (composição completa — Fase 5) ──
+      // ── Fase 3: Gerar Payslip CLT (via engine) ──
       try {
         const mp = modalPagamento;
         const tipoPs = modalPgtoTipo === 'Adiantamento' ? 'adiantamento' : 'variavel';
 
-        // ── Composição completa: holerite + variável + descontos operacionais + pagamentos ──
-        const composicaoPs: Array<{descricao:string;valor:number;tipo:string;referencia?:string;codigo?:string}> = [];
+        // Montar saídas operacionais do colaborador
+        const saidasColPs = saidasMesCompleto
+          .filter((s: any) => s.colaboradorId === mp.colaboradorId)
+          .map((s: any) => ({ tipo: s.tipo || s.origem || '', descricao: s.descricao || '', valor: parseFloat(s.valor) || 0, data: s.data, id: s.id, pagamentoIdLigado: s.pagamentoIdLigado }));
 
-        // 1) Vencimentos do holerite (salário base, periculosidade, feriado)
-        if (mp.conferido && mp.rubricas && mp.rubricas.length > 0) {
-          // Fonte contábil: usar rubricas reais do PDF
-          for (const r of mp.rubricas) {
-            const venc = R(r.vencimento);
-            const desc = R(r.desconto);
-            if (venc > 0) {
-              composicaoPs.push({ descricao: r.descricao, valor: venc, tipo: 'vencimento', referencia: r.referencia, codigo: r.codigo });
-            }
-            if (desc > 0) {
-              composicaoPs.push({ descricao: r.descricao, valor: -desc, tipo: 'desconto-legal', referencia: r.referencia, codigo: r.codigo });
-            }
-          }
-        } else {
-          // Fonte calculada: montar a partir dos campos do engine
-          composicaoPs.push({ descricao: 'Salário base', valor: mp.salarioBase, tipo: 'vencimento' });
-          if (mp.periculosidade > 0) {
-            composicaoPs.push({ descricao: 'Periculosidade', valor: mp.periculosidade, tipo: 'vencimento' });
-          }
-          if ((mp.feriadosValor || 0) > 0) {
-            composicaoPs.push({ descricao: 'Feriado trabalhado', valor: mp.feriadosValor!, tipo: 'vencimento' });
-          }
-          // Descontos legais
-          if (mp.inss > 0) {
-            composicaoPs.push({ descricao: 'INSS', valor: -mp.inss, tipo: 'desconto-legal' });
-          }
-          if (mp.contrAssistencial > 0) {
-            composicaoPs.push({ descricao: 'Contr. Assistencial', valor: -mp.contrAssistencial, tipo: 'desconto-legal' });
-          }
-          if ((mp.valeTransporte || 0) > 0) {
-            composicaoPs.push({ descricao: 'Vale Transporte (6%)', valor: -mp.valeTransporte, tipo: 'desconto-legal' });
-          }
-        }
+        const psResultCLT = montarPayslipCLT({
+          checkItems: checkItemsCLT.map(it => ({ key: it.key, label: it.label, valor: it.valor, tipo: it.tipo as 'credito'|'debito'|'info', checked: it.checked })),
+          abatimentoEspecial: vlAbateCLT,
+          tipoPagamento: tipoPs as 'adiantamento' | 'variavel',
+          rubricas: mp.rubricas,
+          conferido: mp.conferido,
+          salarioBase: mp.salarioBase || 0,
+          periculosidade: mp.periculosidade || 0,
+          feriadosValor: mp.feriadosValor || 0,
+          inss: mp.inss || 0,
+          contrAssistencial: mp.contrAssistencial || 0,
+          valeTransporte: mp.valeTransporte || 0,
+          variavelAte19: mp.variavelAte19 || 0,
+          variavelDe20a31: mp.variavelDe20a31 || 0,
+          saidasOperacionais: saidasColPs,
+          logPagamentos: newLogs.map((l: any) => ({ data: l.data, valor: l.valor, forma: l.forma, tipo: l.tipo, obs: l.obs })),
+          mes: mesAno,
+          nome: mp.nome,
+          cargo: mp.cargo,
+          cpf: mp.cpf,
+          chavePix: mp.chavePix,
+        });
 
-        // 2) Variável motoboy (se aplicável — entregas + caixinhas)
-        if ((mp.variavelAte19 || 0) > 0) {
-          composicaoPs.push({ descricao: 'Variável motoboy (até dia 19)', valor: mp.variavelAte19, tipo: 'variavel' });
-        }
-        if ((mp.variavelDe20a31 || 0) > 0) {
-          composicaoPs.push({ descricao: 'Variável motoboy (20-31)', valor: mp.variavelDe20a31, tipo: 'variavel' });
-        }
-
-        // 3) Descontos operacionais (consumo interno, a pagar, adto especial)
-        const saidasColPs = saidasMesCompleto.filter((s: any) => s.colaboradorId === mp.colaboradorId);
-        const TIPOS_DESC_PS = ['A pagar', 'A receber', 'Consumo Interno'];
-        const saidasDescPs = saidasColPs.filter((s: any) => TIPOS_DESC_PS.includes(s.tipo || s.origem || ''));
-        for (const sd of saidasDescPs) {
-          composicaoPs.push({
-            descricao: `${sd.tipo || 'Desconto'}: ${sd.descricao || ''}`.trim(),
-            valor: -(parseFloat(sd.valor) || 0),
-            tipo: 'desconto-operacional',
-          });
-        }
-        if (vlAbateCLT > 0) {
-          composicaoPs.push({ descricao: 'Desconto Adiantamento Especial', valor: -vlAbateCLT, tipo: 'desconto-operacional' });
-        }
-
-        // 4) Pagamentos registrados (log)
-        for (const reg of newLogs) {
-          composicaoPs.push({
-            descricao: `${reg.forma} — ${reg.tipo}${reg.obs ? ' ('+reg.obs+')' : ''}`,
-            valor: reg.valor,
-            tipo: 'adiantamento',
-          });
-        }
-
-        // Rubricas do holerite (quando conferido)
         const rubricasPs = mp.rubricas || [];
-
-        // Totais: bruto = vencimentos, descontos = legais + operacionais
-        const vencimentosTotal = composicaoPs.filter(c => c.tipo === 'vencimento' || c.tipo === 'variavel').reduce((s, c) => s + c.valor, 0);
-        const descontosTotal = composicaoPs.filter(c => c.tipo === 'desconto-legal' || c.tipo === 'desconto-operacional').reduce((s, c) => s + Math.abs(c.valor), 0);
-        const liquidoPs = parseFloat((vencimentosTotal - descontosTotal).toFixed(2));
-
         const psOps = [{
           tipo: 'payslip' as const,
           periodo: `${mesAno}-clt-${tipoPs}`,
           periodoInicio: `${mesAno}-01`,
           periodoFim: `${mesAno}-${new Date(parseInt(mesAno.split('-')[0]), parseInt(mesAno.split('-')[1]), 0).getDate()}`,
-          bruto: parseFloat(vencimentosTotal.toFixed(2)),
-          transporte: mp.valeTransporte || 0,
-          descontos: parseFloat(descontosTotal.toFixed(2)),
+          bruto: psResultCLT.bruto,
+          transporte: psResultCLT.transporte,
+          descontos: psResultCLT.descontos,
           adiantamentos: 0,
-          liquido: liquidoPs,
+          liquido: psResultCLT.liquido,
           nomeColaborador: mp.nome,
           tipoContrato: 'CLT',
           cargo: mp.cargo || '',
@@ -2951,15 +2905,9 @@ export default function FolhaPagamento() {
           chavePix: mp.chavePix || '',
           tipoPagamento: tipoPs,
           conferido: mp.conferido || false,
-          composicao: composicaoPs,
+          composicao: psResultCLT.composicao,
           ...(rubricasPs.length > 0 ? { rubricas: rubricasPs } : {}),
-          // Campos adicionais para reconstrução no extrato
-          salarioBase: mp.salarioBase,
-          periculosidadeValor: mp.periculosidade,
-          feriadosValor: mp.feriadosValor || 0,
-          inssValor: mp.inss,
-          contrAssistencial: mp.contrAssistencial,
-          valeTransporteValor: mp.valeTransporte,
+          ...psResultCLT.extra,
           fonteHolerite: mp.conferido ? 'contabil' : 'calculado',
         }];
 
@@ -5360,13 +5308,19 @@ export default function FolhaPagamento() {
       {/* ══════ MODAL PAGAMENTO DOBRAS CLT ══════ */}
       {modalDobras && (() => {
         const md = modalDobras as any;
-        const creditosDobras = checkItemsDobras.filter(it => it.tipo === 'credito' && it.checked);
-        const debitosDobras = checkItemsDobras.filter(it => it.tipo === 'debito' && it.checked);
-        const totalCred = creditosDobras.reduce((s, it) => s + it.valor, 0);
-        const totalDeb = debitosDobras.reduce((s, it) => s + it.valor, 0);
         const vlAbatNum = abaterEspDobras ? (parseFloat(vlAbateDobras) || 0) : 0;
-        const liquidoFinal = Math.max(0, totalCred - totalDeb - vlAbatNum);
         const saldoEsp = md.saldoEspecial || 0;
+
+        // Engine calcula tudo
+        const psDobraResult = montarPayslipDobrasCLT({
+          checkItems: checkItemsDobras.map(it => ({ key: it.key, label: it.label, valor: it.valor, tipo: it.tipo as 'credito'|'debito'|'info', checked: it.checked })),
+          abatimentoEspecial: vlAbatNum,
+          semanaLabel: md.semana.label,
+          nome: md.pessoa.nome,
+        });
+        const totalCred = psDobraResult.bruto;
+        const totalDeb = psDobraResult.descontos;
+        const liquidoFinal = psDobraResult.liquido;
 
         const confirmarPagtoDobras = async () => {
           const hoje2 = new Date().toISOString().split('T')[0];
@@ -5408,6 +5362,32 @@ export default function FolhaPagamento() {
                 }),
               });
             }
+
+            // 3) Gerar payslip (via pagamento-batch)
+            try {
+              await fetchAuth(`${apiUrl}/pagamento-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                body: JSON.stringify({
+                  colaboradorId: md.pessoa.id, unitId, mes: mesAno,
+                  dataPagamento: dataConfirmada, formaPagamento: 'PIX',
+                  operacoes: [{
+                    tipo: 'payslip',
+                    periodo: `${mesAno}-dobras-${md.semana.inicio}`,
+                    periodoInicio: md.semana.inicio,
+                    periodoFim: md.semana.fim,
+                    bruto: psDobraResult.bruto,
+                    transporte: md.transporte,
+                    descontos: psDobraResult.descontos,
+                    liquido: psDobraResult.liquido,
+                    nomeColaborador: md.pessoa.nome,
+                    tipoContrato: 'CLT',
+                    tipoPagamento: 'dobras',
+                    composicao: psDobraResult.composicao,
+                  }],
+                }),
+              });
+            } catch (e) { console.error('Erro ao gerar payslip dobras:', e); }
 
             setModalDobras(null);
             await carregarDados();
