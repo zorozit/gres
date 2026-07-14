@@ -371,6 +371,16 @@ export default function FolhaPagamento() {
   const [dobrasFiltroIni, setDobrasFiltroIni] = useState<string>('');
   const [dobrasFiltroFim, setDobrasFiltroFim] = useState<string>('');
 
+  // ── Modal Pagamento Dobras CLT ──
+  interface ModalDobrasCLT {
+    pessoa: any; semana: { inicio: string; fim: string; label: string };
+    bruto: number; transporte: number; totalFinal: number; obs: string;
+  }
+  const [modalDobras, setModalDobras] = useState<ModalDobrasCLT | null>(null);
+  const [checkItemsDobras, setCheckItemsDobras] = useState<CheckItemCLT[]>([]);
+  const [abaterEspDobras, setAbaterEspDobras] = useState(false);
+  const [vlAbateDobras, setVlAbateDobras] = useState('');
+
   useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno, periodoIni, periodoFim]);
 
   const abrirHistorico = async (colaboradorId: string) => {
@@ -4309,27 +4319,54 @@ export default function FolhaPagamento() {
                                         <button
                                           onClick={async () => {
                                             if (!isPago) {
-                                              const hoje2 = new Date().toISOString().split('T')[0];
-                                              const dataConfirmada = window.prompt('Data do pagamento (AAAA-MM-DD):', hoje2);
-                                              if (!dataConfirmada) return;
-                                              setSalvando(true);
+                                              // Abrir modal com descontos/consumos/abatimentos
+                                              const md: ModalDobrasCLT = {
+                                                pessoa: p, semana: sem,
+                                                bruto: brutoEditado, transporte: transpEditado,
+                                                totalFinal: totalEdit, obs: ed.obs || '',
+                                              };
+                                              setModalDobras(md);
+                                              setAbaterEspDobras(false);
+                                              setVlAbateDobras('');
+                                              // Buscar saídas frescas e montar checklist
                                               try {
-                                                const payload = {
-                                                  colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
-                                                  pago: true,
-                                                  dataPagamento: dataConfirmada,
-                                                  valorBruto: brutoEditado, valorTransporte: transpEditado,
-                                                  totalFinal: totalEdit, obs: ed.obs || '',
-                                                };
-                                                await fetchAuth(`${apiUrl}/folha-pagamento`, {
-                                                  method: 'POST',
-                                                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                                                  body: JSON.stringify(payload),
+                                                const resSaidas = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
+                                                  headers: { Authorization: `Bearer ${token()}` }
                                                 });
-                                                await carregarDados();
-                                              } catch { alert('Erro ao salvar status'); }
-                                              finally { setSalvando(false); }
+                                                const saidasFrescas = await resSaidas.json();
+                                                const saidasCol = saidasFrescas.filter((ss: any) => ss.colaboradorId === p.id);
+                                                const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno'];
+                                                const saidasDesc = saidasCol.filter((ss: any) => {
+                                                  const t = ss.tipo || ss.origem || '';
+                                                  if (!TIPOS_DESC.includes(t)) return false;
+                                                  if (ss.pagamentoIdLigado) return false; // já processado
+                                                  return true;
+                                                });
+                                                // Saldo adiantamento especial
+                                                const adtosEsp = saidasCol.filter((ss: any) => (ss.tipo || '') === 'Adiantamento Especial');
+                                                const descEsp = saidasCol.filter((ss: any) => (ss.tipo || '') === 'Desconto Adiantamento Especial');
+                                                let saldoEsp = 0;
+                                                for (const ae of adtosEsp) {
+                                                  const aid = ae.adiantamentoId || ae.id;
+                                                  const totalD = descEsp.filter((dd: any) => dd.adiantamentoId === aid).reduce((s2: number, dd: any) => s2 + (parseFloat(dd.valor) || 0), 0);
+                                                  saldoEsp += Math.max(0, (parseFloat(ae.valor) || 0) - totalD);
+                                                }
+                                                const items: CheckItemCLT[] = [
+                                                  { key: 'dobras', label: `💪 Dobras semana ${sem.label}`, valor: brutoEditado, tipo: 'credito', checked: true },
+                                                  ...(transpEditado > 0 ? [{ key: 'transp', label: `🚗 Transporte`, valor: transpEditado, tipo: 'credito' as const, checked: true }] : []),
+                                                  ...saidasDesc.map((ss: any, i: number) => ({
+                                                    key: `desc_${i}`, label: `🔴 ${ss.tipo || 'Desconto'}: ${ss.descricao || ''} (${(ss.data || '').slice(5)})`,
+                                                    valor: R(ss.valor), tipo: 'debito' as const, checked: true, saidaId: ss.id,
+                                                  })),
+                                                ];
+                                                setCheckItemsDobras(items);
+                                                if (saldoEsp > 0) setAbaterEspDobras(false);
+                                                (md as any).saldoEspecial = saldoEsp;
+                                                (md as any).saidasFrescas = saidasFrescas;
+                                                setModalDobras({ ...md, ...(md as any) });
+                                              } catch (e) { console.error('Erro ao buscar saídas:', e); }
                                             } else {
+                                              // Desfazer pagamento
                                               setSalvando(true);
                                               try {
                                                 const payload = {
@@ -5319,6 +5356,137 @@ export default function FolhaPagamento() {
         )}
       </div>
       <Footer showLinks={true} />
+
+      {/* ══════ MODAL PAGAMENTO DOBRAS CLT ══════ */}
+      {modalDobras && (() => {
+        const md = modalDobras as any;
+        const creditosDobras = checkItemsDobras.filter(it => it.tipo === 'credito' && it.checked);
+        const debitosDobras = checkItemsDobras.filter(it => it.tipo === 'debito' && it.checked);
+        const totalCred = creditosDobras.reduce((s, it) => s + it.valor, 0);
+        const totalDeb = debitosDobras.reduce((s, it) => s + it.valor, 0);
+        const vlAbatNum = abaterEspDobras ? (parseFloat(vlAbateDobras) || 0) : 0;
+        const liquidoFinal = Math.max(0, totalCred - totalDeb - vlAbatNum);
+        const saldoEsp = md.saldoEspecial || 0;
+
+        const confirmarPagtoDobras = async () => {
+          const hoje2 = new Date().toISOString().split('T')[0];
+          const dataConfirmada = window.prompt('Data do pagamento (AAAA-MM-DD):', hoje2);
+          if (!dataConfirmada) return;
+          setSalvando(true);
+          try {
+            // 1) Salvar folha-pagamento (status pago)
+            const payload = {
+              colaboradorId: md.pessoa.id, mes: mesAno, semana: md.semana.inicio, unitId,
+              pago: true, dataPagamento: dataConfirmada,
+              valorBruto: md.bruto, valorTransporte: md.transporte,
+              totalFinal: liquidoFinal, obs: md.obs || '',
+            };
+            await fetchAuth(`${apiUrl}/folha-pagamento`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+              body: JSON.stringify(payload),
+            });
+
+            // 2) Abatimento especial (se habilitado)
+            if (vlAbatNum > 0) {
+              const saidasFr = md.saidasFrescas || saidasPeriodo;
+              const adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
+                saidasFr.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                md.pessoa.id,
+              );
+              await fetchAuth(`${apiUrl}/saidas`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                body: JSON.stringify({
+                  unitId, colaboradorId: md.pessoa.id,
+                  tipo: 'Desconto Adiantamento Especial',
+                  descricao: `Abatimento adto. especial - dobras ${md.semana.label}`,
+                  valor: vlAbatNum, data: dataConfirmada, dataPagamento: dataConfirmada,
+                  pago: true, responsavel: localStorage.getItem('user_email') || '',
+                  obs: `Abatido no pagamento de dobras semana ${md.semana.label}`,
+                  adiantamentoId: adtoIdAlvoDobras || undefined,
+                }),
+              });
+            }
+
+            setModalDobras(null);
+            await carregarDados();
+          } catch (err) { console.error('Erro salvarPagtoDobras:', err); alert('Erro ao salvar pagamento'); }
+          finally { setSalvando(false); }
+        };
+
+        return (
+          <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <div style={{ background:'white', borderRadius:'12px', padding:'24px', maxWidth:'520px', width:'95%', maxHeight:'85vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.3)' }}>
+              <h3 style={{ margin:'0 0 16px', color:'#1565c0' }}>💪 Pagamento Dobras — {md.pessoa.nome}</h3>
+              <p style={{ fontSize:'12px', color:'#666', margin:'0 0 12px' }}>Semana {md.semana.label}</p>
+
+              {/* Checklist */}
+              {checkItemsDobras.map((it, i) => (
+                <div key={it.key} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 0', borderBottom:'1px solid #f0f0f0' }}>
+                  <input type="checkbox" checked={it.checked}
+                    onChange={() => setCheckItemsDobras(prev => prev.map((p2,j) => j===i ? {...p2, checked: !p2.checked} : p2))}
+                    style={{ width:'16px', height:'16px', accentColor: it.tipo === 'credito' ? '#43a047' : '#e53935' }} />
+                  <span style={{ flex:1, fontSize:'12px', color: it.tipo==='debito' ? '#c62828' : '#1b5e20' }}>{it.label}</span>
+                  <span style={{ fontWeight:700, fontSize:'13px', color: it.tipo==='debito' ? '#c62828' : '#2e7d32' }}>
+                    {it.tipo==='debito' ? '-' : '+'}{fmtMoeda(it.valor)}
+                  </span>
+                </div>
+              ))}
+
+              {/* Abatimento Especial */}
+              {saldoEsp > 0 && (
+                <div style={{ marginTop:'12px', padding:'10px', backgroundColor:'#f3e5f5', borderRadius:'6px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                    <input type="checkbox" checked={abaterEspDobras}
+                      onChange={e => { setAbaterEspDobras(e.target.checked); if (!e.target.checked) setVlAbateDobras(''); }}
+                      style={{ width:'16px', height:'16px', accentColor:'#7c3aed' }} />
+                    <label style={{ fontWeight:700, color:'#5b21b6', fontSize:'13px' }}>➖ Abater Adiantamento Especial</label>
+                    <span style={{ marginLeft:'auto', fontSize:'12px', color:'#7c3aed', fontWeight:700 }}>Saldo: {fmtMoeda(saldoEsp)}</span>
+                  </div>
+                  {abaterEspDobras && (
+                    <div style={{ marginTop:'6px' }}>
+                      <input type="number" step="0.01" min="0.01" max={saldoEsp}
+                        value={vlAbateDobras} placeholder={`máx. ${fmtMoeda(saldoEsp)}`}
+                        onChange={e => setVlAbateDobras(e.target.value)}
+                        style={{ width:'140px', padding:'4px 8px', border:'1px solid #a78bfa', borderRadius:'4px', fontSize:'12px' }} />
+                      <div style={{ fontSize:'11px', color:'#6d28d9', marginTop:'4px' }}>Saldo restante: <strong>{fmtMoeda(Math.max(0, saldoEsp - vlAbatNum))}</strong></div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Totais */}
+              <div style={{ marginTop:'16px', padding:'12px', backgroundColor:'#e8f5e9', borderRadius:'8px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px' }}>
+                  <span>🟢 Créditos</span><strong style={{ color:'#2e7d32' }}>{fmtMoeda(totalCred)}</strong>
+                </div>
+                {totalDeb > 0 && <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginTop:'4px' }}>
+                  <span>🔴 Descontos</span><strong style={{ color:'#c62828' }}>-{fmtMoeda(totalDeb)}</strong>
+                </div>}
+                {vlAbatNum > 0 && <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px', marginTop:'4px' }}>
+                  <span>🟪 Abatimento Especial</span><strong style={{ color:'#7c3aed' }}>-{fmtMoeda(vlAbatNum)}</strong>
+                </div>}
+                <hr style={{ margin:'8px 0', border:'none', borderTop:'1px solid #a5d6a7' }} />
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:'16px' }}>
+                  <span style={{ fontWeight:700 }}>💰 Líquido a pagar</span>
+                  <strong style={{ color:'#1b5e20', fontSize:'18px' }}>{fmtMoeda(liquidoFinal)}</strong>
+                </div>
+              </div>
+
+              {/* Ações */}
+              <div style={{ display:'flex', gap:'10px', marginTop:'16px', justifyContent:'flex-end' }}>
+                <button onClick={() => setModalDobras(null)} style={{ ...s.btn('#757575'), padding:'8px 16px' }}>Cancelar</button>
+                <button onClick={confirmarPagtoDobras} disabled={salvando || liquidoFinal <= 0}
+                  style={{ ...s.btn('#43a047'), padding:'8px 20px', fontWeight:700 }}>
+                  {salvando ? 'Salvando...' : `✅ Confirmar PIX ${fmtMoeda(liquidoFinal)}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
