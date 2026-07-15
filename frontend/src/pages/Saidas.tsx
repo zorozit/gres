@@ -35,6 +35,7 @@ interface Categoria {
   hint: string;
   grupo: 'colaborador' | 'caixa';
   regraFolha?: 'abate_transporte' | 'desconto_transporte' | 'desconto_liquido' | 'credito_liquido' | 'adiantamento_clt' | 'saldo_especial' | 'abate_especial' | null;
+  dirLabel?: string;
   bg: string; text: string; border: string;
 }
 
@@ -42,43 +43,50 @@ const CATEGORIAS: Categoria[] = [
   // ── Grupo: Pagamentos ao Colaborador ──────────────────────────────
   {
     value: 'A pagar', label: 'A pagar — genérico', emoji: '📤',
+    dirLabel: '🔴 Restaurante paga ao colaborador',
     dir: 'saida', grupo: 'colaborador', regraFolha: null,
     hint: 'Pagamento genérico ao colaborador (comissão, ajuda de custo, etc.). NÃO é abatido automaticamente da folha.',
     bg: '#fce4e4', text: '#c62828', border: '#e57373',
   },
   {
     value: 'Adiantamento Salário', label: 'Adiantamento Salário', emoji: '💵',
+    dirLabel: '🔴 Restaurante paga ao colaborador',
     dir: 'saida', grupo: 'colaborador', regraFolha: 'adiantamento_clt',
     hint: 'Adiantamento sobre o salário CLT. Será descontado automaticamente no fechamento mensal.',
     bg: '#fce4e4', text: '#b71c1c', border: '#c62828',
   },
   {
     value: 'Adiantamento Transporte', label: 'Adiantamento Transporte', emoji: '🚗',
+    dirLabel: '🔴 Restaurante paga ao colaborador',
     dir: 'saida', grupo: 'colaborador', regraFolha: 'abate_transporte',
     hint: 'Transporte pago antecipado ao colaborador. Será abatido automaticamente do transporte calculado na semana de dobras (Folha → Freelancers).',
     bg: '#fff3e0', text: '#e65100', border: '#ffcc80',
   },
   {
     value: 'Desconto Transporte', label: 'Desconto Transporte', emoji: '🚌',
+    dirLabel: '🟢 Desconta do colaborador',
     dir: 'entrada', grupo: 'colaborador', regraFolha: 'desconto_transporte',
     hint: 'Desconto/abatimento manual da carteira de transporte. Útil para registrar devolução parcelada sem perder o saldo histórico.',
     bg: '#fff8e1', text: '#ef6c00', border: '#ffcc80',
   },
 
   {
-    value: 'Caixinha', label: 'Caixinha 🪙 (gorjeta a pagar)', emoji: '🪙',
+    value: 'Caixinha', label: 'Caixinha (gorjeta a pagar)', emoji: '🪙',
+    dirLabel: '🔴 Restaurante paga ao colaborador',
     dir: 'saida', grupo: 'colaborador', regraFolha: 'credito_liquido',
     hint: '🪙 Gorjeta coletada pelo restaurante. Será PAGA ao colaborador junto com os demais pagamentos da semana (somada ao líquido, não descontada).',
     bg: '#fff8e1', text: '#f57f17', border: '#ffe082',
   },
   {
     value: 'Consumo Interno', label: 'Consumo Interno', emoji: '🍽️',
+    dirLabel: '🟢 Desconta do colaborador',
     dir: 'saida', grupo: 'colaborador', regraFolha: 'desconto_liquido',
     hint: 'Consumo de refeição/produto do colaborador. Será descontado do líquido semanal ou salário.',
     bg: '#fce4ec', text: '#880e4f', border: '#f48fb1',
   },
   {
     value: 'A receber', label: 'A receber — vale / empréstimo', emoji: '📥',
+    dirLabel: '🟢 Desconta do colaborador',
     dir: 'entrada', grupo: 'colaborador', regraFolha: 'desconto_liquido',
     hint: 'Colaborador deve ao restaurante (vale, empréstimo, uniforme, etc.). Será descontado automaticamente do líquido semanal (Freelancer) ou do saldo CLT.',
     bg: '#e8f5e9', text: '#2e7d32', border: '#66bb6a',
@@ -86,18 +94,21 @@ const CATEGORIAS: Categoria[] = [
   // ── Grupo: Caixa / Operacional ────────────────────────────────────
   {
     value: 'Sangria', label: 'Sangria de Caixa', emoji: '💵',
+    dirLabel: '🔴 Saída do caixa',
     dir: 'saida', grupo: 'caixa', regraFolha: null,
     hint: 'Retirada física de dinheiro do caixa (sangria). Não vinculado à folha.',
     bg: '#fff3e0', text: '#e65100', border: '#ffa726',
   },
   {
     value: 'PIX', label: 'PIX (pagamento)', emoji: '📲',
+    dirLabel: '🔴 Saída do caixa',
     dir: 'saida', grupo: 'caixa', regraFolha: null,
     hint: 'Pagamento enviado via PIX (despesa, fornecedor, etc.).',
     bg: '#e8eaf6', text: '#283593', border: '#7986cb',
   },
   {
     value: 'Caixa', label: 'Caixa (entrada/saída)', emoji: '🏦',
+    dirLabel: '⚪ Movimentação de caixa',
     dir: 'neutro', grupo: 'caixa', regraFolha: null,
     hint: 'Movimentação registrada diretamente no caixa.',
     bg: '#e0f7fa', text: '#006064', border: '#26c6da',
@@ -247,9 +258,9 @@ export const Saidas: React.FC = () => {
       alert('Selecione um colaborador');
       return;
     }
+    // Descrição não obrigatória — gera automática se vazia
     if (!novoRegistro.descricao) {
-      alert('Informe a descrição');
-      return;
+      novoRegistro.descricao = getCat(novoRegistro.tipo).label;
     }
     if (!novoRegistro.valor || novoRegistro.valor <= 0) {
       alert('Informe um valor válido (maior que zero)');
@@ -476,12 +487,17 @@ export const Saidas: React.FC = () => {
                     <select value={novoRegistro.tipo}
                       onChange={e => setNovoRegistro({ ...novoRegistro, tipo: e.target.value, origem: e.target.value })}
                       style={s.select}>
-                      <optgroup label="── Pagamentos ao Colaborador ──">
-                        {CATEGORIAS.filter(c => c.grupo === 'colaborador').map(c => (
+                      <optgroup label="🔴 Pagamentos (restaurante paga)">
+                        {CATEGORIAS.filter(c => c.grupo === 'colaborador' && c.dir === 'saida').map(c => (
                           <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>
                         ))}
                       </optgroup>
-                      <optgroup label="── Caixa / Operacional ──">
+                      <optgroup label="🟢 Descontos (desconta do colaborador)">
+                        {CATEGORIAS.filter(c => c.grupo === 'colaborador' && (c.dir === 'entrada' || c.regraFolha === 'desconto_liquido')).map(c => (
+                          <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="🏦 Caixa / Operacional">
                         {CATEGORIAS.filter(c => c.grupo === 'caixa').map(c => (
                           <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>
                         ))}
@@ -489,18 +505,27 @@ export const Saidas: React.FC = () => {
                     </select>
                     {/* Hint contextual */}
                     <div style={s.infoBox(catAtual.bg, catAtual.border, catAtual.text)}>
-                      <strong>{catAtual.emoji} {catAtual.label}</strong>
-                      {catAtual.regraFolha && (
-                        <span style={{ marginLeft: '6px', padding: '1px 6px', backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: '8px', fontSize: '10px' }}>
-                          🔗 Regra automática na folha
-                        </span>
-                      )}
-                      <br /><span style={{ fontSize: '11px', marginTop: '4px', display: 'block' }}>{catAtual.hint}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <strong>{catAtual.emoji} {catAtual.label}</strong>
+                        {catAtual.dirLabel && (
+                          <span style={{ padding: '2px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700,
+                            backgroundColor: catAtual.dir === 'entrada' ? '#c8e6c9' : catAtual.dir === 'saida' ? '#ffcdd2' : '#e0e0e0',
+                            color: catAtual.dir === 'entrada' ? '#1b5e20' : catAtual.dir === 'saida' ? '#b71c1c' : '#424242' }}>
+                            {catAtual.dirLabel}
+                          </span>
+                        )}
+                        {catAtual.regraFolha && (
+                          <span style={{ padding: '1px 6px', backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: '8px', fontSize: '10px' }}>
+                            🔗 Desconta na folha
+                          </span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: '11px', marginTop: '4px', display: 'block' }}>{catAtual.hint}</span>
                     </div>
                   </div>
 
                   <div>
-                    <label style={s.label}>Descrição: *</label>
+                    <label style={s.label}>Descrição:</label>
                     <input type="text" placeholder="Ex: Semana 14/04, uniforme, adiantamento…"
                       value={novoRegistro.descricao}
                       onChange={e => setNovoRegistro({ ...novoRegistro, descricao: e.target.value })}
