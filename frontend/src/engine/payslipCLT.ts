@@ -107,67 +107,28 @@ const R2 = (n: number) => parseFloat(n.toFixed(2));
 export function montarPayslipCLT(input: MontarPayslipCLTInput): PayslipCLTResult {
   const composicao: ComposicaoItem[] = [];
 
-  // ── 1) VENCIMENTOS: holerite ou cálculo ──
-  if (input.conferido && input.rubricas && input.rubricas.length > 0) {
-    for (const r of input.rubricas) {
-      const venc = r.vencimento || 0;
-      const desc = r.desconto || 0;
-      if (venc > 0) {
-        composicao.push({
-          descricao: r.descricao,
-          valor: venc,
-          tipo: 'vencimento',
-        });
-      }
-      if (desc > 0) {
-        composicao.push({
-          descricao: r.descricao,
-          valor: -desc,
-          tipo: 'desconto-legal',
-        });
-      }
-    }
-  } else {
-    composicao.push({ descricao: 'Salário base', valor: input.salarioBase, tipo: 'vencimento' });
-    if (input.periculosidade > 0) {
-      composicao.push({ descricao: 'Periculosidade', valor: input.periculosidade, tipo: 'vencimento' });
-    }
-    if (input.feriadosValor > 0) {
-      composicao.push({ descricao: 'Feriado trabalhado', valor: input.feriadosValor, tipo: 'vencimento' });
-    }
-    if (input.inss > 0) {
-      composicao.push({ descricao: 'INSS', valor: -input.inss, tipo: 'desconto-legal' });
-    }
-    if (input.contrAssistencial > 0) {
-      composicao.push({ descricao: 'Contr. Assistencial', valor: -input.contrAssistencial, tipo: 'desconto-legal' });
-    }
-    if (input.valeTransporte > 0) {
-      composicao.push({ descricao: 'Vale Transporte (6%)', valor: -input.valeTransporte, tipo: 'desconto-legal' });
+  // ── FONTE DE VERDADE: checkItems do modal (o que o usuário viu e confirmou) ──
+  // Cada checkItem checked é uma linha do payslip.
+  // Isso garante: payslip = exatamente o que foi mostrado no modal.
+  const checked = input.checkItems.filter(it => it.checked && it.tipo !== 'info');
+
+  for (const it of checked) {
+    if (it.tipo === 'credito') {
+      composicao.push({
+        descricao: it.label,
+        valor: it.valor,
+        tipo: 'vencimento',
+      });
+    } else if (it.tipo === 'debito') {
+      composicao.push({
+        descricao: it.label,
+        valor: -(it.valor),
+        tipo: 'desconto-operacional',
+      });
     }
   }
 
-  // ── 2) VARIÁVEL MOTOBOY ──
-  if (input.variavelAte19 > 0) {
-    composicao.push({ descricao: 'Variável motoboy (até dia 19)', valor: input.variavelAte19, tipo: 'variavel' });
-  }
-  if (input.variavelDe20a31 > 0) {
-    composicao.push({ descricao: 'Variável motoboy (20-31)', valor: input.variavelDe20a31, tipo: 'variavel' });
-  }
-
-  // ── 3) DESCONTOS OPERACIONAIS (saídas) ──
-  const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno'];
-  const saidasFiltradas = input.saidasOperacionais.filter(s =>
-    TIPOS_DESC.includes(s.tipo) && !s.pagamentoIdLigado
-  );
-  for (const sd of saidasFiltradas) {
-    composicao.push({
-      descricao: `${sd.tipo}: ${sd.descricao || ''}`.trim(),
-      valor: -(sd.valor || 0),
-      tipo: 'desconto-operacional',
-    });
-  }
-
-  // ── 4) ABATIMENTO ESPECIAL ──
+  // ── ABATIMENTO ESPECIAL (se habilitado, não vem nos checkItems) ──
   if (input.abatimentoEspecial > 0) {
     composicao.push({
       descricao: 'Desconto Adiantamento Especial',
@@ -176,7 +137,7 @@ export function montarPayslipCLT(input: MontarPayslipCLTInput): PayslipCLTResult
     });
   }
 
-  // ── 5) PAGAMENTOS REGISTRADOS (log) ──
+  // ── PAGAMENTOS REGISTRADOS (log PIX) ──
   for (const reg of input.logPagamentos) {
     composicao.push({
       descricao: `${reg.forma} — ${reg.tipo}${reg.obs ? ' (' + reg.obs + ')' : ''}`,
@@ -186,33 +147,20 @@ export function montarPayslipCLT(input: MontarPayslipCLTInput): PayslipCLTResult
   }
 
   // ── TOTAIS: derivados da composição ──
-  const vencimentosTotal = R2(
+  const creditosTotal = R2(
     composicao
-      .filter(c => c.tipo === 'vencimento' || c.tipo === 'variavel')
+      .filter(c => c.valor > 0 && c.tipo !== 'adiantamento')
       .reduce((s, c) => s + c.valor, 0)
   );
   const descontosTotal = R2(
     composicao
-      .filter(c => c.tipo === 'desconto-legal' || c.tipo === 'desconto-operacional')
+      .filter(c => c.valor < 0)
       .reduce((s, c) => s + Math.abs(c.valor), 0)
   );
-  const liquido = R2(vencimentosTotal - descontosTotal);
-
-  // ── VALIDAÇÃO: checkItems do modal devem bater ──
-  const checked = input.checkItems.filter(it => it.checked && it.tipo !== 'info');
-  const creditosModal = R2(checked.filter(it => it.tipo === 'credito').reduce((s, it) => s + it.valor, 0));
-  const debitosModal = R2(checked.filter(it => it.tipo === 'debito').reduce((s, it) => s + it.valor, 0));
-  const liquidoModal = R2(creditosModal - debitosModal - input.abatimentoEspecial);
-
-  if (Math.abs(liquido - liquidoModal) > 1) {
-    console.warn(
-      `[engine/payslipCLT] Composição (${liquido}) ≠ modal (${liquidoModal}). ` +
-      `Vencimentos=${vencimentosTotal}, Descontos=${descontosTotal}`
-    );
-  }
+  const liquido = R2(creditosTotal - descontosTotal);
 
   return {
-    bruto: vencimentosTotal,
+    bruto: creditosTotal,
     descontos: descontosTotal,
     liquido,
     transporte: input.valeTransporte,
