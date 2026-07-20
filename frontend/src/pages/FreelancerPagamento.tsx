@@ -354,6 +354,7 @@ export default function FreelancerPagamento() {
 
         /* Caixinha do controle-motoboy */
         let caixinhaCtrlMotoboy = 0;
+        let caixinhaCtrlMotoboyPeriodo = 0; // inclui dias já pagos (para integridade)
         const caixinhaCtrlDetalhe: {descricao:string;valor:number;data:string}[] = [];
 
         /* diasPagos / diasJaPagosDetalhe */
@@ -405,18 +406,22 @@ export default function FreelancerPagamento() {
                 vlLinha, pago: false,
               });
             }
-            if (caixinhaLinha > 0 && !jaPago) {
-              caixinhaCtrlMotoboy += caixinhaLinha;
-              caixinhaCtrlDetalhe.push({
-                descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
-                valor: caixinhaLinha,
-                data: linha.data,
-              });
+            if (caixinhaLinha > 0) {
+              caixinhaCtrlMotoboyPeriodo += caixinhaLinha;
+              if (!jaPago) {
+                caixinhaCtrlMotoboy += caixinhaLinha;
+                caixinhaCtrlDetalhe.push({
+                  descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
+                  valor: caixinhaLinha,
+                  data: linha.data,
+                });
+              }
             }
           }
           total = parseFloat(total.toFixed(2));
           totalJaPago = parseFloat(totalJaPago.toFixed(2));
           caixinhaCtrlMotoboy = parseFloat(caixinhaCtrlMotoboy.toFixed(2));
+          caixinhaCtrlMotoboyPeriodo = parseFloat(caixinhaCtrlMotoboyPeriodo.toFixed(2));
           dobras = parseFloat(dobras.toFixed(1));
           diasCodigo = diasPagosList.map(d => d.data.slice(8)).join(',');
         } else {
@@ -489,6 +494,7 @@ export default function FreelancerPagamento() {
         });
         const caixinhaSaidas = parseFloat(saidasCaixFr.reduce((s:number,x:any)=>s+R(x.valor),0).toFixed(2));
         const caixinhaTotal  = parseFloat((caixinhaSaidas + caixinhaCtrlMotoboy).toFixed(2));
+        const caixinhaTotalPeriodo = parseFloat((caixinhaSaidas + caixinhaCtrlMotoboyPeriodo).toFixed(2)); // inclui dias já pagos
         const caixinhaDetalhe = [
           ...saidasCaixFr.map((s:any)=>({descricao:`🪙 Caixinha: ${s.descricao||'Gorjeta'}`, valor:R(s.valor), data:s.dataPagamento||s.data||''})),
           ...caixinhaCtrlDetalhe,
@@ -543,14 +549,17 @@ export default function FreelancerPagamento() {
         if (pago && psMatch) {
           const brutoPayslipVal = parseFloat(psMatch.bruto || '0');
           const liquidoPayslipVal = parseFloat(psMatch.liquido || '0');
-          const brutoAtual = totalBrutoPeriodo + transp_saldo + caixinhaTotal;
+          const brutoAtual = totalBrutoPeriodo + transp_saldo + caixinhaTotalPeriodo;
           // Se bruto atual difere do payslip, há pendência
           diferencaPendente = R(brutoAtual - brutoPayslipVal);
           if (Math.abs(diferencaPendente) > 1) {
-            // Turno editado pós-pagamento: marcar como parcial, mostrar valor recalculado
+            // Turno editado pós-pagamento: marcar como parcial
             pago = false;
             pagoParcial = true;
-            // Manter bruto/descontos/líquido recalculados (não sobrescrever com payslip)
+            // brutoFinal = valor RECALCULADO completo do período (turnos + caixinha + transporte)
+            brutoFinal = brutoAtual;
+            liquidoFinal = R(brutoAtual - descontosFinal);
+            // diferencaPendente já calculada acima
           } else {
             // Sem divergência: usar payslip como fonte de verdade
             liquidoFinal = liquidoPayslipVal;
