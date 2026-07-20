@@ -2142,10 +2142,11 @@ exports.handler = async (event) => {
 
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
-      const data        = queryParams.data;        // filtro por dia exato
-      const dataInicio  = queryParams.dataInicio;  // filtro por período
-      const dataFim     = queryParams.dataFim;
-      const unitId      = queryParams.unitId;
+      const data            = queryParams.data;            // filtro por dia exato
+      const dataInicio      = queryParams.dataInicio;      // filtro por período
+      const dataFim         = queryParams.dataFim;
+      const unitId          = queryParams.unitId;
+      const colaboradorIdQ  = queryParams.colaboradorId;   // filtro por colaborador (opcional)
 
       console.log('GET /saidas - queryParams:', queryParams);
 
@@ -2181,6 +2182,9 @@ exports.handler = async (event) => {
           if (dataInicio && dataFim) {
             if (!item.data || item.data < dataInicio || item.data > dataFim) return false;
           }
+
+          // Filtro por colaborador (quando solicitado)
+          if (colaboradorIdQ && item.colaboradorId !== colaboradorIdQ) return false;
 
           // Filtro por unidade — aceita itens sem unitId (dados históricos)
           if (unitCnpj) {

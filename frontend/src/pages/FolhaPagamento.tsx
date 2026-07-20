@@ -2126,13 +2126,26 @@ export default function FolhaPagamento() {
                     }
                   }
 
-                  // 4) Abatimento especial
+                  // 4) Abatimento especial — busca TODO histórico para encontrar contrato correto
                   if (abaterEspecial && vlAbate > 0) {
-                    const fonteSaidas3 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
-                    const adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
-                      fonteSaidas3.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                      fr.id,
-                    );
+                    let adtoIdAlvo2: string | undefined;
+                    try {
+                      const rHistFr = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
+                      if (rHistFr.ok) {
+                        const todasSaidasFr = await rHistFr.json();
+                        adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
+                          (Array.isArray(todasSaidasFr)?todasSaidasFr:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                          fr.id,
+                        );
+                      }
+                    } catch { /* fallback abaixo */ }
+                    if (!adtoIdAlvo2) {
+                      const fonteSaidas3 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                      adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
+                        fonteSaidas3.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                        fr.id,
+                      );
+                    }
                     operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo2 || undefined });
                   }
 
@@ -2770,10 +2783,24 @@ export default function FolhaPagamento() {
       const vlAbateCLT = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
       if (vlAbateCLT > 0) {
         const hoje3 = new Date().toISOString().split('T')[0];
-        const adtoIdCLT = encontrarAdiantamentoIdAlvo(
-          saidasMesCompleto.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-          modalPagamento.colaboradorId,
-        );
+        // Buscar todo histórico para encontrar contrato correto
+        let adtoIdCLT: string | undefined;
+        try {
+          const rHistCLT = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${modalPagamento.colaboradorId}`, {headers:{Authorization:`Bearer ${token()}`}});
+          if (rHistCLT.ok) {
+            const todasCLT = await rHistCLT.json();
+            adtoIdCLT = encontrarAdiantamentoIdAlvo(
+              (Array.isArray(todasCLT)?todasCLT:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+              modalPagamento.colaboradorId,
+            );
+          }
+        } catch { /* fallback */ }
+        if (!adtoIdCLT) {
+          adtoIdCLT = encontrarAdiantamentoIdAlvo(
+            saidasMesCompleto.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+            modalPagamento.colaboradorId,
+          );
+        }
         try {
           await fetchAuth(`${apiUrl}/saidas`, {
             method: 'POST',
@@ -5281,13 +5308,26 @@ export default function FolhaPagamento() {
               body: JSON.stringify(payload),
             });
 
-            // 2) Abatimento especial (se habilitado)
+            // 2) Abatimento especial (se habilitado) — busca histórico completo
             if (vlAbatNum > 0) {
-              const saidasFr = md.saidasFrescas || saidasPeriodo;
-              const adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
-                saidasFr.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                md.pessoa.id,
-              );
+              let adtoIdAlvoDobras: string | undefined;
+              try {
+                const rHistD = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${md.pessoa.id}`, {headers:{Authorization:`Bearer ${token()}`}});
+                if (rHistD.ok) {
+                  const todasD = await rHistD.json();
+                  adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
+                    (Array.isArray(todasD)?todasD:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                    md.pessoa.id,
+                  );
+                }
+              } catch { /* fallback */ }
+              if (!adtoIdAlvoDobras) {
+                const saidasFr = md.saidasFrescas || saidasPeriodo;
+                adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
+                  saidasFr.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+                  md.pessoa.id,
+                );
+              }
               await fetchAuth(`${apiUrl}/saidas`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },

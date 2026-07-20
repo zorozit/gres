@@ -84,6 +84,7 @@ export default function FreelancerPagamento() {
   const [formaDin,       setFormaDin]       = useState('');
   const [abaterEsp,      setAbaterEsp]      = useState(false);
   const [vlAbat,         setVlAbat]         = useState('');
+  const [contratosEsp,   setContratosEsp]   = useState<{id:string;data:string;desc:string;valor:number;saldo:number}[]>([]);
 
   /* detalhe */
   const [detalhe, setDetalhe] = useState<{fr: any; fech: any; escsSemana: any[]; saidasSemana: any[]} | null>(null);
@@ -687,6 +688,22 @@ export default function FreelancerPagamento() {
     const dI3 = `${mesAno}-01`, dF3 = new Date(ano3,mes3,0).toISOString().split('T')[0];
     fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dI3}&dataFim=${dF3}`,{headers:{Authorization:`Bearer ${token()}`}})
       .then(r=>r.ok?r.json():[]).then(buildChecklist).catch(()=>buildChecklist(saidasPeriodo));
+
+    // Carregar contratos de adiantamento especial (histórico completo) para mostrar no modal
+    fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`,{headers:{Authorization:`Bearer ${token()}`}})
+      .then(r=>r.ok?r.json():[])
+      .then((todasSaidas: any[]) => {
+        const arr = Array.isArray(todasSaidas)?todasSaidas:[];
+        const adtos = arr.filter((s:any) => (s.tipo||s.origem||'') === 'Adiantamento Especial').sort((a:any,b:any) => (a.data||'').localeCompare(b.data||''));
+        const descs = arr.filter((s:any) => (s.tipo||s.origem||'') === 'Desconto Adiantamento Especial');
+        const contratos = adtos.map((ae:any) => {
+          const cId = ae.adiantamentoId || ae.id;
+          const totalDesc = descs.filter((d:any) => d.adiantamentoId === cId).reduce((sum:number,d:any) => sum + (parseFloat(d.valor)||0), 0);
+          return { id: cId, data: ae.data||'', desc: ae.descricao||ae.obs||'Adiantamento Especial', valor: parseFloat(ae.valor)||0, saldo: parseFloat(((parseFloat(ae.valor)||0) - totalDesc).toFixed(2)) };
+        }).filter((c:any) => c.saldo > 0);
+        setContratosEsp(contratos);
+      })
+      .catch(() => setContratosEsp([]));
   }, [modalPgto]);
 
   const totalSelecionado = checkItems.reduce((s,it)=>it.checked?(it.tipo==='credito'?s+it.valor:s-it.valor):s, 0);
@@ -771,13 +788,27 @@ export default function FreelancerPagamento() {
         }
       }
 
-      // 4) Abatimento especial
+      // 4) Abatimento especial — busca TODO o histórico de saídas do colaborador
+      //    para encontrar o contrato mais antigo com saldo (contratos podem ser de meses anteriores)
       if (abaterEsp && vlAbate>0) {
-        const fonteSaidas2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
-        const adtoIdAlvo = encontrarAdiantamentoIdAlvo(
-          fonteSaidas2.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
-          fr.id,
-        );
+        let adtoIdAlvo: string | undefined;
+        try {
+          const rHist = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
+          if (rHist.ok) {
+            const todasSaidas = await rHist.json();
+            adtoIdAlvo = encontrarAdiantamentoIdAlvo(
+              (Array.isArray(todasSaidas)?todasSaidas:[]).map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
+              fr.id,
+            );
+          }
+        } catch { /* fallback: tenta com saídas do mês */ }
+        if (!adtoIdAlvo) {
+          const fonteSaidas2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+          adtoIdAlvo = encontrarAdiantamentoIdAlvo(
+            fonteSaidas2.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
+            fr.id,
+          );
+        }
         operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo || undefined });
       }
 
@@ -954,9 +985,24 @@ export default function FreelancerPagamento() {
                     <span style={{marginLeft:'auto',fontSize:'12px',color:'#7c3aed',fontWeight:700}}>Saldo: {fmtMoeda(fr.saldoEspecialAberto)}</span>
                   </div>
                   {abaterEsp && <div>
+                    {/* Mostrar contratos em aberto (prioridade: mais antigo) */}
+                    {contratosEsp.length > 0 && (
+                      <div style={{marginBottom:'10px',padding:'8px',backgroundColor:'#ede9fe',borderRadius:'6px',fontSize:'11px'}}>
+                        <div style={{fontWeight:700,color:'#5b21b6',marginBottom:'6px'}}>📋 Contratos em aberto (abate do mais antigo):</div>
+                        {contratosEsp.map((c,i) => {
+                          const isAlvo = i === 0;
+                          return (
+                            <div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',marginBottom:'2px',borderRadius:'4px',backgroundColor:isAlvo?'#c4b5fd':'transparent',border:isAlvo?'1px solid #8b5cf6':'1px solid transparent'}}>
+                              <span>{isAlvo?'▶️ ':''}<strong>{c.data}</strong> — {c.desc}</span>
+                              <span style={{whiteSpace:'nowrap'}}>R${c.valor.toFixed(2)} (saldo: <strong style={{color:isAlvo?'#7c3aed':'#666'}}>R${c.saldo.toFixed(2)}</strong>)</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     <label style={{...s.label,fontSize:'11px',color:'#5b21b6'}}>Valor a abater (R$)</label>
                     <input type="number" step="0.01" min="0.01" max={fr.saldoEspecialAberto} value={vlAbat} placeholder={`máx. ${fmtMoeda(fr.saldoEspecialAberto)}`} onChange={e=>setVlAbat(e.target.value)} style={{...s.input,fontSize:'12px',borderColor:'#a78bfa'}} />
-                    <div style={{fontSize:'11px',color:'#6d28d9',marginTop:'4px'}}>Saldo restante: <strong>{fmtMoeda(Math.max(0,fr.saldoEspecialAberto-(parseFloat(vlAbat)||0)))}</strong></div>
+                    <div style={{fontSize:'11px',color:'#6d28d9',marginTop:'4px'}}>Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0,fr.saldoEspecialAberto-(parseFloat(vlAbat)||0)))}</strong></div>
                   </div>}
                 </div>
               )}
