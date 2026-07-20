@@ -639,6 +639,18 @@ export default function FolhaPagamento() {
   const calcularTodasFolhas = (): FolhaMensal[] => {
     const folhas: FolhaMensal[] = [];
 
+    // ── Mapa de adiantamentos importados via Imp. Contábeis (saídas com "Importação EMS") ──
+    const adtoImportadoMap: Record<string, number> = {};
+    for (const s of saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo) {
+      if (
+        (s.tipo || s.origem) === 'Adiantamento Salário'
+        && (s.descricao || '').includes(`EMS ${mesAno}`)
+        && s.colaboradorId
+      ) {
+        adtoImportadoMap[s.colaboradorId] = parseFloat(s.valor) || 0;
+      }
+    }
+
     // ── Helper: buscar registro salvo no DDB (CLT mensal, sem semana, sem freelancer) ──
     const buscarSalva = (colabId: string) => folhasDB.find(f =>
       f.colaboradorId === colabId
@@ -692,19 +704,24 @@ export default function FolhaPagamento() {
         folhaSalva: salva as any,
       });
 
+      // Usar valor importado do holerite quando disponível
+      const adtoImp = adtoImportadoMap[c.id];
+      const adtoValorFinal = adtoImp != null ? adtoImp : calc.adiantamentoValor;
+      const adtoLiqFinal = adtoImp != null ? adtoImp : calc.adtoLiquido;
+
       folhas.push({
         colaboradorId: c.id, nome: c.nome, cpf: c.cpf, chavePix: c.chavePix, cargo: c.cargo,
         tipoContrato: c.tipoContrato || 'CLT',
         salarioBase: calc.salarioBase, periculosidade: calc.periculosidadeValor,
         inss: calc.inss, salContrInss: calc.salContrInss,
         valeTransporte: calc.valeTransporte, contrAssistencial: calc.contrAssistencial,
-        adiantamentoSalario: 40, adiantamentoValor: calc.adiantamentoValor,
-        adtoContabil: calc.adtoContabil, adtoLiquido: calc.adtoLiquido,
+        adiantamentoSalario: 40, adiantamentoValor: adtoValorFinal,
+        adtoContabil: adtoImp != null ? adtoImp : calc.adtoContabil, adtoLiquido: adtoLiqFinal,
         arredondamentoPos: calc.arredondamentoPos, arredondamentoNeg: calc.arredondamentoNeg,
         diferencaSalario: calc.diferencaSalario,
         feriadosTrab, feriadosValor: calc.feriadosValor,
         variavelAte19: 0, variavelDe20a31: 0, variavelDe20a31MesAnt: 0, totalVariavel: 0,
-        pgtosDia20: calc.adiantamentoValor, pgtosDia05: calc.pgtosDia05,
+        pgtosDia20: adtoValorFinal, pgtosDia05: calc.pgtosDia05,
         outrosPgtos: 0, saldoFinal: calc.saldoFinal,
         conferido: calc.conferido,
         valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
@@ -787,6 +804,11 @@ export default function FolhaPagamento() {
       const pgtosDia05Final = calc.conferido ? calc.valorLiquidoContabil : pgtosDia05;
       const saldoFinalFinal = calc.conferido ? calc.valorLiquidoContabil : saldoFinal;
 
+      // Usar valor importado do holerite quando disponível (motoboy)
+      const adtoImpM = adtoImportadoMap[m.id];
+      const adtoValorFinalM = adtoImpM != null ? adtoImpM : calc.adiantamentoValor;
+      const adtoLiqFinalM = adtoImpM != null ? adtoImpM : calc.adtoLiquido;
+
       folhas.push({
         colaboradorId: m.id, nome: m.nome, cpf: m.cpf, chavePix: m.chavePix, cargo: m.cargo || 'Motoboy',
         tipoContrato: 'CLT', vinculo: m.vinculo,
@@ -794,13 +816,13 @@ export default function FolhaPagamento() {
         inss: calc.inss, salContrInss: calc.salContrInss,
         valeTransporte: calc.valeTransporte, contrAssistencial: calc.contrAssistencial,
         feriadosTrab: feriadosTrabM, feriadosValor: calc.feriadosValor,
-        adiantamentoSalario: 40, adiantamentoValor: calc.adiantamentoValor,
+        adiantamentoSalario: 40, adiantamentoValor: adtoValorFinalM,
         diferencaSalario: difSal,
-        adtoContabil: calc.adtoContabil, adtoLiquido: calc.adtoLiquido,
+        adtoContabil: adtoImpM != null ? adtoImpM : calc.adtoContabil, adtoLiquido: adtoLiqFinalM,
         arredondamentoPos: calc.arredondamentoPos, arredondamentoNeg: calc.arredondamentoNeg,
         variavelAte19: varAte19, variavelDe20a31: varDe20a31,
         variavelDe20a31MesAnt: varDe20a31MesAnt, totalVariavel,
-        pgtosDia20: varAte19 + calc.adiantamentoValor, pgtosDia05: pgtosDia05Final,
+        pgtosDia20: varAte19 + adtoValorFinalM, pgtosDia05: pgtosDia05Final,
         outrosPgtos: totalPagoSaidas, saldoFinal: saldoFinalFinal,
         conferido: calc.conferido,
         valorLiquidoContabil: calc.valorLiquidoContabil || undefined,
