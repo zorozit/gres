@@ -772,10 +772,16 @@ exports.handler = async (event) => {
           horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
           // Contribuição Assistencial (cod 1000 / 1305 da folha)
           contribuicaoAssistencial: contribuicaoAssistencial !== undefined ? (parseFloat(contribuicaoAssistencial) || 0) : (original.Item.contribuicaoAssistencial || 0),
-          // Afastamento / Licença
-          afastadoDesde: afastadoDesde !== undefined ? (afastadoDesde || null) : (original.Item.afastadoDesde || null),
-          afastadoAte: afastadoAte !== undefined ? (afastadoAte || null) : (original.Item.afastadoAte || null),
-          afastadoMotivo: afastadoMotivo !== undefined ? (afastadoMotivo || null) : (original.Item.afastadoMotivo || null),
+          // Afastamento / Licença — usa string vazia para "sem valor" (DynamoDB null issues)
+          ...(afastadoDesde !== undefined
+            ? { afastadoDesde: afastadoDesde || '' }
+            : (original.Item.afastadoDesde ? { afastadoDesde: original.Item.afastadoDesde } : {})),
+          ...(afastadoAte !== undefined
+            ? { afastadoAte: afastadoAte || '' }
+            : (original.Item.afastadoAte ? { afastadoAte: original.Item.afastadoAte } : {})),
+          ...(afastadoMotivo !== undefined
+            ? { afastadoMotivo: afastadoMotivo || '' }
+            : (original.Item.afastadoMotivo ? { afastadoMotivo: original.Item.afastadoMotivo } : {})),
           // Permite mudança de unidade (transferência)
           unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };
@@ -794,6 +800,7 @@ exports.handler = async (event) => {
           else if (diffs.unitId) evento = 'transferido';
           else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte || diffs.periculosidade || diffs.contribuicaoAssistencial || diffs.isMotoboy || diffs.tipoAcordo || diffs.acordo) evento = 'remuneracao_alterada';
           else if (diffs.cargo || diffs.tipo || diffs.funcao || diffs.area) evento = 'cargo_alterado';
+          else if (diffs.afastadoDesde || diffs.afastadoAte || diffs.afastadoMotivo) evento = 'afastamento_alterado';
           else if (diffs.tipoContrato) evento = 'contrato_alterado';
 
           await logColaboradorAlteracao({
