@@ -697,6 +697,8 @@ exports.handler = async (event) => {
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
         contribuicaoAssistencial,  // NOVO
+        // Afastamento / Licença
+        afastadoDesde, afastadoAte, afastadoMotivo,
         // Auditoria
         responsavelId, responsavelNome, responsavelEmail, observacaoAlteracao,
       } = body;
@@ -770,6 +772,10 @@ exports.handler = async (event) => {
           horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
           // Contribuição Assistencial (cod 1000 / 1305 da folha)
           contribuicaoAssistencial: contribuicaoAssistencial !== undefined ? (parseFloat(contribuicaoAssistencial) || 0) : (original.Item.contribuicaoAssistencial || 0),
+          // Afastamento / Licença
+          afastadoDesde: afastadoDesde !== undefined ? (afastadoDesde || null) : (original.Item.afastadoDesde || null),
+          afastadoAte: afastadoAte !== undefined ? (afastadoAte || null) : (original.Item.afastadoAte || null),
+          afastadoMotivo: afastadoMotivo !== undefined ? (afastadoMotivo || null) : (original.Item.afastadoMotivo || null),
           // Permite mudança de unidade (transferência)
           unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };

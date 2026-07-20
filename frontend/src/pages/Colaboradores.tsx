@@ -77,6 +77,10 @@ interface Colaborador {
   periculosidade?: number;
   // Contribuição Assistencial (cod 1000 / 1305 da folha)
   contribuicaoAssistencial?: number;
+  // Afastamento / Licença
+  afastadoDesde?: string;
+  afastadoAte?: string;
+  afastadoMotivo?: string;
   // Novos campos para tipos de acordo freelancer
   isMotoboy?: boolean;
   tipoAcordo?: 'motoboy' | 'valor_turno' | 'valor_dia_noite';
@@ -543,6 +547,36 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
             }}
           />
         </div>
+        {/* Afastamento / Licença */}
+        <div style={{ ...styles.formGroup, gridColumn: '1 / -1', backgroundColor: data.afastadoDesde ? '#fff3e0' : undefined, padding: data.afastadoDesde ? '12px' : undefined, borderRadius: '8px', border: data.afastadoDesde ? '1px solid #fb8c00' : undefined }}>
+          <label style={{ ...styles.label, color: data.afastadoDesde ? '#e65100' : undefined }}>
+            🏥 Afastamento / Licença {data.afastadoDesde && <span style={{ color: '#e65100', fontWeight: 'bold' }}>● Afastado</span>}
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '8px' }}>
+            <div>
+              <label style={{ fontSize: '11px', color: '#666' }}>Desde</label>
+              <input type="date" value={data.afastadoDesde || ''} style={styles.input}
+                onChange={e => onChange({ afastadoDesde: e.target.value || undefined })} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#666' }}>Até (previsão)</label>
+              <input type="date" value={data.afastadoAte || ''} style={styles.input}
+                onChange={e => onChange({ afastadoAte: e.target.value || undefined })} />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: '#666' }}>Motivo</label>
+              <input type="text" placeholder="Ex: Cirurgia, Licença médica..." value={data.afastadoMotivo || ''} style={styles.input}
+                onChange={e => onChange({ afastadoMotivo: e.target.value })} />
+            </div>
+          </div>
+          {data.afastadoDesde && (
+            <button type="button" style={{ marginTop: '6px', fontSize: '12px', background: '#e8f5e9', border: '1px solid #4caf50', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer' }}
+              onClick={() => onChange({ afastadoDesde: undefined, afastadoAte: undefined, afastadoMotivo: undefined })}>
+              ✅ Encerrar afastamento
+            </button>
+          )}
+        </div>
+
         {/* Status */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Status</label>
@@ -881,6 +915,15 @@ const CardColaborador = ({ colab, onEditar, onDesligar, onReativar }: CardColabo
             <div style={styles.cardRow}>
               <span style={{ ...styles.cardLabel, color: '#c62828' }}>Demissão:</span>
               <span style={{ fontSize: '11px', color: '#c62828' }}>{dataISOParaPt(colab.dataDemissao)}</span>
+            </div>
+          )}
+          {(colab as any).afastadoDesde && (
+            <div style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fff3e0', borderRadius: '4px', border: '1px solid #fb8c00' }}>
+              <span style={{ fontSize: '11px', color: '#e65100', fontWeight: 'bold' }}>
+                🏥 Afastado desde {dataISOParaPt((colab as any).afastadoDesde)}
+                {(colab as any).afastadoAte ? ` até ${dataISOParaPt((colab as any).afastadoAte)}` : ''}
+                {(colab as any).afastadoMotivo ? ` — ${(colab as any).afastadoMotivo}` : ''}
+              </span>
             </div>
           )}
         </div>

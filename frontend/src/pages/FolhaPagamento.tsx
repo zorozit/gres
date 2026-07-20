@@ -164,6 +164,10 @@ interface FolhaMensal {
   fonteContabil?: boolean;       // true = valores vieram da contabilidade, não calculados
   // Adiantamento especial
   saldoEspecialAberto: number;    // Saldo de adiantamento especial em aberto
+  // Afastamento
+  afastado?: boolean;
+  afastadoMotivo?: string;
+  afastadoAte?: string;
   raw?: any;
 }
 
@@ -639,6 +643,20 @@ export default function FolhaPagamento() {
   const calcularTodasFolhas = (): FolhaMensal[] => {
     const folhas: FolhaMensal[] = [];
 
+    // ── Helper: verificar se colaborador está afastado no período ──
+    const isAfastadoNoMes = (c: any): { afastado: boolean; motivo?: string; ate?: string } => {
+      if (!c.afastadoDesde) return { afastado: false };
+      const desde = c.afastadoDesde;  // YYYY-MM-DD
+      const ate = c.afastadoAte;      // YYYY-MM-DD ou null
+      const mesFim = `${mesAno}-31`;   // último possível do mês
+      const mesIni = `${mesAno}-01`;
+      // Afastado se: desde <= fim do mês E (sem data fim OU data fim >= início do mês)
+      if (desde <= mesFim && (!ate || ate >= mesIni)) {
+        return { afastado: true, motivo: c.afastadoMotivo || undefined, ate: ate || undefined };
+      }
+      return { afastado: false };
+    };
+
     // ── Mapa de adiantamentos importados via Imp. Contábeis (saídas com "Importação EMS") ──
     const adtoImportadoMap: Record<string, number> = {};
     for (const s of saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo) {
@@ -704,6 +722,9 @@ export default function FolhaPagamento() {
         folhaSalva: salva as any,
       });
 
+      // Verificar afastamento
+      const afInfo = isAfastadoNoMes(c);
+
       // Usar valor importado do holerite quando disponível
       const adtoImp = adtoImportadoMap[c.id];
       const adtoValorFinal = adtoImp != null ? adtoImp : calc.adiantamentoValor;
@@ -728,6 +749,7 @@ export default function FolhaPagamento() {
         fonteContabil: calc.fonteContabil,
         rubricas: calc.holerite.rubricas,
         ...montarEstadoPagamento(c.id, salva),
+        afastado: afInfo.afastado, afastadoMotivo: afInfo.motivo, afastadoAte: afInfo.ate,
         raw: c,
       });
     }
@@ -804,6 +826,9 @@ export default function FolhaPagamento() {
       const pgtosDia05Final = calc.conferido ? calc.valorLiquidoContabil : pgtosDia05;
       const saldoFinalFinal = calc.conferido ? calc.valorLiquidoContabil : saldoFinal;
 
+      // Verificar afastamento (motoboy)
+      const afInfoM = isAfastadoNoMes(m);
+
       // Usar valor importado do holerite quando disponível (motoboy)
       const adtoImpM = adtoImportadoMap[m.id];
       const adtoValorFinalM = adtoImpM != null ? adtoImpM : calc.adiantamentoValor;
@@ -829,6 +854,7 @@ export default function FolhaPagamento() {
         fonteContabil: calc.fonteContabil,
         rubricas: calc.holerite.rubricas,
         ...montarEstadoPagamento(m.id, salva),
+        afastado: afInfoM.afastado, afastadoMotivo: afInfoM.motivo, afastadoAte: afInfoM.ate,
         raw: m,
       });
     }
@@ -3556,7 +3582,7 @@ export default function FolhaPagamento() {
               // Próximo mês (quando o pgto Dia 5 é efetivamente feito)
               const dProx = new Date(aMA, mMA, 1);
               const proxLabel = `05/${String(dProx.getMonth() + 1).padStart(2, '0')}/${dProx.getFullYear()}`;
-              const totalGrid1 = folhasFiltradas.reduce((s, f) => s + f.pgtosDia20, 0);
+              const totalGrid1 = folhasFiltradas.filter(f => !f.afastado).reduce((s, f) => s + f.pgtosDia20, 0);
               // Grid 2 agora soma pgtosDia05 + variavel 20-31 da PRÓPRIA competência
               const totalGrid2 = folhasFiltradas.reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31 || 0)), 0);
 
@@ -3590,8 +3616,15 @@ export default function FolhaPagamento() {
                       </thead>
                       <tbody>
                         {folhasFiltradas.map((f, idx) => (
-                          <tr key={`g1-${f.colaboradorId}`} style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
-                            <td style={{ ...s.td, fontWeight: 'bold' }}>{f.nome}</td>
+                          <tr key={`g1-${f.colaboradorId}`} style={{ backgroundColor: f.afastado ? '#fff3e0' : (idx % 2 === 0 ? '#fafafa' : 'white'), opacity: f.afastado ? 0.7 : 1 }}>
+                            <td style={{ ...s.td, fontWeight: 'bold' }}>
+                              {f.nome}
+                              {f.afastado && (
+                                <div style={{ fontSize: '10px', color: '#e65100', fontWeight: 'normal' }}>
+                                  🏥 {f.afastadoMotivo || 'Afastado'}{f.afastadoAte ? ` até ${f.afastadoAte.split('-').reverse().join('/')}` : ''}
+                                </div>
+                              )}
+                            </td>
                             <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{f.cargo}</td>
                             <td style={s.tdR}>{fmtMoeda(f.salarioBase)}</td>
                             <td style={{ ...s.tdR, color: '#7b1fa2' }}>{fmtMoeda(f.adiantamentoValor)}</td>
@@ -3600,15 +3633,22 @@ export default function FolhaPagamento() {
                             <td style={{ ...s.tdR, color: '#7b1fa2', fontSize: '11px' }}>{fmtMoeda(f.adtoContabil)}</td>
                             <td style={{ ...s.tdR, color: '#311b92', fontWeight: 'bold' }}>{fmtMoeda(f.adtoLiquido)}</td>
                             <td style={{ ...s.td, textAlign: 'center' }}>
-                              <span style={f.pagoAdiantamento ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
-                                {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
-                              </span>
+                              {f.afastado ? (
+                                <span style={s.badge('#fff3e0', '#e65100')}>🏥 Afastado</span>
+                              ) : (
+                                <span style={f.pagoAdiantamento ? s.badge('#e8f5e9', '#2e7d32') : s.badge('#fff3e0', '#e65100')}>
+                                  {f.pagoAdiantamento ? '✅ Pago' : '⏳ Pendente'}
+                                </span>
+                              )}
                               {f.pagoAdiantamento && f.dataPgtoAdiantamento && (
                                 <div style={{ fontSize: '10px', color: '#666' }}>{f.dataPgtoAdiantamento}</div>
                               )}
                             </td>
                             <td style={{ ...s.td, textAlign: 'center' }}>
                               <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                                {f.afastado ? (
+                                  <span style={{ fontSize: '11px', color: '#999' }}>—</span>
+                                ) : (
                                 <button
                                   onClick={() => {
                                     if (f.pagoAdiantamento) { handleTogglePago(f); return; }
@@ -3619,6 +3659,7 @@ export default function FolhaPagamento() {
                                   style={{ ...s.btn(f.pagoAdiantamento ? '#e53935' : '#fb8c00'), padding: '4px 12px', fontSize: '11px' }}>
                                   {f.pagoAdiantamento ? '↩ Desfazer' : '✅ Pagar Dia 20'}
                                 </button>
+                                )}
                                 <button
                                   onClick={() => setModalLogPgto(f)}
                                   style={{ ...s.btn('#546e7a'), padding: '4px 8px', fontSize: '11px' }}
