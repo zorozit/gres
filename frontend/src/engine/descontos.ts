@@ -121,6 +121,93 @@ export function encontrarAdiantamentoIdAlvo(
   return contratosComSaldo[0].cId;
 }
 
+/* ──────────────────────────────────────────────────────────
+ * Resultado da distribuição de abatimento entre contratos
+ * ────────────────────────────────────────────────────────── */
+export interface ContratoSaldo {
+  /** adiantamentoId (ou id) do contrato */
+  cId: string;
+  /** Data do contrato */
+  data: string;
+  /** Descrição do contrato */
+  descricao: string;
+  /** Valor original emprestado */
+  valorOriginal: number;
+  /** Total já abatido (parcelas existentes) */
+  totalAbatido: number;
+  /** Saldo antes deste abatimento */
+  saldoAntes: number;
+  /** Valor que será abatido neste pagamento (0 se contrato não é afetado) */
+  valorAbater: number;
+  /** Saldo após abatimento */
+  saldoDepois: number;
+}
+
+export interface DistribuicaoAbatimento {
+  /** Detalhamento por contrato (mais antigo primeiro) */
+  contratos: ContratoSaldo[];
+  /** Total efetivamente distribuído (pode ser < valorAbatimento se não há saldo suficiente) */
+  totalDistribuido: number;
+  /** Valor que sobrou sem contrato (quando abatimento > soma de todos os saldos) */
+  excedente: number;
+}
+
+/**
+ * Distribui o valor de abatimento entre contratos em aberto, do mais antigo ao mais recente.
+ *
+ * Regra: cascata — preenche o saldo do contrato mais antigo primeiro.
+ * Se o valor excede o saldo de um contrato, o restante transborda pro próximo.
+ *
+ * DEVE SER USADA por todos os modais de pagamento para:
+ * 1. Mostrar ao usuário pra onde cada centavo vai
+ * 2. Gerar as operações de desconto com adiantamentoId correto
+ */
+export function distribuirAbatimento(
+  saidas: SaidaCalc[],
+  colaboradorId: string,
+  valorAbatimento: number,
+): DistribuicaoAbatimento {
+  // Adiantamentos Especiais do colaborador, mais antigo primeiro
+  const adtosEsp = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Adiantamento Especial')
+    .sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+
+  // Descontos já abatidos
+  const descEsp = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Desconto Adiantamento Especial');
+
+  const contratos: ContratoSaldo[] = [];
+  let restante = valorAbatimento;
+
+  for (const ae of adtosEsp) {
+    const cId = ae.adiantamentoId || ae.id;
+    const totalDesc = descEsp
+      .filter(d => d.adiantamentoId === cId)
+      .reduce((sum, d) => sum + (d.valor || 0), 0);
+    const saldoAntes = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
+
+    const valorAbater = saldoAntes > 0 ? parseFloat(Math.min(restante, saldoAntes).toFixed(2)) : 0;
+    if (valorAbater > 0) restante = parseFloat((restante - valorAbater).toFixed(2));
+
+    contratos.push({
+      cId,
+      data: ae.data || '',
+      descricao: ae.descricao || ae.obs || 'Adiantamento Especial',
+      valorOriginal: ae.valor || 0,
+      totalAbatido: parseFloat(totalDesc.toFixed(2)),
+      saldoAntes,
+      valorAbater,
+      saldoDepois: parseFloat((saldoAntes - valorAbater).toFixed(2)),
+    });
+  }
+
+  return {
+    contratos,
+    totalDistribuido: parseFloat((valorAbatimento - restante).toFixed(2)),
+    excedente: parseFloat(Math.max(0, restante).toFixed(2)),
+  };
+}
+
 export function calcularDescontos(input: DescontosInput): DescontosResult {
   const { saidas, colaboradorId, dataInicio, dataFim } = input;
 

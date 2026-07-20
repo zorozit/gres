@@ -60,6 +60,8 @@ export interface SaidaCalc {
   pagamentoIdLigado?: string;
   adiantamentoId?: string;
   referencia?: string;
+  descricao?: string;
+  obs?: string;
 }
 
 /** Dados salvos da folha no DynamoDB (gres-prod-folha-pagamento) */

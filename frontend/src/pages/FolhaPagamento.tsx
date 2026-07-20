@@ -14,7 +14,7 @@ import {
   calcularFolhaCLT,
   calcularVariavelMotoboy,
   montarPayslipFreelancer,
-  encontrarAdiantamentoIdAlvo,
+  distribuirAbatimento,
   montarPayslipCLT,
   montarPayslipDobrasCLT,
   montarChecklistCLT,
@@ -2128,25 +2128,20 @@ export default function FolhaPagamento() {
 
                   // 4) Abatimento especial — busca TODO histórico para encontrar contrato correto
                   if (abaterEspecial && vlAbate > 0) {
-                    let adtoIdAlvo2: string | undefined;
+                    let saidasParaDist2: any[] = [];
                     try {
                       const rHistFr = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
-                      if (rHistFr.ok) {
-                        const todasSaidasFr = await rHistFr.json();
-                        adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
-                          (Array.isArray(todasSaidasFr)?todasSaidasFr:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                          fr.id, vlAbate,
-                        );
-                      }
-                    } catch { /* fallback abaixo */ }
-                    if (!adtoIdAlvo2) {
-                      const fonteSaidas3 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
-                      adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
-                        fonteSaidas3.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                        fr.id, vlAbate,
-                      );
+                      if (rHistFr.ok) saidasParaDist2 = await rHistFr.json();
+                    } catch {}
+                    if (saidasParaDist2.length === 0) saidasParaDist2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                    const dist2 = distribuirAbatimento(
+                      (Array.isArray(saidasParaDist2)?saidasParaDist2:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado, descricao: ss.descricao||ss.obs||'' })),
+                      fr.id, vlAbate,
+                    );
+                    for (const c2 of dist2.contratos) {
+                      if (c2.valorAbater <= 0) continue;
+                      operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel} [${c2.descricao.slice(0,30)}]`, valor:c2.valorAbater, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: c2.cId });
                     }
-                    operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo2 || undefined });
                   }
 
                   // 5) Payslip com composição (vem do engine — mesma função que FreelancerPagamento)
@@ -2783,43 +2778,37 @@ export default function FolhaPagamento() {
       const vlAbateCLT = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
       if (vlAbateCLT > 0) {
         const hoje3 = new Date().toISOString().split('T')[0];
-        // Buscar todo histórico para encontrar contrato correto
-        let adtoIdCLT: string | undefined;
+        // Distribuir entre contratos (engine)
+        let saidasDistCLT: any[] = [];
         try {
           const rHistCLT = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${modalPagamento.colaboradorId}`, {headers:{Authorization:`Bearer ${token()}`}});
-          if (rHistCLT.ok) {
-            const todasCLT = await rHistCLT.json();
-            adtoIdCLT = encontrarAdiantamentoIdAlvo(
-              (Array.isArray(todasCLT)?todasCLT:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origen||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-              modalPagamento.colaboradorId, vlAbateCLT,
-            );
-          }
-        } catch { /* fallback */ }
-        if (!adtoIdCLT) {
-          adtoIdCLT = encontrarAdiantamentoIdAlvo(
-            saidasMesCompleto.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-            modalPagamento.colaboradorId, vlAbateCLT,
-          );
+          if (rHistCLT.ok) saidasDistCLT = await rHistCLT.json();
+        } catch {}
+        if (saidasDistCLT.length === 0) saidasDistCLT = saidasMesCompleto;
+        const distCLT = distribuirAbatimento(
+          (Array.isArray(saidasDistCLT)?saidasDistCLT:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado, descricao: ss.descricao||ss.obs||'' })),
+          modalPagamento.colaboradorId, vlAbateCLT,
+        );
+        for (const cCLT of distCLT.contratos) {
+          if (cCLT.valorAbater <= 0) continue;
+          try {
+            await fetchAuth(`${apiUrl}/saidas`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+              body: JSON.stringify({
+                unitId,
+                colaboradorId: modalPagamento.colaboradorId,
+                tipo: 'Desconto Adiantamento Especial',
+                descricao: `Abatimento adto. especial - folha CLT ${mesAno} [${cCLT.descricao.slice(0,30)}]`,
+                valor: cCLT.valorAbater,
+                data: hoje3, dataPagamento: hoje3, pago: true,
+                responsavel: localStorage.getItem('user_email') || '',
+                obs: `Abatido no pagamento ${modalPgtoTipo} da folha CLT ${mesAno}`,
+                adiantamentoId: cCLT.cId,
+              }),
+            });
+          } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
         }
-        try {
-          await fetchAuth(`${apiUrl}/saidas`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-            body: JSON.stringify({
-              unitId,
-              colaboradorId: modalPagamento.colaboradorId,
-              tipo: 'Desconto Adiantamento Especial',
-              descricao: `Abatimento adto. especial - folha CLT ${mesAno}`,
-              valor: vlAbateCLT,
-              data: hoje3,
-              dataPagamento: hoje3,
-              pago: true,
-              responsavel: localStorage.getItem('user_email') || '',
-              obs: `Abatido no pagamento ${modalPgtoTipo} da folha CLT ${mesAno}`,
-              adiantamentoId: adtoIdCLT || undefined,
-            }),
-          });
-        } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
       }
       // ── Fase 3: Gerar Payslip CLT (via engine) ──
       try {
@@ -5308,39 +5297,34 @@ export default function FolhaPagamento() {
               body: JSON.stringify(payload),
             });
 
-            // 2) Abatimento especial (se habilitado) — busca histórico completo
+            // 2) Abatimento especial (se habilitado) — distribui entre contratos
             if (vlAbatNum > 0) {
-              let adtoIdAlvoDobras: string | undefined;
+              let saidasDistD: any[] = [];
               try {
                 const rHistD = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${md.pessoa.id}`, {headers:{Authorization:`Bearer ${token()}`}});
-                if (rHistD.ok) {
-                  const todasD = await rHistD.json();
-                  adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
-                    (Array.isArray(todasD)?todasD:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                    md.pessoa.id, vlAbatNum,
-                  );
-                }
-              } catch { /* fallback */ }
-              if (!adtoIdAlvoDobras) {
-                const saidasFr = md.saidasFrescas || saidasPeriodo;
-                adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
-                  saidasFr.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                  md.pessoa.id, vlAbatNum,
-                );
+                if (rHistD.ok) saidasDistD = await rHistD.json();
+              } catch {}
+              if (saidasDistD.length === 0) saidasDistD = md.saidasFrescas || saidasPeriodo;
+              const distD = distribuirAbatimento(
+                (Array.isArray(saidasDistD)?saidasDistD:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado, descricao: ss.descricao||ss.obs||'' })),
+                md.pessoa.id, vlAbatNum,
+              );
+              for (const cD of distD.contratos) {
+                if (cD.valorAbater <= 0) continue;
+                await fetchAuth(`${apiUrl}/saidas`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                  body: JSON.stringify({
+                    unitId, colaboradorId: md.pessoa.id,
+                    tipo: 'Desconto Adiantamento Especial',
+                    descricao: `Abatimento adto. especial - dobras ${md.semana.label} [${cD.descricao.slice(0,30)}]`,
+                    valor: cD.valorAbater, data: dataConfirmada, dataPagamento: dataConfirmada,
+                    pago: true, responsavel: localStorage.getItem('user_email') || '',
+                    obs: `Abatido no pagamento de dobras semana ${md.semana.label}`,
+                    adiantamentoId: cD.cId,
+                  }),
+                });
               }
-              await fetchAuth(`${apiUrl}/saidas`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                body: JSON.stringify({
-                  unitId, colaboradorId: md.pessoa.id,
-                  tipo: 'Desconto Adiantamento Especial',
-                  descricao: `Abatimento adto. especial - dobras ${md.semana.label}`,
-                  valor: vlAbatNum, data: dataConfirmada, dataPagamento: dataConfirmada,
-                  pago: true, responsavel: localStorage.getItem('user_email') || '',
-                  obs: `Abatido no pagamento de dobras semana ${md.semana.label}`,
-                  adiantamentoId: adtoIdAlvoDobras || undefined,
-                }),
-              });
             }
 
             // 3) Gerar payslip (via pagamento-batch)

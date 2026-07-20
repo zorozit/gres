@@ -25,8 +25,9 @@ import {
   calcularTransporteFreelancerPeriodo,
   calcularLiquidoFreelancer,
   montarPayslipFreelancer,
-  encontrarAdiantamentoIdAlvo,
+  distribuirAbatimento,
 } from '../engine';
+import type { DistribuicaoAbatimento } from '../engine';
 
 
 /* ─── Helpers (idênticos à FolhaPagamento) ────────────────────────────────── */
@@ -84,7 +85,8 @@ export default function FreelancerPagamento() {
   const [formaDin,       setFormaDin]       = useState('');
   const [abaterEsp,      setAbaterEsp]      = useState(false);
   const [vlAbat,         setVlAbat]         = useState('');
-  const [contratosEsp,   setContratosEsp]   = useState<{id:string;data:string;desc:string;valor:number;saldo:number}[]>([]);
+  // contratosEsp removido — distribuição agora via distAbatimento (engine)
+  const [todasSaidasColab, setTodasSaidasColab] = useState<any[]>([]);
 
   /* detalhe */
   const [detalhe, setDetalhe] = useState<{fr: any; fech: any; escsSemana: any[]; saidasSemana: any[]} | null>(null);
@@ -689,26 +691,27 @@ export default function FreelancerPagamento() {
     fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dI3}&dataFim=${dF3}`,{headers:{Authorization:`Bearer ${token()}`}})
       .then(r=>r.ok?r.json():[]).then(buildChecklist).catch(()=>buildChecklist(saidasPeriodo));
 
-    // Carregar contratos de adiantamento especial (histórico completo) para mostrar no modal
+    // Carregar histórico completo de saídas do colaborador (para engine distribuir abatimento)
     fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`,{headers:{Authorization:`Bearer ${token()}`}})
       .then(r=>r.ok?r.json():[])
       .then((todasSaidas: any[]) => {
         const arr = Array.isArray(todasSaidas)?todasSaidas:[];
-        const adtos = arr.filter((s:any) => (s.tipo||s.origem||'') === 'Adiantamento Especial').sort((a:any,b:any) => (a.data||'').localeCompare(b.data||''));
-        const descs = arr.filter((s:any) => (s.tipo||s.origem||'') === 'Desconto Adiantamento Especial');
-        const contratos = adtos.map((ae:any) => {
-          const cId = ae.adiantamentoId || ae.id;
-          const totalDesc = descs.filter((d:any) => d.adiantamentoId === cId).reduce((sum:number,d:any) => sum + (parseFloat(d.valor)||0), 0);
-          return { id: cId, data: ae.data||'', desc: ae.descricao||ae.obs||'Adiantamento Especial', valor: parseFloat(ae.valor)||0, saldo: parseFloat(((parseFloat(ae.valor)||0) - totalDesc).toFixed(2)) };
-        }).filter((c:any) => c.saldo > 0);
-        setContratosEsp(contratos);
+        setTodasSaidasColab(arr);
       })
-      .catch(() => setContratosEsp([]));
+      .catch(() => { setTodasSaidasColab([]); });
   }, [modalPgto]);
 
   const totalSelecionado = checkItems.reduce((s,it)=>it.checked?(it.tipo==='credito'?s+it.valor:s-it.valor):s, 0);
   const vlAbateN = abaterEsp ? (parseFloat(vlAbat)||0) : 0;
   const totalDesembolsar = Math.max(0, totalSelecionado - vlAbateN);
+
+  // Distribuição em tempo real do abatimento entre contratos (engine)
+  const distAbatimento: DistribuicaoAbatimento | null = (vlAbateN > 0 && todasSaidasColab.length > 0 && modalPgto)
+    ? distribuirAbatimento(
+        todasSaidasColab.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado, descricao: s.descricao||s.obs||'' })),
+        modalPgto.fr.id, vlAbateN,
+      )
+    : null;
   const toggleItem = (key:string) => setCheckItems(prev=>prev.map(it=>it.key===key?{...it,checked:!it.checked}:it));
 
   const confirmarPagamento = async () => {
@@ -788,28 +791,28 @@ export default function FreelancerPagamento() {
         }
       }
 
-      // 4) Abatimento especial — busca TODO o histórico de saídas do colaborador
-      //    para encontrar o contrato mais antigo com saldo (contratos podem ser de meses anteriores)
+      // 4) Abatimento especial — distribui entre contratos (engine)
       if (abaterEsp && vlAbate>0) {
-        let adtoIdAlvo: string | undefined;
-        try {
-          const rHist = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
-          if (rHist.ok) {
-            const todasSaidas = await rHist.json();
-            adtoIdAlvo = encontrarAdiantamentoIdAlvo(
-              (Array.isArray(todasSaidas)?todasSaidas:[]).map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
-              fr.id, vlAbate,
-            );
-          }
-        } catch { /* fallback: tenta com saídas do mês */ }
-        if (!adtoIdAlvo) {
-          const fonteSaidas2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
-          adtoIdAlvo = encontrarAdiantamentoIdAlvo(
-            fonteSaidas2.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
-            fr.id, vlAbate,
-          );
+        // Usar saídas já carregadas ou buscar frescas
+        let saidasParaDist = todasSaidasColab;
+        if (saidasParaDist.length === 0) {
+          try {
+            const rHist = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
+            if (rHist.ok) saidasParaDist = await rHist.json();
+          } catch { /* fallback abaixo */ }
         }
-        operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo || undefined });
+        if (saidasParaDist.length === 0) {
+          saidasParaDist = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+        }
+        const dist = distribuirAbatimento(
+          (Array.isArray(saidasParaDist)?saidasParaDist:[]).map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado, descricao: s.descricao||s.obs||'' })),
+          fr.id, vlAbate,
+        );
+        // Gerar uma operação de desconto por contrato afetado
+        for (const c of dist.contratos) {
+          if (c.valorAbater <= 0) continue;
+          operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel} [${c.descricao.slice(0,30)}]`, valor:c.valorAbater, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: c.cId });
+        }
       }
 
       // 5) Marcar saídas/descontos da semana como pagas (consumo, a receber, caixinhas)
@@ -985,24 +988,47 @@ export default function FreelancerPagamento() {
                     <span style={{marginLeft:'auto',fontSize:'12px',color:'#7c3aed',fontWeight:700}}>Saldo: {fmtMoeda(fr.saldoEspecialAberto)}</span>
                   </div>
                   {abaterEsp && <div>
-                    {/* Mostrar contratos em aberto (prioridade: mais antigo) */}
-                    {contratosEsp.length > 0 && (
-                      <div style={{marginBottom:'10px',padding:'8px',backgroundColor:'#ede9fe',borderRadius:'6px',fontSize:'11px'}}>
-                        <div style={{fontWeight:700,color:'#5b21b6',marginBottom:'6px'}}>📋 Contratos em aberto (abate do mais antigo):</div>
-                        {contratosEsp.map((c,i) => {
-                          const isAlvo = i === 0;
-                          return (
-                            <div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 6px',marginBottom:'2px',borderRadius:'4px',backgroundColor:isAlvo?'#c4b5fd':'transparent',border:isAlvo?'1px solid #8b5cf6':'1px solid transparent'}}>
-                              <span>{isAlvo?'▶️ ':''}<strong>{c.data}</strong> — {c.desc}</span>
-                              <span style={{whiteSpace:'nowrap'}}>R${c.valor.toFixed(2)} (saldo: <strong style={{color:isAlvo?'#7c3aed':'#666'}}>R${c.saldo.toFixed(2)}</strong>)</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                     <label style={{...s.label,fontSize:'11px',color:'#5b21b6'}}>Valor a abater (R$)</label>
                     <input type="number" step="0.01" min="0.01" max={fr.saldoEspecialAberto} value={vlAbat} placeholder={`máx. ${fmtMoeda(fr.saldoEspecialAberto)}`} onChange={e=>setVlAbat(e.target.value)} style={{...s.input,fontSize:'12px',borderColor:'#a78bfa'}} />
-                    <div style={{fontSize:'11px',color:'#6d28d9',marginTop:'4px'}}>Saldo restante após abatimento: <strong>{fmtMoeda(Math.max(0,fr.saldoEspecialAberto-(parseFloat(vlAbat)||0)))}</strong></div>
+                    <div style={{fontSize:'11px',color:'#6d28d9',marginTop:'4px'}}>Saldo geral restante: <strong>{fmtMoeda(Math.max(0,fr.saldoEspecialAberto-(parseFloat(vlAbat)||0)))}</strong></div>
+
+                    {/* Distribuição automática entre contratos (engine) */}
+                    {distAbatimento && distAbatimento.contratos.filter(c => c.saldoAntes > 0).length > 0 && (
+                      <div style={{marginTop:'10px',padding:'8px',backgroundColor:'#ede9fe',borderRadius:'6px',fontSize:'11px'}}>
+                        <div style={{fontWeight:700,color:'#5b21b6',marginBottom:'6px'}}>📋 Distribuição do abatimento (mais antigo primeiro):</div>
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
+                          <thead>
+                            <tr style={{borderBottom:'1px solid #c4b5fd'}}>
+                              <th style={{textAlign:'left',padding:'3px 4px',color:'#5b21b6'}}>Contrato</th>
+                              <th style={{textAlign:'right',padding:'3px 4px',color:'#5b21b6'}}>Saldo</th>
+                              <th style={{textAlign:'right',padding:'3px 4px',color:'#5b21b6'}}>Abater</th>
+                              <th style={{textAlign:'right',padding:'3px 4px',color:'#5b21b6'}}>Após</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {distAbatimento.contratos.filter(c => c.saldoAntes > 0).map(c => (
+                              <tr key={c.cId} style={{backgroundColor: c.valorAbater > 0 ? '#c4b5fd' : 'transparent', borderBottom:'1px solid #e9e1ff'}}>
+                                <td style={{padding:'4px',maxWidth:'150px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                  {c.valorAbater > 0 ? '▶️ ' : ''}<strong>{c.data.slice(0,10)}</strong> — {c.descricao.slice(0,25)}
+                                </td>
+                                <td style={{textAlign:'right',padding:'4px',color:'#666'}}>{fmtMoeda(c.saldoAntes)}</td>
+                                <td style={{textAlign:'right',padding:'4px',fontWeight:c.valorAbater>0?700:400,color:c.valorAbater>0?'#7c3aed':'#999'}}>
+                                  {c.valorAbater > 0 ? `-${fmtMoeda(c.valorAbater)}` : '—'}
+                                </td>
+                                <td style={{textAlign:'right',padding:'4px',fontWeight:700,color:c.saldoDepois<=0?'#16a34a':'#666'}}>
+                                  {fmtMoeda(c.saldoDepois)}{c.saldoDepois <= 0 ? ' ✅' : ''}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {distAbatimento.excedente > 0 && (
+                          <div style={{marginTop:'6px',padding:'4px 8px',backgroundColor:'#fee2e2',borderRadius:'4px',color:'#b91c1c',fontWeight:700}}>
+                            ⚠️ Excedente sem contrato: {fmtMoeda(distAbatimento.excedente)}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>}
                 </div>
               )}
