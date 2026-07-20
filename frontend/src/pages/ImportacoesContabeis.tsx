@@ -23,6 +23,8 @@ interface PreviewRow extends ImportPayrollRecord {
   nomeSistema?: string;
   matchStatus: 'match' | 'unmatched';
   jaImportado: boolean;
+  existingSaidaId?: string;   // id da saída já importada (para sobrescrever)
+  existingFolhaId?: string;   // id do registro folha já importado
   selecionado: boolean;
   // Valores editáveis — inicializados a partir do PDF, podem ser ajustados pelo usuário
   editSalarioBase: number;
@@ -62,6 +64,7 @@ export const ImportacoesContabeis: React.FC = () => {
   const [editingCell, setEditingCell] = useState<{ rowId: string; field: string } | null>(null);
   const [editBuffer, setEditBuffer] = useState<string>('');
   const [importResult, setImportResult] = useState<{ sucesso: number; falhas: string[] } | null>(null);
+  const [modoSobrescrever, setModoSobrescrever] = useState(false);
 
   useEffect(() => {
     if (!unitId || !authToken) return;
@@ -86,15 +89,12 @@ export const ImportacoesContabeis: React.FC = () => {
   const unidadeConfere = !cnpjDocumento || !cnpjUnidade || cnpjDocumento === cnpjUnidade;
 
   const resumo = useMemo(() => {
+    const elegivel = (row: PreviewRow) => row.selecionado && row.matchStatus === 'match' && (!row.jaImportado || modoSobrescrever);
     const matched = rows.filter((row) => row.matchStatus === 'match').length;
     const unmatched = rows.filter((row) => row.matchStatus === 'unmatched').length;
-    const selected = rows.filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado).length;
-    const totalSelecionado = rows
-      .filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado)
-      .reduce((sum, row) => sum + row.editValorLiquido, 0);
-    const totalOriginal = rows
-      .filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado)
-      .reduce((sum, row) => sum + row.valorLiquido, 0);
+    const selected = rows.filter(elegivel).length;
+    const totalSelecionado = rows.filter(elegivel).reduce((sum, row) => sum + row.editValorLiquido, 0);
+    const totalOriginal = rows.filter(elegivel).reduce((sum, row) => sum + row.valorLiquido, 0);
     const temAlteracoes = rows.some((row) =>
       row.editSalarioBase !== row.salarioBase ||
       row.editInssValor !== row.inssValor ||
@@ -103,7 +103,7 @@ export const ImportacoesContabeis: React.FC = () => {
       row.editValorLiquido !== row.valorLiquido
     );
     return { matched, unmatched, selected, totalSelecionado, totalOriginal, temAlteracoes };
-  }, [rows]);
+  }, [rows, modoSobrescrever]);
 
   const reconcileRows = async (result: ImportPayrollParseResult) => {
     const normalizedColabs = colaboradores.map((colab) => ({
@@ -149,17 +149,21 @@ export const ImportacoesContabeis: React.FC = () => {
       // Pagamentos avulsos feitos em outras telas (Folha, Motoboys) NÃO contam como já importado,
       // pois são eventos diferentes (a importação eh do recibo contábil oficial).
       const isObsImport = (s: string) => /Importação EMS/i.test(s || '');
-      const jaImportado = result.tipoDocumento === 'adiantamento'
-        ? existingSaidas.some((item) =>
+      const existingSaida = result.tipoDocumento === 'adiantamento'
+        ? existingSaidas.find((item) =>
             item.colaboradorId === matched?.id
             && (item.tipo || item.origem || item.referencia) === 'Adiantamento Salário'
             && (item.descricao || '').includes(result.competencia)
           )
-        : existingFolhas.some((item) =>
+        : undefined;
+      const existingFolha = result.tipoDocumento !== 'adiantamento'
+        ? existingFolhas.find((item) =>
             item.colaboradorId === matched?.id
             && (item.mes === result.competencia)
             && isObsImport(item.obs || item.observacao || '')
-          );
+          )
+        : undefined;
+      const jaImportado = Boolean(existingSaida || existingFolha);
 
       return {
         ...record,
@@ -167,6 +171,8 @@ export const ImportacoesContabeis: React.FC = () => {
         nomeSistema: matched?.nome,
         matchStatus: matched ? 'match' : 'unmatched',
         jaImportado,
+        existingSaidaId: existingSaida?.id,
+        existingFolhaId: existingFolha?.id,
         selecionado: Boolean(matched) && !jaImportado,
         // Valores editáveis inicializados com valores do PDF
         editSalarioBase: record.salarioBase,
@@ -214,7 +220,7 @@ export const ImportacoesContabeis: React.FC = () => {
 
   const toggleRow = (id: string) => {
     setRows((current) => current.map((row) => (
-      row.id === id && row.matchStatus === 'match' && !row.jaImportado
+      row.id === id && row.matchStatus === 'match' && (!row.jaImportado || modoSobrescrever)
         ? { ...row, selecionado: !row.selecionado }
         : row
     )));
@@ -222,7 +228,7 @@ export const ImportacoesContabeis: React.FC = () => {
 
   const marcarTodos = (checked: boolean) => {
     setRows((current) => current.map((row) => (
-      row.matchStatus === 'match' && !row.jaImportado
+      row.matchStatus === 'match' && (!row.jaImportado || modoSobrescrever)
         ? { ...row, selecionado: checked }
         : row
     )));
@@ -315,22 +321,72 @@ export const ImportacoesContabeis: React.FC = () => {
 
     return (
       <span
-        onClick={() => !row.jaImportado && row.matchStatus === 'match' && startEditing(row.id, field, value)}
+        onClick={() => (!row.jaImportado || modoSobrescrever) && row.matchStatus === 'match' && startEditing(row.id, field, value)}
         title={edited ? `Original: ${fmtMoeda((row as any)[field.replace('edit', '').charAt(0).toLowerCase() + field.replace('edit', '').slice(1)])} — Clique para editar` : 'Clique para editar'}
         style={{
-          cursor: row.jaImportado ? 'default' : 'pointer',
+          cursor: (row.jaImportado && !modoSobrescrever) ? 'default' : 'pointer',
           color: edited ? '#e65100' : (color || '#37474f'),
           fontWeight: edited ? 800 : (field === 'editValorLiquido' ? 700 : 400),
           backgroundColor: edited ? '#fff3e0' : 'transparent',
           padding: edited ? '2px 6px' : undefined,
           borderRadius: edited ? '4px' : undefined,
-          borderBottom: row.jaImportado ? 'none' : '1px dashed #90a4ae',
+          borderBottom: (row.jaImportado && !modoSobrescrever) ? 'none' : '1px dashed #90a4ae',
           display: 'inline-block',
         }}
       >
         {value > 0 ? fmtMoeda(value) : '—'}
       </span>
     );
+  };
+
+  const sobrescreverImportacao = async (row: PreviewRow) => {
+    const responsavel = (user as any)?.email || localStorage.getItem('user_email') || 'importacao-contabil';
+    const hoje = new Date().toISOString().slice(0,10);
+    if (row.existingSaidaId) {
+      // Atualiza saída existente via PUT (backend exige: responsavel, descricao, valor, colaboradorId)
+      const body = {
+        responsavel,
+        colaboradorId: row.colaboradorId,
+        descricao: `Importação EMS ${row.competencia} - Adiantamento Salário`,
+        valor: row.editValorLiquido,
+        data: paymentDate || hoje,
+        dataPagamento: paymentDate || hoje,
+        tipo: 'Adiantamento Salário',
+        origem: 'Adiantamento Salário',
+        observacao: `Reimportado EMS | código ${row.codigoColaborador} | ${row.cargo} | sobrescrito em ${hoje}`,
+      };
+      const response = await fetchAuth(`${apiUrl}/saidas/${row.existingSaidaId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Falha ao sobrescrever ${row.nomeColaborador}`);
+      }
+    } else if (row.existingFolhaId) {
+      // Folha mensal: re-POST com mergeMode=contabil sobrescreve campos contábeis
+      const body = {
+        unitId,
+        colaboradorId: row.colaboradorId,
+        mes: row.competencia,
+        salarioBase: row.editSalarioBase,
+        inssValor: row.editInssValor,
+        valeTransporteContabil: row.editValeTransporte,
+        valorLiquidoContabil: row.editValorLiquido,
+        obs: `Reimportado EMS | código ${row.codigoColaborador} | sobrescrito em ${hoje}`,
+        mergeMode: 'contabil',
+      };
+      const response = await fetchAuth(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Falha ao sobrescrever ${row.nomeColaborador}`);
+      }
+    }
   };
 
   const importarAdiantamento = async (row: PreviewRow) => {
@@ -405,7 +461,7 @@ export const ImportacoesContabeis: React.FC = () => {
 
   const handleImportar = async () => {
     if (!parseResult) return;
-    const selecionados = rows.filter((row) => row.selecionado && row.matchStatus === 'match' && !row.jaImportado);
+    const selecionados = rows.filter((row) => row.selecionado && row.matchStatus === 'match' && (!row.jaImportado || modoSobrescrever));
     if (!unidadeConfere) {
       alert('O CNPJ do PDF é diferente da unidade ativa. Troque a unidade antes de importar.');
       return;
@@ -438,7 +494,9 @@ export const ImportacoesContabeis: React.FC = () => {
     let sucesso = 0;
     for (const row of selecionados) {
       try {
-        if (parseResult.tipoDocumento === 'adiantamento') {
+        if (row.jaImportado && modoSobrescrever) {
+          await sobrescreverImportacao(row);
+        } else if (parseResult.tipoDocumento === 'adiantamento') {
           await importarAdiantamento(row);
         } else {
           await importarFolha(row);
@@ -570,16 +628,22 @@ export const ImportacoesContabeis: React.FC = () => {
                   <h2 style={styles.sectionTitle}>Prévia conciliada com colaboradores</h2>
                   <div style={styles.hint}>Linhas sem match não entram. Linhas já importadas ficam protegidas contra duplicidade.</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <button type="button" style={styles.secondaryButton} onClick={() => marcarTodos(true)}>Selecionar elegíveis</button>
                   <button type="button" style={styles.secondaryButton} onClick={() => marcarTodos(false)}>Limpar seleção</button>
+                  {rows.some(r => r.jaImportado) && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer', padding: '4px 10px', borderRadius: '6px', backgroundColor: modoSobrescrever ? '#fff3e0' : '#f5f5f5', border: modoSobrescrever ? '1px solid #e65100' : '1px solid #ccc' }}>
+                      <input type="checkbox" checked={modoSobrescrever} onChange={e => { setModoSobrescrever(e.target.checked); if (e.target.checked) marcarTodos(true); }} />
+                      ✏️ Sobrescrever já importados
+                    </label>
+                  )}
                   {resumo.temAlteracoes && (
                     <button type="button" style={{ ...styles.secondaryButton, backgroundColor: '#fff3e0', color: '#e65100' }} onClick={resetAllToOriginal}>
                       ↩️ Resetar valores originais
                     </button>
                   )}
-                  <button type="button" style={styles.primaryButton} onClick={handleImportar} disabled={importando || resumo.selected === 0 || !unidadeConfere}>
-                    {importando ? '⏳ Importando...' : `✅ Importar ${resumo.selected} linha(s)`}
+                  <button type="button" style={{ ...styles.primaryButton, backgroundColor: modoSobrescrever ? '#e65100' : undefined }} onClick={handleImportar} disabled={importando || resumo.selected === 0 || !unidadeConfere}>
+                    {importando ? '⏳ Importando...' : modoSobrescrever ? `✏️ Sobrescrever ${resumo.selected} linha(s)` : `✅ Importar ${resumo.selected} linha(s)`}
                   </button>
                 </div>
               </div>
@@ -619,12 +683,16 @@ export const ImportacoesContabeis: React.FC = () => {
                   </thead>
                   <tbody>
                     {rows.map((row) => {
-                      const statusLabel = row.jaImportado ? 'Já importado' : row.matchStatus === 'match' ? 'Pronto para importar' : 'Sem vínculo';
-                      const statusColors = row.jaImportado
+                      const statusLabel = row.jaImportado
+                        ? (modoSobrescrever ? '✏️ Sobrescrever' : 'Já importado')
+                        : row.matchStatus === 'match' ? 'Pronto para importar' : 'Sem vínculo';
+                      const statusColors = (row.jaImportado && !modoSobrescrever)
                         ? ['#eceff1', '#546e7a']
-                        : row.matchStatus === 'match'
-                          ? ['#e8f5e9', '#2e7d32']
-                          : ['#ffebee', '#c62828'];
+                        : (row.jaImportado && modoSobrescrever)
+                          ? ['#fff3e0', '#e65100']
+                          : row.matchStatus === 'match'
+                            ? ['#e8f5e9', '#2e7d32']
+                            : ['#ffebee', '#c62828'];
 
                       return (
                         <tr key={row.id}>
@@ -632,7 +700,7 @@ export const ImportacoesContabeis: React.FC = () => {
                             <input
                               type="checkbox"
                               checked={row.selecionado}
-                              disabled={row.matchStatus !== 'match' || row.jaImportado}
+                              disabled={row.matchStatus !== 'match' || (row.jaImportado && !modoSobrescrever)}
                               onChange={() => toggleRow(row.id)}
                             />
                           </td>
