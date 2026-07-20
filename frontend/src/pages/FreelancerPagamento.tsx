@@ -527,8 +527,8 @@ export default function FreelancerPagamento() {
         const totalLiquido = liqResult.liquido;
 
         /* pago? */
-        let pago = diasJaPagosDetalhe.length>0 && dobras===0;
-        let pagoParcial = diasJaPagosDetalhe.length>0 && dobras>0;
+        const pago = diasJaPagosDetalhe.length>0 && dobras===0;
+        const pagoParcial = diasJaPagosDetalhe.length>0 && dobras>0;
 
         if (dobras===0 && diasJaPagosDetalhe.length===0) return null;
 
@@ -538,26 +538,10 @@ export default function FreelancerPagamento() {
         let brutoFinal = total + transp_saldo + caixinhaTotal;
         const psArr = payslipsMap[cid] || [];
         const psMatch = psArr.find((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
-        /* INTEGRIDADE: detectar diferença entre valor pago (payslip) e valor recalculado */
-        let diferencaPendente = 0;
         if (pago && psMatch) {
-          const brutoPayslipVal = parseFloat(psMatch.bruto || '0');
-          const liquidoPayslipVal = parseFloat(psMatch.liquido || '0');
-          const brutoAtual = total + transp_saldo + caixinhaTotal;
-          // Se bruto atual difere do payslip, há pendência
-          diferencaPendente = R(brutoAtual - brutoPayslipVal);
-          if (Math.abs(diferencaPendente) > 1) {
-            // Turno editado pós-pagamento: marcar como parcial, mostrar valor recalculado
-            pago = false;
-            pagoParcial = true;
-            // Manter bruto/descontos/líquido recalculados (não sobrescrever com payslip)
-          } else {
-            // Sem divergência: usar payslip como fonte de verdade
-            liquidoFinal = liquidoPayslipVal;
-            descontosFinal = parseFloat(psMatch.descontos || '0');
-            brutoFinal = brutoPayslipVal;
-            diferencaPendente = 0;
-          }
+          liquidoFinal = parseFloat(psMatch.liquido || '0');
+          descontosFinal = parseFloat(psMatch.descontos || '0');
+          brutoFinal = parseFloat(psMatch.bruto || '0');
         }
 
         return {
@@ -572,7 +556,7 @@ export default function FreelancerPagamento() {
           totalTransporte: transp_saldo,
           transporteAdiantado: transp_adt, transporteAdiantadoBruto: transpAdtBruto, transporteAdiantadoMes: transpAdtMes, transporteJaConsumido: transpJaConsumido, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
           saidasDesconto: descontosFinal, saidasDetalhe,
-          totalLiquido: liquidoFinal, brutoPayslip: brutoFinal, pago, pagoParcial, payslip: psMatch || null, diferencaPendente,
+          totalLiquido: liquidoFinal, brutoPayslip: brutoFinal, pago, pagoParcial, payslip: psMatch || null,
           pendentesAnteriores, saldoEspecialAberto,
           periodoInicio: isoInicio, periodoFim: isoFim2,
           caixinhaTotal, caixinhaDetalhe,
@@ -683,14 +667,8 @@ export default function FreelancerPagamento() {
         return `Dobras (${fr.dobras}× ${obsValor})`;
       })();
 
-      // Se tem diferença pendente (turno editado pós-pagamento), adicionar item de complemento
-      const diferencaPend = fr.diferencaPendente || 0;
-      const principalItem = diferencaPend > 1
-        ? { key:'complemento', label:`⚠️ Complemento (turno ajustado após pagamento — payslip: R$${fmt(fr.brutoPayslip - diferencaPend)}, atual: R$${fmt(fr.brutoPayslip)})`, valor:diferencaPend, tipo:'credito' as const, checked:true }
-        : { key:'dobras', label: labelPrincipal, valor:fr.total, tipo:'credito' as const, checked:true };
-
       const items: any[] = [
-        principalItem,
+        { key:'dobras', label: labelPrincipal, valor:fr.total, tipo:'credito', checked:true },
         ...(totalTransp>0?[{key:'transporte',label:transpLabel,valor:fr.transporteSaldo,tipo:'credito',checked:fr.transporteSaldo>0}]:[]),
         // Caixinha do controle-motoboy (para motoboys)
         ...caixCtrlItems,
@@ -1549,9 +1527,8 @@ export default function FreelancerPagamento() {
                           const frForma    = diasPagosNovos.length>0 ? diasPagosNovos[0]?.formaPagamento : frFolhaSalva?.formaPagamento;
                           const diasJaPagesSemana = (fr.diasJaPagosDetalhe||[]).length;
                           const frIsPago = diasJaPagesSemana>0 || frFolhaSalva?.pago || fr.pago || false;
-                          const temDiferenca = (fr.diferencaPendente || 0) > 1;
-                          const pagoParcial = (frIsPago && fr.dobras>0) || temDiferenca;
-                          const pagoCompleto = diasJaPagesSemana>0 && fr.dobras===0 && !temDiferenca;
+                          const pagoParcial = frIsPago && fr.dobras>0;
+                          const pagoCompleto = diasJaPagesSemana>0 && fr.dobras===0;
                           const semDetalhe  = frFolhaSalva?.pago && diasJaPagesSemana===0 && (frFolhaSalva?.diasPagos?.length||0)===0;
                           /* ── composição do pagamento (campos estruturados do backend) ── */
                           const compReg = diasPagosNovos.length>0 ? diasPagosNovos[0] : frFolhaSalva;
@@ -1628,11 +1605,7 @@ export default function FreelancerPagamento() {
                               </td>
                               {/* ── Status: badge simples + data + forma (padrão Extrato) ── */}
                               <td style={{...s.td,textAlign:'center'}}>
-                                {temDiferenca
-                                  ? <span style={{...s.badge('#ffcdd2','#c62828'),fontSize:'9px'}} title={`Turno editado após pagamento. Payslip: R$${(fr.brutoPayslip-(fr.diferencaPendente||0)).toFixed(2)} → Atual: R$${fr.brutoPayslip.toFixed(2)}`}>
-                                      ⚠️ Pendência +{fmtMoeda(fr.diferencaPendente||0)}
-                                    </span>
-                                  : semDetalhe
+                                {semDetalhe
                                   ? <span style={{...s.badge('#fff3e0','#e65100'),fontSize:'9px'}} title="Pago sem detalhe analítico — reabra e repague">⚠️ Pago*</span>
                                   : pagoParcial
                                   ? <span style={{...s.badge('#fff9c4','#f57f17'),fontSize:'9px'}}>🟡 Parcial</span>
