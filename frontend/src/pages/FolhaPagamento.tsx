@@ -1409,13 +1409,16 @@ export default function FolhaPagamento() {
     return true;
   }), [folhasLocais, filtroStatus, filtroTipo]);
 
-  const totais = useMemo(() => ({
-    saldo: folhasFiltradas.reduce((s, f) => s + f.saldoFinal, 0),
-    variavel: folhasFiltradas.reduce((s, f) => s + f.totalVariavel, 0),
-    salarios: folhasFiltradas.reduce((s, f) => s + f.salarioBase + f.periculosidade, 0),
-    pgto20: folhasFiltradas.reduce((s, f) => s + f.pgtosDia20, 0),
-    pgto05: folhasFiltradas.reduce((s, f) => s + f.pgtosDia05, 0),
-  }), [folhasFiltradas]);
+  const totais = useMemo(() => {
+    const ativos = folhasFiltradas.filter(f => !f.afastado);
+    return {
+      saldo: ativos.reduce((s, f) => s + f.saldoFinal, 0),
+      variavel: ativos.reduce((s, f) => s + f.totalVariavel, 0),
+      salarios: folhasFiltradas.reduce((s, f) => s + f.salarioBase + f.periculosidade, 0),
+      pgto20: ativos.reduce((s, f) => s + f.pgtosDia20, 0),
+      pgto05: ativos.reduce((s, f) => s + f.pgtosDia05, 0),
+    };
+  }, [folhasFiltradas]);
 
   // Total l\u00edquido do m\u00eas: soma das dobras + transporte - descontos de sa\u00eddas
   const totalFreelancerMes = useMemo(() =>
@@ -3584,7 +3587,7 @@ export default function FolhaPagamento() {
               const proxLabel = `05/${String(dProx.getMonth() + 1).padStart(2, '0')}/${dProx.getFullYear()}`;
               const totalGrid1 = folhasFiltradas.filter(f => !f.afastado).reduce((s, f) => s + f.pgtosDia20, 0);
               // Grid 2 agora soma pgtosDia05 + variavel 20-31 da PRÓPRIA competência
-              const totalGrid2 = folhasFiltradas.reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31 || 0)), 0);
+              const totalGrid2 = folhasFiltradas.filter(f => !f.afastado).reduce((s, f) => s + (f.pgtosDia05 + (f.variavelDe20a31 || 0)), 0);
 
               return (
                 <>
