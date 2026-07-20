@@ -86,6 +86,7 @@ export interface DescontosResult {
 export function encontrarAdiantamentoIdAlvo(
   saidas: SaidaCalc[],
   colaboradorId: string,
+  valorAbatimento?: number,
 ): string | undefined {
   // Adiantamentos Especiais do colaborador, mais antigo primeiro
   const adtosEsp = saidas
@@ -96,14 +97,28 @@ export function encontrarAdiantamentoIdAlvo(
   const descEsp = saidas
     .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Desconto Adiantamento Especial' && s.pago);
 
+  // Se valorAbatimento foi passado, preferir contrato com saldo >= valor
+  // (evita estourar contrato pequeno quando há outro com saldo suficiente)
+  const contratosComSaldo: { cId: string; saldo: number }[] = [];
   for (const ae of adtosEsp) {
     const cId = ae.adiantamentoId || ae.id;
     const totalDesc = descEsp
       .filter(d => d.adiantamentoId === cId)
       .reduce((sum, d) => sum + (d.valor || 0), 0);
-    if ((ae.valor || 0) - totalDesc > 0) return cId;
+    const saldo = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
+    if (saldo > 0) contratosComSaldo.push({ cId, saldo });
   }
-  return undefined;
+
+  if (contratosComSaldo.length === 0) return undefined;
+
+  // Se temos valor de abatimento, preferir o mais antigo com saldo suficiente
+  if (valorAbatimento && valorAbatimento > 0) {
+    const suficiente = contratosComSaldo.find(c => c.saldo >= valorAbatimento);
+    if (suficiente) return suficiente.cId;
+  }
+
+  // Fallback: mais antigo com qualquer saldo > 0
+  return contratosComSaldo[0].cId;
 }
 
 export function calcularDescontos(input: DescontosInput): DescontosResult {

@@ -798,7 +798,7 @@ export default function FreelancerPagamento() {
             const todasSaidas = await rHist.json();
             adtoIdAlvo = encontrarAdiantamentoIdAlvo(
               (Array.isArray(todasSaidas)?todasSaidas:[]).map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
-              fr.id,
+              fr.id, vlAbate,
             );
           }
         } catch { /* fallback: tenta com saídas do mês */ }
@@ -806,7 +806,7 @@ export default function FreelancerPagamento() {
           const fonteSaidas2 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
           adtoIdAlvo = encontrarAdiantamentoIdAlvo(
             fonteSaidas2.map((s:any) => ({ id: s.id, colaboradorId: s.colaboradorId, tipo: s.tipo||s.origem||'', valor: parseFloat(s.valor)||0, data: s.data||'', pago: s.pago, adiantamentoId: s.adiantamentoId, pagamentoIdLigado: s.pagamentoIdLigado })),
-            fr.id,
+            fr.id, vlAbate,
           );
         }
         operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalPgto, dataPagamento:dataLocalPgto, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo || undefined });

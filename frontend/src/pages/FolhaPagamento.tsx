@@ -2135,7 +2135,7 @@ export default function FolhaPagamento() {
                         const todasSaidasFr = await rHistFr.json();
                         adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
                           (Array.isArray(todasSaidasFr)?todasSaidasFr:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                          fr.id,
+                          fr.id, vlAbate,
                         );
                       }
                     } catch { /* fallback abaixo */ }
@@ -2143,7 +2143,7 @@ export default function FolhaPagamento() {
                       const fonteSaidas3 = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
                       adtoIdAlvo2 = encontrarAdiantamentoIdAlvo(
                         fonteSaidas3.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                        fr.id,
+                        fr.id, vlAbate,
                       );
                     }
                     operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Adiantamento Especial', descricao:`Abatimento adto. especial - pgto sem. ${fech.semanaLabel}`, valor:vlAbate, data:dataLocalFreelancer, dataPagamento:dataLocalFreelancer, pago:true, responsavel:responsavelEmail, responsavelId, obs:`Abatido no pagamento da semana ${fech.semanaLabel}`, adiantamentoId: adtoIdAlvo2 || undefined });
@@ -2790,15 +2790,15 @@ export default function FolhaPagamento() {
           if (rHistCLT.ok) {
             const todasCLT = await rHistCLT.json();
             adtoIdCLT = encontrarAdiantamentoIdAlvo(
-              (Array.isArray(todasCLT)?todasCLT:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-              modalPagamento.colaboradorId,
+              (Array.isArray(todasCLT)?todasCLT:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origen||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
+              modalPagamento.colaboradorId, vlAbateCLT,
             );
           }
         } catch { /* fallback */ }
         if (!adtoIdCLT) {
           adtoIdCLT = encontrarAdiantamentoIdAlvo(
             saidasMesCompleto.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-            modalPagamento.colaboradorId,
+            modalPagamento.colaboradorId, vlAbateCLT,
           );
         }
         try {
@@ -5317,7 +5317,7 @@ export default function FolhaPagamento() {
                   const todasD = await rHistD.json();
                   adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
                     (Array.isArray(todasD)?todasD:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                    md.pessoa.id,
+                    md.pessoa.id, vlAbatNum,
                   );
                 }
               } catch { /* fallback */ }
@@ -5325,7 +5325,7 @@ export default function FolhaPagamento() {
                 const saidasFr = md.saidasFrescas || saidasPeriodo;
                 adtoIdAlvoDobras = encontrarAdiantamentoIdAlvo(
                   saidasFr.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado })),
-                  md.pessoa.id,
+                  md.pessoa.id, vlAbatNum,
                 );
               }
               await fetchAuth(`${apiUrl}/saidas`, {
