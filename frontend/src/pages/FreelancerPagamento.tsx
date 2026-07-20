@@ -543,7 +543,7 @@ export default function FreelancerPagamento() {
         if (pago && psMatch) {
           const brutoPayslipVal = parseFloat(psMatch.bruto || '0');
           const liquidoPayslipVal = parseFloat(psMatch.liquido || '0');
-          const brutoAtual = total + transp_saldo + caixinhaTotal;
+          const brutoAtual = totalBrutoPeriodo + transp_saldo + caixinhaTotal;
           // Se bruto atual difere do payslip, há pendência
           diferencaPendente = R(brutoAtual - brutoPayslipVal);
           if (Math.abs(diferencaPendente) > 1) {
