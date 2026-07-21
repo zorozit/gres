@@ -543,21 +543,25 @@ export default function FreelancerPagamento() {
         let descontosFinal = saidasDesconto;
         let brutoFinal = total + transp_saldo + caixinhaTotal;
         const psArr = payslipsMap[cid] || [];
-        const psMatch = psArr.find((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
+        // Encontrar TODOS os payslips que cobrem este período (original + complementos)
+        const psMatches = psArr.filter((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
+        const psMatch = psMatches[0] || null;
         /* INTEGRIDADE: detectar diferença entre valor pago (payslip) e valor recalculado */
         let diferencaPendente = 0;
-        let valorPagoPayslip = 0; // valor que foi efetivamente pago (do payslip)
+        let valorPagoPayslip = 0; // valor que foi efetivamente pago (soma de todos payslips)
         if (pago && psMatch) {
-          const brutoPayslipVal = parseFloat(psMatch.bruto || '0');
-          const liquidoPayslipVal = parseFloat(psMatch.liquido || '0');
+          // Somar bruto/líquido/descontos de TODOS os payslips do período
+          const brutoPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.bruto), 0).toFixed(2));
+          const liquidoPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.liquido), 0).toFixed(2));
+          const descontosPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.descontos), 0).toFixed(2));
           const brutoAtual = totalBrutoPeriodo + transp_saldo + caixinhaTotalPeriodo;
-          // Se bruto atual difere do payslip, há pendência
+          // Se bruto atual difere da soma de payslips, há pendência
           diferencaPendente = R(brutoAtual - brutoPayslipVal);
           if (Math.abs(diferencaPendente) > 1) {
             // Turno editado pós-pagamento: marcar como parcial
             pago = false;
             pagoParcial = true;
-            valorPagoPayslip = brutoPayslipVal; // quanto FOI pago de fato
+            valorPagoPayslip = brutoPayslipVal; // quanto FOI pago de fato (soma payslips)
             // brutoFinal = valor RECALCULADO completo do período (turnos + caixinha + transporte)
             brutoFinal = brutoAtual;
             liquidoFinal = R(brutoAtual - descontosFinal);
@@ -565,7 +569,7 @@ export default function FreelancerPagamento() {
           } else {
             // Sem divergência: usar payslip como fonte de verdade
             liquidoFinal = liquidoPayslipVal;
-            descontosFinal = parseFloat(psMatch.descontos || '0');
+            descontosFinal = descontosPayslipVal;
             brutoFinal = brutoPayslipVal;
             diferencaPendente = 0;
           }
