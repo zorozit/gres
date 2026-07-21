@@ -546,6 +546,7 @@ export default function FreelancerPagamento() {
         const psMatch = psArr.find((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
         /* INTEGRIDADE: detectar diferença entre valor pago (payslip) e valor recalculado */
         let diferencaPendente = 0;
+        let valorPagoPayslip = 0; // valor que foi efetivamente pago (do payslip)
         if (pago && psMatch) {
           const brutoPayslipVal = parseFloat(psMatch.bruto || '0');
           const liquidoPayslipVal = parseFloat(psMatch.liquido || '0');
@@ -556,6 +557,7 @@ export default function FreelancerPagamento() {
             // Turno editado pós-pagamento: marcar como parcial
             pago = false;
             pagoParcial = true;
+            valorPagoPayslip = brutoPayslipVal; // quanto FOI pago de fato
             // brutoFinal = valor RECALCULADO completo do período (turnos + caixinha + transporte)
             brutoFinal = brutoAtual;
             liquidoFinal = R(brutoAtual - descontosFinal);
@@ -581,7 +583,7 @@ export default function FreelancerPagamento() {
           totalTransporte: transp_saldo,
           transporteAdiantado: transp_adt, transporteAdiantadoBruto: transpAdtBruto, transporteAdiantadoMes: transpAdtMes, transporteJaConsumido: transpJaConsumido, transporteSemanasAnteriores: 0, transporteSaldo: transp_saldo,
           saidasDesconto: descontosFinal, saidasDetalhe,
-          totalLiquido: liquidoFinal, brutoPayslip: brutoFinal, pago, pagoParcial, payslip: psMatch || null, diferencaPendente,
+          totalLiquido: liquidoFinal, brutoPayslip: brutoFinal, pago, pagoParcial, payslip: psMatch || null, diferencaPendente, valorPagoPayslip,
           pendentesAnteriores, saldoEspecialAberto,
           periodoInicio: isoInicio, periodoFim: isoFim2,
           caixinhaTotal, caixinhaDetalhe,
@@ -1574,7 +1576,7 @@ export default function FreelancerPagamento() {
                               <td style={{...s.td,fontWeight:'bold'}}>
                                 {fr.nome}
                                 {(fr.saldoEspecialAberto||0)>0 && <div style={{fontSize:'10px',color:'#7c3aed',fontWeight:'bold',marginTop:'2px'}}>🟣 Adto. esp.: {fmtMoeda(fr.saldoEspecialAberto)}</div>}
-                                {(fr.diasJaPagosDetalhe?.length||0)>0 && <div style={{fontSize:'10px',color:'#1565c0',marginTop:'2px'}}>✅ {fr.diasJaPagosDetalhe.length} dia(s) já pago(s): {fmtMoeda(fr.totalJaPago)}</div>}
+                                {(fr.diasJaPagosDetalhe?.length||0)>0 && <div style={{fontSize:'10px',color:'#1565c0',marginTop:'2px'}}>✅ {fr.diasJaPagosDetalhe.length} dia(s) já pago(s): {fmtMoeda(fr.valorPagoPayslip > 0 ? fr.valorPagoPayslip : fr.totalJaPago)}</div>}
                               </td>
                               <td style={{...s.td,fontSize:'11px'}}>
                                 {fr.chavePix && <div>💳 {fr.chavePix}</div>}
@@ -1594,7 +1596,7 @@ export default function FreelancerPagamento() {
                               </td>
                               <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:'#1976d2',fontSize:'13px'}}>
                                 {fmtMoeda(fr.totalBrutoPeriodo??fr.total)}
-                                {fr.totalJaPago>0 && <div style={{fontSize:'9px',color:'#2e7d32'}}>✓ {fmtMoeda(fr.totalJaPago)} pago</div>}
+                                {fr.totalJaPago>0 && <div style={{fontSize:'9px',color: fr.valorPagoPayslip > 0 ? '#e65100' : '#2e7d32'}}>✓ {fmtMoeda(fr.valorPagoPayslip > 0 ? fr.valorPagoPayslip : fr.totalJaPago)} pago</div>}
                               </td>
                               <td style={{...s.td,textAlign:'right',fontSize:'11px',color:fr.totalTransporte>0?'#1565c0':'#aaa'}}>
                                 {fr.totalTransporte>0 ? `📦 ${fmtMoeda(fr.totalTransporte)}` : '-'}
