@@ -571,6 +571,7 @@ export default function FreelancerPagamento() {
             liquidoFinal = liquidoPayslipVal;
             descontosFinal = descontosPayslipVal;
             brutoFinal = brutoPayslipVal;
+            valorPagoPayslip = brutoPayslipVal; // mostrar valor real pago nos badges
             diferencaPendente = 0;
           }
         }
@@ -1600,7 +1601,7 @@ export default function FreelancerPagamento() {
                               </td>
                               <td style={{...s.td,textAlign:'right',fontWeight:'bold',color:'#1976d2',fontSize:'13px'}}>
                                 {fmtMoeda(fr.totalBrutoPeriodo??fr.total)}
-                                {fr.totalJaPago>0 && <div style={{fontSize:'9px',color: fr.valorPagoPayslip > 0 ? '#e65100' : '#2e7d32'}}>✓ {fmtMoeda(fr.valorPagoPayslip > 0 ? fr.valorPagoPayslip : fr.totalJaPago)} pago</div>}
+                                {fr.totalJaPago>0 && <div style={{fontSize:'9px',color: (fr.diferencaPendente||0) > 1 ? '#e65100' : '#2e7d32'}}>✓ {fmtMoeda(fr.valorPagoPayslip > 0 ? fr.valorPagoPayslip : fr.totalJaPago)} pago</div>}
                               </td>
                               <td style={{...s.td,textAlign:'right',fontSize:'11px',color:fr.totalTransporte>0?'#1565c0':'#aaa'}}>
                                 {fr.totalTransporte>0 ? `📦 ${fmtMoeda(fr.totalTransporte)}` : '-'}
