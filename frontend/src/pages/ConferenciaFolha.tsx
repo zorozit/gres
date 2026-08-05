@@ -199,6 +199,41 @@ export default function ConferenciaFolha() {
   // ──────────────────────────────────────────────────────────────────────────
   // Aprovar para pagamento
   // ──────────────────────────────────────────────────────────────────────────
+  const aprovarUm = async (row: FolhaRow) => {
+    setSalvando(true);
+    setMensagem('');
+    try {
+      const body = {
+        colaboradorId: row.colaboradorId,
+        mes: mesAno,
+        unitId,
+        valorBruto: row.salarioBase,
+        valorLiquidoContabil: calcLiquido(row.editRubricas),
+        inssValor: row.editRubricas.find(r => /INSS/i.test(r.descricao))?.desconto || row.inssValor,
+        valeTransporte: row.editRubricas.find(r => /Vale Transp/i.test(r.descricao))?.desconto || row.valeTransporteContabil,
+        feriado: row.editRubricas.find(r => /Feriado/i.test(r.descricao))?.vencimento || row.feriado,
+        rubricas: row.editRubricas,
+        totalVencimentos: row.editRubricas.reduce((s, r) => s + r.vencimento, 0),
+        totalDescontos: row.editRubricas.reduce((s, r) => s + r.desconto, 0),
+        conferido: true,
+        conferidoPor: (user as any)?.email || 'conferencia-folha',
+        conferidoEm: new Date().toISOString(),
+        mergeMode: 'contabil',
+      };
+      const res = await fetchAuth(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setMensagem(`✅ ${row.nome} aprovado para pagamento.`);
+    } catch (e: any) {
+      setMensagem(`❌ Falha ao aprovar ${row.nome}: ${e.message}`);
+    }
+    await carregarDados();
+    setSalvando(false);
+  };
+
   const aprovarTodos = async () => {
     setSalvando(true);
     setMensagem('');
@@ -208,29 +243,7 @@ export default function ConferenciaFolha() {
 
     for (const row of elegíveis) {
       try {
-        const body = {
-          colaboradorId: row.colaboradorId,
-          mes: mesAno,
-          unitId,
-          valorBruto: row.salarioBase,
-          valorLiquidoContabil: calcLiquido(row.editRubricas),
-          inssValor: row.editRubricas.find(r => /INSS/i.test(r.descricao))?.desconto || row.inssValor,
-          valeTransporte: row.editRubricas.find(r => /Vale Transp/i.test(r.descricao))?.desconto || row.valeTransporteContabil,
-          feriado: row.editRubricas.find(r => /Feriado/i.test(r.descricao))?.vencimento || row.feriado,
-          rubricas: row.editRubricas,
-          totalVencimentos: row.editRubricas.reduce((s, r) => s + r.vencimento, 0),
-          totalDescontos: row.editRubricas.reduce((s, r) => s + r.desconto, 0),
-          conferido: true,
-          conferidoPor: (user as any)?.email || 'conferencia-folha',
-          conferidoEm: new Date().toISOString(),
-          mergeMode: 'contabil',
-        };
-        const res = await fetchAuth(`${apiUrl}/folha-pagamento`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error(await res.text());
+        await aprovarUm(row);
         ok++;
       } catch (e: any) {
         falhas.push(`${row.nome}: ${e.message}`);
@@ -411,6 +424,12 @@ export default function ConferenciaFolha() {
                 {edited && (
                   <button onClick={() => resetRow(row.colaboradorId)} title="Resetar valores originais"
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#fff' }}>↩️</button>
+                )}
+                {!row.pago && !row.conferido && row.contabImportado && (
+                  <button onClick={() => aprovarUm(row)} disabled={salvando}
+                    style={{ padding: '4px 12px', borderRadius: 6, border: 'none', backgroundColor: '#43a047', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                    {salvando ? '⏳' : '✅ Aprovar'}
+                  </button>
                 )}
               </div>
             </div>
