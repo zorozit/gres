@@ -5552,6 +5552,74 @@ export default function FolhaPagamento() {
               }
             }
 
+            // 2b) Baixar adiantamentos de transporte CLT (por dia de presença na semana)
+            try {
+              const colabTObj = colaboradores.find(c => c.id === md.pessoa.id);
+              const vtDiaCLT = R(colabTObj?.valorTransporte || 0);
+              if (vtDiaCLT > 0) {
+                const rSaidasT = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${md.pessoa.id}`, {
+                  headers: { Authorization: `Bearer ${token()}` },
+                });
+                const todasSaidasT: any[] = rSaidasT?.ok ? await rSaidasT.json() : [];
+                const adtosT = todasSaidasT
+                  .filter((s2: any) => (s2.tipo || '') === 'Adiantamento Transporte')
+                  .sort((a2: any, b2: any) => (a2.data || '').localeCompare(b2.data || ''));
+                const descTranspExist = todasSaidasT.filter((s2: any) => (s2.tipo || '') === 'Desconto Transporte');
+                const descDatasSet = new Set(descTranspExist.map((s2: any) => s2.data));
+                // Calcular saldo por contrato
+                const ctSaldos: { id: string; saldo: number }[] = [];
+                for (const at of adtosT) {
+                  const aId = at.adiantamentoId || at.id;
+                  const tDesc = descTranspExist.filter((d2: any) => d2.adiantamentoId === aId).reduce((s2: number, d2: any) => s2 + R(d2.valor), 0);
+                  const sd = R(at.valor) - tDesc;
+                  if (sd > 0.01) ctSaldos.push({ id: aId, saldo: sd });
+                }
+                // Sem vínculo: abater do mais antigo
+                const descSemVinc = descTranspExist.filter((d2: any) => !d2.adiantamentoId);
+                for (const dSV of descSemVinc) {
+                  const ct = ctSaldos.find(c2 => c2.saldo > 0.01);
+                  if (ct) ct.saldo = Math.max(0, ct.saldo - R(dSV.valor));
+                }
+                // Dias de presença na semana (escalas)
+                const escSem = escalas.filter((e2: any) =>
+                  e2.colaboradorId === md.pessoa.id &&
+                  (e2.data || '') >= md.semana.inicio && (e2.data || '') <= md.semana.fim
+                );
+                const diasPres = escSem
+                  .filter((e2: any) => e2.presenca === 'presente' || e2.presencaNoite === 'presente')
+                  .map((e2: any) => e2.data)
+                  .filter((d2: string) => !descDatasSet.has(d2));
+                const diasUnicosSem = Array.from(new Set(diasPres)).sort();
+                if (diasUnicosSem.length > 0 && ctSaldos.some(c2 => c2.saldo > 0.01)) {
+                  const respBaixaT = localStorage.getItem('user_email') || (user as any)?.email || 'Sistema';
+                  let ctIdx = 0;
+                  for (const dia of diasUnicosSem) {
+                    while (ctIdx < ctSaldos.length && ctSaldos[ctIdx].saldo <= 0.01) ctIdx++;
+                    if (ctIdx >= ctSaldos.length) break;
+                    const ct = ctSaldos[ctIdx];
+                    const vBaixa = Math.min(vtDiaCLT, ct.saldo);
+                    try {
+                      await fetchAuth(`${apiUrl}/saidas`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                        body: JSON.stringify({
+                          unitId, colaboradorId: md.pessoa.id,
+                          tipo: 'Desconto Transporte',
+                          descricao: `Transporte do dia ${dia} (consumo do adto.)`,
+                          valor: vBaixa, data: dia, dataPagamento: dia,
+                          pago: true, responsavel: respBaixaT,
+                          adiantamentoId: ct.id,
+                          obs: `Auto-gerado ao confirmar pagamento dobras CLT sem. ${md.semana.label}`,
+                        }),
+                      });
+                      ct.saldo = parseFloat((ct.saldo - vBaixa).toFixed(2));
+                    } catch (eT) { console.error(`[Baixa Transporte Dobras CLT] Erro dia ${dia}:`, eT); }
+                  }
+                  console.log(`[Baixa Transporte Dobras CLT] ${diasUnicosSem.length} dias processados para ${md.pessoa.nome}`);
+                }
+              }
+            } catch (eT) { console.error('[Baixa Transporte Dobras CLT] Erro geral:', eT); }
+
             // 3) Gerar payslip (via pagamento-batch)
             try {
               await fetchAuth(`${apiUrl}/pagamento-batch`, {
