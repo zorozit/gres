@@ -1372,6 +1372,50 @@ export default function FolhaPagamento() {
     } catch (err: any) { alert(`Erro ao salvar pagamento variável: ${err?.message || err}. Tente novamente.`); console.error('handleTogglePagoVariavel error:', err); }
     finally { setSalvando(false); }
   };
+
+  /* ── Estornar (remover) um lançamento de pagamento ──────── */
+  const handleEstornoPagamento = async (folha: FolhaMensal, logIndex: number) => {
+    const log = (folha.logPagamentos || [])[logIndex];
+    if (!log) return;
+    const valor = typeof log.valor === 'number' ? log.valor : parseFloat(log.valor || '0');
+    const desc = `${log.forma || 'PIX'} — ${log.tipo || 'Pagamento'} — R$ ${valor.toFixed(2).replace('.', ',')} em ${log.data || '?'}`;
+    if (!window.confirm(`Estornar este lançamento?\n\n${desc}\n\nEssa ação remove o registro de pagamento. O valor voltará como pendente.`)) return;
+    setSalvando(true);
+    try {
+      const newLogs = (folha.logPagamentos || []).filter((_: any, i: number) => i !== logIndex);
+      // Recalcular status de pagamento com base nos logs restantes
+      const temAdto = newLogs.some((l: any) => l.tipo === 'Adiantamento');
+      const temVar = newLogs.some((l: any) => l.tipo === 'Variável');
+      const payload = {
+        colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
+        pago: temAdto && temVar,
+        pagoAdiantamento: temAdto,
+        dataPgtoAdiantamento: temAdto ? (newLogs.find((l: any) => l.tipo === 'Adiantamento')?.data || null) : null,
+        pagoVariavel: temVar,
+        dataPgtoVariavel: temVar ? (newLogs.find((l: any) => l.tipo === 'Variável')?.data || null) : null,
+        logPagamentos: newLogs,
+        saldoFinal: folha.saldoFinal,
+        ...auditoriaCampos(),
+      };
+      const resp = await fetchAuth(`${apiUrl}/folha-pagamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(payload),
+      });
+      if (!resp?.ok) throw new Error(`HTTP ${resp?.status}: ${await resp?.text().catch(() => 'sem detalhe')}`);
+      setFolhasLocais(prev => prev.map(f =>
+        f.colaboradorId === folha.colaboradorId
+          ? { ...f, pago: temAdto && temVar,
+              pagoAdiantamento: temAdto, dataPgtoAdiantamento: temAdto ? payload.dataPgtoAdiantamento : undefined,
+              pagoVariavel: temVar, dataPgtoVariavel: temVar ? payload.dataPgtoVariavel : undefined,
+              logPagamentos: newLogs }
+          : f
+      ));
+      alert('Estorno realizado. Lançamento removido.');
+    } catch (err: any) { alert(`Erro ao estornar: ${err?.message || err}`); console.error('handleEstornoPagamento error:', err); }
+    finally { setSalvando(false); }
+  };
+
   /* ── Export XLSX ─────────────────────────────────────────── */
   const exportarXLSX = () => {
     const ws = XLSX.utils.json_to_sheet(folhasFiltradas.map(f => ({
@@ -4598,8 +4642,16 @@ export default function FolhaPagamento() {
                               {log.forma === 'PIX' ? '📱 PIX' : log.forma === 'Dinheiro' ? '💵 Dinheiro' : log.forma || 'PIX'} — {log.tipo || 'Pagamento'}
                               {log.obs && <span style={{ color: '#777', marginLeft: '6px' }}>({log.obs})</span>}
                             </td>
-                            <td colSpan={6} style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(R(log.valor))}</td>
-                            <td />
+                            <td colSpan={5} style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0' }}>{fmtMoeda(R(log.valor))}</td>
+                            <td style={{ padding: '2px 6px', textAlign: 'center' }}>
+                              <button onClick={() => handleEstornoPagamento(f, idx)} disabled={salvando}
+                                title="Estornar este lançamento"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', opacity: 0.6, padding: '2px 4px' }}
+                                onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                                onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}>
+                                🗑️
+                              </button>
+                            </td>
                           </tr>
                         );
                       });
