@@ -95,11 +95,12 @@ const formatCompetencia = (mesNome: string, ano: string) => {
 
 const moneyRegex = /\d{1,3}(?:\.\d{3})*,\d{2}/g;
 
-const findMoneyNear = (lines: string[], anchorMatcher: (line: string) => boolean) => {
+const findMoneyNear = (lines: string[], anchorMatcher: (line: string) => boolean, pickIndex = -1) => {
   const anchorIndex = lines.findIndex(anchorMatcher);
   if (anchorIndex < 0) return 0;
-  // Check the anchor line itself first (offset 0), then neighbours
-  const offsets = [0, -1, 1, -2, 2, -3, 3];
+  // Check the anchor line itself first (offset 0), then forward (+1,+2) before backward (-1,-2)
+  // Values typically appear on the same line or the NEXT line (e.g. "Total Vencimentos" header, values on next line)
+  const offsets = [0, 1, 2, -1, -2, 3, -3];
   for (const offset of offsets) {
     const line = lines[anchorIndex + offset];
     if (!line) continue;
@@ -109,7 +110,9 @@ const findMoneyNear = (lines: string[], anchorMatcher: (line: string) => boolean
       : line;
     const matches = searchText.match(moneyRegex);
     if (matches?.length) {
-      return toMoney(matches[matches.length - 1]);
+      // pickIndex: -1 = last (default), 0 = first, 1 = second, etc.
+      const idx = pickIndex < 0 ? matches.length - 1 : Math.min(pickIndex, matches.length - 1);
+      return toMoney(matches[idx]);
     }
   }
   return 0;
@@ -372,8 +375,10 @@ const parseEmsReceiptPage = (lines: string[], pageNumber: number, pdfRows?: PdfR
   }
 
   // Totais
-  const totalVencimentos = findMoneyNear(compactLines, (line) => /Total Vencimentos/i.test(line));
-  const totalDescontos = findMoneyNear(compactLines, (line) => /Total Descontos/i.test(line));
+  // "Total Vencimentos Total Descontos" is on one line, values on the NEXT line: "1.239,36 705,36"
+  // pickIndex=0 → first value (vencimentos), pickIndex=-1 → last value (descontos)
+  const totalVencimentos = findMoneyNear(compactLines, (line) => /Total Vencimentos/i.test(line), 0);
+  const totalDescontos = findMoneyNear(compactLines, (line) => /Total Descontos/i.test(line), -1);
   const totalLiquido = findMoneyNear(compactLines, (line) => /Total Liquido/i.test(line));
 
   const mesNome = competenceMatch[1];
