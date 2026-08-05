@@ -2834,7 +2834,24 @@ export default function FolhaPagamento() {
         tipo: modalPgtoTipo,
         obs: l.obs || undefined,
       }));
-    if (registros.length === 0) { alert('Adicione ao menos um pagamento com valor.'); return; }
+    // Permitir registro R$0 quando débitos > créditos (saldo negativo gera adto especial)
+    const totalChecklistSave = checkItemsCLT.reduce((sum, it) => {
+      if (!it.checked || it.tipo === 'info') return sum;
+      return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
+    }, 0);
+    const saldoNegativoSave = totalChecklistSave < 0 ? Math.abs(totalChecklistSave) : 0;
+    if (registros.length === 0 && saldoNegativoSave === 0) { alert('Adicione ao menos um pagamento com valor.'); return; }
+    // Quando saldo negativo: criar registro R$0 para contabilizar o payslip
+    if (registros.length === 0 && saldoNegativoSave > 0) {
+      registros.push({
+        id: Date.now().toString(),
+        data: hoje2,
+        valor: 0,
+        forma: 'PIX' as any,
+        tipo: modalPgtoTipo,
+        obs: `Saldo negativo: d\u00e9bitos excederam cr\u00e9ditos em R$${saldoNegativoSave.toFixed(2)} \u2014 gerado Adiantamento Especial`,
+      });
+    }
     const dataPrimeiro = registros[0].data;
     setSalvando(true);
     try {
@@ -2907,6 +2924,37 @@ export default function FolhaPagamento() {
               }),
             });
           } catch (e) { console.error('Erro ao registrar abatimento especial:', e); }
+        }
+      }
+      // ── Fase 2b: Gerar Adiantamento Especial quando débitos > créditos ──
+      if (saldoNegativoSave > 0) {
+        try {
+          const hoje4 = new Date().toISOString().split('T')[0];
+          await fetchAuth(`${apiUrl}/saidas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+            body: JSON.stringify({
+              unitId,
+              colaboradorId: modalPagamento.colaboradorId,
+              favorecido: modalPagamento.nome,
+              colaborador: modalPagamento.nome,
+              tipo: 'Adiantamento Especial',
+              origem: 'Adiantamento Especial',
+              referencia: 'Adiantamento Especial',
+              descricao: `Saldo negativo folha ${mesAno} (d\u00e9bitos excederam l\u00edquido em R$${saldoNegativoSave.toFixed(2)})`,
+              valor: saldoNegativoSave,
+              data: hoje4,
+              dataPagamento: hoje4,
+              pago: false,
+              formaPagamento: 'Desconto em folha',
+              responsavel: localStorage.getItem('user_email') || '',
+              responsavelNome: 'Sistema',
+              obs: `Gerado automaticamente no fechamento da folha CLT ${mesAno} \u2014 d\u00e9bitos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='debito').reduce((s,i)=>s+i.valor,0).toFixed(2)}) excederam cr\u00e9ditos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='credito').reduce((s,i)=>s+i.valor,0).toFixed(2)})`,
+            }),
+          });
+        } catch (e) {
+          console.error('Erro ao gerar Adiantamento Especial por saldo negativo:', e);
+          alert(`\u26a0\ufe0f Pagamento registrado, mas falhou ao criar o Adiantamento Especial de R$${saldoNegativoSave.toFixed(2)}. Registre manualmente na aba Sa\u00eddas.`);
         }
       }
       // ── Fase 3: Gerar Payslip CLT (via engine) ──
@@ -3069,6 +3117,7 @@ export default function FolhaPagamento() {
       return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
     }, 0);
     const vlAbateCLTModal = abaterEspecialCLT ? (parseFloat(valorAbatimentoCLT) || 0) : 0;
+    const saldoNegativo = totalChecklist < 0 ? Math.abs(totalChecklist) : 0; // débitos > créditos → gera adto especial
     const totalADesembolsar = Math.max(0, totalChecklist - vlAbateCLTModal);
     const totalPgtoLinhas = pgtoLinhas.reduce((s, l) => s + (parseFloat(l.valor) || 0), 0);
     const diff = totalPgtoLinhas - totalADesembolsar;
@@ -3285,10 +3334,16 @@ export default function FolhaPagamento() {
                     )}
                   </div>
                 )}
-                <div style={{ padding: '8px 14px', backgroundColor: '#e8f5e9', display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #c8e6c9' }}>
+                <div style={{ padding: '8px 14px', backgroundColor: saldoNegativo > 0 ? '#fff3e0' : '#e8f5e9', display: 'flex', justifyContent: 'space-between', borderTop: `2px solid ${saldoNegativo > 0 ? '#ffcc02' : '#c8e6c9'}` }}>
                   <span style={{ fontSize: '13px' }}>Total a pagar:</span>
-                  <strong style={{ fontSize: '16px', color: '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
+                  <strong style={{ fontSize: '16px', color: saldoNegativo > 0 ? '#e65100' : '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
                 </div>
+                {saldoNegativo > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#fff3e0', borderLeft: '4px solid #e65100', borderRadius: '0 0 8px 8px', fontSize: '12px', color: '#bf360c' }}>
+                    ⚠️ <strong>Débitos excedem o líquido em {fmtMoeda(saldoNegativo)}.</strong><br />
+                    Ao confirmar, o pagamento será registrado como <strong>R$ 0,00</strong> e a diferença de <strong>{fmtMoeda(saldoNegativo)}</strong> será lançada automaticamente como <strong>Adiantamento Especial</strong> (débito do colaborador).
+                  </div>
+                )}
               </div>
               {/* Lançamentos */}
               <div style={{ marginBottom: '10px' }}>
@@ -3330,8 +3385,8 @@ export default function FolhaPagamento() {
               </div>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Fechar</button>
-                <button onClick={salvarPagamentoModal} disabled={salvando || totalPgtoLinhas <= 0} style={s.btn('#43a047')}>
-                  {salvando ? '⏳ Salvando...' : '✅ Confirmar'}
+                <button onClick={salvarPagamentoModal} disabled={salvando || (totalPgtoLinhas <= 0 && saldoNegativo === 0)} style={s.btn('#43a047')}>
+                  {salvando ? '⏳ Salvando...' : saldoNegativo > 0 ? `✅ Confirmar (gera adto. R$${saldoNegativo.toFixed(2)})` : '✅ Confirmar'}
                 </button>
               </div>
             </div>
