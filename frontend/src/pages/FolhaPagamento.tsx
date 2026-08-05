@@ -4141,32 +4141,12 @@ export default function FolhaPagamento() {
                     totalBruto = vd * dobrasCalc;
                   }
                   const diasTrab = codigos.filter(c => c !== '-').length;
-                  const totalTransporte = p.valorTransporte * diasTrab;
-
-                  // Deduzir adiantamento de transporte já pago para CLT (mesma lógica dos freelancers)
-                  // saidasPeriodo é estado do componente pai, acessível aqui
-                  const saidasTranspCLT = saidasPeriodo.filter((s: any) =>
-                    s.colaboradorId === p.id &&
-                    (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
-                  );
-                  const adtoTranspMes = saidasTranspCLT.reduce((sum: number, s: any) => sum + R(s.valor), 0);
-
-                  // Semanas anteriores já consumidas: conta dias pagos em semanas antes desta
-                  const diasPagosAnteriores = folhasDB
-                    .filter(f =>
-                      f.colaboradorId === p.id &&
-                      f.mes === mesAno &&
-                      f.semana < sem.inicio &&
-                      f.pago
-                    )
-                    .reduce((sum: number, f: any) => {
-                      // valorTransporte salvo ou recalcula por dias salvos
-                      return sum + R(f.valorTransporte);
-                    }, 0);
-
-                  const adtoDisponivel = Math.max(0, adtoTranspMes - diasPagosAnteriores);
-                  // Saldo a pagar = máx(0, transporte da semana − adto disponível)
-                  const transporteSaldoCLT = parseFloat(Math.max(0, totalTransporte - adtoDisponivel).toFixed(2));
+                  // Transporte CLT: NÃO incluir nas dobras — já é descontado na folha contábil
+                  // (Cód.109 Desc. Vale Transporte) e controlado nos pagamentos dia 20/05
+                  const totalTransporte = 0;
+                  const adtoTranspMes = 0;
+                  const adtoDisponivel = 0;
+                  const transporteSaldoCLT = 0;
 
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte, transporteSaldoCLT, adtoTranspMes, adtoDisponivel };
                 }).filter(l => l.dC + l.nC + l.dnC > 0);
@@ -4190,8 +4170,7 @@ export default function FolhaPagamento() {
                           💳 Pagto na <strong>{sem.proxSeg}</strong>
                           {' · '}CLT: <strong style={{ color: '#1976d2' }}>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato==='CLT').reduce((s,l)=>s+l.totalBruto,0))}</strong>
                           {' · '}Free: <strong style={{ color: '#c2185b' }}>{fmtMoeda(linhas.filter(l=>l.pessoa.tipoContrato!=='CLT').reduce((s,l)=>s+l.totalBruto,0))}</strong>
-                          {semTotalTransp > 0 && <> · 🚗 <strong style={{ color: '#1565c0' }}>{fmtMoeda(semTotalTransp)}</strong></>}
-                          {' · '}Total: <strong style={{ color: '#1b5e20' }}>{fmtMoeda(semTotalBruto + semTotalTransp)}</strong>
+                          {' · '}Total: <strong style={{ color: '#1b5e20' }}>{fmtMoeda(semTotalBruto)}</strong>
                         </div>
                       </div>
                     </div>
@@ -4235,9 +4214,7 @@ export default function FolhaPagamento() {
                                   <th style={{ ...s.thC, backgroundColor: '#2e7d32', minWidth: '28px', fontSize: '10px' }}>DN</th>
                                   <th style={{ ...s.th, backgroundColor: '#f57f17', textAlign: 'right', minWidth: '72px', fontSize: '10px' }}>Val. Dia</th>
                                   <th style={{ ...s.th, backgroundColor: '#3949ab', textAlign: 'right', minWidth: '72px', fontSize: '10px' }}>Val. Noite</th>
-                                  <th style={{ ...s.th, backgroundColor: '#1b5e20', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Bruto (R$)</th>
-                                  <th style={{ ...s.th, backgroundColor: '#1565c0', textAlign: 'right', minWidth: '70px', fontSize: '11px' }}>🚗 Transp</th>
-                                  <th style={{ ...s.th, backgroundColor: '#2e7d32', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Total</th>
+                                  <th style={{ ...s.th, backgroundColor: '#2e7d32', textAlign: 'right', minWidth: '85px', fontSize: '11px' }}>Total (R$)</th>
                                   <th style={{ ...s.th, backgroundColor: '#37474f', textAlign: 'center', minWidth: '80px', fontSize: '10px' }}>Status</th>
                                   <th style={{ ...s.th, backgroundColor: '#37474f', textAlign: 'left', minWidth: '100px', fontSize: '10px' }}>PIX</th>
                                 </tr>
@@ -4251,7 +4228,7 @@ export default function FolhaPagamento() {
                                   // CLT: usa saldo (total − adto já pago); freelancer: usa totalTransporte bruto
                                   const transpBase = l.pessoa.tipoContrato === 'CLT' ? l.transporteSaldoCLT : l.totalTransporte;
                                   const transpEditado = ed.valorTransporte !== undefined ? (parseFloat(ed.valorTransporte) || 0) : transpBase;
-                                  const totalEdit = brutoEditado + transpEditado;
+                                  const totalEdit = brutoEditado; // transporte removido para CLT (VT na folha contábil)
                                   // payment log from folhasDB or local state
                                   const folhaSalva = folhasDB.find(f => f.colaboradorId === p.id && f.mes === mesAno && f.semana === sem.inicio);
                                   const isPago = folhaSalva?.pago || false;
@@ -4307,31 +4284,16 @@ export default function FolhaPagamento() {
                                           </span>
                                         ) : <span style={{ color: '#ccc' }}>—</span>}
                                       </td>
-                                      {/* Bruto editável */}
+                                      {/* Total editável (dobras — sem transporte, VT já controlado na folha contábil) */}
                                       <td style={{ ...s.td, textAlign: 'right', padding: '4px 4px' }}>
                                         <input
                                           type="number" step="0.01" min="0"
                                           value={ed.valorBruto !== undefined ? ed.valorBruto : l.totalBruto.toFixed(2)}
                                           onChange={e => setEditDobras(prev => ({ ...prev, [editKey]: { ...prev[editKey], valorBruto: e.target.value } }))}
-                                          style={{ width: '75px', padding: '3px 5px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '12px', textAlign: 'right', backgroundColor: ed.valorBruto !== undefined ? '#fff9e0' : 'white' }}
+                                          style={{ width: '85px', padding: '3px 5px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '12px', textAlign: 'right', fontWeight: 'bold', backgroundColor: ed.valorBruto !== undefined ? '#fff9e0' : 'white' }}
                                         />
                                       </td>
-                                      {/* Transporte editável — CLT mostra saldo (total − adto); tooltip explica */}
-                                      <td style={{ ...s.td, textAlign: 'right', padding: '4px 4px' }}>
-                                        <input
-                                          type="number" step="0.50" min="0"
-                                          value={ed.valorTransporte !== undefined ? ed.valorTransporte : transpBase.toFixed(2)}
-                                          onChange={e => setEditDobras(prev => ({ ...prev, [editKey]: { ...prev[editKey], valorTransporte: e.target.value } }))}
-                                          title={l.pessoa.tipoContrato === 'CLT' && l.adtoTranspMes > 0
-                                            ? `Total: R$${fmt(l.totalTransporte)} | Adto mês: R$${fmt(l.adtoTranspMes)} | Saldo a pagar: R$${fmt(l.transporteSaldoCLT)}`
-                                            : undefined}
-                                          style={{ width: '65px', padding: '3px 5px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '12px', textAlign: 'right',
-                                            backgroundColor: ed.valorTransporte !== undefined ? '#e3f2fd' : (l.pessoa.tipoContrato === 'CLT' && l.adtoTranspMes > 0 && l.transporteSaldoCLT === 0 ? '#e8f5e9' : 'white') }}
-                                        />
-                                      </td>
-                                      <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
-                                        {fmtMoeda(totalEdit)}
-                                      </td>
+                                      {/* Transporte removido — VT já controlado na folha contábil dia 20/05 */}
                                       {/* Status pago */}
                                       <td style={{ ...s.td, textAlign: 'center' }}>
                                         <button
@@ -4440,29 +4402,11 @@ export default function FolhaPagamento() {
                                     for (let d = new Date(d1); d <= d2; d.setDate(d.getDate()+1)) days3.push(d.toISOString().split('T')[0]);
                                     return <td colSpan={days3.length + 5} />; {/* +2 colunas Val.Dia / Val.Noite */}
                                   })()}
-                                  <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', fontSize: '12px' }}>
-                                    {fmtMoeda(gp.reduce((s,l) => {
-                                      const ek = `${sem.inicio}_${l.pessoa.id}`;
-                                      const ed = editDobras[ek] || {};
-                                      return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
-                                    }, 0))}
-                                  </td>
-                                  <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', color: '#1565c0', fontSize: '12px' }}>
-                                    {fmtMoeda(gp.reduce((s,l) => {
-                                      const ek = `${sem.inicio}_${l.pessoa.id}`;
-                                      const ed = editDobras[ek] || {};
-                                      const transpBase2 = l.pessoa.tipoContrato === 'CLT' ? l.transporteSaldoCLT : l.totalTransporte;
-                                      return s + (ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : transpBase2);
-                                    }, 0))}
-                                  </td>
                                   <td style={{ padding: '6px', textAlign: 'right', fontWeight: 'bold', color: '#1b5e20', fontSize: '13px' }}>
                                     {fmtMoeda(gp.reduce((s,l) => {
                                       const ek = `${sem.inicio}_${l.pessoa.id}`;
                                       const ed = editDobras[ek] || {};
-                                      const br = ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto;
-                                      const transpBase2 = l.pessoa.tipoContrato === 'CLT' ? l.transporteSaldoCLT : l.totalTransporte;
-                                      const tr = ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : transpBase2;
-                                      return s + br + tr;
+                                      return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
                                     }, 0))}
                                   </td>
                                   <td colSpan={2} />
@@ -4488,19 +4432,10 @@ export default function FolhaPagamento() {
                           const ed = editDobras[ek] || {};
                           return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
                         }, 0))}</strong></span>
-                        {semTotalTransp > 0 && <span style={{ fontSize: '12px' }}>🚗: <strong>{fmtMoeda(linhas.reduce((s,l) => {
-                          const ek = `${sem.inicio}_${l.pessoa.id}`;
-                          const ed = editDobras[ek] || {};
-                          const transpBase3 = l.pessoa.tipoContrato === 'CLT' ? l.transporteSaldoCLT : l.totalTransporte;
-                          return s + (ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : transpBase3);
-                        }, 0))}</strong></span>}
                         <span style={{ fontSize: '15px', fontWeight: 'bold' }}>Total: {fmtMoeda(linhas.reduce((s,l) => {
                           const ek = `${sem.inicio}_${l.pessoa.id}`;
                           const ed = editDobras[ek] || {};
-                          const br = ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto;
-                          const transpBase3 = l.pessoa.tipoContrato === 'CLT' ? l.transporteSaldoCLT : l.totalTransporte;
-                          const tr = ed.valorTransporte !== undefined ? parseFloat(ed.valorTransporte)||0 : transpBase3;
-                          return s + br + tr;
+                          return s + (ed.valorBruto !== undefined ? parseFloat(ed.valorBruto)||0 : l.totalBruto);
                         }, 0))}</span>
                       </div>
                     </div>
