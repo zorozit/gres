@@ -2972,6 +2972,92 @@ export default function FolhaPagamento() {
           alert(`\u26a0\ufe0f Pagamento registrado, mas falhou ao criar o Adiantamento Especial de R$${saldoNegativoSave.toFixed(2)}. Registre manualmente na aba Sa\u00eddas.`);
         }
       }
+      // ── Fase 2c: Baixar adiantamentos de transporte CLT (consumo por dia de presença) ──
+      try {
+        const colabObj = colaboradores.find(c => c.id === modalPagamento.colaboradorId) || (modalPagamento as any).raw;
+        const vtDia = R(colabObj?.valorTransporte || 0);
+        if (vtDia > 0) {
+          // Buscar TODAS as saídas do colaborador
+          const rAdtoTransp = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${modalPagamento.colaboradorId}`, {
+            headers: { Authorization: `Bearer ${token()}` },
+          });
+          const todasSaidas: any[] = rAdtoTransp?.ok ? await rAdtoTransp.json() : [];
+
+          // Adiantamentos de transporte (todos, calcular saldo manualmente)
+          const adtosTransp = todasSaidas
+            .filter((s: any) => (s.tipo || '') === 'Adiantamento Transporte')
+            .sort((a: any, b: any) => (a.data || '').localeCompare(b.data || ''));
+          // Descontos já existentes
+          const descTranspExist = todasSaidas
+            .filter((s: any) => (s.tipo || '') === 'Desconto Transporte');
+          const descTranspDatas = new Set(descTranspExist.map((s: any) => s.data));
+
+          // Calcular saldo por contrato (adiantamento - descontos vinculados)
+          const contratoSaldos: { id: string; saldo: number }[] = [];
+          for (const adto of adtosTransp) {
+            const aId = adto.adiantamentoId || adto.id;
+            const descsVinc = descTranspExist.filter((d: any) => d.adiantamentoId === aId);
+            const totalDesc = descsVinc.reduce((s: number, d: any) => s + R(d.valor), 0);
+            const saldo = R(adto.valor) - totalDesc;
+            if (saldo > 0.01) contratoSaldos.push({ id: aId, saldo });
+          }
+          // Descontos sem vínculo: abater do contrato mais antigo em aberto
+          const descSemVinc = descTranspExist.filter((d: any) => !d.adiantamentoId);
+          for (const desc of descSemVinc) {
+            const c = contratoSaldos.find(cs => cs.saldo > 0.01);
+            if (c) c.saldo = Math.max(0, c.saldo - R(desc.valor));
+          }
+
+          // Dias de presença no mês (sem desconto já existente)
+          const escalasMesCLT = escalas.filter((e: any) =>
+            e.colaboradorId === modalPagamento.colaboradorId && (e.data || '').startsWith(mesAno)
+          );
+          const diasPresentes = escalasMesCLT
+            .filter((e: any) => e.presenca === 'presente' || e.presencaNoite === 'presente')
+            .map((e: any) => e.data)
+            .filter((d: string) => !descTranspDatas.has(d));
+          const diasUnicos = Array.from(new Set(diasPresentes)).sort();
+
+          if (diasUnicos.length > 0 && contratoSaldos.some(c => c.saldo > 0.01)) {
+            const respBaixa = localStorage.getItem('user_email') || (user as any)?.email || 'Sistema';
+            let baixados = 0;
+            let contratoIdx = 0;
+            for (const dia of diasUnicos) {
+              // Encontrar contrato com saldo
+              while (contratoIdx < contratoSaldos.length && contratoSaldos[contratoIdx].saldo <= 0.01) contratoIdx++;
+              if (contratoIdx >= contratoSaldos.length) break;
+              const contrato = contratoSaldos[contratoIdx];
+              const valorBaixa = Math.min(vtDia, contrato.saldo);
+              try {
+                await fetchAuth(`${apiUrl}/saidas`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                  body: JSON.stringify({
+                    unitId,
+                    colaboradorId: modalPagamento.colaboradorId,
+                    tipo: 'Desconto Transporte',
+                    descricao: `Transporte do dia ${dia} (consumo do adto.)`,
+                    valor: valorBaixa,
+                    data: dia,
+                    dataPagamento: dia,
+                    pago: true,
+                    responsavel: respBaixa,
+                    adiantamentoId: contrato.id,
+                    obs: `Auto-gerado ao confirmar pagamento folha CLT ${mesAno}`,
+                  }),
+                });
+                contrato.saldo = parseFloat((contrato.saldo - valorBaixa).toFixed(2));
+                baixados++;
+              } catch (e) {
+                console.error(`[Baixa Transporte CLT] Erro dia ${dia}:`, e);
+              }
+            }
+            console.log(`[Baixa Transporte CLT] ${baixados} dias baixados para ${modalPagamento.nome}`);
+          }
+        }
+      } catch (e) {
+        console.error('[Baixa Transporte CLT] Erro geral:', e);
+      }
       // ── Fase 3: Gerar Payslip CLT (via engine) ──
       try {
         const mp = modalPagamento;
