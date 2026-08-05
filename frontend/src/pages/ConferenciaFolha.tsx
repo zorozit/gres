@@ -86,11 +86,16 @@ export default function ConferenciaFolha() {
       const cltColabs = (Array.isArray(colabs) ? colabs : [])
         .filter((c: any) => c.ativo !== false && (c.tipoContrato === 'CLT' || c.tipoContrato === 'clt'));
 
-      // Mapear folha por colaboradorId (pegar o registro mensal, não os diários)
+      // Mapear folha por colaboradorId — priorizar o registro mensal (id = col-xxx_YYYY-MM)
       const folhaMap = new Map<string, any>();
+      const monthlyIdRx = /^col-[^_]+_\d{4}-\d{2}$/;
       (Array.isArray(folhas) ? folhas : []).forEach((f: any) => {
-        if (f.mes === mesAno && f.id && !f.id.includes('_2026-') || f.id?.match(/^col-[^_]+_\d{4}-\d{2}$/)) {
-          // Registro mensal: id = col-xxx_2026-06
+        if (f.mes !== mesAno) return;
+        const isMonthly = monthlyIdRx.test(f.id || '');
+        const existing = folhaMap.get(f.colaboradorId);
+        // Se já tem registro mensal no map, não sobrescrever com diário
+        if (existing && monthlyIdRx.test(existing.id || '') && !isMonthly) return;
+        if (isMonthly || !existing) {
           folhaMap.set(f.colaboradorId, f);
         }
       });
