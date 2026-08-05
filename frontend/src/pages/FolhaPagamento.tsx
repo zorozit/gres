@@ -2840,16 +2840,21 @@ export default function FolhaPagamento() {
       return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
     }, 0);
     const saldoNegativoSave = totalChecklistSave < 0 ? Math.abs(totalChecklistSave) : 0;
+    // Valor do crédito da folha (líquido contábil) — para o payslip trabalhista
+    const creditosFolha = parseFloat(checkItemsCLT
+      .filter(it => it.checked && it.tipo === 'credito')
+      .reduce((s, it) => s + it.valor, 0).toFixed(2));
     if (registros.length === 0 && saldoNegativoSave === 0) { alert('Adicione ao menos um pagamento com valor.'); return; }
-    // Quando saldo negativo: criar registro R$0 para contabilizar o payslip
+    // Quando saldo negativo: registrar o valor do crédito (líquido contábil) como pagamento
+    // O payslip precisa comprovar que a folha foi paga (obrigação trabalhista)
     if (registros.length === 0 && saldoNegativoSave > 0) {
       registros.push({
         id: Date.now().toString(),
         data: hoje2,
-        valor: 0,
+        valor: creditosFolha,
         forma: 'PIX' as any,
         tipo: modalPgtoTipo,
-        obs: `Saldo negativo: d\u00e9bitos excederam cr\u00e9ditos em R$${saldoNegativoSave.toFixed(2)} \u2014 gerado Adiantamento Especial`,
+        obs: `Folha ${mesAno} \u2014 l\u00edquido R$${creditosFolha.toFixed(2)}, d\u00e9bitos R$${(creditosFolha + saldoNegativoSave).toFixed(2)}, saldo -R$${saldoNegativoSave.toFixed(2)} (Adiantamento Especial)`,
       });
     }
     const dataPrimeiro = registros[0].data;
@@ -3338,12 +3343,18 @@ export default function FolhaPagamento() {
                   <span style={{ fontSize: '13px' }}>Total a pagar:</span>
                   <strong style={{ fontSize: '16px', color: saldoNegativo > 0 ? '#e65100' : '#1b5e20' }}>{fmtMoeda(totalADesembolsar)}</strong>
                 </div>
-                {saldoNegativo > 0 && (
-                  <div style={{ padding: '10px 14px', backgroundColor: '#fff3e0', borderLeft: '4px solid #e65100', borderRadius: '0 0 8px 8px', fontSize: '12px', color: '#bf360c' }}>
-                    ⚠️ <strong>Débitos excedem o líquido em {fmtMoeda(saldoNegativo)}.</strong><br />
-                    Ao confirmar, o pagamento será registrado como <strong>R$ 0,00</strong> e a diferença de <strong>{fmtMoeda(saldoNegativo)}</strong> será lançada automaticamente como <strong>Adiantamento Especial</strong> (débito do colaborador).
-                  </div>
-                )}
+                {saldoNegativo > 0 && (() => {
+                  const creditosFolhaModal = checkItemsCLT
+                    .filter(it => it.checked && it.tipo === 'credito')
+                    .reduce((s, it) => s + it.valor, 0);
+                  return (
+                    <div style={{ padding: '10px 14px', backgroundColor: '#fff3e0', borderLeft: '4px solid #e65100', borderRadius: '0 0 8px 8px', fontSize: '12px', color: '#bf360c' }}>
+                      ⚠️ <strong>Débitos excedem o líquido em {fmtMoeda(saldoNegativo)}.</strong><br />
+                      O payslip registrará o pagamento da folha de <strong>{fmtMoeda(creditosFolhaModal)}</strong> (comprovante trabalhista).<br />
+                      A diferença de <strong>{fmtMoeda(saldoNegativo)}</strong> será lançada como <strong>Adiantamento Especial</strong> (débito a abater nas próximas semanas).
+                    </div>
+                  );
+                })()}
               </div>
               {/* Lançamentos */}
               <div style={{ marginBottom: '10px' }}>
@@ -3375,6 +3386,12 @@ export default function FolhaPagamento() {
                   {totalADesembolsar > 0 && pgtoLinhas[0]?.valor === '' && (
                     <button onClick={() => setPgtoLinhas(p => p.map((l,i) => i===0?{...l,valor:totalADesembolsar.toFixed(2)}:l))} style={{ ...s.btn('#43a047'), padding: '5px 12px', fontSize: 12 }}>↓ {fmtMoeda(totalADesembolsar)}</button>
                   )}
+                  {saldoNegativo > 0 && pgtoLinhas[0]?.valor === '' && (() => {
+                    const creditosFolhaBtn = checkItemsCLT.filter(it => it.checked && it.tipo === 'credito').reduce((s2, it) => s2 + it.valor, 0);
+                    return creditosFolhaBtn > 0 ? (
+                      <button onClick={() => setPgtoLinhas(p => p.map((l,i) => i===0?{...l,valor:creditosFolhaBtn.toFixed(2)}:l))} style={{ ...s.btn('#e65100'), padding: '5px 12px', fontSize: 12 }}>↓ {fmtMoeda(creditosFolhaBtn)} (líquido folha)</button>
+                    ) : null;
+                  })()}
                 </div>
               </div>
               <div style={{ backgroundColor: Math.abs(diff) < 0.05 ? '#e8f5e9' : '#fff3e0', borderRadius: 6, padding: '8px 12px', marginBottom: 14, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
@@ -3385,8 +3402,8 @@ export default function FolhaPagamento() {
               </div>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button onClick={() => setModalPagamento(null)} style={s.btn('#9e9e9e')}>Fechar</button>
-                <button onClick={salvarPagamentoModal} disabled={salvando || (totalPgtoLinhas <= 0 && saldoNegativo === 0)} style={s.btn('#43a047')}>
-                  {salvando ? '⏳ Salvando...' : saldoNegativo > 0 ? `✅ Confirmar (gera adto. R$${saldoNegativo.toFixed(2)})` : '✅ Confirmar'}
+                <button onClick={salvarPagamentoModal} disabled={salvando || (totalPgtoLinhas <= 0 && saldoNegativo === 0)} style={s.btn(saldoNegativo > 0 ? '#e65100' : '#43a047')}>
+                  {salvando ? '⏳ Salvando...' : saldoNegativo > 0 ? `✅ Confirmar — paga folha + gera adto. R$${saldoNegativo.toFixed(2)}` : '✅ Confirmar'}
                 </button>
               </div>
             </div>
