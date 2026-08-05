@@ -290,6 +290,14 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
   const adtoEspecialSaidas = saidasColaborador
     .filter(s => s.tipo === 'Adiantamento Especial');
 
+  // Adiantamentos extras de salário (feitos após a contabilidade, fora do holerite)
+  // Exclui o adiantamento importado da EMS (Cód.12 já está no líquido contábil)
+  const adtoSalarioExtras = saidasColaborador
+    .filter(s =>
+      s.tipo === 'Adiantamento Sal\u00e1rio' &&
+      !(s.descricao || '').includes('EMS')
+    );
+
   const items: CheckItemCLT[] = [];
 
   if (tipoPagamento === 'Adiantamento') {
@@ -313,6 +321,11 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
     );
     if (adtoTransp > 0) {
       items.push({ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito', checked: true });
+    }
+    // Adiantamentos extras de salário (fora do holerite — feitos após contabilidade)
+    for (let i = 0; i < adtoSalarioExtras.length; i++) {
+      const s = adtoSalarioExtras[i];
+      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
     }
     for (let i = 0; i < adtoEspecialSaidas.length; i++) {
       const s = adtoEspecialSaidas[i];
@@ -351,6 +364,11 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
     if (calc.contrAssistencial > 0) items.push({ key: 'contr', label: `🟥 Contr. Assistencial`, valor: calc.contrAssistencial, tipo: 'debito', checked: true });
     if (calc.valeTransporte > 0) items.push({ key: 'vt', label: `🟥 Desc. Vale Transporte (Cód.109 — 6% sal.)`, valor: calc.valeTransporte, tipo: 'debito', checked: true });
     if (adtoTransp > 0) items.push({ key: 'transp5', label: `🚗 Adto Transporte (a abater)`, valor: adtoTransp, tipo: 'debito', checked: true });
+    // Adiantamentos extras de salário (fora do holerite)
+    for (let i = 0; i < adtoSalarioExtras.length; i++) {
+      const s = adtoSalarioExtras[i];
+      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+    }
     for (let i = 0; i < adtoEspecialSaidas.length; i++) {
       const s = adtoEspecialSaidas[i];
       items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
