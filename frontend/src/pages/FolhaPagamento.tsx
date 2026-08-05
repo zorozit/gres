@@ -2835,11 +2835,11 @@ export default function FolhaPagamento() {
         obs: l.obs || undefined,
       }));
     // Permitir registro R$0 quando débitos > créditos (saldo negativo gera adto especial)
-    const totalChecklistSave = checkItemsCLT.reduce((sum, it) => {
-      if (!it.checked || it.tipo === 'info') return sum;
-      return it.tipo === 'credito' ? sum + it.valor : sum - it.valor;
-    }, 0);
+    const creditosSave = checkItemsCLT.filter(it => it.checked && it.tipo === 'credito').reduce((s, it) => s + it.valor, 0);
+    const debitosSave = checkItemsCLT.filter(it => it.checked && it.tipo === 'debito').reduce((s, it) => s + it.valor, 0);
+    const totalChecklistSave = parseFloat((creditosSave - debitosSave).toFixed(2));
     const saldoNegativoSave = totalChecklistSave < 0 ? Math.abs(totalChecklistSave) : 0;
+    console.log('[salvarPagamentoModal] créditos:', creditosSave, 'debitos:', debitosSave, 'total:', totalChecklistSave, 'saldoNeg:', saldoNegativoSave, 'items:', checkItemsCLT.map(i => `${i.key}:${i.checked?'ON':'off'}:${i.tipo}:${i.valor}`));
     // Valor do crédito da folha (líquido contábil) — para o payslip trabalhista
     const creditosFolha = parseFloat(checkItemsCLT
       .filter(it => it.checked && it.tipo === 'credito')
@@ -2935,28 +2935,38 @@ export default function FolhaPagamento() {
       if (saldoNegativoSave > 0) {
         try {
           const hoje4 = new Date().toISOString().split('T')[0];
-          await fetchAuth(`${apiUrl}/saidas`, {
+          const respAdtoEsp = localStorage.getItem('user_email') || (user as any)?.email || 'Sistema';
+          const bodyAdtoEsp = {
+            unitId,
+            colaboradorId: modalPagamento.colaboradorId,
+            favorecido: modalPagamento.nome,
+            colaborador: modalPagamento.nome,
+            tipo: 'Adiantamento Especial',
+            origem: 'Adiantamento Especial',
+            referencia: 'Adiantamento Especial',
+            descricao: `Saldo negativo folha ${mesAno} (d\u00e9bitos excederam l\u00edquido em R$${saldoNegativoSave.toFixed(2)})`,
+            valor: saldoNegativoSave,
+            data: hoje4,
+            dataPagamento: hoje4,
+            pago: false,
+            formaPagamento: 'Desconto em folha',
+            responsavel: respAdtoEsp,
+            responsavelNome: respAdtoEsp,
+            obs: `Gerado automaticamente no fechamento da folha CLT ${mesAno} \u2014 d\u00e9bitos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='debito').reduce((s,i)=>s+i.valor,0).toFixed(2)}) excederam cr\u00e9ditos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='credito').reduce((s,i)=>s+i.valor,0).toFixed(2)})`,
+          };
+          console.log('[Adto Especial saldo negativo] Enviando:', JSON.stringify(bodyAdtoEsp));
+          const respSaida = await fetchAuth(`${apiUrl}/saidas`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-            body: JSON.stringify({
-              unitId,
-              colaboradorId: modalPagamento.colaboradorId,
-              favorecido: modalPagamento.nome,
-              colaborador: modalPagamento.nome,
-              tipo: 'Adiantamento Especial',
-              origem: 'Adiantamento Especial',
-              referencia: 'Adiantamento Especial',
-              descricao: `Saldo negativo folha ${mesAno} (d\u00e9bitos excederam l\u00edquido em R$${saldoNegativoSave.toFixed(2)})`,
-              valor: saldoNegativoSave,
-              data: hoje4,
-              dataPagamento: hoje4,
-              pago: false,
-              formaPagamento: 'Desconto em folha',
-              responsavel: localStorage.getItem('user_email') || '',
-              responsavelNome: 'Sistema',
-              obs: `Gerado automaticamente no fechamento da folha CLT ${mesAno} \u2014 d\u00e9bitos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='debito').reduce((s,i)=>s+i.valor,0).toFixed(2)}) excederam cr\u00e9ditos (R$${checkItemsCLT.filter(i=>i.checked&&i.tipo==='credito').reduce((s,i)=>s+i.valor,0).toFixed(2)})`,
-            }),
+            body: JSON.stringify(bodyAdtoEsp),
           });
+          if (!respSaida?.ok) {
+            const errTxt = await respSaida?.text().catch(() => 'sem detalhe');
+            console.error('[Adto Especial saldo negativo] Falha:', respSaida?.status, errTxt);
+            alert(`\u26a0\ufe0f Pagamento registrado, mas falhou ao criar o Adiantamento Especial de R$${saldoNegativoSave.toFixed(2)}.\n\nErro: ${errTxt}\n\nRegistre manualmente na aba Sa\u00eddas.`);
+          } else {
+            console.log('[Adto Especial saldo negativo] Criado com sucesso');
+          }
         } catch (e) {
           console.error('Erro ao gerar Adiantamento Especial por saldo negativo:', e);
           alert(`\u26a0\ufe0f Pagamento registrado, mas falhou ao criar o Adiantamento Especial de R$${saldoNegativoSave.toFixed(2)}. Registre manualmente na aba Sa\u00eddas.`);
