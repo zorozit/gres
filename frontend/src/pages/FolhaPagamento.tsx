@@ -1293,23 +1293,25 @@ export default function FolhaPagamento() {
     if (freelancers.length > 0 && escalas.length >= 0) calcularFechamentosFreelancer();
   }, [editFechamento, freelancers, escalas, saidasPeriodo, saidasMesCompleto, saidasPendentesAnt, saldosEspeciais, controlesMap, motoboys]);
 
-  /* ── Toggle pago CLT ─────────────────────────────────────── */
+  /* ── Toggle pago ADIANTAMENTO CLT (dia 20) ─────────────── */
   const handleTogglePago = async (folha: FolhaMensal, dataOverride?: string) => {
-    const novoPago = !folha.pago;
+    const novoAdto = !folha.pagoAdiantamento;
     const hoje2 = new Date().toISOString().split('T')[0];
-    const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
+    const dataPgtoFinal = novoAdto ? (dataOverride || hoje2) : null;
+    // pago geral = true somente se AMBOS (adiantamento + variável) estiverem pagos
+    const novoPagoGeral = novoAdto && folha.pagoVariavel;
     setSalvando(true);
     try {
       // Registrar no logPagamentos quando marcar como pago
       const existingLogs = folha.logPagamentos || [];
-      const newLogs = novoPago ? [
+      const newLogs = novoAdto ? [
         ...existingLogs,
         { id: Date.now().toString(), data: dataPgtoFinal || hoje2, valor: folha.pgtosDia20, forma: 'PIX' as const, tipo: 'Adiantamento' as const }
       ] : existingLogs;
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
-        pago: novoPago, dataPagamento: dataPgtoFinal,
-        pagoAdiantamento: novoPago, dataPgtoAdiantamento: dataPgtoFinal,
+        pago: novoPagoGeral, dataPagamento: novoPagoGeral ? dataPgtoFinal : folha.dataPagamento,
+        pagoAdiantamento: novoAdto, dataPgtoAdiantamento: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
         logPagamentos: newLogs,
         ...auditoriaCampos(),
@@ -1322,8 +1324,8 @@ export default function FolhaPagamento() {
       if (!resp?.ok) throw new Error(`HTTP ${resp?.status}: ${await resp?.text().catch(() => 'sem detalhe')}`);
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
-          ? { ...f, pago: novoPago, dataPagamento: novoPago ? (dataOverride || hoje2) : undefined,
-              pagoAdiantamento: novoPago, dataPgtoAdiantamento: novoPago ? (dataOverride || hoje2) : undefined,
+          ? { ...f, pago: novoPagoGeral, dataPagamento: novoPagoGeral ? (dataOverride || hoje2) : f.dataPagamento,
+              pagoAdiantamento: novoAdto, dataPgtoAdiantamento: novoAdto ? (dataOverride || hoje2) : undefined,
               logPagamentos: newLogs }
           : f
       ));
@@ -1333,21 +1335,23 @@ export default function FolhaPagamento() {
 
   /* ── Toggle pago VARIÁVEL (independente do fixo) ─────────── */
   const handleTogglePagoVariavel = async (folha: FolhaMensal, dataOverride?: string) => {
-    const novoPago = !folha.pagoVariavel;
+    const novoVar = !folha.pagoVariavel;
     const hoje2 = new Date().toISOString().split('T')[0];
-    const dataPgtoFinal = novoPago ? (dataOverride || hoje2) : null;
+    const dataPgtoFinal = novoVar ? (dataOverride || hoje2) : null;
+    // pago geral = true somente se AMBOS (adiantamento + variável) estiverem pagos
+    const novoPagoGeral = folha.pagoAdiantamento && novoVar;
     setSalvando(true);
     try {
       // Registrar no logPagamentos quando marcar variável como pago
       const existingLogs = folha.logPagamentos || [];
-      const newLogs = novoPago ? [
+      const newLogs = novoVar ? [
         ...existingLogs,
         { id: Date.now().toString(), data: dataPgtoFinal || hoje2, valor: folha.pgtosDia05, forma: 'PIX' as const, tipo: 'Variável' as const }
       ] : existingLogs;
       const payload = {
         colaboradorId: folha.colaboradorId, mes: mesAno, unitId,
-        pago: folha.pago,
-        pagoVariavel: novoPago, dataPgtoVariavel: dataPgtoFinal,
+        pago: novoPagoGeral, dataPagamento: novoPagoGeral ? dataPgtoFinal : folha.dataPagamento,
+        pagoVariavel: novoVar, dataPgtoVariavel: dataPgtoFinal,
         saldoFinal: folha.saldoFinal,
         logPagamentos: newLogs,
         ...auditoriaCampos(),
@@ -1360,14 +1364,14 @@ export default function FolhaPagamento() {
       if (!resp?.ok) throw new Error(`HTTP ${resp?.status}: ${await resp?.text().catch(() => 'sem detalhe')}`);
       setFolhasLocais(prev => prev.map(f =>
         f.colaboradorId === folha.colaboradorId
-          ? { ...f, pagoVariavel: novoPago, dataPgtoVariavel: novoPago ? (dataOverride || hoje2) : undefined,
+          ? { ...f, pago: novoPagoGeral, dataPagamento: novoPagoGeral ? (dataOverride || hoje2) : f.dataPagamento,
+              pagoVariavel: novoVar, dataPgtoVariavel: novoVar ? (dataOverride || hoje2) : undefined,
               logPagamentos: newLogs }
           : f
       ));
-    } catch (err: any) { alert(`Erro ao salvar pagamento vari\u00e1vel: ${err?.message || err}. Tente novamente.`); console.error('handleTogglePagoVariavel error:', err); }
+    } catch (err: any) { alert(`Erro ao salvar pagamento variável: ${err?.message || err}. Tente novamente.`); console.error('handleTogglePagoVariavel error:', err); }
     finally { setSalvando(false); }
   };
-
   /* ── Export XLSX ─────────────────────────────────────────── */
   const exportarXLSX = () => {
     const ws = XLSX.utils.json_to_sheet(folhasFiltradas.map(f => ({

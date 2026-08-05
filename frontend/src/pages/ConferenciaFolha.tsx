@@ -40,7 +40,9 @@ interface FolhaRow {
   folhaId?: string;
   mes: string;
   contabImportado: boolean;
-  pago: boolean;
+  pago: boolean;            // pago GERAL (adiantamento + saldo)
+  pagoAdiantamento: boolean; // dia 20
+  pagoVariavel: boolean;     // dia 05 (saldo)
   conferido: boolean;
   obsEMS?: string;
 }
@@ -134,7 +136,9 @@ export default function ConferenciaFolha() {
           folhaId: f?.id,
           mes: mesAno,
           contabImportado: hasContab,
-          pago: f?.pago === true,
+          pago: f?.pagoAdiantamento === true && f?.pagoVariavel === true,
+          pagoAdiantamento: f?.pagoAdiantamento === true,
+          pagoVariavel: f?.pagoVariavel === true,
           conferido: f?.conferido === true,
           obsEMS: f?.obsEMS,
         };
@@ -321,7 +325,9 @@ export default function ConferenciaFolha() {
   // Status badge
   // ──────────────────────────────────────────────────────────────────────────
   const statusBadge = (row: FolhaRow) => {
-    if (row.pago) return { label: '✅ Pago', bg: '#e8f5e9', fg: '#2e7d32' };
+    if (row.pagoAdiantamento && row.pagoVariavel) return { label: '✅ Pago (completo)', bg: '#e8f5e9', fg: '#2e7d32' };
+    if (row.pagoAdiantamento) return { label: '💸 Adto pago — saldo pendente', bg: '#fff8e1', fg: '#e65100' };
+    if (row.pagoVariavel) return { label: '💸 Saldo pago — adto pendente', bg: '#fff8e1', fg: '#e65100' };
     if (row.conferido) return { label: '🔒 Conferido', bg: '#e3f2fd', fg: '#1565c0' };
     if (row.contabImportado) return { label: '📥 Importado', bg: '#fff8e1', fg: '#ef6c00' };
     return { label: '⚠️ Sem dados', bg: '#ffebee', fg: '#c62828' };
