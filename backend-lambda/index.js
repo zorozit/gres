@@ -1928,6 +1928,7 @@ exports.handler = async (event) => {
                 responsavel: op.responsavel || responsavel || '',
                 responsavelId: op.responsavelId || responsavelId || '',
                 obs: op.obs || '',
+                ...(op.adiantamentoId ? { adiantamentoId: op.adiantamentoId } : {}),
                 createdAt: now,
                 updatedAt: now,
               };
