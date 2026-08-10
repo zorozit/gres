@@ -100,14 +100,32 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
   return (
     <div style={{ maxHeight: 480, overflowY: 'auto' }}>
       <div style={{ marginBottom: 10, fontSize: 12, color: '#666' }}>
-        📋 {logs.length} alteração{logs.length > 1 ? 'ões' : ''} registrada{logs.length > 1 ? 's' : ''}
+        📋 {logs.length} {logs.length === 1 ? 'alteração registrada' : 'alterações registradas'}
       </div>
       {logs.map(log => {
         const meta = EVENTO_LABEL[log.evento] || EVENTO_LABEL.alterado;
 
         // Calcular diff: ignora campos técnicos, mostra todos os campos conhecidos que mudaram
-        const antes = log.valoresAntes || {};
-        const depois = log.valoresDepois || {};
+        // DynamoDB Document Client já deserializa Maps, mas API Gateway pode retornar formato DDB raw
+        const rawAntes = log.valoresAntes || {};
+        const rawDepois = log.valoresDepois || {};
+        // Normalizar: se vier no formato DDB {"M": {...}} ou {"S": "..."}, extrair
+        const unwrapDDB = (obj: any): any => {
+          if (!obj || typeof obj !== 'object') return obj;
+          if ('M' in obj && typeof obj.M === 'object') {
+            const result: any = {};
+            for (const [k, v] of Object.entries(obj.M)) result[k] = unwrapDDB(v);
+            return result;
+          }
+          if ('S' in obj) return obj.S;
+          if ('N' in obj) return parseFloat(obj.N);
+          if ('BOOL' in obj) return obj.BOOL;
+          if ('NULL' in obj) return null;
+          if ('L' in obj && Array.isArray(obj.L)) return obj.L.map(unwrapDDB);
+          return obj;
+        };
+        const antes = unwrapDDB(rawAntes) || {};
+        const depois = unwrapDDB(rawDepois) || {};
         const temDados = log.valoresAntes !== null || log.valoresDepois !== null;
         const campos = new Set([...Object.keys(antes), ...Object.keys(depois)]);
         const diffs: Array<{ campo: string; label: string; antes: any; depois: any }> = [];
@@ -181,12 +199,12 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
             )}
             {log.evento !== 'criado' && diffs.length === 0 && !temDados && (
               <div style={{ fontSize: 11, color: '#bbb', marginTop: 4, fontStyle: 'italic' }}>
-                ℹ️ Log legado — detalhe de campos não disponível (registrado antes do sistema de diff).
+                📁 Registro de auditoria sem detalhamento de campos (log anterior ao sistema de diff).
               </div>
             )}
             {log.evento !== 'criado' && diffs.length === 0 && temDados && (
               <div style={{ fontSize: 11, color: '#888', marginTop: 4, fontStyle: 'italic' }}>
-                ℹ️ Nenhuma diferença detectada nos campos monitorados.
+                ✅ Salvamento sem alteração efetiva — os campos monitorados permaneceram iguais.
               </div>
             )}
           </div>
