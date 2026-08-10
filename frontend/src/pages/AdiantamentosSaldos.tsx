@@ -215,6 +215,32 @@ export const AdiantamentosSaldos: React.FC = () => {
       });
     });
 
+    // 3b. Redistribuir excessos negativos: se um contrato teve mais descontos
+    //     do que o valor emprestado, o excesso abate do próximo contrato em aberto
+    //     (mesmo colaborador, mesmo tipo, ordem cronológica)
+    const todosContratos = [...contratoMap.values()];
+    todosContratos
+      .filter(c => c.saldo < -0.01)
+      .forEach(c => {
+        const excesso = Math.abs(c.saldo);
+        // Zerar o saldo negativo do contrato quitado
+        c.saldo = 0;
+        c.quitado = true;
+        // Encontrar próximo contrato em aberto do mesmo colaborador+tipo
+        const candidatos = todosContratos
+          .filter(c2 => c2.colaboradorId === c.colaboradorId && c2.tipoAdiantamento === c.tipoAdiantamento && !c2.quitado && c2.adiantamentoId !== c.adiantamentoId)
+          .sort((a, b) => a.dataAbertura.localeCompare(b.dataAbertura));
+        let restante = excesso;
+        for (const alvo of candidatos) {
+          if (restante <= 0.01) break;
+          const abater = Math.min(restante, alvo.saldo);
+          alvo.totalAbatido = parseFloat((alvo.totalAbatido + abater).toFixed(2));
+          alvo.saldo = parseFloat((alvo.valorTotal - alvo.totalAbatido).toFixed(2));
+          alvo.quitado = alvo.saldo <= 0.01;
+          restante = parseFloat((restante - abater).toFixed(2));
+        }
+      });
+
     // 4. Ordenar parcelas por data em cada contrato
     contratoMap.forEach(c => {
       c.parcelas.sort((a, b) => (a.dataPagamento || a.data || '').localeCompare(b.dataPagamento || b.data || ''));
