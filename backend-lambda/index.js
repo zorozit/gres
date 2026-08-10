@@ -560,7 +560,7 @@ exports.handler = async (event) => {
     }
 
     // POST COLABORADORES — ID = col-{uuid}; obrigatórios = Nome + CPF + celular/telefone + unitId
-    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
+    if ((rawPath === '/colaboradores' || (rawPath.startsWith('/colaboradores') && !rawPath.startsWith('/colaboradores-log'))) && httpMethod === 'POST') {
       const {
         nome, email, telefone, celular, cpf,
         tipoContrato, cargo, tipo, funcao, area,
@@ -843,7 +843,7 @@ exports.handler = async (event) => {
     }
 
     // GET COLABORADORES — filtra por unitId (CNPJ)
-    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'GET') {
+    if ((rawPath === '/colaboradores' || (rawPath.startsWith('/colaboradores') && !rawPath.startsWith('/colaboradores-log'))) && httpMethod === 'GET') {
       try {
         const unitIdRaw = queryParams.unitId;
         const unitIdClean = unitIdRaw ? resolveUnitId(unitIdRaw) : null;
@@ -1464,6 +1464,124 @@ exports.handler = async (event) => {
       } catch (err) {
         console.error('GET colaboradores-log/:id error:', err);
         return response(500, { error: 'Erro ao buscar historico do colaborador: ' + err.message });
+      }
+    }
+
+    // ══════ AFASTAMENTOS / STATUS DO COLABORADOR ══════════════════════════════
+    // GET /afastamentos?colaboradorId=xxx — lista afastamentos de um colaborador
+    if (rawPath === '/afastamentos' && httpMethod === 'GET') {
+      const colId = queryParams.colaboradorId;
+      if (!colId) return response(400, { error: 'colaboradorId obrigatório' });
+      try {
+        const r = await dynamodb.query({
+          TableName: 'gres-prod-afastamentos',
+          IndexName: 'colaboradorId-dataInicio-index',
+          KeyConditionExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':cid': colId },
+          ScanIndexForward: false,
+        }).promise();
+        return response(200, r.Items || []);
+      } catch (err) {
+        // Fallback: scan
+        try {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-afastamentos',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colId },
+          }).promise();
+          const items = (r.Items || []).sort((a, b) => (b.dataInicio || '').localeCompare(a.dataInicio || ''));
+          return response(200, items);
+        } catch (e2) {
+          return response(500, { error: 'Erro ao buscar afastamentos: ' + e2.message });
+        }
+      }
+    }
+
+    // POST /afastamentos — cria novo afastamento
+    if (rawPath === '/afastamentos' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, tipo, motivo, dataInicio, dataFimPrevista, observacao,
+              responsavelId, responsavelNome, responsavelEmail, cid: cidMedico, crm } = body;
+      if (!colaboradorId || !tipo || !dataInicio) {
+        return response(400, { error: 'colaboradorId, tipo e dataInicio são obrigatórios' });
+      }
+      const now = new Date().toISOString();
+      const item = {
+        id: `afst-${colaboradorId}-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
+        colaboradorId,
+        unitId: unitId || '',
+        tipo,           // 'licenca_medica' | 'licenca_maternidade' | 'ferias' | 'suspensao' | 'acidente_trabalho' | 'licenca_paternidade' | 'outros'
+        motivo: motivo || '',
+        dataInicio,
+        dataFimPrevista: dataFimPrevista || '',
+        dataFimReal: '',
+        ativo: true,    // afastamento em andamento
+        observacao: observacao || '',
+        cidMedico: cidMedico || '',
+        crm: crm || '',
+        responsavelId: responsavelId || '',
+        responsavelNome: responsavelNome || '',
+        responsavelEmail: responsavelEmail || '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      try {
+        await dynamodb.put({ TableName: 'gres-prod-afastamentos', Item: item }).promise();
+        // Atualizar status do colaborador
+        await dynamodb.update({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId },
+          UpdateExpression: 'SET afastadoDesde = :desde, afastadoAte = :ate, afastadoMotivo = :mot, statusAtual = :st, updatedAt = :now',
+          ExpressionAttributeValues: {
+            ':desde': dataInicio,
+            ':ate': dataFimPrevista || '',
+            ':mot': `${tipo}${motivo ? ': ' + motivo : ''}`,
+            ':st': tipo,
+            ':now': now,
+          },
+        }).promise();
+        return response(201, { success: true, id: item.id, item });
+      } catch (err) {
+        return response(500, { error: 'Erro ao criar afastamento: ' + err.message });
+      }
+    }
+
+    // PUT /afastamentos/:id — atualizar (encerrar, editar datas, etc)
+    if (rawPath.match(/\/afastamentos\/.+/) && httpMethod === 'PUT') {
+      const afstId = rawPath.split('/').pop();
+      if (!afstId) return response(400, { error: 'id obrigatório' });
+      const now = new Date().toISOString();
+      try {
+        const existing = await dynamodb.get({ TableName: 'gres-prod-afastamentos', Key: { id: afstId } }).promise();
+        if (!existing.Item) return response(404, { error: 'Afastamento não encontrado' });
+
+        const updated = { ...existing.Item, ...body, updatedAt: now };
+        // Se está encerrando o afastamento
+        if (body.ativo === false && existing.Item.ativo === true) {
+          updated.dataFimReal = body.dataFimReal || new Date().toISOString().split('T')[0];
+          // Limpar status de afastamento do colaborador
+          await dynamodb.update({
+            TableName: 'gres-prod-colaboradores',
+            Key: { id: existing.Item.colaboradorId },
+            UpdateExpression: 'SET afastadoDesde = :vazio, afastadoAte = :vazio, afastadoMotivo = :vazio, statusAtual = :ativo, updatedAt = :now',
+            ExpressionAttributeValues: { ':vazio': '', ':ativo': 'ativo', ':now': now },
+          }).promise();
+        }
+        await dynamodb.put({ TableName: 'gres-prod-afastamentos', Item: updated }).promise();
+        return response(200, { success: true, id: afstId, item: updated });
+      } catch (err) {
+        return response(500, { error: 'Erro ao atualizar afastamento: ' + err.message });
+      }
+    }
+
+    // DELETE /afastamentos/:id
+    if (rawPath.match(/\/afastamentos\/.+/) && httpMethod === 'DELETE') {
+      const afstId = rawPath.split('/').pop();
+      if (!afstId) return response(400, { error: 'id obrigatório' });
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-afastamentos', Key: { id: afstId } }).promise();
+        return response(200, { success: true });
+      } catch (err) {
+        return response(500, { error: 'Erro ao deletar afastamento: ' + err.message });
       }
     }
 

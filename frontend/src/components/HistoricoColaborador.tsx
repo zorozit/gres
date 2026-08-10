@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchAuth } from '../utils/fetchAuth';
 
 
-export type AbaModal = 'cadastro' | 'historico' | 'pagamentos' | 'escalas' | 'saidas' | 'motoboy';
+export type AbaModal = 'cadastro' | 'historico' | 'pagamentos' | 'escalas' | 'saidas' | 'motoboy' | 'afastamentos';
 
 interface Props {
   colaboradorId: string;

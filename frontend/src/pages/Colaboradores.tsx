@@ -13,6 +13,7 @@ import {
   HistoricoMotoboy,
   type AbaModal,
 } from '../components/HistoricoColaborador';
+import { AfastamentosColaborador } from '../components/AfastamentosColaborador';
 
 /* ─── Interfaces ──────────────────────────────────────────────────────────── */
 interface AcordoTurno {
@@ -213,6 +214,52 @@ const dataPtParaISO = (pt: string): string => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+/* ── DateInput com estado local durante edição ────────────────────────────── */
+const DateInputMask: React.FC<{
+  value: string; // ISO yyyy-mm-dd
+  onChange: (iso: string) => void;
+  placeholder?: string;
+  style?: React.CSSProperties;
+}> = ({ value, onChange, placeholder = 'DD/MM/AAAA', style }) => {
+  const [local, setLocal] = useState(dataISOParaPt(value));
+  const [editing, setEditing] = useState(false);
+
+  // Sincronizar quando valor externo muda (e não está editando)
+  useEffect(() => {
+    if (!editing) setLocal(dataISOParaPt(value));
+  }, [value, editing]);
+
+  return (
+    <input
+      type="text" inputMode="numeric" placeholder={placeholder}
+      value={local} maxLength={10}
+      style={style || styles.input}
+      onFocus={() => setEditing(true)}
+      onChange={e => {
+        const fmt2 = formatarData(e.target.value);
+        setLocal(fmt2);
+        const iso = dataPtParaISO(fmt2);
+        if (iso) onChange(iso);
+      }}
+      onBlur={() => {
+        setEditing(false);
+        const iso = dataPtParaISO(local);
+        if (iso) {
+          onChange(iso);
+          setLocal(dataISOParaPt(iso));
+        } else if (!local.replace(/\D/g, '')) {
+          // Campo apagado — limpar
+          onChange('');
+          setLocal('');
+        } else {
+          // Formato incompleto — reverter ao valor válido
+          setLocal(dataISOParaPt(value));
+        }
+      }}
+    />
+  );
+};
+
 /* ─── Sub-form prop types ─────────────────────────────────────────────────── */
 interface CamposBasicosProps {
   data: Partial<Colaborador>;
@@ -257,18 +304,9 @@ const CamposBasicos = ({ data, onChange }: CamposBasicosProps) => (
       </div>
       <div style={styles.formGroup}>
         <label style={styles.label}>Data de Nascimento</label>
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="DD/MM/AAAA"
-          value={dataISOParaPt(data.dataNascimento || '')}
-          style={styles.input}
-          maxLength={10}
-          onChange={e => {
-            const fmt2 = formatarData(e.target.value);
-            const iso = dataPtParaISO(fmt2);
-            onChange({ dataNascimento: iso || fmt2 });
-          }}
+        <DateInputMask
+          value={data.dataNascimento || ''}
+          onChange={v => onChange({ dataNascimento: v })}
         />
       </div>
       <div style={styles.formGroup}>
@@ -521,30 +559,19 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
         {/* Datas */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Data de Admissão</label>
-          <input
-            type="text" inputMode="numeric" placeholder="DD/MM/AAAA"
-            value={dataISOParaPt(data.dataAdmissao || '')} style={styles.input} maxLength={10}
-            onChange={e => {
-              const fmt2 = formatarData(e.target.value);
-              const iso = dataPtParaISO(fmt2);
-              onChange({ dataAdmissao: iso || fmt2 });
-            }}
+          <DateInputMask
+            value={data.dataAdmissao || ''}
+            onChange={v => onChange({ dataAdmissao: v })}
           />
         </div>
         <div style={styles.formGroup}>
           <label style={{ ...styles.label, color: data.ativo === false ? '#c62828' : '#444' }}>
             Data de Demissão {data.ativo === false && <span style={{ color:'#c62828' }}>● Desligado</span>}
           </label>
-          <input
-            type="text" inputMode="numeric" placeholder="DD/MM/AAAA"
-            value={dataISOParaPt(data.dataDemissao || '')}
+          <DateInputMask
+            value={data.dataDemissao || ''}
+            onChange={v => onChange({ dataDemissao: v })}
             style={{ ...styles.input, borderColor: data.dataDemissao ? '#c62828' : '#ccc' }}
-            maxLength={10}
-            onChange={e => {
-              const fmt2 = formatarData(e.target.value);
-              const iso = dataPtParaISO(fmt2);
-              onChange({ dataDemissao: iso || fmt2 });
-            }}
           />
         </div>
         {/* Afastamento / Licença */}
@@ -580,11 +607,29 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
         {/* Status */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Status</label>
-          <select value={data.ativo === false ? 'inativo' : 'ativo'} style={styles.input}
-            onChange={e => onChange({ ativo: e.target.value === 'ativo' })}>
-            <option value="ativo">● Ativo</option>
-            <option value="inativo">○ Inativo / Desligado</option>
+          <select value={data.ativo === false ? 'inativo' : ((data as any).statusAtual || 'ativo')} style={{
+            ...styles.input,
+            backgroundColor: data.ativo === false ? '#ffebee' : ((data as any).statusAtual && (data as any).statusAtual !== 'ativo') ? '#fff3e0' : undefined,
+            fontWeight: 600,
+          }}
+            onChange={e => {
+              const v = e.target.value;
+              if (v === 'inativo') onChange({ ativo: false });
+              else onChange({ ativo: true, statusAtual: v === 'ativo' ? 'ativo' : v } as any);
+            }}>
+            <option value="ativo">✅ Ativo</option>
+            <option value="licenca_medica">🏥 Licença Médica</option>
+            <option value="licenca_maternidade">🤰 Licença Maternidade</option>
+            <option value="licenca_paternidade">👶 Licença Paternidade</option>
+            <option value="ferias">🏖️ Férias</option>
+            <option value="acidente_trabalho">⚠️ Acidente de Trabalho</option>
+            <option value="auxilio_doenca">📋 Auxílio-Doença (INSS)</option>
+            <option value="suspensao">🚫 Suspensão</option>
+            <option value="inativo">🚪 Desligado / Inativo</option>
           </select>
+          <small style={{ fontSize: 10, color: '#888', marginTop: 2, display: 'block' }}>
+            💡 Use a aba "Afastamentos" para registrar períodos com histórico completo
+          </small>
         </div>
         {/* Financeiro — Salário (CLT only) */}
         {!isFreelancer && (
@@ -917,12 +962,12 @@ const CardColaborador = ({ colab, onEditar, onDesligar, onReativar }: CardColabo
               <span style={{ fontSize: '11px', color: '#c62828' }}>{dataISOParaPt(colab.dataDemissao)}</span>
             </div>
           )}
-          {(colab as any).afastadoDesde && (
+          {((colab as any).afastadoDesde || ((colab as any).statusAtual && (colab as any).statusAtual !== 'ativo')) && (
             <div style={{ marginTop: '4px', padding: '4px 8px', backgroundColor: '#fff3e0', borderRadius: '4px', border: '1px solid #fb8c00' }}>
               <span style={{ fontSize: '11px', color: '#e65100', fontWeight: 'bold' }}>
-                🏥 Afastado desde {dataISOParaPt((colab as any).afastadoDesde)}
-                {(colab as any).afastadoAte ? ` até ${dataISOParaPt((colab as any).afastadoAte)}` : ''}
-                {(colab as any).afastadoMotivo ? ` — ${(colab as any).afastadoMotivo}` : ''}
+                🏥 {(colab as any).afastadoMotivo || (colab as any).statusAtual || 'Afastado'}
+                {(colab as any).afastadoDesde ? ` desde ${dataISOParaPt((colab as any).afastadoDesde)}` : ''}
+                {(colab as any).afastadoAte ? ` — prev. retorno ${dataISOParaPt((colab as any).afastadoAte)}` : ''}
               </span>
             </div>
           )}
@@ -1626,6 +1671,7 @@ export default function Colaboradores() {
                 { id:'pagamentos', label:'💰 Pagamentos' },
                 { id:'escalas',    label:'📅 Escalas' },
                 { id:'saidas',     label:'💸 Saídas' },
+                { id:'afastamentos', label:'🏥 Afastamentos' },
                 ...((colaboradorEditando.isMotoboy || (colaboradorEditando.cargo || '').toLowerCase()==='motoboy') ? [{ id:'motoboy', label:'🛥️ Motoboy' }] : []),
               ] as { id: AbaModal; label: string }[]).map(t => (
                 <button key={t.id} onClick={() => setAbaModal(t.id)}
@@ -1683,6 +1729,16 @@ export default function Colaboradores() {
 
             {abaModal === 'motoboy' && (
               <HistoricoMotoboy colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'afastamentos' && (
+              <AfastamentosColaborador
+                colaboradorId={colaboradorEditando.id}
+                unitId={unitId}
+                apiUrl={apiUrl}
+                token={token()}
+                onStatusChange={() => carregarColaboradores(unitId)}
+              />
             )}
 
             <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap:'wrap' }}>
