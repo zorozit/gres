@@ -596,7 +596,7 @@ export default function FolhaPagamento() {
       // Carregar saídas pendentes de meses anteriores
       if (rSPend?.ok) {
         const dSP = await rSPend.json();
-        const pendentes = (Array.isArray(dSP) ? dSP : []).filter((s: any) => s.pago === false);
+        const pendentes = (Array.isArray(dSP) ? dSP : []).filter((s: any) => s.pago === false && !s.pagamentoIdLigado);
         setSaidasPendentesAnt(pendentes);
       } else {
         setSaidasPendentesAnt([]);
@@ -1757,7 +1757,7 @@ export default function FolhaPagamento() {
   /* ── Modal confirmar pagamento Freelancer (checklist + data editável) ── */
   // Hooks must be called unconditionally (React rules) - states are always created
   // even when the modal is not open; they are reset via useEffect when modal opens.
-  interface CheckItem { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; }
+  interface CheckItem { key: string; label: string; valor: number; tipo: 'credito'|'debito'; checked: boolean; saidaId?: string; }
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
   const [dataLocalFreelancer, setDataLocalFreelancer] = useState(new Date().toISOString().split('T')[0]);
   const [formaFreelancer, setFormaFreelancer] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
@@ -1803,8 +1803,9 @@ export default function FolhaPagamento() {
         if (s.colaboradorId !== fr.id) return false;
         if (!TIPOS_DESCONTO.includes(t)) return false;
         if (saidaData(s) < rangeIni || saidaData(s) > rangeFimExp) return false;
-        // Parcelas de adiantamento especial já quitadas: para checklist de pagamento,
-        // excluir se já pago (não cobrar de novo); no grid/detalhamento mostramos como info
+        // Já processado em pagamento anterior: não cobrar de novo
+        if (s.pagamentoIdLigado) return false;
+        // Parcelas de adiantamento especial já quitadas
         if (t === 'Desconto Adiantamento Especial' && s.adiantamentoId && s.pago === true) return false;
         return true;
       });
@@ -1814,7 +1815,7 @@ export default function FolhaPagamento() {
         saidaData(s) >= rangeIni && saidaData(s) <= rangeFim
       );
 
-      const descDetalhe = saidasDescFr.map((s: any) => ({ descricao: s.descricao || s.tipo || 'Desconto', valor: R(s.valor), data: saidaData(s) }));
+      const descDetalhe = saidasDescFr.map((s: any) => ({ id: s.id, descricao: s.descricao || s.tipo || 'Desconto', valor: R(s.valor), data: saidaData(s) }));
       const caixDetalhe = saidasCaixFr.map((s: any) => ({ descricao: `Caixinha: ${s.descricao || 'Gorjeta'}`, valor: R(s.valor), data: saidaData(s) }));
 
       const obsValor = (fr.valorDia > 0 || fr.valorNoite > 0)
@@ -1861,13 +1862,14 @@ export default function FolhaPagamento() {
           tipo: 'credito' as const,
           checked: true,
         })) : []),
-        ...descDetalhe.map((d, i) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true })),
+        ...descDetalhe.map((d, i) => ({ key: `desc_${i}`, label: `🔴 Desconto: ${d.descricao} (${d.data})`, valor: d.valor, tipo: 'debito' as const, checked: true, saidaId: d.id })),
         ...(fr.pendentesAnteriores || []).map((p: any, i: number) => ({
           key: `pend_${i}`,
           label: `⏳ Pendente anterior: [${p.tipo || p.origem}] ${p.descricao || ''} (${(p.dataPagamento || p.data || '').substring(0, 10)})`,
           valor: R(p.valor),
           tipo: 'debito' as const,
           checked: false,
+          saidaId: p.id,
         })),
       ];
       setCheckItems(items);
@@ -2247,7 +2249,18 @@ export default function FolhaPagamento() {
                     }
                   }
 
-                  // 5) Payslip com composição (vem do engine — mesma função que FreelancerPagamento)
+                  // 5) Marcar saídas de desconto/pendentes como processadas (pagamentoIdLigado)
+                  //    Evita que reapareçam no checklist de semanas futuras
+                  for (const it of checkItems) {
+                    if (!it.checked) continue;
+                    if (!it.saidaId) continue;
+                    // desc_N = descontos da semana, pend_N = pendentes anteriores
+                    if (it.key.startsWith('desc_') || it.key.startsWith('pend_')) {
+                      operacoes.push({ tipo: 'saida-marcar-processada', saidaId: it.saidaId });
+                    }
+                  }
+
+                  // 6) Payslip com composição (vem do engine — mesma função que FreelancerPagamento)
                   const semLabel2 = fech.semanaLabel || mesAno;
                   const periodoKey2 = `${mesAno}-${semLabel2.replace(/[^\w]/g,'')}`;
                   operacoes.push({
