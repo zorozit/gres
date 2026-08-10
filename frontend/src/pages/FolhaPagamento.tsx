@@ -2084,20 +2084,30 @@ export default function FolhaPagamento() {
                 </button>
               ))}
             </div>
-            {formaFreelancer === 'Misto' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <div>
-                  <label style={{ ...s.label, fontSize: '11px' }}>Valor em PIX (R$)</label>
-                  <input type="number" step="0.01" min="0" value={formaFreelancerPix} placeholder="0,00"
-                    onChange={e => setFormaFreelancerPix(e.target.value)} style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+            {formaFreelancer === 'Misto' && (() => {
+              const dinVal = parseFloat(formaFreelancerDin) || 0;
+              const pixCalc = Math.max(0, parseFloat((totalADesembolsarFreelancer - dinVal).toFixed(2)));
+              return (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>
+                    <label style={{ ...s.label, fontSize: '11px' }}>💵 Dinheiro (R$)</label>
+                    <input type="number" step="0.01" min="0" value={formaFreelancerDin} placeholder="0,00"
+                      onChange={e => { setFormaFreelancerDin(e.target.value); setFormaFreelancerPix(Math.max(0, totalADesembolsarFreelancer - (parseFloat(e.target.value) || 0)).toFixed(2)); }}
+                      style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
+                  </div>
+                  <div>
+                    <label style={{ ...s.label, fontSize: '11px' }}>📱 PIX (R$)</label>
+                    <input type="number" step="0.01" min="0" value={formaFreelancerPix || pixCalc.toFixed(2)} placeholder="0,00"
+                      onChange={e => setFormaFreelancerPix(e.target.value)} style={{ ...s.input, fontSize: '12px', padding: '6px', background: '#f3e5f5' }} />
+                  </div>
                 </div>
-                <div>
-                  <label style={{ ...s.label, fontSize: '11px' }}>Valor em Dinheiro (R$)</label>
-                  <input type="number" step="0.01" min="0" value={formaFreelancerDin} placeholder="0,00"
-                    onChange={e => setFormaFreelancerDin(e.target.value)} style={{ ...s.input, fontSize: '12px', padding: '6px' }} />
-                </div>
+                {dinVal > 0 && <div style={{ marginTop: '4px', fontSize: '11px', color: '#6a1b9a', fontWeight: 600 }}>
+                  💵 R${dinVal.toFixed(2)} dinheiro + 📱 R${(parseFloat(formaFreelancerPix) || pixCalc).toFixed(2)} PIX = R${(dinVal + (parseFloat(formaFreelancerPix) || pixCalc)).toFixed(2)}
+                </div>}
               </div>
-            )}
+              );
+            })()}
           </div>
 
           {/* Data pagamento */}
@@ -5763,20 +5773,30 @@ export default function FolhaPagamento() {
                     </button>
                   ))}
                 </div>
-                {formaDobras === 'Misto' && (
-                  <div style={{ display:'flex', gap:'10px', marginTop:'8px' }}>
-                    <div style={{ flex:1 }}>
-                      <label style={{ fontSize:'11px', color:'#666' }}>💳 Valor PIX</label>
-                      <input type="number" step="0.01" min="0" value={formaDobrasVlPix} placeholder="0,00"
-                        onChange={e => setFormaDobrasVlPix(e.target.value)} style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px' }} />
+                {formaDobras === 'Misto' && (() => {
+                  const dinValD = parseFloat(formaDobrasVlDin) || 0;
+                  const pixCalcD = Math.max(0, parseFloat((liquidoFinal - dinValD).toFixed(2)));
+                  return (
+                  <div style={{ marginTop:'8px' }}>
+                    <div style={{ display:'flex', gap:'10px' }}>
+                      <div style={{ flex:1 }}>
+                        <label style={{ fontSize:'11px', color:'#666' }}>💵 Dinheiro</label>
+                        <input type="number" step="0.01" min="0" value={formaDobrasVlDin} placeholder="0,00"
+                          onChange={e => { setFormaDobrasVlDin(e.target.value); setFormaDobrasVlPix(Math.max(0, liquidoFinal - (parseFloat(e.target.value) || 0)).toFixed(2)); }}
+                          style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px' }} />
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <label style={{ fontSize:'11px', color:'#666' }}>📱 PIX</label>
+                        <input type="number" step="0.01" min="0" value={formaDobrasVlPix || pixCalcD.toFixed(2)} placeholder="0,00"
+                          onChange={e => setFormaDobrasVlPix(e.target.value)} style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px', background:'#f3e5f5' }} />
+                      </div>
                     </div>
-                    <div style={{ flex:1 }}>
-                      <label style={{ fontSize:'11px', color:'#666' }}>💵 Valor Dinheiro</label>
-                      <input type="number" step="0.01" min="0" value={formaDobrasVlDin} placeholder="0,00"
-                        onChange={e => setFormaDobrasVlDin(e.target.value)} style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px' }} />
-                    </div>
+                    {dinValD > 0 && <div style={{ marginTop:'4px', fontSize:'11px', color:'#6a1b9a', fontWeight:600 }}>
+                      💵 R${dinValD.toFixed(2)} dinheiro + 📱 R${(parseFloat(formaDobrasVlPix) || pixCalcD).toFixed(2)} PIX = R${(dinValD + (parseFloat(formaDobrasVlPix) || pixCalcD)).toFixed(2)}
+                    </div>}
                   </div>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Data do pagamento */}
