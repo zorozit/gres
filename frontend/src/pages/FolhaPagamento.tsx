@@ -387,6 +387,10 @@ export default function FolhaPagamento() {
   const [checkItemsDobras, setCheckItemsDobras] = useState<CheckItemCLT[]>([]);
   const [abaterEspDobras, setAbaterEspDobras] = useState(false);
   const [vlAbateDobras, setVlAbateDobras] = useState('');
+  const [dataLocalDobras, setDataLocalDobras] = useState(new Date().toISOString().split('T')[0]);
+  const [formaDobras, setFormaDobras] = useState<'PIX' | 'Dinheiro' | 'Misto'>('PIX');
+  const [formaDobrasVlPix, setFormaDobrasVlPix] = useState('');
+  const [formaDobrasVlDin, setFormaDobrasVlDin] = useState('');
 
   useEffect(() => { if (unitId) carregarDados(); }, [unitId, mesAno, periodoIni, periodoFim]);
 
@@ -1769,9 +1773,9 @@ export default function FolhaPagamento() {
     setFormaFreelancerPix('');
     setFormaFreelancerDin('');
     setCheckItems([]); // limpa enquanto recarrega
-    // Abatimento especial: checkbox desligado por padrão, usuário liga se quiser
+    // Abatimento especial: ligado por padrão quando há saldo (regra de pagamento)
     const saldo = modalFreelancerPgto.fr.saldoEspecialAberto || 0;
-    setAbaterEspecial(false);
+    setAbaterEspecial(saldo > 0);
     setValorAbatimento(saldo > 0 ? saldo.toString() : '');
     setDataLocalFreelancer(new Date().toISOString().split('T')[0]);
 
@@ -4476,6 +4480,10 @@ export default function FolhaPagamento() {
                                               setModalDobras(md);
                                               setAbaterEspDobras(false);
                                               setVlAbateDobras('');
+                                              setDataLocalDobras(new Date().toISOString().split('T')[0]);
+                                              setFormaDobras('PIX');
+                                              setFormaDobrasVlPix('');
+                                              setFormaDobrasVlDin('');
                                               // Buscar saídas frescas e montar checklist
                                               try {
                                                 const resSaidas = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
@@ -4484,10 +4492,23 @@ export default function FolhaPagamento() {
                                                 const saidasFrescas = await resSaidas.json();
                                                 const saidasCol = saidasFrescas.filter((ss: any) => ss.colaboradorId === p.id);
                                                 const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno'];
+                                                // Range expandido +2 dias para pegar saídas até dia do pagamento
+                                                const rangeFimExp = new Date(new Date(sem.fim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
                                                 const saidasDesc = saidasCol.filter((ss: any) => {
                                                   const t = ss.tipo || ss.origem || '';
                                                   if (!TIPOS_DESC.includes(t)) return false;
                                                   if (ss.pagamentoIdLigado) return false; // já processado
+                                                  const dt = ss.dataPagamento || ss.data || '';
+                                                  if (dt < sem.inicio || dt > rangeFimExp) return false;
+                                                  return true;
+                                                });
+                                                // Pendentes anteriores: descontos de semanas passadas sem pagamentoIdLigado
+                                                const pendentes = saidasCol.filter((ss: any) => {
+                                                  const t = ss.tipo || ss.origem || '';
+                                                  if (!TIPOS_DESC.includes(t)) return false;
+                                                  if (ss.pagamentoIdLigado) return false;
+                                                  const dt = ss.dataPagamento || ss.data || '';
+                                                  if (dt >= sem.inicio) return false; // pertence à semana atual ou futura
                                                   return true;
                                                 });
                                                 // Saldo adiantamento especial
@@ -4505,6 +4526,10 @@ export default function FolhaPagamento() {
                                                   ...saidasDesc.map((ss: any, i: number) => ({
                                                     key: `desc_${i}`, label: `🔴 ${ss.tipo || 'Desconto'}: ${ss.descricao || ''} (${(ss.data || '').slice(5)})`,
                                                     valor: R(ss.valor), tipo: 'debito' as const, checked: true, saidaId: ss.id,
+                                                  })),
+                                                  ...pendentes.map((ss: any, i: number) => ({
+                                                    key: `pend_${i}`, label: `⏳ Pend. anterior: ${ss.tipo || 'Desconto'}: ${ss.descricao || ''} (${(ss.data || '').slice(5)})`,
+                                                    valor: R(ss.valor), tipo: 'debito' as const, checked: false, saidaId: ss.id,
                                                   })),
                                                 ];
                                                 setCheckItemsDobras(items);
@@ -5504,25 +5529,34 @@ export default function FolhaPagamento() {
         const liquidoFinal = psDobraResult.liquido;
 
         const confirmarPagtoDobras = async () => {
-          const hoje2 = new Date().toISOString().split('T')[0];
-          const dataConfirmada = window.prompt('Data do pagamento (AAAA-MM-DD):', hoje2);
+          const dataConfirmada = dataLocalDobras;
           if (!dataConfirmada) return;
           setSalvando(true);
           try {
-            // 1) Salvar folha-pagamento (status pago)
-            const payload = {
-              colaboradorId: md.pessoa.id, mes: mesAno, semana: md.semana.inicio, unitId,
+            const responsavelEmail = localStorage.getItem('user_email') || (user as any)?.email || 'Sistema';
+            const responsavelIdLocal = (user as any)?.id || localStorage.getItem('user_id') || '';
+            const debitoItems = checkItemsDobras.filter(it => it.checked && it.tipo === 'debito');
+            const totalDebito = debitoItems.reduce((s2, it) => s2 + it.valor, 0);
+
+            const operacoes: any[] = [];
+
+            // 1) Folha-pagamento (status pago)
+            operacoes.push({
+              tipo: 'folha-pagamento-upsert',
+              colaboradorId: md.pessoa.id, mes: mesAno, semana: md.semana.inicio,
               pago: true, dataPagamento: dataConfirmada,
               valorBruto: md.bruto, valorTransporte: md.transporte,
               totalFinal: liquidoFinal, obs: md.obs || '',
-            };
-            await fetchAuth(`${apiUrl}/folha-pagamento`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-              body: JSON.stringify(payload),
             });
 
-            // 2) Abatimento especial (se habilitado) — distribui entre contratos
+            // 2) Marcar saídas processadas (pagamentoIdLigado)
+            for (const it of debitoItems) {
+              if ((it as any).saidaId) {
+                operacoes.push({ tipo: 'saida-marcar-processada', saidaId: (it as any).saidaId });
+              }
+            }
+
+            // 3) Abatimento especial — distribui entre contratos
             if (vlAbatNum > 0) {
               let saidasDistD: any[] = [];
               try {
@@ -5536,23 +5570,18 @@ export default function FolhaPagamento() {
               );
               for (const cD of distD.contratos) {
                 if (cD.valorAbater <= 0) continue;
-                await fetchAuth(`${apiUrl}/saidas`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                  body: JSON.stringify({
-                    unitId, colaboradorId: md.pessoa.id,
-                    tipo: 'Desconto Adiantamento Especial',
-                    descricao: `Abatimento adto. especial - dobras ${md.semana.label} [${cD.descricao.slice(0,30)}]`,
-                    valor: cD.valorAbater, data: dataConfirmada, dataPagamento: dataConfirmada,
-                    pago: true, responsavel: localStorage.getItem('user_email') || '',
-                    obs: `Abatido no pagamento de dobras semana ${md.semana.label}`,
-                    adiantamentoId: cD.cId,
-                  }),
+                operacoes.push({
+                  tipo: 'saida-criar', tipoSaida: 'Desconto Adiantamento Especial',
+                  descricao: `Abatimento adto. especial - dobras ${md.semana.label} [${cD.descricao.slice(0,30)}]`,
+                  valor: cD.valorAbater, data: dataConfirmada, dataPagamento: dataConfirmada,
+                  pago: true, responsavel: responsavelEmail, responsavelId: responsavelIdLocal,
+                  obs: `Abatido no pagamento de dobras semana ${md.semana.label}`,
+                  adiantamentoId: cD.cId,
                 });
               }
             }
 
-            // 2b) Baixar adiantamentos de transporte CLT (por dia de presença na semana)
+            // 4) Baixar adiantamentos de transporte CLT (por dia de presença na semana)
             try {
               const colabTObj = colaboradores.find(c => c.id === md.pessoa.id);
               const vtDiaCLT = R(colabTObj?.valorTransporte || 0);
@@ -5566,7 +5595,6 @@ export default function FolhaPagamento() {
                   .sort((a2: any, b2: any) => (a2.data || '').localeCompare(b2.data || ''));
                 const descTranspExist = todasSaidasT.filter((s2: any) => (s2.tipo || '') === 'Desconto Transporte');
                 const descDatasSet = new Set(descTranspExist.map((s2: any) => s2.data));
-                // Calcular saldo por contrato
                 const ctSaldos: { id: string; saldo: number }[] = [];
                 for (const at of adtosT) {
                   const aId = at.adiantamentoId || at.id;
@@ -5574,13 +5602,11 @@ export default function FolhaPagamento() {
                   const sd = R(at.valor) - tDesc;
                   if (sd > 0.01) ctSaldos.push({ id: aId, saldo: sd });
                 }
-                // Sem vínculo: abater do mais antigo
                 const descSemVinc = descTranspExist.filter((d2: any) => !d2.adiantamentoId);
                 for (const dSV of descSemVinc) {
                   const ct = ctSaldos.find(c2 => c2.saldo > 0.01);
                   if (ct) ct.saldo = Math.max(0, ct.saldo - R(dSV.valor));
                 }
-                // Dias de presença na semana (escalas)
                 const escSem = escalas.filter((e2: any) =>
                   e2.colaboradorId === md.pessoa.id &&
                   (e2.data || '') >= md.semana.inicio && (e2.data || '') <= md.semana.fim
@@ -5591,72 +5617,90 @@ export default function FolhaPagamento() {
                   .filter((d2: string) => !descDatasSet.has(d2));
                 const diasUnicosSem = Array.from(new Set(diasPres)).sort();
                 if (diasUnicosSem.length > 0 && ctSaldos.some(c2 => c2.saldo > 0.01)) {
-                  const respBaixaT = localStorage.getItem('user_email') || (user as any)?.email || 'Sistema';
                   let ctIdx = 0;
                   for (const dia of diasUnicosSem) {
                     while (ctIdx < ctSaldos.length && ctSaldos[ctIdx].saldo <= 0.01) ctIdx++;
                     if (ctIdx >= ctSaldos.length) break;
                     const ct = ctSaldos[ctIdx];
                     const vBaixa = Math.min(vtDiaCLT, ct.saldo);
-                    try {
-                      await fetchAuth(`${apiUrl}/saidas`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                        body: JSON.stringify({
-                          unitId, colaboradorId: md.pessoa.id,
-                          tipo: 'Desconto Transporte',
-                          descricao: `Transporte do dia ${dia} (consumo do adto.)`,
-                          valor: vBaixa, data: dia, dataPagamento: dia,
-                          pago: true, responsavel: respBaixaT,
-                          adiantamentoId: ct.id,
-                          obs: `Auto-gerado ao confirmar pagamento dobras CLT sem. ${md.semana.label}`,
-                        }),
-                      });
-                      ct.saldo = parseFloat((ct.saldo - vBaixa).toFixed(2));
-                    } catch (eT) { console.error(`[Baixa Transporte Dobras CLT] Erro dia ${dia}:`, eT); }
+                    operacoes.push({
+                      tipo: 'saida-criar', tipoSaida: 'Desconto Transporte',
+                      descricao: `Transporte do dia ${dia} (consumo do adto.)`,
+                      valor: vBaixa, data: dia, dataPagamento: dia,
+                      pago: true, responsavel: responsavelEmail, responsavelId: responsavelIdLocal,
+                      adiantamentoId: ct.id,
+                      obs: `Auto-gerado ao confirmar pagamento dobras CLT sem. ${md.semana.label}`,
+                    });
+                    ct.saldo = parseFloat((ct.saldo - vBaixa).toFixed(2));
                   }
-                  console.log(`[Baixa Transporte Dobras CLT] ${diasUnicosSem.length} dias processados para ${md.pessoa.nome}`);
                 }
               }
             } catch (eT) { console.error('[Baixa Transporte Dobras CLT] Erro geral:', eT); }
 
-            // 3) Gerar payslip (via pagamento-batch)
-            try {
-              await fetchAuth(`${apiUrl}/pagamento-batch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                body: JSON.stringify({
-                  colaboradorId: md.pessoa.id, unitId, mes: mesAno,
-                  dataPagamento: dataConfirmada, formaPagamento: 'PIX',
-                  operacoes: [{
-                    tipo: 'payslip',
-                    periodo: `${mesAno}-dobras-${md.semana.inicio}`,
-                    periodoInicio: md.semana.inicio,
-                    periodoFim: md.semana.fim,
-                    bruto: psDobraResult.bruto,
-                    transporte: md.transporte,
-                    descontos: psDobraResult.descontos,
-                    liquido: psDobraResult.liquido,
-                    nomeColaborador: md.pessoa.nome,
-                    tipoContrato: 'CLT',
-                    tipoPagamento: 'dobras',
-                    composicao: psDobraResult.composicao,
-                  }],
-                }),
-              });
-            } catch (e) { console.error('Erro ao gerar payslip dobras:', e); }
+            // 5) Payslip
+            operacoes.push({
+              tipo: 'payslip',
+              periodo: `${mesAno}-dobras-${md.semana.inicio}`,
+              periodoInicio: md.semana.inicio,
+              periodoFim: md.semana.fim,
+              bruto: psDobraResult.bruto,
+              transporte: md.transporte,
+              descontos: psDobraResult.descontos,
+              liquido: psDobraResult.liquido,
+              nomeColaborador: md.pessoa.nome,
+              tipoContrato: 'CLT',
+              tipoPagamento: 'dobras',
+              composicao: psDobraResult.composicao,
+            });
+
+            // Enviar tudo atômico
+            const resp = await fetchAuth(`${apiUrl}/pagamento-batch`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+              body: JSON.stringify({
+                colaboradorId: md.pessoa.id, unitId, mes: mesAno,
+                semana: md.semana.inicio,
+                dataPagamento: dataConfirmada, formaPagamento: formaDobras,
+                valorBruto: psDobraResult.bruto, valorDescSaidas: totalDebito,
+                valorAbatEsp: vlAbatNum, valorLiquido: liquidoFinal,
+                obs: `CLT dobras sem. ${md.semana.label} - Bruto R$${psDobraResult.bruto.toFixed(2)} - Desc R$${totalDebito.toFixed(2)}${vlAbatNum > 0 ? ` - Abat.esp R$${vlAbatNum.toFixed(2)}` : ''} - Líq R$${liquidoFinal.toFixed(2)} - ${formaDobras}`,
+                operacoes,
+              }),
+            });
+            if (!resp.ok) {
+              const errData = await resp.json().catch(()=>null);
+              throw new Error(errData?.message || `HTTP ${resp.status}`);
+            }
 
             setModalDobras(null);
             await carregarDados();
-          } catch (err) { console.error('Erro salvarPagtoDobras:', err); alert('Erro ao salvar pagamento'); }
+          } catch (err) { console.error('Erro salvarPagtoDobras:', err); alert('Erro ao salvar pagamento: ' + err); }
           finally { setSalvando(false); }
         };
 
         return (
-          <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <div style={{ background:'white', borderRadius:'12px', padding:'24px', maxWidth:'520px', width:'95%', maxHeight:'85vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.3)' }}>
-              <h3 style={{ margin:'0 0 16px', color:'#1565c0' }}>💪 Pagamento Dobras — {md.pessoa.nome}</h3>
-              <p style={{ fontSize:'12px', color:'#666', margin:'0 0 12px' }}>Semana {md.semana.label}</p>
+          <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.55)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}
+            onClick={() => setModalDobras(null)}>
+            <div style={{ background:'white', borderRadius:'12px', padding:'24px', maxWidth:'520px', width:'96%', maxHeight:'90vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.3)' }}
+              onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px' }}>
+                <h3 style={{ margin:0, color:'#1565c0' }}>💪 Pagamento Dobras — {md.pessoa.nome}</h3>
+                <button onClick={() => setModalDobras(null)} style={{ background:'none', border:'none', fontSize:'20px', cursor:'pointer' }}>✕</button>
+              </div>
+              <div style={{ backgroundColor:'#e3f2fd', borderRadius:'6px', padding:'10px 14px', marginBottom:'14px', fontSize:'13px' }}>
+                <div style={{ fontWeight:'bold', color:'#0d47a1', fontSize:'15px' }}>{md.pessoa.nome}</div>
+                <div style={{ color:'#1565c0', marginTop:'2px' }}>Semana {md.semana.label}</div>
+                {md.pessoa.chavePix && (
+                  <div style={{ marginTop:'4px', fontSize:'12px', color:'#666' }}>
+                    💳 PIX: <strong>{md.pessoa.chavePix}</strong>
+                    <button onClick={() => navigator.clipboard.writeText(md.pessoa.chavePix)}
+                      style={{ marginLeft:'8px', padding:'1px 6px', fontSize:'10px', border:'none', borderRadius:'3px', backgroundColor:'#43a047', color:'white', cursor:'pointer' }}>
+                      📋
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {/* Checklist */}
               {checkItemsDobras.map((it, i) => (
@@ -5693,8 +5737,44 @@ export default function FolhaPagamento() {
                 </div>
               )}
 
+              {/* Forma de pagamento */}
+              <div style={{ marginTop:'14px', marginBottom:'10px' }}>
+                <label style={{ fontWeight:700, fontSize:'12px', color:'#333', display:'block', marginBottom:'6px' }}>Forma de pagamento</label>
+                <div style={{ display:'flex', gap:'8px' }}>
+                  {(['PIX', 'Dinheiro', 'Misto'] as const).map(f => (
+                    <button key={f} onClick={() => { setFormaDobras(f); setFormaDobrasVlPix(''); setFormaDobrasVlDin(''); }}
+                      style={{ padding:'6px 14px', borderRadius:'6px', border: formaDobras === f ? '2px solid #1565c0' : '1px solid #ccc',
+                        backgroundColor: formaDobras === f ? '#e3f2fd' : 'white', fontWeight: formaDobras === f ? 700 : 400,
+                        color: formaDobras === f ? '#1565c0' : '#555', cursor:'pointer', fontSize:'12px' }}>
+                      {f === 'PIX' ? '💳 PIX' : f === 'Dinheiro' ? '💵 Dinheiro' : '🔀 Misto'}
+                    </button>
+                  ))}
+                </div>
+                {formaDobras === 'Misto' && (
+                  <div style={{ display:'flex', gap:'10px', marginTop:'8px' }}>
+                    <div style={{ flex:1 }}>
+                      <label style={{ fontSize:'11px', color:'#666' }}>💳 Valor PIX</label>
+                      <input type="number" step="0.01" min="0" value={formaDobrasVlPix} placeholder="0,00"
+                        onChange={e => setFormaDobrasVlPix(e.target.value)} style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px' }} />
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <label style={{ fontSize:'11px', color:'#666' }}>💵 Valor Dinheiro</label>
+                      <input type="number" step="0.01" min="0" value={formaDobrasVlDin} placeholder="0,00"
+                        onChange={e => setFormaDobrasVlDin(e.target.value)} style={{ width:'100%', padding:'4px 6px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'12px' }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Data do pagamento */}
+              <div style={{ marginBottom:'14px' }}>
+                <label style={{ fontWeight:700, fontSize:'12px', color:'#333', display:'block', marginBottom:'4px' }}>Data do pagamento</label>
+                <input type="date" value={dataLocalDobras} onChange={e => setDataLocalDobras(e.target.value)}
+                  style={{ padding:'6px 10px', border:'1px solid #ccc', borderRadius:'4px', fontSize:'13px', width:'160px' }} />
+              </div>
+
               {/* Totais */}
-              <div style={{ marginTop:'16px', padding:'12px', backgroundColor:'#e8f5e9', borderRadius:'8px' }}>
+              <div style={{ padding:'12px', backgroundColor:'#e8f5e9', borderRadius:'8px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', fontSize:'13px' }}>
                   <span>🟢 Créditos</span><strong style={{ color:'#2e7d32' }}>{fmtMoeda(totalCred)}</strong>
                 </div>
@@ -5711,12 +5791,20 @@ export default function FolhaPagamento() {
                 </div>
               </div>
 
+              {/* Aviso saldo negativo */}
+              {liquidoFinal < 0 && (
+                <div style={{ backgroundColor:'#fff3e0', border:'1px solid #ff9800', borderRadius:'6px', padding:'10px 14px', marginTop:'10px', fontSize:'12px', color:'#e65100' }}>
+                  ⚠️ <strong>Saldo negativo: {fmtMoeda(Math.abs(liquidoFinal))}</strong> a favor do restaurante.<br/>
+                  Os descontos excedem o valor a pagar. Desmarque itens ou registre assim (fica como débito pendente).
+                </div>
+              )}
+
               {/* Ações */}
               <div style={{ display:'flex', gap:'10px', marginTop:'16px', justifyContent:'flex-end' }}>
                 <button onClick={() => setModalDobras(null)} style={{ ...s.btn('#757575'), padding:'8px 16px' }}>Cancelar</button>
                 <button onClick={confirmarPagtoDobras} disabled={salvando || liquidoFinal <= 0}
                   style={{ ...s.btn('#43a047'), padding:'8px 20px', fontWeight:700 }}>
-                  {salvando ? 'Salvando...' : `✅ Confirmar PIX ${fmtMoeda(liquidoFinal)}`}
+                  {salvando ? '⏳ Salvando...' : `✅ Confirmar ${formaDobras} ${fmtMoeda(liquidoFinal)}`}
                 </button>
               </div>
             </div>

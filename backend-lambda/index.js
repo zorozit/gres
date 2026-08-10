@@ -2006,6 +2006,46 @@ exports.handler = async (event) => {
               break;
             }
 
+            // ── Marcar saída existente como processada (liga ao pagamento) ──
+            case 'saida-marcar-processada': {
+              if (!op.saidaId) { console.warn('saida-marcar-processada: saidaId ausente'); break; }
+              await dynamodb.update({
+                TableName: 'gres-prod-saidas',
+                Key: { id: op.saidaId },
+                UpdateExpression: 'SET pagamentoIdLigado = :pid, updatedAt = :now',
+                ExpressionAttributeValues: { ':pid': pagamentoId, ':now': now },
+              }).promise();
+              results.saidas.push(op.saidaId);
+              break;
+            }
+
+            // ── Upsert folha-pagamento (CLT dobras/mensal) ──
+            case 'folha-pagamento-upsert': {
+              const fpId = op.id || `folha-${op.colaboradorId || colaboradorId}-${op.semana || semana}-${op.mes || mes}`;
+              const fpItem = {
+                id: fpId,
+                colaboradorId: op.colaboradorId || colaboradorId,
+                unitId: op.unitId || unitId,
+                mes: op.mes || mes,
+                semana: op.semana || semana || '',
+                pago: op.pago !== undefined ? op.pago : true,
+                dataPagamento: op.dataPagamento || dataPagamento || now.slice(0,10),
+                formaPagamento: op.formaPagamento || formaPagamento || 'PIX',
+                valorBruto: Number(op.valorBruto) || 0,
+                valorTransporte: Number(op.valorTransporte) || 0,
+                totalFinal: Number(op.totalFinal) || 0,
+                pagamentoId,
+                obs: op.obs || obs || '',
+                responsavel: op.responsavel || responsavel || '',
+                responsavelId: op.responsavelId || responsavelId || '',
+                createdAt: now,
+                updatedAt: now,
+              };
+              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: fpItem }).promise();
+              results.folha.push(fpId);
+              break;
+            }
+
             default:
               console.warn(`pagamento-batch: tipo de operação desconhecido: ${op.tipo}`);
           }
