@@ -176,25 +176,58 @@ export function distribuirAbatimento(
   const descEsp = saidas
     .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Desconto Adiantamento Especial');
 
-  const contratos: ContratoSaldo[] = [];
-  let restante = valorAbatimento;
-
+  // 1. Calcular saldo bruto de cada contrato
+  const saldosBrutos: { cId: string; data: string; descricao: string; valorOriginal: number; totalAbatido: number; saldoBruto: number }[] = [];
   for (const ae of adtosEsp) {
     const cId = ae.adiantamentoId || ae.id;
     const totalDesc = descEsp
       .filter(d => d.adiantamentoId === cId)
       .reduce((sum, d) => sum + (d.valor || 0), 0);
-    const saldoAntes = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
-
-    const valorAbater = saldoAntes > 0 ? parseFloat(Math.min(restante, saldoAntes).toFixed(2)) : 0;
-    if (valorAbater > 0) restante = parseFloat((restante - valorAbater).toFixed(2));
-
-    contratos.push({
+    const saldoBruto = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
+    saldosBrutos.push({
       cId,
       data: ae.data || '',
       descricao: ae.descricao || ae.obs || 'Adiantamento Especial',
       valorOriginal: ae.valor || 0,
       totalAbatido: parseFloat(totalDesc.toFixed(2)),
+      saldoBruto,
+    });
+  }
+
+  // 2. Redistribuir excessos negativos (FIFO) — se um contrato teve mais
+  //    descontos que o emprestado, o excesso abate do próximo contrato aberto
+  const saldosAjustados = saldosBrutos.map(s => ({ ...s, saldoEfetivo: s.saldoBruto }));
+  for (let i = 0; i < saldosAjustados.length; i++) {
+    if (saldosAjustados[i].saldoEfetivo < -0.01) {
+      const excesso = Math.abs(saldosAjustados[i].saldoEfetivo);
+      saldosAjustados[i].saldoEfetivo = 0;
+      // Redistribuir para próximos contratos abertos
+      let restExcesso = excesso;
+      for (let j = i + 1; j < saldosAjustados.length && restExcesso > 0.01; j++) {
+        if (saldosAjustados[j].saldoEfetivo > 0.01) {
+          const abater = Math.min(restExcesso, saldosAjustados[j].saldoEfetivo);
+          saldosAjustados[j].saldoEfetivo = parseFloat((saldosAjustados[j].saldoEfetivo - abater).toFixed(2));
+          restExcesso = parseFloat((restExcesso - abater).toFixed(2));
+        }
+      }
+    }
+  }
+
+  // 3. Distribuir abatimento apenas nos contratos com saldo efetivo > 0
+  const contratos: ContratoSaldo[] = [];
+  let restante = valorAbatimento;
+
+  for (const s of saldosAjustados) {
+    const saldoAntes = Math.max(0, s.saldoEfetivo);
+    const valorAbater = saldoAntes > 0 ? parseFloat(Math.min(restante, saldoAntes).toFixed(2)) : 0;
+    if (valorAbater > 0) restante = parseFloat((restante - valorAbater).toFixed(2));
+
+    contratos.push({
+      cId: s.cId,
+      data: s.data,
+      descricao: s.descricao,
+      valorOriginal: s.valorOriginal,
+      totalAbatido: s.totalAbatido,
       saldoAntes,
       valorAbater,
       saldoDepois: parseFloat((saldoAntes - valorAbater).toFixed(2)),
