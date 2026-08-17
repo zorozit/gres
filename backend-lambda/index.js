@@ -3567,6 +3567,25 @@ exports.handler = async (event) => {
               break;
             }
 
+            // ── SAÍDA (marcar como processada — vincula ao pagamentoId) ────
+            // Evita que saídas de desconto/consumo reapareçam em semanas futuras
+            case 'saida-marcar-processada': {
+              if (!op.saidaId) break;
+              transactItems.push({
+                Update: {
+                  TableName: 'gres-prod-saidas',
+                  Key: { id: op.saidaId },
+                  UpdateExpression: 'SET pagamentoIdLigado = :pgtoId, updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':pgtoId': pagamentoId,
+                    ':now': now,
+                  },
+                },
+              });
+              savedIds.push(op.saidaId);
+              break;
+            }
+
             // ── PAYSLIP ────────────────────────────────────────────────────
             case 'payslip': {
               const psId = op.id || `ps-${colaboradorId}-${mes}-${(semana || 'full').replace(/[^\w]/g, '')}`;
