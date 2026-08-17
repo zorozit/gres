@@ -3586,6 +3586,38 @@ exports.handler = async (event) => {
               break;
             }
 
+            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, registro único por semana) ────
+            case 'folha-pagamento-upsert': {
+              const fpColabId = op.colaboradorId || colaboradorId;
+              const fpSemana = op.semana || semana || '';
+              const fpId = `folha-${fpColabId}-dobras-${fpSemana}`;
+              const fpItem = {
+                id: fpId,
+                tipo: 'dobras-clt',
+                colaboradorId: fpColabId,
+                mes: op.mes || mes,
+                semana: fpSemana,
+                unitId: normalizedUnitId,
+                pago: op.pago !== undefined ? !!op.pago : true,
+                dataPagamento: op.dataPagamento || body.dataPagamento || now.split('T')[0],
+                formaPagamento: op.formaPagamento || body.formaPagamento || 'PIX',
+                pagamentoId,
+                valorBruto: parseFloat(op.valorBruto) || 0,
+                valorTransporte: parseFloat(op.valorTransporte) || 0,
+                totalFinal: parseFloat(op.totalFinal) || 0,
+                obs: op.obs || '',
+                updatedAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-folha-pagamento',
+                  Item: fpItem,
+                },
+              });
+              savedIds.push(fpId);
+              break;
+            }
+
             // ── PAYSLIP ────────────────────────────────────────────────────
             case 'payslip': {
               const psId = op.id || `ps-${colaboradorId}-${mes}-${(semana || 'full').replace(/[^\w]/g, '')}`;
@@ -3605,6 +3637,11 @@ exports.handler = async (event) => {
                 liquido: parseFloat(op.liquido) || 0,
                 status: op.status || 'pago',
                 pagamentos: [pagamentoId],
+                ...(op.tipoContrato ? { tipoContrato: op.tipoContrato } : {}),
+                ...(op.tipoPagamento ? { tipoPagamento: op.tipoPagamento } : {}),
+                ...(op.composicao ? { composicao: op.composicao } : {}),
+                ...(op.dataPagamento || body.dataPagamento ? { dataPagamento: op.dataPagamento || body.dataPagamento } : {}),
+                ...(op.formaPagamento || body.formaPagamento ? { formaPagamento: op.formaPagamento || body.formaPagamento } : {}),
                 criadoEm: now,
                 atualizadoEm: now,
               };
