@@ -122,8 +122,17 @@ const getCat = (tipo: string): Categoria =>
 // ── Helper ─────────────────────────────────────────────────────────────
 const fmtDataBR = (iso: string) => {
   if (!iso || iso === '-') return '-';
-  const [y, m, d] = (iso || '').split('-');
+  const [y, m, d] = (iso || '').split('T')[0].split('-');
   return d && m && y ? `${d}/${m}/${y}` : iso;
+};
+
+const fmtHora = (iso: string | undefined | null) => {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+  } catch { return ''; }
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -729,7 +738,12 @@ export const Saidas: React.FC = () => {
                           style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}
                           onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
                           onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#fafafa' : 'white')}>
-                          <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '11px' }}>{fmtDataBR(r.data)}</td>
+                          <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '11px' }}>
+                            {fmtDataBR(r.data)}
+                            {fmtHora(r.timestamp || r.createdAt || r.dataCadastro) && (
+                              <div style={{ fontSize: '10px', color: '#999' }}>{fmtHora(r.timestamp || r.createdAt || r.dataCadastro)}</div>
+                            )}
+                          </td>
                           <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '11px', color: '#666' }}>{fmtDataBR(r.dataPagamento || r.data)}</td>
                           <td style={{ ...s.td, fontWeight: 'bold' }}>{r.colaborador || r.favorecido || r.colaboradorNome || '-'}</td>
                           <td style={s.td}>

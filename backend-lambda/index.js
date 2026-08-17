@@ -2,6 +2,11 @@
 const DynamoDB = require('aws-sdk/clients/dynamodb');
 const CognitoIdentityServiceProvider = require('aws-sdk/clients/cognitoidentityserviceprovider');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// JWT secret — em produção deveria ser env var
+const JWT_SECRET = process.env.JWT_SECRET || 'gires-jwt-secret-2026-prod';
+const JWT_EXPIRES_IN = '8h';
 
 const cognito = new CognitoIdentityServiceProvider({
   region: 'us-east-2'
@@ -24,6 +29,78 @@ const response = (statusCode, body) => {
       'Cache-Control': 'no-cache, no-store, must-revalidate'
     },
     body: responseBody
+  };
+};
+
+// ─────────────────────────────────────────────────────────
+// P2.1 — Structured Error Response Helpers
+// ─────────────────────────────────────────────────────────
+const ERROR_CODES = {
+  VALIDATION_ERROR: 'VALIDATION_ERROR',
+  NOT_FOUND: 'NOT_FOUND',
+  CONFLICT: 'CONFLICT',
+  AUTH_ERROR: 'AUTH_ERROR',
+  SERVER_ERROR: 'SERVER_ERROR',
+  FORBIDDEN: 'FORBIDDEN'
+};
+
+/** Structured success response (for create/update/delete) */
+const successResponse = (statusCode, data, meta) => {
+  const body = { success: true, data };
+  if (meta) body.meta = meta;
+  return response(statusCode, body);
+};
+
+/** Structured error response */
+const errorResponse = (statusCode, code, message, details) => {
+  const body = { success: false, code, message };
+  if (details) body.details = details;
+  return response(statusCode, body);
+};
+
+/** Paginated list response — returns array for backward compat, adds meta header */
+const listResponse = (items, meta) => {
+  if (meta && (meta.cursor || meta.hasMore)) {
+    return response(200, { success: true, data: items, meta });
+  }
+  return response(200, items);
+};
+
+// ─────────────────────────────────────────────────────────
+// P2.4 — Pagination Helper
+// ─────────────────────────────────────────────────────────
+const parsePagination = (queryParams) => {
+  const limit = queryParams.limit ? Math.min(Math.max(parseInt(queryParams.limit, 10) || 200, 1), 1000) : null;
+  let cursor = null;
+  if (queryParams.cursor) {
+    try { cursor = JSON.parse(Buffer.from(queryParams.cursor, 'base64').toString('utf8')); } catch(e) {}
+  }
+  return { limit, cursor };
+};
+
+const encodeCursor = (lastKey) => {
+  if (!lastKey) return null;
+  return Buffer.from(JSON.stringify(lastKey)).toString('base64');
+};
+
+/** Query GSI with optional pagination */
+const queryGSI = async (tableName, indexName, keyExpr, exprVals, filterExpr, limit, cursor) => {
+  const params = {
+    TableName: tableName,
+    IndexName: indexName,
+    KeyConditionExpression: keyExpr,
+    ExpressionAttributeValues: exprVals,
+    ScanIndexForward: false
+  };
+  if (filterExpr) params.FilterExpression = filterExpr;
+  if (limit) params.Limit = limit;
+  if (cursor) params.ExclusiveStartKey = cursor;
+  
+  const result = await dynamodb.query(params).promise();
+  return {
+    items: result.Items || [],
+    lastKey: result.LastEvaluatedKey || null,
+    count: result.Count || 0
   };
 };
 
@@ -251,6 +328,39 @@ const validarColaborador = async (colaboradorId) => {
 };
 
 /**
+ * Resolve o valor correto de um turno para um colaborador com base no acordo.
+ * Suporta: valor fixo (valorDia/valorNoite) e tabela variável por dia da semana.
+ * @param {object} colaborador - Item do DynamoDB (gres-prod-colaboradores)
+ * @param {string} dataISO - Data no formato YYYY-MM-DD
+ * @param {string} turno - 'Dia' ou 'Noite'
+ * @returns {number} Valor correto do turno
+ */
+const resolverValorTurnoServidor = (colaborador, dataISO, turno) => {
+  if (!colaborador || !dataISO) return 0;
+  const acordo = colaborador.acordo || {};
+  const tabela = acordo.tabela || null;
+  const temTabela = tabela && typeof tabela === 'object' && Object.keys(tabela).length > 0;
+
+  if (colaborador.tipoAcordo === 'valor_turno' && temTabela) {
+    // Tabela variável por dia da semana
+    const dias = ['dom','seg','ter','qua','qui','sex','sab'];
+    const d = new Date(dataISO + 'T12:00:00');
+    const diaSemana = dias[d.getDay()];
+    const entrada = tabela[diaSemana];
+    if (entrada) {
+      const chave = turno === 'Noite' ? 'N' : 'D';
+      const val = parseFloat(entrada[chave]) || 0;
+      if (val > 0) return val;
+    }
+    // Fallback: valorDia/valorNoite médio
+  }
+  // Valor fixo
+  return turno === 'Noite'
+    ? (parseFloat(colaborador.valorNoite) || 0)
+    : (parseFloat(colaborador.valorDia) || 0);
+};
+
+/**
  * Verifica se um motoboy existe.
  * Retorna o item ou null.
  */
@@ -289,6 +399,76 @@ const resolverResponsavel = async (identificador, fallbackNome) => {
   };
 };
 
+// ─────────────────────────────────────────────────────────
+// JWT helpers
+// ─────────────────────────────────────────────────────────
+
+/** Gera JWT assinado com dados do usuário */
+function gerarToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      email: user.email,
+      perfil: user.perfil || 'operador',
+      unitIds: user.unitIds || [],
+      isMaster: user.email === 'admin@gres.com',
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
+/** Verifica token e retorna payload ou null */
+function verificarToken(authHeader) {
+  if (!authHeader) return null;
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return null;
+  try {
+    return jwt.verify(parts[1], JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
+// Rotas públicas que não exigem JWT
+const ROTAS_PUBLICAS = ['/auth/login', '/health'];
+
+// ─────────────────────────────────────────────────────────
+// Bcrypt helpers
+// ─────────────────────────────────────────────────────────
+const BCRYPT_ROUNDS = 10;
+
+/** Verifica se string já é hash bcrypt */
+function isBcryptHash(str) {
+  return typeof str === 'string' && str.startsWith('$2');
+}
+
+/**
+ * Compara senha digitada com armazenada.
+ * Se armazenada for texto plano, faz compare direto e regrava como hash (migração transparente).
+ */
+async function compararSenha(senhaDigitada, senhaArmazenada, userId) {
+  if (isBcryptHash(senhaArmazenada)) {
+    return bcrypt.compareSync(senhaDigitada, senhaArmazenada);
+  }
+  // Senha em texto plano — compare direto
+  if (senhaDigitada !== senhaArmazenada) return false;
+  // Auto-migrar para hash
+  try {
+    const hash = bcrypt.hashSync(senhaDigitada, BCRYPT_ROUNDS);
+    await dynamodb.update({
+      TableName: 'gres-prod-usuarios',
+      Key: { id: userId },
+      UpdateExpression: 'SET senha = :h',
+      ExpressionAttributeValues: { ':h': hash },
+    }).promise();
+    console.log(`Auto-migrou senha de ${userId} para bcrypt`);
+  } catch (e) {
+    console.warn('Falha ao auto-migrar senha (best-effort):', e.message);
+  }
+  return true;
+}
+
 // Handler principal
 exports.handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
@@ -298,12 +478,24 @@ exports.handler = async (event) => {
     const rawPath = event.rawPath || event.path || '/';
     const body = event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {};
     const queryParams = event.queryStringParameters || {};
+    const headers = event.headers || {};
 
     console.log(`Method: ${httpMethod}, Path: ${rawPath}`);
 
     // OPTIONS para CORS
     if (httpMethod === 'OPTIONS') {
       return response(200, { ok: true });
+    }
+
+    // ── JWT Auth middleware ──────────────────────────────
+    const isRotaPublica = ROTAS_PUBLICAS.some(r => rawPath === r || rawPath.includes(r));
+    if (!isRotaPublica) {
+      const tokenPayload = verificarToken(headers.authorization || headers.Authorization);
+      if (!tokenPayload) {
+        return response(401, { error: 'Token inválido ou ausente. Faça login novamente.' });
+      }
+      // Injeta dados do token no body pra uso interno (não sobrescreve body do POST)
+      event._auth = tokenPayload;
     }
 
     // LOGIN com DynamoDB
@@ -328,40 +520,14 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
         
-        // Validar senha — suporta bcrypt hash ($2b$) e texto puro (legado)
-        const senhaDB = user.senha || '';
-        let senhaValida = false;
-        const isBcrypt = senhaDB.startsWith('$2b$') || senhaDB.startsWith('$2a$');
-        if (isBcrypt) {
-          senhaValida = bcrypt.compareSync(password, senhaDB);
-        } else {
-          senhaValida = (senhaDB === password);
-        }
-        if (!senhaValida) {
+        // Validar senha (bcrypt ou texto plano com auto-migração)
+        const senhaOk = await compararSenha(password, user.senha || '', user.id);
+        if (!senhaOk) {
           return response(401, { error: 'Senha incorreta' });
         }
 
-        // Auto-migração: se senha era texto puro, regrava como bcrypt hash
-        if (!isBcrypt && senhaValida && senhaDB.length > 0) {
-          try {
-            const hashed = bcrypt.hashSync(password, 10);
-            await dynamodb.update({
-              TableName: 'gres-prod-usuarios',
-              Key: { id: user.id },
-              UpdateExpression: 'SET senha = :h',
-              ExpressionAttributeValues: { ':h': hashed }
-            }).promise();
-            console.log(`Auto-migração bcrypt: ${email}`);
-          } catch (e) { console.warn('Auto-migração bcrypt falhou:', e.message); }
-        }
-
-        // Gerar token JWT simples
-        const token = Buffer.from(JSON.stringify({
-          email: user.email,
-          id: user.id,
-          perfil: user.perfil,
-          iat: Math.floor(Date.now() / 1000)
-        })).toString('base64');
+        // Gerar JWT assinado
+        const token = gerarToken(user);
 
         return response(200, {
           success: true,
@@ -374,7 +540,8 @@ exports.handler = async (event) => {
             perfil: user.perfil || 'operador', 
             unitId: user.unitId || 'default',
             unitIds: user.unitIds || (user.unitId ? [user.unitId] : []),
-            nome: user.nome
+            nome: user.nome,
+            isMaster: email === 'admin@gres.com'
           }
         });
       } catch (error) {
@@ -409,8 +576,10 @@ exports.handler = async (event) => {
 
         const user = userResult.Items[0];
 
-        // Atualizar senha no DynamoDB (salvar como bcrypt hash)
-        const hashedPassword = bcrypt.hashSync(newPassword, 10);
+        // Hash da nova senha com bcrypt
+        const hashedPassword = bcrypt.hashSync(newPassword, BCRYPT_ROUNDS);
+
+        // Atualizar senha no DynamoDB
         await dynamodb.update({
           TableName: 'gres-prod-usuarios',
           Key: { id: user.id },
@@ -519,7 +688,7 @@ exports.handler = async (event) => {
           unitIds: unitIds ? unitIds.map(resolveUnitId) : [unitIdClean],
           cpf: cpf || '',
           celular: celular || '',
-          senha: senha ? bcrypt.hashSync(senha, 10) : '',
+          senha: senha ? bcrypt.hashSync(senha, BCRYPT_ROUNDS) : '',
           ativo: ativo !== false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -560,7 +729,7 @@ exports.handler = async (event) => {
     }
 
     // POST COLABORADORES — ID = col-{uuid}; obrigatórios = Nome + CPF + celular/telefone + unitId
-    if ((rawPath === '/colaboradores' || (rawPath.startsWith('/colaboradores') && !rawPath.startsWith('/colaboradores-log'))) && httpMethod === 'POST') {
+    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'POST') {
       const {
         nome, email, telefone, celular, cpf,
         tipoContrato, cargo, tipo, funcao, area,
@@ -697,8 +866,6 @@ exports.handler = async (event) => {
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
         contribuicaoAssistencial,  // NOVO
-        // Afastamento / Licença
-        afastadoDesde, afastadoAte, afastadoMotivo,
         // Auditoria
         responsavelId, responsavelNome, responsavelEmail, observacaoAlteracao,
       } = body;
@@ -772,16 +939,6 @@ exports.handler = async (event) => {
           horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
           // Contribuição Assistencial (cod 1000 / 1305 da folha)
           contribuicaoAssistencial: contribuicaoAssistencial !== undefined ? (parseFloat(contribuicaoAssistencial) || 0) : (original.Item.contribuicaoAssistencial || 0),
-          // Afastamento / Licença — usa string vazia para "sem valor" (DynamoDB null issues)
-          ...(afastadoDesde !== undefined
-            ? { afastadoDesde: afastadoDesde || '' }
-            : (original.Item.afastadoDesde ? { afastadoDesde: original.Item.afastadoDesde } : {})),
-          ...(afastadoAte !== undefined
-            ? { afastadoAte: afastadoAte || '' }
-            : (original.Item.afastadoAte ? { afastadoAte: original.Item.afastadoAte } : {})),
-          ...(afastadoMotivo !== undefined
-            ? { afastadoMotivo: afastadoMotivo || '' }
-            : (original.Item.afastadoMotivo ? { afastadoMotivo: original.Item.afastadoMotivo } : {})),
           // Permite mudança de unidade (transferência)
           unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };
@@ -800,7 +957,6 @@ exports.handler = async (event) => {
           else if (diffs.unitId) evento = 'transferido';
           else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte || diffs.periculosidade || diffs.contribuicaoAssistencial || diffs.isMotoboy || diffs.tipoAcordo || diffs.acordo) evento = 'remuneracao_alterada';
           else if (diffs.cargo || diffs.tipo || diffs.funcao || diffs.area) evento = 'cargo_alterado';
-          else if (diffs.afastadoDesde || diffs.afastadoAte || diffs.afastadoMotivo) evento = 'afastamento_alterado';
           else if (diffs.tipoContrato) evento = 'contrato_alterado';
 
           await logColaboradorAlteracao({
@@ -824,34 +980,113 @@ exports.handler = async (event) => {
       }
     }
 
-    // DELETE COLABORADORES
+    // DELETE COLABORADORES — soft delete (marca ativo=false em vez de apagar)
     if (rawPath.includes('/colaboradores/') && httpMethod === 'DELETE') {
       const colaboradorId = rawPath.split('/').pop();
       if (!colaboradorId) return response(400, { error: 'ID do colaborador é obrigatório' });
 
       try {
-        await dynamodb.delete({
+        // Buscar colaborador atual
+        const original = await dynamodb.get({
           TableName: 'gres-prod-colaboradores',
           Key: { id: colaboradorId }
         }).promise();
 
-        return response(200, { success: true, message: 'Colaborador deletado com sucesso' });
+        if (!original.Item) {
+          return response(404, { error: 'Colaborador não encontrado' });
+        }
+
+        // Verificar dependências (registros vinculados)
+        const dependencias = {};
+        const [folhaRes, saidasRes, escalasRes] = await Promise.all([
+          dynamodb.scan({
+            TableName: 'gres-prod-folha-pagamento',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+          dynamodb.scan({
+            TableName: 'gres-prod-saidas',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+          dynamodb.scan({
+            TableName: 'gres-prod-escalas',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeValues: { ':cid': colaboradorId },
+            Select: 'COUNT',
+          }).promise(),
+        ]);
+        if (folhaRes.Count > 0) dependencias.folhaPagamento = folhaRes.Count;
+        if (saidasRes.Count > 0) dependencias.saidas = saidasRes.Count;
+        if (escalasRes.Count > 0) dependencias.escalas = escalasRes.Count;
+
+        const authData = event._auth || {};
+
+        // Soft delete: marca ativo=false
+        await dynamodb.update({
+          TableName: 'gres-prod-colaboradores',
+          Key: { id: colaboradorId },
+          UpdateExpression: 'SET ativo = :f, desativadoEm = :ts, desativadoPor = :uid, desativadoPorNome = :un, updatedAt = :ts',
+          ExpressionAttributeValues: {
+            ':f': false,
+            ':ts': new Date().toISOString(),
+            ':uid': authData.sub || body.responsavelId || '',
+            ':un': authData.email || body.responsavelNome || '',
+          },
+        }).promise();
+
+        // Log de auditoria
+        await logColaboradorAlteracao({
+          colaboradorId,
+          evento: 'desativado',
+          valoresAntes: { ativo: original.Item.ativo },
+          valoresDepois: { ativo: false },
+          usuarioId: authData.sub || body.responsavelId || '',
+          usuarioNome: authData.email || body.responsavelNome || '',
+          unitId: original.Item.unitId || '',
+        });
+
+        const temDependencias = Object.keys(dependencias).length > 0;
+        return response(200, {
+          success: true,
+          softDelete: true,
+          message: temDependencias
+            ? `Colaborador desativado (tem ${Object.values(dependencias).reduce((a,b)=>a+b,0)} registros vinculados — dados preservados)`
+            : 'Colaborador desativado com sucesso',
+          dependencias: temDependencias ? dependencias : undefined,
+        });
       } catch (error) {
         console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao deletar colaborador: ' + error.message });
+        return response(500, { error: 'Erro ao desativar colaborador: ' + error.message });
       }
     }
 
-    // GET COLABORADORES — filtra por unitId (CNPJ)
-    if ((rawPath === '/colaboradores' || (rawPath.startsWith('/colaboradores') && !rawPath.startsWith('/colaboradores-log'))) && httpMethod === 'GET') {
+    // GET COLABORADORES — filtra por unitId (CNPJ); exclui inativos por padrão
+    if ((rawPath === '/colaboradores' || rawPath.includes('/colaboradores')) && httpMethod === 'GET') {
       try {
         const unitIdRaw = queryParams.unitId;
         const unitIdClean = unitIdRaw ? resolveUnitId(unitIdRaw) : null;
+        const incluirInativos = queryParams.incluirInativos === 'true';
         let params = { TableName: 'gres-prod-colaboradores' };
 
+        const filters = [];
+        const exprValues = {};
+
         if (unitIdClean) {
-          params.FilterExpression = 'unitId = :uid';
-          params.ExpressionAttributeValues = { ':uid': unitIdClean };
+          filters.push('unitId = :uid');
+          exprValues[':uid'] = unitIdClean;
+        }
+
+        if (!incluirInativos) {
+          filters.push('(ativo <> :inativo OR attribute_not_exists(ativo))');
+          exprValues[':inativo'] = false;
+        }
+
+        if (filters.length > 0) {
+          params.FilterExpression = filters.join(' AND ');
+          params.ExpressionAttributeValues = exprValues;
         }
 
         const result = await dynamodb.scan(params).promise();
@@ -1217,7 +1452,7 @@ exports.handler = async (event) => {
       }
     }
 
-    // POST ESCALAS
+    // POST ESCALAS — com check de duplicata
     if (rawPath === '/escalas' && httpMethod === 'POST') {
       const uid = body.unitId || body.unidadeId;
       const { data, colaboradorId, turno, observacao } = body;
@@ -1225,8 +1460,23 @@ exports.handler = async (event) => {
         return response(400, { error: 'unitId, data, colaboradorId e turno são obrigatórios' });
       }
       try {
+        // ID determinístico: garante idempotência natural
+        const escalaId = `esc-${colaboradorId}-${data}-${turno}-${toCnpj(uid)}`;
+
+        // Check duplicata: já existe escala ativa com mesmo colab+data+turno+unit?
+        const dupCheck = await dynamodb.get({
+          TableName: 'gres-prod-escalas',
+          Key: { id: escalaId },
+        }).promise();
+        if (dupCheck.Item && !dupCheck.Item._deleted && dupCheck.Item.turno !== 'Deletado') {
+          return response(409, {
+            error: 'Já existe escala para este colaborador neste dia/turno/unidade',
+            existingId: dupCheck.Item.id,
+          });
+        }
+
         const item = {
-          id: `esc-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          id: escalaId,
           unitId: uid, unidadeId: uid, data, colaboradorId, turno,
           observacao: observacao || '',
           timestamp: new Date().toISOString(), createdAt: new Date().toISOString()
@@ -1250,39 +1500,68 @@ exports.handler = async (event) => {
 
     // GET ESCALAS — suporta unitId, unidadeId, mes (YYYY-MM)
     if (rawPath === '/escalas' && httpMethod === 'GET') {
-      const uid = queryParams.unitId || queryParams.unidadeId;
-      const mes = queryParams.mes; // ex: 2026-03
+      const { unitId, mes, data, colaboradorId } = queryParams;
+      const unitCnpj = unitId ? toCnpj(unitId) : null;
+      const { limit, cursor } = parsePagination(queryParams);
       try {
         let items = [];
-        if (uid) {
-          // Tenta query pelo índice, fallback para scan filtrado
-          try {
-            const r = await dynamodb.query({
-              TableName: 'gres-prod-escalas',
-              IndexName: 'unidadeId-timestamp-index',
-              KeyConditionExpression: 'unidadeId = :uid',
-              ExpressionAttributeValues: { ':uid': uid }
-            }).promise();
-            items = r.Items || [];
-          } catch {
-            const r = await dynamodb.scan({ TableName: 'gres-prod-escalas' }).promise();
-            items = (r.Items || []).filter(i => i.unitId === uid || i.unidadeId === uid);
+        let lastKey = null;
+        // P2.4: Use GSI query when unitId + date filter
+        if (unitCnpj && (mes || data)) {
+          const exprVals = { ':uid': unitCnpj };
+          let keyExpr = 'unitId = :uid';
+          if (data) {
+            keyExpr += ' AND #dt = :d';
+            exprVals[':d'] = data;
+          } else if (mes) {
+            keyExpr += ' AND begins_with(#dt, :m)';
+            exprVals[':m'] = mes;
           }
+          const filterParts = [];
+          if (colaboradorId) { filterParts.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          const params = {
+            TableName: 'gres-prod-escalas',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: keyExpr,
+            ExpressionAttributeValues: exprVals,
+            ExpressionAttributeNames: { '#dt': 'data' },
+            ScanIndexForward: false
+          };
+          if (filterParts.length > 0) params.FilterExpression = filterParts.join(' AND ');
+          if (limit) params.Limit = limit;
+          if (cursor) params.ExclusiveStartKey = cursor;
+          const result = await dynamodb.query(params).promise();
+          items = result.Items || [];
+          lastKey = result.LastEvaluatedKey;
         } else {
-          const r = await dynamodb.scan({ TableName: 'gres-prod-escalas' }).promise();
-          items = r.Items || [];
+          // Fallback scan
+          const filters = [];
+          const exprVals = {};
+          if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          const scanParams = {
+            TableName: 'gres-prod-escalas',
+            ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {})
+          };
+          let scanKey = cursor || undefined;
+          do {
+            const r = await dynamodb.scan({ ...scanParams, ...(scanKey ? { ExclusiveStartKey: scanKey } : {}), ...(limit ? { Limit: limit } : {}) }).promise();
+            items = items.concat(r.Items || []);
+            scanKey = r.LastEvaluatedKey;
+            if (limit && items.length >= limit) { lastKey = scanKey; break; }
+          } while (scanKey);
+          if (unitCnpj) items = items.filter(i => toCnpj(i.unitId || '') === unitCnpj);
+          if (mes) items = items.filter(i => (i.data || '').startsWith(mes));
         }
-        if (mes) items = items.filter(i => (i.data || '').startsWith(mes));
-        // Filter out soft-deleted items
-        items = items.filter(i => !i._deleted && i.turno !== 'Deletado');
+        if (limit) {
+          return listResponse(items, { count: items.length, cursor: encodeCursor(lastKey), hasMore: !!lastKey });
+        }
         return response(200, items);
       } catch (err) {
-        console.error('DynamoDB error:', err);
-        return response(500, { error: 'Erro ao buscar escalas' });
+        console.error('escalas GET error:', err);
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar escalas: ' + err.message);
       }
     }
 
-    // PUT ESCALA — atualiza turno, presença ou observação
     if (rawPath.match(/\/escalas\/.+/) && httpMethod === 'PUT') {
       const escId = rawPath.split('/').pop();
       if (!escId) return response(400, { error: 'ID obrigatório' });
@@ -1467,124 +1746,6 @@ exports.handler = async (event) => {
       }
     }
 
-    // ══════ AFASTAMENTOS / STATUS DO COLABORADOR ══════════════════════════════
-    // GET /afastamentos?colaboradorId=xxx — lista afastamentos de um colaborador
-    if (rawPath === '/afastamentos' && httpMethod === 'GET') {
-      const colId = queryParams.colaboradorId;
-      if (!colId) return response(400, { error: 'colaboradorId obrigatório' });
-      try {
-        const r = await dynamodb.query({
-          TableName: 'gres-prod-afastamentos',
-          IndexName: 'colaboradorId-dataInicio-index',
-          KeyConditionExpression: 'colaboradorId = :cid',
-          ExpressionAttributeValues: { ':cid': colId },
-          ScanIndexForward: false,
-        }).promise();
-        return response(200, r.Items || []);
-      } catch (err) {
-        // Fallback: scan
-        try {
-          const r = await dynamodb.scan({
-            TableName: 'gres-prod-afastamentos',
-            FilterExpression: 'colaboradorId = :cid',
-            ExpressionAttributeValues: { ':cid': colId },
-          }).promise();
-          const items = (r.Items || []).sort((a, b) => (b.dataInicio || '').localeCompare(a.dataInicio || ''));
-          return response(200, items);
-        } catch (e2) {
-          return response(500, { error: 'Erro ao buscar afastamentos: ' + e2.message });
-        }
-      }
-    }
-
-    // POST /afastamentos — cria novo afastamento
-    if (rawPath === '/afastamentos' && httpMethod === 'POST') {
-      const { colaboradorId, unitId, tipo, motivo, dataInicio, dataFimPrevista, observacao,
-              responsavelId, responsavelNome, responsavelEmail, cid: cidMedico, crm } = body;
-      if (!colaboradorId || !tipo || !dataInicio) {
-        return response(400, { error: 'colaboradorId, tipo e dataInicio são obrigatórios' });
-      }
-      const now = new Date().toISOString();
-      const item = {
-        id: `afst-${colaboradorId}-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
-        colaboradorId,
-        unitId: unitId || '',
-        tipo,           // 'licenca_medica' | 'licenca_maternidade' | 'ferias' | 'suspensao' | 'acidente_trabalho' | 'licenca_paternidade' | 'outros'
-        motivo: motivo || '',
-        dataInicio,
-        dataFimPrevista: dataFimPrevista || '',
-        dataFimReal: '',
-        ativo: true,    // afastamento em andamento
-        observacao: observacao || '',
-        cidMedico: cidMedico || '',
-        crm: crm || '',
-        responsavelId: responsavelId || '',
-        responsavelNome: responsavelNome || '',
-        responsavelEmail: responsavelEmail || '',
-        createdAt: now,
-        updatedAt: now,
-      };
-      try {
-        await dynamodb.put({ TableName: 'gres-prod-afastamentos', Item: item }).promise();
-        // Atualizar status do colaborador
-        await dynamodb.update({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: colaboradorId },
-          UpdateExpression: 'SET afastadoDesde = :desde, afastadoAte = :ate, afastadoMotivo = :mot, statusAtual = :st, updatedAt = :now',
-          ExpressionAttributeValues: {
-            ':desde': dataInicio,
-            ':ate': dataFimPrevista || '',
-            ':mot': `${tipo}${motivo ? ': ' + motivo : ''}`,
-            ':st': tipo,
-            ':now': now,
-          },
-        }).promise();
-        return response(201, { success: true, id: item.id, item });
-      } catch (err) {
-        return response(500, { error: 'Erro ao criar afastamento: ' + err.message });
-      }
-    }
-
-    // PUT /afastamentos/:id — atualizar (encerrar, editar datas, etc)
-    if (rawPath.match(/\/afastamentos\/.+/) && httpMethod === 'PUT') {
-      const afstId = rawPath.split('/').pop();
-      if (!afstId) return response(400, { error: 'id obrigatório' });
-      const now = new Date().toISOString();
-      try {
-        const existing = await dynamodb.get({ TableName: 'gres-prod-afastamentos', Key: { id: afstId } }).promise();
-        if (!existing.Item) return response(404, { error: 'Afastamento não encontrado' });
-
-        const updated = { ...existing.Item, ...body, updatedAt: now };
-        // Se está encerrando o afastamento
-        if (body.ativo === false && existing.Item.ativo === true) {
-          updated.dataFimReal = body.dataFimReal || new Date().toISOString().split('T')[0];
-          // Limpar status de afastamento do colaborador
-          await dynamodb.update({
-            TableName: 'gres-prod-colaboradores',
-            Key: { id: existing.Item.colaboradorId },
-            UpdateExpression: 'SET afastadoDesde = :vazio, afastadoAte = :vazio, afastadoMotivo = :vazio, statusAtual = :ativo, updatedAt = :now',
-            ExpressionAttributeValues: { ':vazio': '', ':ativo': 'ativo', ':now': now },
-          }).promise();
-        }
-        await dynamodb.put({ TableName: 'gres-prod-afastamentos', Item: updated }).promise();
-        return response(200, { success: true, id: afstId, item: updated });
-      } catch (err) {
-        return response(500, { error: 'Erro ao atualizar afastamento: ' + err.message });
-      }
-    }
-
-    // DELETE /afastamentos/:id
-    if (rawPath.match(/\/afastamentos\/.+/) && httpMethod === 'DELETE') {
-      const afstId = rawPath.split('/').pop();
-      if (!afstId) return response(400, { error: 'id obrigatório' });
-      try {
-        await dynamodb.delete({ TableName: 'gres-prod-afastamentos', Key: { id: afstId } }).promise();
-        return response(200, { success: true });
-      } catch (err) {
-        return response(500, { error: 'Erro ao deletar afastamento: ' + err.message });
-      }
-    }
-
     // GET /auditoria?tabela=&unitId=&dataIni=&dataFim=&entidadeId=&usuarioId=
     // Endpoint generico que consulta as tabelas de log: colaboradores, folha-pagamento, saidas, controle-motoboy, escalas
     if (rawPath === '/auditoria' && httpMethod === 'GET') {
@@ -1738,21 +1899,28 @@ exports.handler = async (event) => {
               // NOVO: campos específicos CLT
               pagoAdiantamento, dataPgtoAdiantamento, pagoVariavel, dataPgtoVariavel,
               logPagamentos,
-              // Campos contábeis (importação EMS / conferência folha)
-              valorLiquidoContabil, salContrInss, inssValor,
-              feriado, obsEMS, mergeMode,
-              totalVencimentos, totalDescontos, rubricas,
-              conferido, conferidoPor, conferidoEm } = body;
+              // Importação contábil (EMS): não sobrescrever dados operacionais
+              mergeMode, valorLiquidoContabil, obsEMS } = body;
       if (!colaboradorId || !mes) return response(400, { error: 'colaboradorId e mes são obrigatórios' });
       try {
         const now = new Date().toISOString();
         const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
         const dtPgto = pago ? (dataPagamento || now.split('T')[0]) : null;
 
+        // ── P0.3: Validar colaborador existe ────────────────────────────────
+        const colaborador = await validarColaborador(colaboradorId);
+        if (!colaborador) {
+          return response(400, { error: 'Colaborador não encontrado', colaboradorId });
+        }
+        if (normalizedUnitId && colaborador.unitId && toCnpj(colaborador.unitId) !== normalizedUnitId) {
+          console.warn(`P0.3 unit mismatch: colab ${colaboradorId} unitId=${colaborador.unitId} vs payload=${normalizedUnitId}`);
+        }
+
         // ── NOVO MODELO: array de dias ──────────────────────────────────────
         if (Array.isArray(dias) && dias.length > 0) {
           const saved = [];
           const isFazendoPagamento = pago !== false;
+          const valorCorrecoes = [];
 
           // Gerar pagamentoId único para amarrar todos os turnos deste lote.
           // Se for desfazer (pago=false), não gera lote — cada turno é revertido individualmente.
@@ -1764,6 +1932,18 @@ exports.handler = async (event) => {
           for (const d of dias) {
             const { data, turno, valor, tipoCodigo } = d;
             if (!data || !turno) continue;
+
+            // ── P0.1: Validação server-side do valor do turno ───────────────
+            let valorFinal = parseFloat(valor) || 0;
+            if (turno !== 'Transporte' && isFazendoPagamento) {
+              const valorEsperado = resolverValorTurnoServidor(colaborador, data, turno);
+              if (valorEsperado > 0 && Math.abs(valorFinal - valorEsperado) > 0.01) {
+                console.warn(`P0.1 valor corrigido: colab=${colaboradorId} data=${data} turno=${turno} frontend=${valorFinal} servidor=${valorEsperado}`);
+                valorCorrecoes.push({ data, turno, frontendVal: valorFinal, servidorVal: valorEsperado });
+                valorFinal = valorEsperado;
+              }
+            }
+
             const dayId = `folha-${colaboradorId}-${data}-${turno}`;
             const item = {
               id: dayId,
@@ -1772,7 +1952,7 @@ exports.handler = async (event) => {
               colaboradorId, data, turno, mes,
               semana: semana || null,
               unitId: normalizedUnitId,
-              valor: parseFloat(valor) || 0,
+              valor: valorFinal,
               pago: isFazendoPagamento,
               dataPagamento: isFazendoPagamento ? dtPgto : null,
               formaPagamento: isFazendoPagamento ? (formaPagamento || 'PIX') : null,
@@ -1789,8 +1969,22 @@ exports.handler = async (event) => {
               obs: obs || '',
               updatedAt: now,
             };
-            await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
-            saved.push(dayId);
+            // ── P0.2: Idempotência — não sobrescreve registro existente ────
+            try {
+              await dynamodb.put({
+                TableName: 'gres-prod-folha-pagamento',
+                Item: item,
+                ConditionExpression: 'attribute_not_exists(id) OR pago = :false',
+                ExpressionAttributeValues: { ':false': false },
+              }).promise();
+              saved.push(dayId);
+            } catch (condErr) {
+              if (condErr.code === 'ConditionalCheckFailedException') {
+                console.warn(`P0.2 idempotência: ${dayId} já existe e pago=true, pulando`);
+                continue;
+              }
+              throw condErr;
+            }
           }
           // Auditoria: log de pagamento (1 entrada por lote, não por dia)
           const audPag = extrairAuditoria(body, event);
@@ -1803,7 +1997,10 @@ exports.handler = async (event) => {
             ...audPag,
             unitId: normalizedUnitId,
           });
-          return response(200, { success: true, ids: saved, count: saved.length, pagamentoId });
+          return response(200, {
+            success: true, ids: saved, count: saved.length, pagamentoId,
+            ...(valorCorrecoes.length > 0 ? { valorCorrecoes, aviso: 'Alguns valores foram corrigidos pelo servidor' } : {}),
+          });
         }
 
         // ── LEGADO: registro semanal agrupado (CLT ou desfazer pagamento antigo) ──
@@ -1815,6 +2012,29 @@ exports.handler = async (event) => {
           const o = await dynamodb.get({ TableName: 'gres-prod-folha-pagamento', Key: { id: itemId } }).promise();
           origItemPreserve = o.Item || null;
         } catch {}
+
+        // ── mergeMode='contabil': importação EMS — só gravar campos contábeis sem pisar nos operacionais ──
+        if (mergeMode === 'contabil' && origItemPreserve) {
+          const contabUpdate = {
+            ...origItemPreserve,
+            valorBruto: valorBruto !== undefined ? (parseFloat(valorBruto) || 0) : origItemPreserve.valorBruto,
+            valorLiquidoContabil: valorLiquidoContabil !== undefined ? parseFloat(valorLiquidoContabil) || 0 : origItemPreserve.valorLiquidoContabil,
+            salContrInss: body.salContrInss !== undefined ? parseFloat(body.salContrInss) || 0 : origItemPreserve.salContrInss,
+            inssValor: body.inssValor !== undefined ? parseFloat(body.inssValor) || 0 : origItemPreserve.inssValor,
+            valeTransporteContabil: body.valeTransporte !== undefined ? parseFloat(body.valeTransporte) || 0 : origItemPreserve.valeTransporteContabil,
+            feriadoContabil: body.feriado !== undefined ? parseFloat(body.feriado) || 0 : origItemPreserve.feriadoContabil,
+            obsEMS: obsEMS || origItemPreserve.obsEMS || '',
+            // NAO sobrescrever: saldoFinal, totalFinal, pago, dataPagamento, logPagamentos, pagoAdiantamento, pagoVariavel
+            updatedAt: now,
+          };
+          await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: contabUpdate }).promise();
+          const audContab = extrairAuditoria(body, event);
+          await logAlteracaoGenerica({
+            tabela: 'folha-pagamento', entidadeId: itemId, evento: 'contabil-importado',
+            valoresAntes: origItemPreserve, valoresDepois: contabUpdate, ...audContab, unitId: normalizedUnitId,
+          });
+          return response(200, { success: true, id: itemId, mode: 'contabil-merge' });
+        }
 
         const item = {
           ...(origItemPreserve || {}),
@@ -1844,32 +2064,27 @@ exports.handler = async (event) => {
             ? [...((origItemPreserve?.logPagamentos) || []), ...logPagamentos]
             : (origItemPreserve?.logPagamentos || []),
           obs: obs !== undefined ? obs : (origItemPreserve?.obs || ''),
-          // Campos contábeis (importação EMS / conferência folha)
-          // mergeMode='contabil': só atualiza campos contábeis, preserva operacionais
-          ...(valorLiquidoContabil !== undefined ? { valorLiquidoContabil: parseFloat(valorLiquidoContabil) || 0 } : (origItemPreserve?.valorLiquidoContabil !== undefined ? { valorLiquidoContabil: origItemPreserve.valorLiquidoContabil } : {})),
-          ...(salContrInss !== undefined ? { salContrInss: parseFloat(salContrInss) || 0 } : (origItemPreserve?.salContrInss !== undefined ? { salContrInss: origItemPreserve.salContrInss } : {})),
-          ...(inssValor !== undefined ? { inssValor: parseFloat(inssValor) || 0 } : (origItemPreserve?.inssValor !== undefined ? { inssValor: origItemPreserve.inssValor } : {})),
-          ...(body.valeTransporte !== undefined && mergeMode === 'contabil' ? { valeTransporteContabil: parseFloat(body.valeTransporte) || 0 } : (origItemPreserve?.valeTransporteContabil !== undefined ? { valeTransporteContabil: origItemPreserve.valeTransporteContabil } : {})),
-          ...(feriado !== undefined ? { feriado: parseFloat(feriado) || 0 } : (origItemPreserve?.feriado !== undefined ? { feriado: origItemPreserve.feriado } : {})),
-          ...(obsEMS !== undefined ? { obsEMS } : (origItemPreserve?.obsEMS !== undefined ? { obsEMS: origItemPreserve.obsEMS } : {})),
-          ...(totalVencimentos !== undefined ? { totalVencimentos: parseFloat(totalVencimentos) || 0 } : (origItemPreserve?.totalVencimentos !== undefined ? { totalVencimentos: origItemPreserve.totalVencimentos } : {})),
-          ...(totalDescontos !== undefined ? { totalDescontos: parseFloat(totalDescontos) || 0 } : (origItemPreserve?.totalDescontos !== undefined ? { totalDescontos: origItemPreserve.totalDescontos } : {})),
-          ...(Array.isArray(rubricas) ? { rubricas } : (origItemPreserve?.rubricas ? { rubricas: origItemPreserve.rubricas } : {})),
-          ...(conferido !== undefined ? { conferido: !!conferido } : (origItemPreserve?.conferido !== undefined ? { conferido: origItemPreserve.conferido } : {})),
-          ...(conferidoPor !== undefined ? { conferidoPor } : (origItemPreserve?.conferidoPor !== undefined ? { conferidoPor: origItemPreserve.conferidoPor } : {})),
-          ...(conferidoEm !== undefined ? { conferidoEm } : (origItemPreserve?.conferidoEm !== undefined ? { conferidoEm: origItemPreserve.conferidoEm } : {})),
+          obsEMS: origItemPreserve?.obsEMS || null,
+          valorLiquidoContabil: origItemPreserve?.valorLiquidoContabil || null,
           updatedAt: now,
         };
-
-        // mergeMode='contabil': se já existe registro, preservar pago/saldoFinal/logPagamentos
-        if (mergeMode === 'contabil' && origItemPreserve) {
-          item.pago = origItemPreserve.pago;
-          item.dataPagamento = origItemPreserve.dataPagamento;
-          item.saldoFinal = origItemPreserve.saldoFinal;
-          item.totalFinal = origItemPreserve.totalFinal;
-          if (origItemPreserve.logPagamentos) item.logPagamentos = origItemPreserve.logPagamentos;
+        // Deduplicar logPagamentos: por id E por (valor+data+tipo)
+        // Previne duplicatas de double-click (ids diferentes mas mesmo pagamento)
+        if (Array.isArray(item.logPagamentos)) {
+          const seenIds = new Set();
+          const seenKeys = new Set();
+          item.logPagamentos = item.logPagamentos.filter(lp => {
+            if (!lp) return false;
+            // Dedup por id
+            if (lp.id && seenIds.has(lp.id)) return false;
+            if (lp.id) seenIds.add(lp.id);
+            // Dedup por (valor, data, tipo) — previne multi-clique
+            const key = `${lp.valor || 0}_${lp.data || ''}_${lp.tipo || ''}`;
+            if (seenKeys.has(key)) return false;
+            seenKeys.add(key);
+            return true;
+          });
         }
-
         await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
 
         // Auditoria (usa origItemPreserve carregado acima)
@@ -1892,38 +2107,58 @@ exports.handler = async (event) => {
       }
     }
 
-    // GET /folha-pagamento?unitId=xxx&mes=2026-03[&colaboradorId=xxx]
+    // GET /folha-pagamento?unitId=xxx&mes=2026-03[&colaboradorId=xxx][&limit=N&cursor=xxx]
     if (rawPath === '/folha-pagamento' && httpMethod === 'GET') {
       const { unitId, mes, colaboradorId } = queryParams;
       const unitCnpj = unitId ? toCnpj(unitId) : null;
+      const { limit, cursor } = parsePagination(queryParams);
       try {
-        // Paginated scan (DynamoDB truncates at 1MB per call)
         let items = [];
-        const filters = [];
-        const exprVals = {};
-        if (mes) { filters.push('mes = :m'); exprVals[':m'] = mes; }
-        if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
-        const scanParams = {
-          TableName: 'gres-prod-folha-pagamento',
-          ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
-        };
-        let lastKey = undefined;
-        do {
-          const r = await dynamodb.scan({ ...scanParams, ...(lastKey ? { ExclusiveStartKey: lastKey } : {}) }).promise();
-          items = items.concat(r.Items || []);
-          lastKey = r.LastEvaluatedKey;
-        } while (lastKey);
-        // Filter unitId client-side with CNPJ normalization
-        if (unitCnpj) {
-          items = items.filter(i => {
-            const iCnpj = toCnpj(i.unitId || '');
-            return !i.unitId || iCnpj === unitCnpj || i.unitId === unitId;
-          });
+        let lastKey = null;
+        // P2.4: Use GSI query when unitId+mes provided
+        if (unitCnpj && mes) {
+          const filterParts = [];
+          const exprVals = { ':uid': unitCnpj, ':m': mes };
+          if (colaboradorId) { filterParts.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          const result = await queryGSI(
+            'gres-prod-folha-pagamento', 'unitId-mes-index',
+            'unitId = :uid AND mes = :m', exprVals,
+            filterParts.length > 0 ? filterParts.join(' AND ') : null,
+            limit, cursor
+          );
+          items = result.items;
+          lastKey = result.lastKey;
+        } else {
+          // Fallback to scan
+          const filters = [];
+          const exprVals = {};
+          if (mes) { filters.push('mes = :m'); exprVals[':m'] = mes; }
+          if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          const scanParams = {
+            TableName: 'gres-prod-folha-pagamento',
+            ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
+          };
+          let scanKey = cursor || undefined;
+          do {
+            const r = await dynamodb.scan({ ...scanParams, ...(scanKey ? { ExclusiveStartKey: scanKey } : {}), ...(limit ? { Limit: limit } : {}) }).promise();
+            items = items.concat(r.Items || []);
+            scanKey = r.LastEvaluatedKey;
+            if (limit && items.length >= limit) { lastKey = scanKey; break; }
+          } while (scanKey);
+          if (unitCnpj) {
+            items = items.filter(i => {
+              const iCnpj = toCnpj(i.unitId || '');
+              return !i.unitId || iCnpj === unitCnpj || i.unitId === unitId;
+            });
+          }
+        }
+        if (limit) {
+          return listResponse(items, { count: items.length, cursor: encodeCursor(lastKey), hasMore: !!lastKey });
         }
         return response(200, items);
       } catch (err) {
         console.error('folha-pagamento GET error:', err);
-        return response(500, { error: 'Erro ao buscar folha: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar folha: ' + err.message);
       }
     }
 
@@ -1943,260 +2178,6 @@ exports.handler = async (event) => {
         return response(200, items);
       } catch (err) {
         return response(500, { error: 'Erro ao buscar histórico: ' + err.message });
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════════
-    // POST /pagamento-batch — pagamento atômico de freelancer (batch de operações)
-    // ══════════════════════════════════════════════════════════════════════════════
-    if (rawPath === '/pagamento-batch' && httpMethod === 'POST') {
-      const { colaboradorId, unitId, mes, semana, dataPagamento, formaPagamento,
-              responsavel, responsavelId, valorBruto, valorDescSaidas, valorAbatEsp, valorLiquido,
-              obs, operacoes } = body;
-
-      if (!colaboradorId || !unitId || !operacoes || !Array.isArray(operacoes)) {
-        return response(400, { error: 'colaboradorId, unitId e operacoes[] são obrigatórios' });
-      }
-
-      const now = new Date().toISOString();
-      const pagamentoId = `pgto-${colaboradorId}-${now.replace(/[:.]/g, '').slice(0,17)}`;
-      const results = { folha: [], saidas: [], payslip: null, pagamentoId };
-
-      try {
-        for (const op of operacoes) {
-          switch (op.tipo) {
-
-            // ── Turno da folha de pagamento ──
-            case 'folha-turno': {
-              const dayId = `folha-${colaboradorId}-${op.data}-${op.turno}`;
-              // SEMPRE derivar mes da data do turno (op.data) — nunca confiar no mes do body
-              // pois o seletor de mês do frontend pode estar no mês errado
-              const mesTurno = op.data?.slice(0,7) || mes;
-              const item = {
-                id: dayId,
-                tipo: 'freelancer-dia',
-                colaboradorId,
-                unitId,
-                mes: mesTurno,
-                data: op.data,
-                turno: op.turno,
-                valor: Number(op.valor) || 0,
-                tipoCodigo: op.tipoCodigo || '',
-                pago: true,
-                pagamentoId,
-                pagamentoData: dataPagamento || now.slice(0,10),
-                formaPagamento: formaPagamento || 'PIX',
-                obs: op.obs || obs || '',
-                responsavel: responsavel || '',
-                responsavelId: responsavelId || '',
-                createdAt: now,
-                updatedAt: now,
-              };
-              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
-              results.folha.push(dayId);
-              break;
-            }
-
-            // ── Transporte (crédito) ──
-            case 'folha-transporte': {
-              const tId = `folha-${colaboradorId}-transp-${semana || dataPagamento}`;
-              // Derivar mes da data da operação (período de trabalho), não dataPagamento
-              const mesTransp = op.data?.slice(0,7) || op.periodoFim?.slice(0,7) || mes || dataPagamento?.slice(0,7);
-              const item = {
-                id: tId,
-                tipo: 'freelancer-dia',
-                colaboradorId,
-                unitId,
-                mes: mesTransp,
-                data: op.data || dataPagamento,
-                turno: 'Transporte',
-                valor: Number(op.valor) || 0,
-                tipoCodigo: 'transporte-freelancer',
-                pago: true,
-                pagamentoId,
-                pagamentoData: dataPagamento || now.slice(0,10),
-                formaPagamento: formaPagamento || 'PIX',
-                obs: op.obs || '',
-                responsavel: responsavel || '',
-                responsavelId: responsavelId || '',
-                createdAt: now,
-                updatedAt: now,
-              };
-              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: item }).promise();
-              results.folha.push(tId);
-              break;
-            }
-
-            // ── Criar saída (Desconto Transporte, Desconto Adiantamento Especial, etc.) ──
-            case 'saida-criar': {
-              const saidaId = `saida-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-              const sItem = {
-                id: saidaId,
-                colaboradorId,
-                colaboradorNome: op.nomeColaborador || body.nomeColaborador || '',
-                unitId,
-                tipo: op.tipoSaida || 'Consumo Interno',
-                descricao: op.descricao || '',
-                valor: Number(op.valor) || 0,
-                data: op.data || dataPagamento,
-                dataPagamento: op.dataPagamento || dataPagamento,
-                pago: op.pago !== undefined ? op.pago : true,
-                pagamentoIdLigado: pagamentoId,
-                excedeAdto: op.excedeAdto || false,
-                responsavel: op.responsavel || responsavel || '',
-                responsavelId: op.responsavelId || responsavelId || '',
-                obs: op.obs || '',
-                ...(op.adiantamentoId ? { adiantamentoId: op.adiantamentoId } : {}),
-                createdAt: now,
-                updatedAt: now,
-              };
-              await dynamodb.put({ TableName: 'gres-prod-saidas', Item: sItem }).promise();
-              results.saidas.push(saidaId);
-              break;
-            }
-
-            // ── Atualizar saída existente (marcar caixinha como paga) ──
-            case 'saida-atualizar': {
-              const updateExpr = 'SET pago = :t, pagamentoIdLigado = :pid, updatedAt = :now';
-              const exprVals = { ':t': true, ':pid': pagamentoId, ':now': now };
-              if (op.obs) {
-                // Append obs
-                const existing = await dynamodb.get({ TableName: 'gres-prod-saidas', Key: { id: op.id } }).promise();
-                const oldObs = existing.Item?.obs || '';
-                await dynamodb.update({
-                  TableName: 'gres-prod-saidas',
-                  Key: { id: op.id },
-                  UpdateExpression: updateExpr + ', obs = :obs',
-                  ExpressionAttributeValues: { ...exprVals, ':obs': op.obs },
-                }).promise();
-              } else {
-                await dynamodb.update({
-                  TableName: 'gres-prod-saidas',
-                  Key: { id: op.id },
-                  UpdateExpression: updateExpr,
-                  ExpressionAttributeValues: exprVals,
-                }).promise();
-              }
-              results.saidas.push(op.id);
-              break;
-            }
-
-            // ── Payslip (comprovante do pagamento) ──
-            case 'payslip': {
-              // Derivar mes do período de trabalho, não do seletor do frontend
-              const mesPayslip = op.periodoFim?.slice(0,7) || op.periodoInicio?.slice(0,7) || mes || dataPagamento?.slice(0,7);
-              const psId = `ps-${colaboradorId}-${mesPayslip}-${op.periodo || semana}`;
-              const psItem = {
-                id: psId,
-                colaboradorId,
-                unitId,
-                mes: mesPayslip,
-                periodo: op.periodo || '',
-                periodoInicio: op.periodoInicio || '',
-                periodoFim: op.periodoFim || '',
-                bruto: Number(op.bruto) || 0,
-                transporte: Number(op.transporte) || 0,
-                descontos: Number(op.descontos) || 0,
-                adiantamentos: Number(op.adiantamentos) || 0,
-                liquido: Number(op.liquido) || 0,
-                nomeColaborador: op.nomeColaborador || '',
-                formaPagamento: formaPagamento || 'PIX',
-                dataPagamento: dataPagamento || now.slice(0,10),
-                pagamentos: [pagamentoId],
-                status: 'pago',
-                criadoEm: now,
-                atualizadoEm: now,
-                // ── Fase 3: campos extras ──
-                ...(op.tipoContrato && { tipoContrato: op.tipoContrato }),  // 'CLT' | 'Freelancer'
-                ...(op.cargo && { cargo: op.cargo }),
-                ...(op.cpf && { cpf: op.cpf }),
-                ...(op.chavePix && { chavePix: op.chavePix }),
-                ...(Array.isArray(op.composicao) && op.composicao.length > 0 && { composicao: op.composicao }),
-                ...(Array.isArray(op.rubricas) && op.rubricas.length > 0 && { rubricas: op.rubricas }),
-                ...(op.conferido != null && { conferido: op.conferido }),
-                ...(op.tipoPagamento && { tipoPagamento: op.tipoPagamento }), // 'adiantamento' | 'variavel' | 'dia05' | 'semanal'
-                ...(op.diasTrabalhados != null && { diasTrabalhados: Number(op.diasTrabalhados) }),
-                ...(op.dobras != null && { dobras: Number(op.dobras) }),
-                ...(op.dataPagamento2 && { dataPagamento: op.dataPagamento2 }),
-              };
-              await dynamodb.put({ TableName: 'gres-prod-payslips', Item: psItem }).promise();
-              results.payslip = psId;
-              break;
-            }
-
-            // ── Marcar saída existente como processada (liga ao pagamento) ──
-            case 'saida-marcar-processada': {
-              if (!op.saidaId) { console.warn('saida-marcar-processada: saidaId ausente'); break; }
-              await dynamodb.update({
-                TableName: 'gres-prod-saidas',
-                Key: { id: op.saidaId },
-                UpdateExpression: 'SET pagamentoIdLigado = :pid, updatedAt = :now',
-                ExpressionAttributeValues: { ':pid': pagamentoId, ':now': now },
-              }).promise();
-              results.saidas.push(op.saidaId);
-              break;
-            }
-
-            // ── Upsert folha-pagamento (CLT dobras/mensal) ──
-            case 'folha-pagamento-upsert': {
-              const fpId = op.id || `folha-${op.colaboradorId || colaboradorId}-${op.semana || semana}-${op.mes || mes}`;
-              const fpItem = {
-                id: fpId,
-                colaboradorId: op.colaboradorId || colaboradorId,
-                unitId: op.unitId || unitId,
-                mes: op.mes || mes,
-                semana: op.semana || semana || '',
-                pago: op.pago !== undefined ? op.pago : true,
-                dataPagamento: op.dataPagamento || dataPagamento || now.slice(0,10),
-                formaPagamento: op.formaPagamento || formaPagamento || 'PIX',
-                valorBruto: Number(op.valorBruto) || 0,
-                valorTransporte: Number(op.valorTransporte) || 0,
-                totalFinal: Number(op.totalFinal) || 0,
-                pagamentoId,
-                obs: op.obs || obs || '',
-                responsavel: op.responsavel || responsavel || '',
-                responsavelId: op.responsavelId || responsavelId || '',
-                createdAt: now,
-                updatedAt: now,
-              };
-              await dynamodb.put({ TableName: 'gres-prod-folha-pagamento', Item: fpItem }).promise();
-              results.folha.push(fpId);
-              break;
-            }
-
-            default:
-              console.warn(`pagamento-batch: tipo de operação desconhecido: ${op.tipo}`);
-          }
-        }
-
-        // Auditoria
-        try {
-          const logId = `log-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-          await dynamodb.put({
-            TableName: 'gres-prod-audit-logs',
-            Item: {
-              id: logId,
-              tabela: 'pagamento-batch',
-              entidadeId: pagamentoId,
-              acao: 'pagamento-batch',
-              responsavel: responsavel || '',
-              responsavelId: responsavelId || '',
-              detalhes: JSON.stringify({
-                colaboradorId, unitId, mes, semana,
-                valorBruto, valorDescSaidas, valorAbatEsp, valorLiquido,
-                formaPagamento, operacoesCount: operacoes.length,
-              }),
-              createdAt: now,
-            }
-          }).promise();
-        } catch (logErr) {
-          console.warn('Audit log failed (non-blocking):', logErr.message);
-        }
-
-        return response(200, { success: true, ...results });
-      } catch (err) {
-        console.error('pagamento-batch error:', err);
-        return response(500, { error: 'Erro ao processar pagamento: ' + err.message });
       }
     }
 
@@ -2245,9 +2226,7 @@ exports.handler = async (event) => {
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : 0,
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : 0,
           formaPagamento: formaPagamento || 'PIX',
-          // Saídas manuais nascem como NÃO pagas por default.
-          // Saídas criadas pelo fluxo de pagamento (batch) enviam pago=true explicitamente.
-          pago: pago !== undefined ? pago : false,
+          pago: pago !== undefined ? pago : true,
           obs: obs || observacao || '',
           ...(adiantamentoId ? { adiantamentoId } : {}),
           // Rastreabilidade de lote: amarra a saída auto-gerada ao pagamentoId do lote que a criou.
@@ -2314,96 +2293,80 @@ exports.handler = async (event) => {
 
     // GET SAIDAS
     if ((rawPath === '/saidas' || rawPath.includes('/saidas')) && httpMethod === 'GET') {
-      const data            = queryParams.data;            // filtro por dia exato
-      const dataInicio      = queryParams.dataInicio;      // filtro por período
-      const dataFim         = queryParams.dataFim;
-      const unitId          = queryParams.unitId;
-      const colaboradorIdQ  = queryParams.colaboradorId;   // filtro por colaborador (opcional)
-
-      console.log('GET /saidas - queryParams:', queryParams);
-
+      const { unitId, colaboradorId, dataInicio, dataFim, tipo, mes } = queryParams;
+      const unitCnpj = unitId ? toCnpj(unitId) : null;
+      const { limit, cursor } = parsePagination(queryParams);
       try {
-        // Buscar usuários para relacionamento
-        const usuariosResult = await dynamodb.scan({ TableName: 'gres-prod-usuarios' }).promise();
-        const usuariosMap = {};
-        (usuariosResult.Items || []).forEach(u => { usuariosMap[u.email] = u.nome; });
-
-        // Buscar colaboradores para relacionamento
-        const colaboradoresResult = await dynamodb.scan({ TableName: 'gres-prod-colaboradores' }).promise();
-        const colaboradores = colaboradoresResult.Items || [];
-        const colaboradoresMap = {};
-        colaboradores.forEach(c => { colaboradoresMap[c.nome] = c.id; });
-
-        // Scan completo e filtro em memória
-        const result = await dynamodb.scan({ TableName: 'gres-prod-saidas' }).promise();
-        let items = result.Items || [];
-        console.log('Total de itens no banco:', items.length);
-
-        // --- CNPJ da unidade solicitante (primeiros 14 chars) ---
-        const unitCnpj = (unitId && unitId !== 'null' && unitId !== '')
-          ? unitId.substring(0, 14)
-          : null;
-
-        items = items.filter(item => {
-          // Filtro por data exata (aba Novo Registro)
-          if (data) {
-            return item.data === data;
-          }
-
-          // Filtro por período (aba Movimentos)
+        let items = [];
+        let lastKey = null;
+        // P2.4: Use GSI query when unitId + date range provided
+        if (unitCnpj && (dataInicio || mes)) {
+          const exprVals = { ':uid': unitCnpj };
+          let keyExpr = 'unitId = :uid';
           if (dataInicio && dataFim) {
-            if (!item.data || item.data < dataInicio || item.data > dataFim) return false;
+            keyExpr += ' AND #dt BETWEEN :di AND :df';
+            exprVals[':di'] = dataInicio;
+            exprVals[':df'] = dataFim;
+          } else if (dataInicio) {
+            keyExpr += ' AND #dt >= :di';
+            exprVals[':di'] = dataInicio;
+          } else if (mes) {
+            keyExpr += ' AND begins_with(#dt, :m)';
+            exprVals[':m'] = mes;
           }
-
-          // Filtro por colaborador (quando solicitado)
-          if (colaboradorIdQ && item.colaboradorId !== colaboradorIdQ) return false;
-
-          // Filtro por unidade — aceita itens sem unitId (dados históricos)
+          const filterParts = [];
+          if (colaboradorId) { filterParts.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          if (tipo) { filterParts.push('tipo = :t'); exprVals[':t'] = tipo; }
+          const params = {
+            TableName: 'gres-prod-saidas',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: keyExpr,
+            ExpressionAttributeValues: exprVals,
+            ExpressionAttributeNames: { '#dt': 'data' },
+            ScanIndexForward: false
+          };
+          if (filterParts.length > 0) params.FilterExpression = filterParts.join(' AND ');
+          if (limit) params.Limit = limit;
+          if (cursor) params.ExclusiveStartKey = cursor;
+          const result = await dynamodb.query(params).promise();
+          items = result.Items || [];
+          lastKey = result.LastEvaluatedKey;
+        } else {
+          // Fallback to scan (backward compat)
+          const filters = [];
+          const exprVals = {};
+          const exprNames = {};
+          if (colaboradorId) { filters.push('colaboradorId = :c'); exprVals[':c'] = colaboradorId; }
+          if (dataInicio) { filters.push('#dt >= :di'); exprVals[':di'] = dataInicio; exprNames['#dt'] = 'data'; }
+          if (dataFim) { filters.push('#dt <= :df'); exprVals[':df'] = dataFim; if (!exprNames['#dt']) exprNames['#dt'] = 'data'; }
+          if (tipo) { filters.push('tipo = :t'); exprVals[':t'] = tipo; }
+          if (mes) { filters.push('begins_with(mes, :m)'); exprVals[':m'] = mes; }
+          const scanParams = {
+            TableName: 'gres-prod-saidas',
+            ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {}),
+            ...(Object.keys(exprNames).length > 0 ? { ExpressionAttributeNames: exprNames } : {})
+          };
+          let scanKey = cursor || undefined;
+          do {
+            const r = await dynamodb.scan({ ...scanParams, ...(scanKey ? { ExclusiveStartKey: scanKey } : {}), ...(limit ? { Limit: limit } : {}) }).promise();
+            items = items.concat(r.Items || []);
+            scanKey = r.LastEvaluatedKey;
+            if (limit && items.length >= limit) { lastKey = scanKey; break; }
+          } while (scanKey);
           if (unitCnpj) {
-            const itemUnitId = item.unitId || item.unidade_id || '';
-            // Se item não tem unitId, inclui (dados históricos pertencem à unidade)
-            if (itemUnitId !== '') {
-              const itemCnpj = itemUnitId.substring(0, 14);
-              if (itemCnpj !== unitCnpj) return false;
-            }
+            items = items.filter(i => toCnpj(i.unitId || '') === unitCnpj);
           }
-
-          return true;
-        }).map(item => {
-          // Enriquecer responsável
-          // Enriquecer responsável: tentar por email, depois por id, depois pelo campo responsavelNome já salvo
-          if (item.responsavelNome && item.responsavelNome !== 'Não informado') {
-            // já tem nome salvo diretamente no registro — mantém
-          } else if (item.responsavel && item.responsavel !== 'Não informado') {
-            item.responsavelNome = usuariosMap[item.responsavel] || item.responsavel;
-          } else {
-            item.responsavelNome = 'Não informado';
-          }
-
-          // Enriquecer colaborador
-          if (item.colaboradorId) {
-            const col = colaboradores.find(c => c.id === item.colaboradorId);
-            item.colaboradorNome = col ? col.nome : (item.colaborador || 'Não encontrado');
-          } else if (item.colaborador) {
-            item.colaboradorNome = item.colaborador;
-            item.colaboradorId = colaboradoresMap[item.colaborador] || '';
-          }
-
-          return item;
-        });
-
-        // Ordenar por data desc
-        items.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
-
-        console.log('Itens após filtro:', items.length);
+        }
+        if (limit) {
+          return listResponse(items, { count: items.length, cursor: encodeCursor(lastKey), hasMore: !!lastKey });
+        }
         return response(200, items);
-      } catch (error) {
-        console.error('DynamoDB error:', error);
-        return response(500, { error: 'Erro ao buscar saídas: ' + error.message });
+      } catch (err) {
+        console.error('saidas GET error:', err);
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar saídas: ' + err.message);
       }
     }
 
-    // PUT SAIDAS - Editar saída
     if (rawPath.includes('/saidas/') && httpMethod === 'PUT') {
       const saidaId = rawPath.split('/').pop();
       const { responsavel, responsavelId, colaboradorId, descricao, valor, data,
@@ -2453,7 +2416,7 @@ exports.handler = async (event) => {
           observacao: observacao !== undefined ? observacao : (original.observacao || ''),
           obs: obs !== undefined ? obs : (original.obs || ''),
           adiantamentoId: adiantamentoId !== undefined ? adiantamentoId : (original.adiantamentoId || undefined),
-          pago: pago !== undefined ? pago : (original.pago !== undefined ? original.pago : false),
+          pago: pago !== undefined ? pago : (original.pago !== undefined ? original.pago : true),
           formaPagamento: formaPagamento !== undefined ? formaPagamento : (original.formaPagamento || 'PIX'),
           viagens: viagens !== undefined ? parseInt(viagens) || 0 : (original.viagens || 0),
           caixinha: caixinha !== undefined ? parseFloat(caixinha) || 0 : (original.caixinha || 0),
@@ -2524,31 +2487,6 @@ exports.handler = async (event) => {
     }
 
     // DELETE CAIXA - Deletar registro (apenas admin)
-    // ═══ GET /payslips — admin: buscar payslips por unitId ═══
-    if (rawPath === '/payslips' && httpMethod === 'GET') {
-      const qs = event.queryStringParameters || {};
-      const unitId = qs.unitId;
-      if (!unitId) return response(400, { error: 'unitId obrigatório' });
-      try {
-        const mesFilter = qs.mes;
-        let filterExpr = 'unitId = :u';
-        const exprValues = { ':u': unitId };
-        if (mesFilter) {
-          filterExpr += ' AND mes = :m';
-          exprValues[':m'] = mesFilter;
-        }
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-payslips',
-          FilterExpression: filterExpr,
-          ExpressionAttributeValues: exprValues
-        }).promise();
-        const items = (result.Items || []).sort((a, b) => (b.periodoFim || '').localeCompare(a.periodoFim || ''));
-        return response(200, items);
-      } catch (err) {
-        return response(500, { error: 'Erro ao buscar payslips', details: err.message });
-      }
-    }
-
     if ((rawPath.includes('/caixa/') || rawPath === '/caixa') && httpMethod === 'DELETE') {
       const caixaId = rawPath.split('/').pop();
 
@@ -2781,40 +2719,83 @@ exports.handler = async (event) => {
     }
 
     // ─── GET /perfis-permissoes — carrega config salva ou retorna default ───
+    // Se ?unitId=xxx → busca override config-perfis-permissoes-{unitId}, senão busca global
     if (rawPath === '/perfis-permissoes' && httpMethod === 'GET') {
       try {
+        const unitIdParam = queryParams.unitId;
+        const docId = unitIdParam
+          ? `config-perfis-permissoes-${toCnpj(unitIdParam)}`
+          : 'config-perfis-permissoes';
         const result = await dynamodb.get({
           TableName: 'gres-prod-usuarios',
-          Key: { id: 'config-perfis-permissoes' }
+          Key: { id: docId }
         }).promise();
         if (result.Item && result.Item.permissoes) {
-          return response(200, { permissoes: result.Item.permissoes, updatedAt: result.Item.updatedAt });
+          return response(200, {
+            permissoes: result.Item.permissoes,
+            updatedAt: result.Item.updatedAt,
+            unitId: result.Item.unitId || null,
+            isOverride: !!result.Item.unitId
+          });
         }
         // Retorna default vazio — frontend usa seus próprios defaults
-        return response(200, { permissoes: null, updatedAt: null });
+        return response(200, { permissoes: null, updatedAt: null, unitId: null, isOverride: false });
       } catch (err) {
         return response(500, { error: 'Erro ao carregar permissões: ' + err.message });
       }
     }
 
     // ─── PUT /perfis-permissoes — salva config de permissões por perfil ───
+    // Se body.unitId → salva como override config-perfis-permissoes-{unitId}, senão salva global
     if (rawPath === '/perfis-permissoes' && httpMethod === 'PUT') {
-      const { permissoes } = body;
+      const { permissoes, unitId: bodyUnitId } = body;
       if (!permissoes || typeof permissoes !== 'object') {
         return response(400, { error: 'Campo permissoes é obrigatório e deve ser um objeto' });
       }
       try {
-        await dynamodb.put({
-          TableName: 'gres-prod-usuarios',
-          Item: {
-            id: 'config-perfis-permissoes',
-            permissoes,
-            updatedAt: new Date().toISOString()
-          }
-        }).promise();
-        return response(200, { success: true, updatedAt: new Date().toISOString() });
+        const now = new Date().toISOString();
+        if (bodyUnitId) {
+          const cnpj = toCnpj(bodyUnitId);
+          await dynamodb.put({
+            TableName: 'gres-prod-usuarios',
+            Item: {
+              id: `config-perfis-permissoes-${cnpj}`,
+              unitId: cnpj,
+              permissoes,
+              updatedAt: now
+            }
+          }).promise();
+        } else {
+          await dynamodb.put({
+            TableName: 'gres-prod-usuarios',
+            Item: {
+              id: 'config-perfis-permissoes',
+              permissoes,
+              updatedAt: now
+            }
+          }).promise();
+        }
+        return response(200, { success: true, updatedAt: now });
       } catch (err) {
         return response(500, { error: 'Erro ao salvar permissões: ' + err.message });
+      }
+    }
+
+    // ─── DELETE /perfis-permissoes?unitId=xxx — remove override da unidade ───
+    if (rawPath === '/perfis-permissoes' && httpMethod === 'DELETE') {
+      const unitIdParam = queryParams.unitId;
+      if (!unitIdParam) {
+        return response(400, { error: 'unitId é obrigatório para deletar override' });
+      }
+      try {
+        const cnpj = toCnpj(unitIdParam);
+        await dynamodb.delete({
+          TableName: 'gres-prod-usuarios',
+          Key: { id: `config-perfis-permissoes-${cnpj}` }
+        }).promise();
+        return response(200, { success: true, message: 'Override removido, usando padrão global' });
+      } catch (err) {
+        return response(500, { error: 'Erro ao remover override: ' + err.message });
       }
     }
 
@@ -3235,497 +3216,584 @@ exports.handler = async (event) => {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ─── PORTAL DO COLABORADOR ─────────────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════════
 
-    // Helper: validar token do portal
-    function validarTokenPortal(evt) {
-      const authHeader = (evt.headers || {}).authorization || (evt.headers || {}).Authorization || '';
-      const tkn = authHeader.replace('Bearer ', '');
-      if (!tkn) return null;
+    // ═══════════════════════════════════════════════════════════
+    // P2.2 — REMUNERAÇÕES (Pay Rate History)
+    // ═══════════════════════════════════════════════════════════
+
+    // GET /remuneracoes?colaboradorId=xxx — histórico de remunerações
+    if (rawPath === '/remuneracoes' && httpMethod === 'GET') {
+      const { colaboradorId } = queryParams;
+      if (!colaboradorId) return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId é obrigatório');
       try {
-        const decoded = JSON.parse(Buffer.from(tkn, 'base64').toString());
-        if (decoded.tipo !== 'portal') return null;
-        return decoded;
-      } catch { return null; }
-    }
-
-    // ─── POST /portal/login — Login do colaborador ────────────────────────────
-    if (rawPath === '/portal/login' && httpMethod === 'POST') {
-      try {
-        const { cpf, senha } = body;
-        if (!cpf || !senha) {
-          return response(400, { error: 'CPF e senha são obrigatórios' });
-        }
-
-        // Buscar colaborador ativo pelo CPF (normalizar para comparação)
-        const cpfLimpo = cpf.replace(/\D/g, '');
-        const colResult = await dynamodb.scan({
-          TableName: 'gres-prod-colaboradores',
-          FilterExpression: 'ativo = :ativo',
-          ExpressionAttributeValues: { ':ativo': true }
+        const result = await dynamodb.query({
+          TableName: 'gres-prod-remuneracoes',
+          IndexName: 'colaborador-vigencia-index',
+          KeyConditionExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':cid': colaboradorId },
+          ScanIndexForward: false
         }).promise();
-
-        const colMatch = (colResult.Items || []).find(c => 
-          (c.cpf || '').replace(/\D/g, '') === cpfLimpo
-        );
-        if (!colMatch) {
-          return response(401, { error: 'CPF não encontrado' });
-        }
-
-        const col = colMatch;
-        let primeiroAcesso = false;
-
-        if (col.portalSenha) {
-          // Colaborador já tem senha do portal
-          const isBcryptPortal = col.portalSenha.startsWith('$2b$') || col.portalSenha.startsWith('$2a$');
-          let senhaOk = false;
-          if (isBcryptPortal) {
-            senhaOk = bcrypt.compareSync(senha, col.portalSenha);
-          } else {
-            senhaOk = (senha === col.portalSenha);
-          }
-          if (!senhaOk) {
-            return response(401, { error: 'Senha incorreta' });
-          }
-        } else {
-          // Primeiro acesso: validar com últimos 4 dígitos do celular
-          const celular = (col.celular || '').replace(/\D/g, '');
-          const ultimos4 = celular.slice(-4);
-          if (!ultimos4 || senha !== ultimos4) {
-            return response(401, { error: 'Senha incorreta' });
-          }
-          primeiroAcesso = true;
-        }
-
-        // Gerar token portal
-        const token = Buffer.from(JSON.stringify({
-          colaboradorId: col.id,
-          cpf: col.cpf,
-          nome: col.nome,
-          tipo: 'portal',
-          iat: Math.floor(Date.now() / 1000)
-        })).toString('base64');
-
-        return response(200, {
-          success: true,
-          token,
-          primeiroAcesso,
-          colaborador: {
-            id: col.id,
-            nome: col.nome,
-            cpf: col.cpf,
-            tipoContrato: col.tipoContrato,
-            cargo: col.cargo,
-            unitId: col.unitId,
-            celular: col.celular,
-            email: col.email,
-            chavePix: col.chavePix,
-            dataAdmissao: col.dataAdmissao
-          }
-        });
+        return response(200, result.Items || []);
       } catch (err) {
-        console.error('Erro portal/login:', err);
-        return response(500, { error: 'Erro ao fazer login: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar remunerações: ' + err.message);
       }
     }
 
-    // ─── POST /portal/trocar-senha — Troca de senha do portal ─────────────────
-    if (rawPath === '/portal/trocar-senha' && httpMethod === 'POST') {
+    // GET /remuneracoes/vigente?colaboradorId=xxx&data=YYYY-MM-DD — remuneração vigente
+    if ((rawPath === '/remuneracoes/vigente' || rawPath.includes('/remuneracoes/vigente')) && httpMethod === 'GET') {
+      const { colaboradorId, data } = queryParams;
+      if (!colaboradorId) return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId é obrigatório');
+      const refDate = data || new Date().toISOString().slice(0, 10);
       try {
-        const portalUser = validarTokenPortal(event);
-        if (!portalUser) {
-          return response(401, { error: 'Token inválido ou ausente' });
-        }
-
-        const { colaboradorId, senhaAtual, novaSenha } = body;
-        if (!colaboradorId || !senhaAtual || !novaSenha) {
-          return response(400, { error: 'colaboradorId, senhaAtual e novaSenha são obrigatórios' });
-        }
-        if (novaSenha.length < 6) {
-          return response(400, { error: 'Nova senha deve ter no mínimo 6 caracteres' });
-        }
-
-        // Buscar colaborador
-        const colGet = await dynamodb.get({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: colaboradorId }
+        const result = await dynamodb.query({
+          TableName: 'gres-prod-remuneracoes',
+          IndexName: 'colaborador-vigencia-index',
+          KeyConditionExpression: 'colaboradorId = :cid AND effectiveDate <= :dt',
+          ExpressionAttributeValues: { ':cid': colaboradorId, ':dt': refDate },
+          ScanIndexForward: false,
+          Limit: 1
         }).promise();
-        const col = colGet.Item;
-        if (!col) {
-          return response(404, { error: 'Colaborador não encontrado' });
+        const vigente = (result.Items || [])[0];
+        if (!vigente) return errorResponse(404, ERROR_CODES.NOT_FOUND, 'Nenhuma remuneração vigente encontrada');
+        if (vigente.endDate && vigente.endDate < refDate) {
+          return errorResponse(404, ERROR_CODES.NOT_FOUND, 'Remuneração encerrada em ' + vigente.endDate);
         }
-
-        // Verificar senha atual
-        let senhaAtualOk = false;
-        if (col.portalSenha) {
-          const isBcryptAtual = col.portalSenha.startsWith('$2b$') || col.portalSenha.startsWith('$2a$');
-          if (isBcryptAtual) {
-            senhaAtualOk = bcrypt.compareSync(senhaAtual, col.portalSenha);
-          } else {
-            senhaAtualOk = (senhaAtual === col.portalSenha);
-          }
-        } else {
-          // Primeiro acesso: verificar com últimos 4 dígitos do celular
-          const celular = (col.celular || '').replace(/\D/g, '');
-          const ultimos4 = celular.slice(-4);
-          senhaAtualOk = (senhaAtual === ultimos4);
-        }
-
-        if (!senhaAtualOk) {
-          return response(401, { error: 'Senha atual incorreta' });
-        }
-
-        // Salvar nova senha com bcrypt
-        const hashedSenha = bcrypt.hashSync(novaSenha, 10);
-        await dynamodb.update({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: colaboradorId },
-          UpdateExpression: 'SET portalSenha = :ps',
-          ExpressionAttributeValues: { ':ps': hashedSenha }
-        }).promise();
-
-        return response(200, { success: true });
+        return successResponse(200, vigente);
       } catch (err) {
-        console.error('Erro portal/trocar-senha:', err);
-        return response(500, { error: 'Erro ao trocar senha: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar remuneração vigente: ' + err.message);
       }
     }
 
-    // ─── GET /portal/meus-dados — Dados do colaborador logado ─────────────────
-    if (rawPath === '/portal/meus-dados' && httpMethod === 'GET') {
-      try {
-        const portalUser = validarTokenPortal(event);
-        if (!portalUser) {
-          return response(401, { error: 'Token inválido ou ausente' });
-        }
-
-        const colGet = await dynamodb.get({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: portalUser.colaboradorId }
-        }).promise();
-        const col = colGet.Item;
-        if (!col) {
-          return response(404, { error: 'Colaborador não encontrado' });
-        }
-
-        // Buscar nome da unidade
-        let nomeUnidade = '';
-        if (col.unitId) {
-          try {
-            const uniResult = await dynamodb.scan({
-              TableName: 'gres-prod-unidades',
-              FilterExpression: 'cnpj = :cnpj',
-              ExpressionAttributeValues: { ':cnpj': col.unitId }
-            }).promise();
-            if (uniResult.Items && uniResult.Items.length > 0) {
-              nomeUnidade = uniResult.Items[0].nome || uniResult.Items[0].nomeFantasia || '';
-            }
-          } catch (e) { console.warn('Erro ao buscar unidade:', e.message); }
-        }
-
-        const dados = {
-          nome: col.nome,
-          cpf: col.cpf,
-          celular: col.celular,
-          email: col.email,
-          cargo: col.cargo,
-          tipoContrato: col.tipoContrato,
-          dataAdmissao: col.dataAdmissao,
-          dataNascimento: col.dataNascimento,
-          area: col.area,
-          unitId: col.unitId,
-          nomeUnidade,
-          chavePix: col.chavePix
-        };
-
-        // Incluir campos financeiros relevantes ao tipo de contrato
-        if (col.tipoContrato === 'CLT') {
-          dados.salario = col.salario;
-        }
-        if (col.valorDia !== undefined) dados.valorDia = col.valorDia;
-        if (col.valorNoite !== undefined) dados.valorNoite = col.valorNoite;
-
-        return response(200, dados);
-      } catch (err) {
-        console.error('Erro portal/meus-dados:', err);
-        return response(500, { error: 'Erro ao buscar dados: ' + err.message });
+    // POST /remuneracoes — criar nova remuneração (fecha a anterior automaticamente)
+    if (rawPath === '/remuneracoes' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, tipoAcordo, acordo, valorDia, valorNoite, valorTransporte, effectiveDate, observacao } = body || {};
+      if (!colaboradorId || !effectiveDate) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId e effectiveDate são obrigatórios');
       }
-    }
-
-    // ─── GET /portal/recebimentos — Payslips do colaborador ───────────────────
-    if (rawPath === '/portal/recebimentos' && httpMethod === 'GET') {
       try {
-        const portalUser = validarTokenPortal(event);
-        if (!portalUser) {
-          return response(401, { error: 'Token inválido ou ausente' });
-        }
-
-        const qs = event.queryStringParameters || {};
-        let meses = parseInt(qs.meses) || 3;
-        if (meses > 12) meses = 12;
-        if (meses < 1) meses = 1;
-
-        const payResult = await dynamodb.scan({
-          TableName: 'gres-prod-payslips',
-          FilterExpression: 'colaboradorId = :cid',
-          ExpressionAttributeValues: { ':cid': portalUser.colaboradorId }
+        // Fechar remuneração anterior
+        const prev = await dynamodb.query({
+          TableName: 'gres-prod-remuneracoes',
+          IndexName: 'colaborador-vigencia-index',
+          KeyConditionExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':cid': colaboradorId },
+          ScanIndexForward: false,
+          Limit: 1
         }).promise();
-
-        let payslips = payResult.Items || [];
-        // Ordenar por periodoFim desc
-        payslips.sort((a, b) => (b.periodoFim || '').localeCompare(a.periodoFim || ''));
-
-        // Limitar aos últimos N meses
-        const dataLimite = new Date();
-        dataLimite.setMonth(dataLimite.getMonth() - meses);
-        const limiteStr = dataLimite.toISOString().slice(0, 10);
-        payslips = payslips.filter(p => (p.periodoFim || '') >= limiteStr);
-
-        return response(200, payslips);
-      } catch (err) {
-        console.error('Erro portal/recebimentos:', err);
-        return response(500, { error: 'Erro ao buscar recebimentos: ' + err.message });
-      }
-    }
-
-    // ─── GET /portal/comunicados — Comunicados para o colaborador ──────────────
-    if (rawPath === '/portal/comunicados' && httpMethod === 'GET') {
-      try {
-        const portalUser = validarTokenPortal(event);
-        if (!portalUser) {
-          return response(401, { error: 'Token inválido ou ausente' });
+        const prevItem = (prev.Items || [])[0];
+        if (prevItem && !prevItem.endDate) {
+          const dayBefore = new Date(effectiveDate);
+          dayBefore.setDate(dayBefore.getDate() - 1);
+          const endDateStr = dayBefore.toISOString().slice(0, 10);
+          await dynamodb.update({
+            TableName: 'gres-prod-remuneracoes',
+            Key: { id: prevItem.id },
+            UpdateExpression: 'SET endDate = :ed',
+            ExpressionAttributeValues: { ':ed': endDateStr }
+          }).promise();
         }
-
-        // Buscar dados do colaborador para filtrar comunicados
-        const colGet = await dynamodb.get({
-          TableName: 'gres-prod-colaboradores',
-          Key: { id: portalUser.colaboradorId }
-        }).promise();
-        const col = colGet.Item;
-        if (!col) {
-          return response(404, { error: 'Colaborador não encontrado' });
-        }
-
-        const comResult = await dynamodb.scan({
-          TableName: 'gres-prod-comunicados',
-          FilterExpression: 'ativo = :ativo',
-          ExpressionAttributeValues: { ':ativo': true }
-        }).promise();
-
-        let comunicados = (comResult.Items || []).filter(c => {
-          // Filtrar por destinatários
-          if (c.destinatarios === 'todos') return true;
-          if (c.destinatarios === col.tipoContrato) return true;
-          // Filtrar por unidade
-          if (c.unitIds && Array.isArray(c.unitIds) && c.unitIds.includes(col.unitId)) return true;
-          return false;
-        });
-
-        // Ordenar por criadoEm desc
-        comunicados.sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
-
-        return response(200, comunicados);
-      } catch (err) {
-        console.error('Erro portal/comunicados:', err);
-        return response(500, { error: 'Erro ao buscar comunicados: ' + err.message });
-      }
-    }
-
-    // ─── GET /portal/vagas — Vagas abertas para colaboradores ──────────────────
-    if (rawPath === '/portal/vagas' && httpMethod === 'GET') {
-      try {
-        const portalUser = validarTokenPortal(event);
-        if (!portalUser) {
-          return response(401, { error: 'Token inválido ou ausente' });
-        }
-
-        const vagasResult = await dynamodb.scan({
-          TableName: 'gres-prod-vagas',
-          FilterExpression: '#st = :aberta',
-          ExpressionAttributeNames: { '#st': 'status' },
-          ExpressionAttributeValues: { ':aberta': 'aberta' }
-        }).promise();
-
-        // Enriquecer com nome da unidade
-        const vagas = await Promise.all((vagasResult.Items || []).map(async (v) => {
-          let nomeUnidade = '';
-          if (v.unitId) {
-            try {
-              const uniRes = await dynamodb.scan({
-                TableName: 'gres-prod-unidades',
-                FilterExpression: 'cnpj = :cnpj',
-                ExpressionAttributeValues: { ':cnpj': v.unitId }
-              }).promise();
-              if (uniRes.Items && uniRes.Items.length > 0) {
-                nomeUnidade = uniRes.Items[0].nome || uniRes.Items[0].nomeFantasia || '';
-              }
-            } catch (e) { /* ignore */ }
-          }
-          return {
-            id: v.id,
-            titulo: v.titulo,
-            descricao: v.descricao,
-            requisitos: v.requisitos,
-            beneficios: v.beneficios,
-            unitId: v.unitId,
-            nomeUnidade
-          };
-        }));
-
-        return response(200, vagas);
-      } catch (err) {
-        console.error('Erro portal/vagas:', err);
-        return response(500, { error: 'Erro ao buscar vagas: ' + err.message });
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ─── COMUNICADOS (ADMIN) ───────────────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // ─── POST /comunicados — Criar comunicado ─────────────────────────────────
-    if (rawPath === '/comunicados' && httpMethod === 'POST') {
-      try {
-        // Verificar token admin (não portal)
-        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
-        const tkn = authHeader.replace('Bearer ', '');
-        let adminUser = null;
-        try {
-          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
-        } catch { /* ignore */ }
-        if (!adminUser || adminUser.tipo === 'portal') {
-          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
-        }
-
-        const { titulo, conteudo, destinatarios, unitIds, ativo } = body;
-        if (!titulo || !conteudo) {
-          return response(400, { error: 'titulo e conteudo são obrigatórios' });
-        }
-
         const now = new Date().toISOString();
-        const comId = 'com-' + require('crypto').randomBytes(4).toString('hex');
+        const newId = 'rem-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
         const item = {
-          id: comId,
-          titulo,
-          conteudo,
-          destinatarios: destinatarios || 'todos',
-          unitIds: unitIds || [],
-          ativo: ativo !== undefined ? ativo : true,
-          criadoEm: now,
-          atualizadoEm: now,
-          criadoPor: adminUser.email || adminUser.id || 'admin'
+          id: newId, colaboradorId, unitId: unitId || '', tipoAcordo: tipoAcordo || null,
+          acordo: acordo || null, valorDia: valorDia || 0, valorNoite: valorNoite || 0,
+          valorTransporte: valorTransporte || 0, effectiveDate,
+          criadoPor: (event._auth && event._auth.email) || 'system',
+          criadoEm: now, observacao: observacao || ''
         };
-
-        await dynamodb.put({ TableName: 'gres-prod-comunicados', Item: item }).promise();
-        return response(201, item);
+        await dynamodb.put({ TableName: 'gres-prod-remuneracoes', Item: item }).promise();
+        return successResponse(201, item);
       } catch (err) {
-        console.error('Erro POST /comunicados:', err);
-        return response(500, { error: 'Erro ao criar comunicado: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao criar remuneração: ' + err.message);
       }
     }
 
-    // ─── GET /comunicados — Listar comunicados (admin) ────────────────────────
-    if (rawPath === '/comunicados' && httpMethod === 'GET') {
+    // ═══════════════════════════════════════════════════════════
+    // P2.3 — PAYSLIPS (Payment Summaries)
+    // ═══════════════════════════════════════════════════════════
+
+    // GET /payslips?unitId=xxx&mes=2026-06 — listar payslips por unidade/mês
+    if (rawPath === '/payslips' && httpMethod === 'GET') {
+      const { unitId, mes, colaboradorId } = queryParams;
       try {
-        // Verificar token admin (não portal)
-        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
-        const tkn = authHeader.replace('Bearer ', '');
-        let adminUser = null;
-        try {
-          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
-        } catch { /* ignore */ }
-        if (!adminUser || adminUser.tipo === 'portal') {
-          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        let items = [];
+        if (unitId && mes) {
+          const periodoPrefix = mes; // 2026-06
+          const result = await dynamodb.query({
+            TableName: 'gres-prod-payslips',
+            IndexName: 'unidade-periodo-index',
+            KeyConditionExpression: 'unitId = :uid AND begins_with(periodo, :p)',
+            ExpressionAttributeValues: { ':uid': toCnpj(unitId), ':p': periodoPrefix }
+          }).promise();
+          items = result.Items || [];
+        } else {
+          const filters = [];
+          const exprVals = {};
+          if (unitId) { filters.push('unitId = :uid'); exprVals[':uid'] = toCnpj(unitId); }
+          if (mes) { filters.push('begins_with(periodo, :m)'); exprVals[':m'] = mes; }
+          if (colaboradorId) { filters.push('colaboradorId = :cid'); exprVals[':cid'] = colaboradorId; }
+          const result = await dynamodb.scan({
+            TableName: 'gres-prod-payslips',
+            ...(filters.length > 0 ? { FilterExpression: filters.join(' AND '), ExpressionAttributeValues: exprVals } : {})
+          }).promise();
+          items = result.Items || [];
         }
-
-        const qs = event.queryStringParameters || {};
-        let params = { TableName: 'gres-prod-comunicados' };
-
-        if (qs.unitId) {
-          params.FilterExpression = 'contains(unitIds, :uid)';
-          params.ExpressionAttributeValues = { ':uid': qs.unitId };
-        }
-
-        const result = await dynamodb.scan(params).promise();
-        const comunicados = (result.Items || []).sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
-        return response(200, comunicados);
+        items.sort((a, b) => (b.periodo || '').localeCompare(a.periodo || ''));
+        return response(200, items);
       } catch (err) {
-        console.error('Erro GET /comunicados:', err);
-        return response(500, { error: 'Erro ao listar comunicados: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar payslips: ' + err.message);
       }
     }
 
-    // ─── PUT /comunicados/:id — Atualizar comunicado ──────────────────────────
-    if (rawPath.match(/\/comunicados\/.+/) && httpMethod === 'PUT') {
+    // GET /payslips/:id — detalhe de payslip
+    if (rawPath.match(/\/payslips\/.+/) && httpMethod === 'GET') {
+      const id = rawPath.split('/payslips/')[1];
       try {
-        const comId = rawPath.split('/comunicados/')[1];
-        // Verificar token admin
-        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
-        const tkn = authHeader.replace('Bearer ', '');
-        let adminUser = null;
-        try {
-          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
-        } catch { /* ignore */ }
-        if (!adminUser || adminUser.tipo === 'portal') {
-          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
-        }
+        const result = await dynamodb.get({ TableName: 'gres-prod-payslips', Key: { id } }).promise();
+        if (!result.Item) return errorResponse(404, ERROR_CODES.NOT_FOUND, 'Payslip não encontrado');
+        return successResponse(200, result.Item);
+      } catch (err) {
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao buscar payslip: ' + err.message);
+      }
+    }
 
+    // POST /payslips — criar/atualizar payslip
+    if (rawPath === '/payslips' && httpMethod === 'POST') {
+      const { colaboradorId, nomeColaborador, unitId, periodo, periodoInicio, periodoFim, mes, bruto, transporte, descontos, adiantamentos, liquido, status, pagamentos } = body || {};
+      if (!colaboradorId || !periodo) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId e periodo são obrigatórios');
+      }
+      try {
         const now = new Date().toISOString();
-        const updates = { ...body, atualizadoEm: now };
-        delete updates.id;
-        delete updates.criadoEm;
-        delete updates.criadoPor;
-
-        const exprs = Object.keys(updates).map((k, i) => `#k${i} = :v${i}`);
-        const names = {};
-        const vals = {};
-        Object.keys(updates).forEach((k, i) => { names[`#k${i}`] = k; vals[`:v${i}`] = updates[k]; });
-
-        await dynamodb.update({
-          TableName: 'gres-prod-comunicados',
-          Key: { id: comId },
-          UpdateExpression: 'SET ' + exprs.join(', '),
-          ExpressionAttributeNames: names,
-          ExpressionAttributeValues: vals
-        }).promise();
-
-        return response(200, { success: true, id: comId });
+        const psId = 'ps-' + colaboradorId + '-' + periodo;
+        const existing = await dynamodb.get({ TableName: 'gres-prod-payslips', Key: { id: psId } }).promise();
+        const item = {
+          id: psId, colaboradorId, nomeColaborador: nomeColaborador || '',
+          unitId: toCnpj(unitId || ''), periodo, periodoInicio: periodoInicio || '',
+          periodoFim: periodoFim || '', mes: mes || periodo.slice(0, 7),
+          bruto: bruto || 0, transporte: transporte || 0, descontos: descontos || 0,
+          adiantamentos: adiantamentos || 0, liquido: liquido || 0,
+          status: status || 'pendente',
+          pagamentos: pagamentos || [],
+          criadoEm: (existing.Item && existing.Item.criadoEm) || now,
+          atualizadoEm: now
+        };
+        await dynamodb.put({ TableName: 'gres-prod-payslips', Item: item }).promise();
+        return successResponse(existing.Item ? 200 : 201, item);
       } catch (err) {
-        console.error('Erro PUT /comunicados:', err);
-        return response(500, { error: 'Erro ao atualizar comunicado: ' + err.message });
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao salvar payslip: ' + err.message);
       }
     }
 
-    // ─── DELETE /comunicados/:id — Excluir comunicado ─────────────────────────
-    if (rawPath.match(/\/comunicados\/.+/) && httpMethod === 'DELETE') {
+    // ════════════════════════════════════════════════════════════════════
+    // POST /pagamento-batch — Pagamento atômico (TransactWriteItems)
+    // Recebe todas as operações de um pagamento (folha + saídas + payslip)
+    // e executa atomicamente: tudo salva ou nada salva.
+    // ════════════════════════════════════════════════════════════════════
+    if (rawPath === '/pagamento-batch' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, mes, semana, operacoes } = body;
+
+      if (!colaboradorId || !mes || !unitId) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId, mes e unitId são obrigatórios');
+      }
+      if (!Array.isArray(operacoes) || operacoes.length === 0) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'operacoes deve ser um array não vazio');
+      }
+      // DynamoDB TransactWriteItems limit: 100 items
+      if (operacoes.length > 100) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Máximo 100 operações por batch');
+      }
+
       try {
-        const comId = rawPath.split('/comunicados/')[1];
-        // Verificar token admin
-        const authHeader = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
-        const tkn = authHeader.replace('Bearer ', '');
-        let adminUser = null;
-        try {
-          adminUser = JSON.parse(Buffer.from(tkn, 'base64').toString());
-        } catch { /* ignore */ }
-        if (!adminUser || adminUser.tipo === 'portal') {
-          return response(403, { error: 'Acesso negado. Requer token de administrador.' });
+        const now = new Date().toISOString();
+        const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
+
+        // Validar colaborador
+        const colaborador = await validarColaborador(colaboradorId);
+        if (!colaborador) {
+          return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Colaborador não encontrado', { colaboradorId });
         }
 
-        await dynamodb.delete({ TableName: 'gres-prod-comunicados', Key: { id: comId } }).promise();
-        return response(200, { success: true });
+        // Gerar pagamentoId do lote
+        const pagamentoId = body.pagamentoId || `pgto-${colaboradorId}-${now.replace(/[:.]/g, '').slice(0, 17)}`;
+
+        const transactItems = [];
+        const savedIds = [];
+        const valorCorrecoes = [];
+
+        for (const op of operacoes) {
+          switch (op.tipo) {
+
+            // ── FOLHA-PAGAMENTO (turno individual) ─────────────────────────
+            case 'folha-turno': {
+              const { data, turno, valor, tipoCodigo, obs: opObs, dataPagamento: opDtPgto, formaPagamento: opForma } = op;
+              if (!data || !turno) break;
+              let valorFinal = parseFloat(valor) || 0;
+
+              // P0.1: Validação server-side
+              if (turno !== 'Transporte') {
+                const valorEsperado = resolverValorTurnoServidor(colaborador, data, turno);
+                if (valorEsperado > 0 && Math.abs(valorFinal - valorEsperado) > 0.01) {
+                  valorCorrecoes.push({ data, turno, frontendVal: valorFinal, servidorVal: valorEsperado });
+                  valorFinal = valorEsperado;
+                }
+              }
+
+              const dayId = `folha-${colaboradorId}-${data}-${turno}`;
+              const item = {
+                id: dayId,
+                tipo: 'freelancer-dia',
+                tipoCodigo: tipoCodigo || (turno === 'Dia' ? 'freelancer-dia' : 'freelancer-noite'),
+                colaboradorId, data, turno, mes,
+                semana: semana || null,
+                unitId: normalizedUnitId,
+                valor: valorFinal,
+                pago: true,
+                dataPagamento: opDtPgto || body.dataPagamento || now.split('T')[0],
+                formaPagamento: opForma || body.formaPagamento || 'PIX',
+                pagamentoId,
+                transacaoBancariaId: null,
+                confiabilidade: 'real',
+                ...(body.valorBruto !== undefined ? { valorBruto: parseFloat(body.valorBruto) || 0 } : {}),
+                ...(body.valorDescSaidas !== undefined ? { valorDescSaidas: parseFloat(body.valorDescSaidas) || 0 } : {}),
+                ...(body.valorAbatEsp !== undefined ? { valorAbatEsp: parseFloat(body.valorAbatEsp) || 0 } : {}),
+                ...(body.valorLiquido !== undefined ? { valorLiquido: parseFloat(body.valorLiquido) || 0 } : {}),
+                obs: opObs || body.obs || '',
+                updatedAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-folha-pagamento',
+                  Item: item,
+                  ConditionExpression: 'attribute_not_exists(id) OR pago = :false',
+                  ExpressionAttributeValues: { ':false': false },
+                },
+              });
+              savedIds.push(dayId);
+              break;
+            }
+
+            // ── FOLHA-PAGAMENTO (transporte) ───────────────────────────────
+            case 'folha-transporte': {
+              const { data: tData, valor: tValor, obs: tObs, dataPagamento: tDtPgto, formaPagamento: tForma } = op;
+              const dayId = `folha-${colaboradorId}-${tData || semana}-Transporte`;
+              const item = {
+                id: dayId,
+                tipo: 'freelancer-dia',
+                tipoCodigo: 'transporte-freelancer',
+                colaboradorId, data: tData || semana, turno: 'Transporte', mes,
+                semana: semana || null,
+                unitId: normalizedUnitId,
+                valor: parseFloat(tValor) || 0,
+                pago: true,
+                dataPagamento: tDtPgto || body.dataPagamento || now.split('T')[0],
+                formaPagamento: tForma || body.formaPagamento || 'PIX',
+                pagamentoId,
+                transacaoBancariaId: null,
+                confiabilidade: 'real',
+                obs: tObs || '',
+                updatedAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-folha-pagamento',
+                  Item: item,
+                  ConditionExpression: 'attribute_not_exists(id) OR pago = :false',
+                  ExpressionAttributeValues: { ':false': false },
+                },
+              });
+              savedIds.push(dayId);
+              break;
+            }
+
+            // ── SAÍDA (criar nova) ─────────────────────────────────────────
+            case 'saida-criar': {
+              const saidaId = op.id || `saida-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+              const item = {
+                id: saidaId,
+                responsavel: op.responsavel || '',
+                responsavelId: op.responsavelId || '',
+                responsavelNome: op.responsavelNome || op.responsavel || '',
+                colaboradorId,
+                colaborador: colaborador.nome || '',
+                favorecido: colaborador.nome || '',
+                descricao: op.descricao || '',
+                valor: parseFloat(op.valor) || 0,
+                data: op.data || now.split('T')[0],
+                turno: op.turno || '',
+                tipo: op.tipoSaida || op.tipo || 'A pagar',
+                origem: op.tipoSaida || op.tipo || 'A pagar',
+                referencia: op.tipoSaida || op.tipo || 'A pagar',
+                dataPagamento: op.dataPagamento || '',
+                observacao: op.observacao || '',
+                viagens: 0,
+                caixinha: 0,
+                formaPagamento: op.formaPagamento || 'PIX',
+                pago: op.pago !== undefined ? op.pago : true,
+                obs: op.obs || '',
+                pagamentoIdLigado: pagamentoId,
+                ...(op.excedeAdto !== undefined ? { excedeAdto: !!op.excedeAdto } : {}),
+                unitId: normalizedUnitId,
+                timestamp: now,
+                createdAt: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-saidas',
+                  Item: item,
+                },
+              });
+              savedIds.push(saidaId);
+              break;
+            }
+
+            // ── SAÍDA (atualizar existente — marcar caixinha como paga) ────
+            case 'saida-atualizar': {
+              if (!op.id) break;
+              transactItems.push({
+                Update: {
+                  TableName: 'gres-prod-saidas',
+                  Key: { id: op.id },
+                  UpdateExpression: 'SET pago = :pago, pagamentoIdLigado = :pgtoId, obs = :obs, updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':pago': true,
+                    ':pgtoId': pagamentoId,
+                    ':obs': op.obs || '',
+                    ':now': now,
+                  },
+                },
+              });
+              savedIds.push(op.id);
+              break;
+            }
+
+            // ── PAYSLIP ────────────────────────────────────────────────────
+            case 'payslip': {
+              const psId = op.id || `ps-${colaboradorId}-${mes}-${(semana || 'full').replace(/[^\w]/g, '')}`;
+              const psItem = {
+                id: psId,
+                colaboradorId,
+                nomeColaborador: op.nomeColaborador || colaborador.nome || '',
+                unitId: normalizedUnitId,
+                periodo: op.periodo || mes,
+                periodoInicio: op.periodoInicio || '',
+                periodoFim: op.periodoFim || '',
+                mes,
+                bruto: parseFloat(op.bruto) || 0,
+                transporte: parseFloat(op.transporte) || 0,
+                descontos: parseFloat(op.descontos) || 0,
+                adiantamentos: parseFloat(op.adiantamentos) || 0,
+                liquido: parseFloat(op.liquido) || 0,
+                status: op.status || 'pago',
+                pagamentos: [pagamentoId],
+                criadoEm: now,
+                atualizadoEm: now,
+              };
+              transactItems.push({
+                Put: {
+                  TableName: 'gres-prod-payslips',
+                  Item: psItem,
+                },
+              });
+              savedIds.push(psId);
+              break;
+            }
+
+            default:
+              console.warn(`[pagamento-batch] tipo de operação desconhecido: ${op.tipo}`);
+          }
+        }
+
+        if (transactItems.length === 0) {
+          return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'Nenhuma operação válida para executar');
+        }
+
+        // ── EXECUTAR TRANSAÇÃO ATÔMICA ──────────────────────────────────────
+        // DynamoDB limit: 100 items per TransactWriteItems call
+        // Se tiver mais de 25, precisa fazer em batches (DynamoDB aceita até 100 mas
+        // recomenda batches menores para evitar throttle)
+        if (transactItems.length <= 25) {
+          await dynamodb.transactWrite({ TransactItems: transactItems }).promise();
+        } else {
+          // Batch in groups of 25
+          for (let i = 0; i < transactItems.length; i += 25) {
+            const batch = transactItems.slice(i, i + 25);
+            await dynamodb.transactWrite({ TransactItems: batch }).promise();
+          }
+        }
+
+        // Auditoria
+        const audBatch = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'folha-pagamento',
+          entidadeId: pagamentoId,
+          evento: 'pagamento-batch',
+          valoresAntes: null,
+          valoresDepois: { colaboradorId, mes, semana, operacoes: operacoes.length, ids: savedIds },
+          ...audBatch,
+          unitId: normalizedUnitId,
+        });
+
+        return successResponse(200, {
+          pagamentoId,
+          ids: savedIds,
+          count: savedIds.length,
+          transacoes: transactItems.length,
+          atomico: true,
+          ...(valorCorrecoes.length > 0 ? { valorCorrecoes, aviso: 'Alguns valores foram corrigidos pelo servidor' } : {}),
+        });
+
       } catch (err) {
-        console.error('Erro DELETE /comunicados:', err);
-        return response(500, { error: 'Erro ao excluir comunicado: ' + err.message });
+        console.error('[pagamento-batch] Erro:', err);
+        // TransactionCanceledException = uma ou mais condições falharam
+        if (err.code === 'TransactionCanceledException') {
+          const reasons = (err.CancellationReasons || []).map((r, i) => ({
+            index: i,
+            code: r.Code,
+            message: r.Message || '',
+            item: r.Item,
+          })).filter(r => r.code !== 'None');
+          return errorResponse(409, ERROR_CODES.CONFLICT,
+            'Transação cancelada — uma ou mais operações conflitaram (ex: turno já pago)',
+            { reasons }
+          );
+        }
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro no pagamento batch: ' + err.message);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POST /desfazer-pagamento — Reverte atômico: turnos + saídas + payslip
+    // Busca pelo pagamentoId (ligado nos turnos e saídas) e reverte tudo.
+    // ════════════════════════════════════════════════════════════════════
+    if (rawPath === '/desfazer-pagamento' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, mes, semana, pagamentoId, periodoInicio, periodoFim } = body;
+
+      if (!colaboradorId || !mes) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId e mes são obrigatórios');
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
+        const revertidos = { turnos: [], saidas: [], payslips: [] };
+
+        // 1) Buscar turnos pagos deste colaborador no período
+        const isoIni = periodoInicio || `${mes}-01`;
+        const isoFim = periodoFim || `${mes}-31`;
+        // Usa GSI unitId-mes-index e filtra por colaboradorId no servidor
+        const folhasResp = await dynamodb.query({
+          TableName: 'gres-prod-folha-pagamento',
+          IndexName: 'unitId-mes-index',
+          KeyConditionExpression: 'unitId = :uid AND mes = :mes',
+          FilterExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':uid': normalizedUnitId, ':mes': mes, ':cid': colaboradorId },
+        }).promise();
+        const turnosPagos = (folhasResp.Items || []).filter(f =>
+          f.pago === true && f.tipo === 'freelancer-dia' &&
+          f.data >= isoIni && f.data <= isoFim &&
+          (!pagamentoId || f.pagamentoId === pagamentoId)
+        );
+
+        // Extrair pagamentoIds reais (pode haver vários se legado)
+        const pgtoIds = new Set();
+        turnosPagos.forEach(t => { if (t.pagamentoId) pgtoIds.add(t.pagamentoId); });
+
+        // 2) Reverter turnos → pago=false
+        for (const turno of turnosPagos) {
+          await dynamodb.put({
+            TableName: 'gres-prod-folha-pagamento',
+            Item: { ...turno, pago: false, dataPagamento: null, formaPagamento: null, updatedAt: now },
+          }).promise();
+          revertidos.turnos.push(turno.id);
+        }
+
+        // 3) Buscar e deletar saídas ligadas ao(s) pagamentoId(s)
+        if (pgtoIds.size > 0) {
+          // Buscar saídas ligadas ao(s) pagamentoId(s)
+          // Usa GSI unitId-data-index com range expandido +2 dias e filtra por colaborador + pagamentoIdLigado
+          const fimExpandido = new Date(new Date(isoFim + 'T12:00:00').getTime() + 2 * 864e5).toISOString().slice(0, 10);
+          const saidasResp = await dynamodb.query({
+            TableName: 'gres-prod-saidas',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: 'unitId = :uid AND #dt BETWEEN :ini AND :fim',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeNames: { '#dt': 'data' },
+            ExpressionAttributeValues: { ':uid': normalizedUnitId, ':ini': isoIni, ':fim': fimExpandido, ':cid': colaboradorId },
+          }).promise();
+          const saidasLigadas = (saidasResp.Items || []).filter(s => pgtoIds.has(s.pagamentoIdLigado));
+
+          for (const saida of saidasLigadas) {
+            // Tipos auto-gerados pelo pagamento que devem ser DELETADOS
+            const TIPOS_AUTO = ['Desconto Transporte', 'Desconto Adiantamento Especial'];
+            const tipoSaida = saida.tipo || saida.origem || saida.referencia || '';
+            if (TIPOS_AUTO.includes(tipoSaida)) {
+              // Deletar — foi criada automaticamente no pagamento
+              await dynamodb.delete({ TableName: 'gres-prod-saidas', Key: { id: saida.id } }).promise();
+              revertidos.saidas.push({ id: saida.id, acao: 'deletado', tipo: tipoSaida });
+            } else {
+              // Saídas manuais (consumo interno, etc): desvincular do pagamento mas manter
+              await dynamodb.update({
+                TableName: 'gres-prod-saidas',
+                Key: { id: saida.id },
+                UpdateExpression: 'REMOVE pagamentoIdLigado SET updatedAt = :now',
+                ExpressionAttributeValues: { ':now': now },
+              }).promise();
+              revertidos.saidas.push({ id: saida.id, acao: 'desvinculado', tipo: tipoSaida });
+            }
+          }
+        }
+
+        // 4) Buscar e deletar payslip(s) do pagamento
+        //    Payslip id pattern: ps-{colaboradorId}-{mes}-{semana...}
+        if (pgtoIds.size > 0) {
+          // Usa GSI unidade-periodo-index e filtra por colaboradorId
+          const psResp = await dynamodb.query({
+            TableName: 'gres-prod-payslips',
+            IndexName: 'unidade-periodo-index',
+            KeyConditionExpression: 'unitId = :uid',
+            FilterExpression: 'colaboradorId = :cid AND mes = :mes',
+            ExpressionAttributeValues: { ':uid': normalizedUnitId, ':cid': colaboradorId, ':mes': mes },
+          }).promise();
+          const payslipsLigados = (psResp.Items || []).filter(ps => {
+            const psPagamentos = ps.pagamentos || [];
+            return psPagamentos.some(p => pgtoIds.has(p));
+          });
+          for (const ps of payslipsLigados) {
+            await dynamodb.delete({ TableName: 'gres-prod-payslips', Key: { id: ps.id } }).promise();
+            revertidos.payslips.push(ps.id);
+          }
+        }
+
+        // Auditoria
+        const audUndo = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'folha-pagamento',
+          entidadeId: pagamentoId || `undo-${colaboradorId}-${now}`,
+          evento: 'desfazer-pagamento',
+          valoresAntes: { pagamentoIds: [...pgtoIds], turnosPagos: turnosPagos.length },
+          valoresDepois: revertidos,
+          ...audUndo,
+          unitId: normalizedUnitId,
+        });
+
+        return successResponse(200, {
+          success: true,
+          revertidos,
+          pagamentoIds: [...pgtoIds],
+        });
+
+      } catch (err) {
+        console.error('[desfazer-pagamento] Erro:', err);
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao desfazer pagamento: ' + err.message);
       }
     }
 
     // Rota não encontrada
-    return response(404, { error: `Rota não encontrada: ${rawPath}` });
+    return errorResponse(404, ERROR_CODES.NOT_FOUND, `Rota não encontrada: ${rawPath}`);
 
   } catch (error) {
     console.error('Erro geral:', error);
-    return response(500, { error: 'Erro interno do servidor' });
+    return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro interno do servidor');
   }
 };
