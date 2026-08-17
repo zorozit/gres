@@ -126,13 +126,15 @@ const fmtDataBR = (iso: string) => {
   return d && m && y ? `${d}/${m}/${y}` : iso;
 };
 
-const fmtHora = (iso: string | undefined | null) => {
-  if (!iso) return '';
+const fmtDataHoraBR = (iso: string | undefined | null): { data: string; hora: string } => {
+  if (!iso) return { data: '', hora: '' };
   try {
     const d = new Date(iso);
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
-  } catch { return ''; }
+    if (isNaN(d.getTime())) return { data: '', hora: '' };
+    const dtStr = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo' });
+    const hrStr = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+    return { data: dtStr, hora: hrStr };
+  } catch { return { data: '', hora: '' }; }
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -739,10 +741,17 @@ export const Saidas: React.FC = () => {
                           onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#e8f0fe')}
                           onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#fafafa' : 'white')}>
                           <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '11px' }}>
-                            {fmtDataBR(r.data)}
-                            {fmtHora(r.timestamp || r.createdAt || r.dataCadastro) && (
-                              <div style={{ fontSize: '10px', color: '#999' }}>{fmtHora(r.timestamp || r.createdAt || r.dataCadastro)}</div>
-                            )}
+                            {(() => {
+                              const tsRaw = r.timestamp || r.createdAt || r.dataCadastro;
+                              const { data: dtBR, hora } = fmtDataHoraBR(tsRaw);
+                              const dataLanc = fmtDataBR(r.data);
+                              // Se o timestamp convertido resulta numa data diferente da data do lançamento,
+                              // mostrar a data real do timestamp (fuso SP) em vez da data ISO
+                              if (dtBR && dtBR !== dataLanc) {
+                                return <>{dtBR}{hora && <div style={{ fontSize: '10px', color: '#999' }}>{hora}</div>}</>;
+                              }
+                              return <>{dataLanc}{hora && <div style={{ fontSize: '10px', color: '#999' }}>{hora}</div>}</>;
+                            })()}
                           </td>
                           <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '11px', color: '#666' }}>{fmtDataBR(r.dataPagamento || r.data)}</td>
                           <td style={{ ...s.td, fontWeight: 'bold' }}>{r.colaborador || r.favorecido || r.colaboradorNome || '-'}</td>
