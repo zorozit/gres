@@ -5282,29 +5282,43 @@ export default function FolhaPagamento() {
                                           setModalFreelancerPgto({ fr, fech });
                                           return;
                                         }
-                                        // Desfazer pagamento: marca todos os registros granulares da semana como não pagos
+                                        // Desfazer pagamento: reverte turnos + saídas auto-geradas + payslip (atômico)
                                         setSalvando(true);
                                         try {
-                                          // Dias já pagos nesta semana (novo modelo)
                                           const isoIniDes = fr.periodoInicio || fech.dataInicioBase;
                                           const isoFimDes = fr.periodoFim    || fech.dataFechamento;
                                           const diasJaPagosNovos = folhasDB.filter((f: any) =>
                                             f.colaboradorId === fr.id && f.tipo === 'freelancer-dia' &&
                                             f.data >= isoIniDes && f.data <= isoFimDes && f.pago
                                           );
-                                          if (diasJaPagosNovos.length > 0) {
-                                            // Desfaz cada registro granular
-                                            const payloadDias = {
-                                              colaboradorId: fr.id, mes: mesAno, semana: fech.dataFechamento, unitId,
-                                              pago: false,
-                                              dias: diasJaPagosNovos.map((d: any) => ({ data: d.data, turno: d.turno, valor: d.valor })),
-                                            };
-                                            const r1 = await fetchAuth(`${apiUrl}/folha-pagamento`, {
+                                          // Extrair pagamentoId do primeiro turno pago (todos compartilham o mesmo lote)
+                                          const pgtoId = diasJaPagosNovos.find((d: any) => d.pagamentoId)?.pagamentoId || null;
+
+                                          if (pgtoId) {
+                                            // Novo: endpoint atômico que reverte turnos + saídas + payslip
+                                            const rUndo = await fetchAuth(`${apiUrl}/desfazer-pagamento`, {
                                               method: 'POST',
                                               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
-                                              body: JSON.stringify(payloadDias),
+                                              body: JSON.stringify({
+                                                colaboradorId: fr.id, unitId, mes: mesAno,
+                                                semana: fech.dataFechamento,
+                                                pagamentoId: pgtoId,
+                                                periodoInicio: isoIniDes, periodoFim: isoFimDes,
+                                              }),
                                             });
-                                            if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
+                                            if (!rUndo.ok) throw new Error(`HTTP ${rUndo.status}`);
+                                          } else if (diasJaPagosNovos.length > 0) {
+                                            // Fallback sem pagamentoId: endpoint atômico busca por período
+                                            const rUndo2 = await fetchAuth(`${apiUrl}/desfazer-pagamento`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+                                              body: JSON.stringify({
+                                                colaboradorId: fr.id, unitId, mes: mesAno,
+                                                semana: fech.dataFechamento,
+                                                periodoInicio: isoIniDes, periodoFim: isoFimDes,
+                                              }),
+                                            });
+                                            if (!rUndo2.ok) throw new Error(`HTTP ${rUndo2.status}`);
                                           } else {
                                             // Legado: desfaz o registro semanal agrupado
                                             const payloadLeg = {

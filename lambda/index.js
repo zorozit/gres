@@ -3662,6 +3662,133 @@ exports.handler = async (event) => {
       }
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // POST /desfazer-pagamento — Reverte atômico: turnos + saídas + payslip
+    // Busca pelo pagamentoId (ligado nos turnos e saídas) e reverte tudo.
+    // ════════════════════════════════════════════════════════════════════
+    if (rawPath === '/desfazer-pagamento' && httpMethod === 'POST') {
+      const { colaboradorId, unitId, mes, semana, pagamentoId, periodoInicio, periodoFim } = body;
+
+      if (!colaboradorId || !mes) {
+        return errorResponse(400, ERROR_CODES.VALIDATION_ERROR, 'colaboradorId e mes são obrigatórios');
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const normalizedUnitId = toCnpj(unitId || '') || unitId || '';
+        const revertidos = { turnos: [], saidas: [], payslips: [] };
+
+        // 1) Buscar turnos pagos deste colaborador no período
+        const isoIni = periodoInicio || `${mes}-01`;
+        const isoFim = periodoFim || `${mes}-31`;
+        // Usa GSI unitId-mes-index e filtra por colaboradorId no servidor
+        const folhasResp = await dynamodb.query({
+          TableName: 'gres-prod-folha-pagamento',
+          IndexName: 'unitId-mes-index',
+          KeyConditionExpression: 'unitId = :uid AND mes = :mes',
+          FilterExpression: 'colaboradorId = :cid',
+          ExpressionAttributeValues: { ':uid': normalizedUnitId, ':mes': mes, ':cid': colaboradorId },
+        }).promise();
+        const turnosPagos = (folhasResp.Items || []).filter(f =>
+          f.pago === true && f.tipo === 'freelancer-dia' &&
+          f.data >= isoIni && f.data <= isoFim &&
+          (!pagamentoId || f.pagamentoId === pagamentoId)
+        );
+
+        // Extrair pagamentoIds reais (pode haver vários se legado)
+        const pgtoIds = new Set();
+        turnosPagos.forEach(t => { if (t.pagamentoId) pgtoIds.add(t.pagamentoId); });
+
+        // 2) Reverter turnos → pago=false
+        for (const turno of turnosPagos) {
+          await dynamodb.put({
+            TableName: 'gres-prod-folha-pagamento',
+            Item: { ...turno, pago: false, dataPagamento: null, formaPagamento: null, updatedAt: now },
+          }).promise();
+          revertidos.turnos.push(turno.id);
+        }
+
+        // 3) Buscar e deletar saídas ligadas ao(s) pagamentoId(s)
+        if (pgtoIds.size > 0) {
+          // Buscar saídas ligadas ao(s) pagamentoId(s)
+          // Usa GSI unitId-data-index com range expandido +2 dias e filtra por colaborador + pagamentoIdLigado
+          const fimExpandido = new Date(new Date(isoFim + 'T12:00:00').getTime() + 2 * 864e5).toISOString().slice(0, 10);
+          const saidasResp = await dynamodb.query({
+            TableName: 'gres-prod-saidas',
+            IndexName: 'unitId-data-index',
+            KeyConditionExpression: 'unitId = :uid AND #dt BETWEEN :ini AND :fim',
+            FilterExpression: 'colaboradorId = :cid',
+            ExpressionAttributeNames: { '#dt': 'data' },
+            ExpressionAttributeValues: { ':uid': normalizedUnitId, ':ini': isoIni, ':fim': fimExpandido, ':cid': colaboradorId },
+          }).promise();
+          const saidasLigadas = (saidasResp.Items || []).filter(s => pgtoIds.has(s.pagamentoIdLigado));
+
+          for (const saida of saidasLigadas) {
+            // Tipos auto-gerados pelo pagamento que devem ser DELETADOS
+            const TIPOS_AUTO = ['Desconto Transporte', 'Desconto Adiantamento Especial'];
+            const tipoSaida = saida.tipo || saida.origem || saida.referencia || '';
+            if (TIPOS_AUTO.includes(tipoSaida)) {
+              // Deletar — foi criada automaticamente no pagamento
+              await dynamodb.delete({ TableName: 'gres-prod-saidas', Key: { id: saida.id } }).promise();
+              revertidos.saidas.push({ id: saida.id, acao: 'deletado', tipo: tipoSaida });
+            } else {
+              // Saídas manuais (consumo interno, etc): desvincular do pagamento mas manter
+              await dynamodb.update({
+                TableName: 'gres-prod-saidas',
+                Key: { id: saida.id },
+                UpdateExpression: 'REMOVE pagamentoIdLigado SET updatedAt = :now',
+                ExpressionAttributeValues: { ':now': now },
+              }).promise();
+              revertidos.saidas.push({ id: saida.id, acao: 'desvinculado', tipo: tipoSaida });
+            }
+          }
+        }
+
+        // 4) Buscar e deletar payslip(s) do pagamento
+        //    Payslip id pattern: ps-{colaboradorId}-{mes}-{semana...}
+        if (pgtoIds.size > 0) {
+          // Usa GSI unidade-periodo-index e filtra por colaboradorId
+          const psResp = await dynamodb.query({
+            TableName: 'gres-prod-payslips',
+            IndexName: 'unidade-periodo-index',
+            KeyConditionExpression: 'unitId = :uid',
+            FilterExpression: 'colaboradorId = :cid AND mes = :mes',
+            ExpressionAttributeValues: { ':uid': normalizedUnitId, ':cid': colaboradorId, ':mes': mes },
+          }).promise();
+          const payslipsLigados = (psResp.Items || []).filter(ps => {
+            const psPagamentos = ps.pagamentos || [];
+            return psPagamentos.some(p => pgtoIds.has(p));
+          });
+          for (const ps of payslipsLigados) {
+            await dynamodb.delete({ TableName: 'gres-prod-payslips', Key: { id: ps.id } }).promise();
+            revertidos.payslips.push(ps.id);
+          }
+        }
+
+        // Auditoria
+        const audUndo = extrairAuditoria(body, event);
+        await logAlteracaoGenerica({
+          tabela: 'folha-pagamento',
+          entidadeId: pagamentoId || `undo-${colaboradorId}-${now}`,
+          evento: 'desfazer-pagamento',
+          valoresAntes: { pagamentoIds: [...pgtoIds], turnosPagos: turnosPagos.length },
+          valoresDepois: revertidos,
+          ...audUndo,
+          unitId: normalizedUnitId,
+        });
+
+        return successResponse(200, {
+          success: true,
+          revertidos,
+          pagamentoIds: [...pgtoIds],
+        });
+
+      } catch (err) {
+        console.error('[desfazer-pagamento] Erro:', err);
+        return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao desfazer pagamento: ' + err.message);
+      }
+    }
+
     // Rota não encontrada
     return errorResponse(404, ERROR_CODES.NOT_FOUND, `Rota não encontrada: ${rawPath}`);
 

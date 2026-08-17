@@ -910,21 +910,31 @@ export default function FreelancerPagamento() {
     finally { setSalvando(false); }
   };
 
-  /* desfazer pagamento */
+  /* desfazer pagamento — reverte turnos + saídas auto-geradas + payslip */
   const desfazerPagamento = async (fr: any, fech: any) => {
     if (!window.confirm(`Desfazer pagamento de ${fr.nome} — semana ${fech.semanaLabel}?`)) return;
     setSalvando(true);
     try {
+      const isoIniDes = fech.dataInicioBase;
+      const isoFimDes = fech.dataFechamento;
       const diasPagosNovos = folhasDB.filter((f:any)=>
         f.colaboradorId===fr.id && f.tipo==='freelancer-dia' &&
-        f.data>=fech.dataInicioBase && f.data<=fech.dataFechamento && f.pago
+        f.data>=isoIniDes && f.data<=isoFimDes && f.pago
       );
-      if (diasPagosNovos.length>0) {
-        await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
-          colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,
-          dias:diasPagosNovos.map((d:any)=>({data:d.data,turno:d.turno,valor:d.valor})),
+      // Extrair pagamentoId do lote (todos os turnos compartilham)
+      const pgtoId = diasPagosNovos.find((d:any) => d.pagamentoId)?.pagamentoId || null;
+
+      if (pgtoId || diasPagosNovos.length > 0) {
+        // Endpoint atômico: reverte turnos + deleta saídas auto + deleta payslip
+        const rUndo = await fetchAuth(`${apiUrl}/desfazer-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
+          colaboradorId:fr.id, unitId, mes:mesAno,
+          semana:fech.dataFechamento,
+          pagamentoId:pgtoId,
+          periodoInicio:isoIniDes, periodoFim:isoFimDes,
         })});
+        if (!rUndo.ok) throw new Error(`HTTP ${rUndo.status}`);
       } else {
+        // Legado: desfaz registro semanal agrupado
         await fetchAuth(`${apiUrl}/folha-pagamento`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({
           colaboradorId:fr.id,mes:mesAno,semana:fech.dataFechamento,unitId,pago:false,dataPagamento:null,diasPagos:[],
         })});
