@@ -4344,7 +4344,7 @@ export default function FolhaPagamento() {
                   const transporteSaldoCLT = 0;
 
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte, transporteSaldoCLT, adtoTranspMes, adtoDisponivel };
-                }).filter(l => l.dC + l.nC + l.dnC > 0);
+                }).filter(l => (l.dC + l.nC + l.dnC > 0) && l.totalBruto > 0);
 
                 if (linhas.length === 0) return null;
 

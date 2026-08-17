@@ -235,7 +235,7 @@ export default function Payslips() {
                       background: p.tipoContrato === 'CLT' ? '#e3f2fd' : '#f3e5f5',
                       color: p.tipoContrato === 'CLT' ? '#1565c0' : '#7b1fa2',
                       padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
-                    }}>{p.tipoContrato || 'Freelancer'}</span>
+                    }}>{p.tipoContrato || (p.periodo?.includes('dobras') ? 'CLT' : 'Freelancer')}</span>
                   </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 'bold' }}>{fmtMoeda(p.bruto)}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>{p.descontos > 0 ? `-${fmtMoeda(p.descontos)}` : '-'}</td>
@@ -272,7 +272,7 @@ export default function Payslips() {
                   background: detalhe.tipoContrato === 'CLT' ? '#e3f2fd' : '#f3e5f5',
                   color: detalhe.tipoContrato === 'CLT' ? '#1565c0' : '#7b1fa2',
                   padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
-                }}>{detalhe.tipoContrato || 'Freelancer'}</span>
+                }}>{detalhe.tipoContrato || (detalhe.periodo?.includes('dobras') ? 'CLT' : detalhe.tipoPagamento === 'dobras' ? 'CLT' : 'Freelancer')}</span>
                 {detalhe.tipoPagamento && <span style={{ fontSize: '11px', color: '#999', marginLeft: 6 }}>{detalhe.tipoPagamento}</span>}
               </div>
               <div><span style={{ color: '#666' }}>Pagamento:</span><br />
