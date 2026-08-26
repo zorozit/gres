@@ -93,15 +93,28 @@ const queryGSI = async (tableName, indexName, keyExpr, exprVals, filterExpr, lim
     ScanIndexForward: false
   };
   if (filterExpr) params.FilterExpression = filterExpr;
-  if (limit) params.Limit = limit;
-  if (cursor) params.ExclusiveStartKey = cursor;
-  
-  const result = await dynamodb.query(params).promise();
-  return {
-    items: result.Items || [],
-    lastKey: result.LastEvaluatedKey || null,
-    count: result.Count || 0
-  };
+
+  if (limit) {
+    // Com limit: uma única query paginada (cursor-based)
+    params.Limit = limit;
+    if (cursor) params.ExclusiveStartKey = cursor;
+    const result = await dynamodb.query(params).promise();
+    return {
+      items: result.Items || [],
+      lastKey: result.LastEvaluatedKey || null,
+      count: result.Count || 0
+    };
+  } else {
+    // Sem limit: paginar automaticamente para buscar TODOS os resultados
+    let items = [];
+    let queryKey = cursor || undefined;
+    do {
+      const result = await dynamodb.query({ ...params, ...(queryKey ? { ExclusiveStartKey: queryKey } : {}) }).promise();
+      items = items.concat(result.Items || []);
+      queryKey = result.LastEvaluatedKey;
+    } while (queryKey);
+    return { items, lastKey: null, count: items.length };
+  }
 };
 
 // ─────────────────────────────────────────────────────────
@@ -1528,11 +1541,22 @@ exports.handler = async (event) => {
             ScanIndexForward: false
           };
           if (filterParts.length > 0) params.FilterExpression = filterParts.join(' AND ');
-          if (limit) params.Limit = limit;
-          if (cursor) params.ExclusiveStartKey = cursor;
-          const result = await dynamodb.query(params).promise();
-          items = result.Items || [];
-          lastKey = result.LastEvaluatedKey;
+          if (limit) {
+            params.Limit = limit;
+            if (cursor) params.ExclusiveStartKey = cursor;
+            const result = await dynamodb.query(params).promise();
+            items = result.Items || [];
+            lastKey = result.LastEvaluatedKey;
+          } else {
+            // Sem limit: paginar automaticamente para buscar TODOS os resultados (escalas)
+            let queryKey = cursor || undefined;
+            do {
+              const result = await dynamodb.query({ ...params, ...(queryKey ? { ExclusiveStartKey: queryKey } : {}) }).promise();
+              items = items.concat(result.Items || []);
+              queryKey = result.LastEvaluatedKey;
+            } while (queryKey);
+            lastKey = null;
+          }
         } else {
           // Fallback scan
           const filters = [];
@@ -2326,11 +2350,22 @@ exports.handler = async (event) => {
             ScanIndexForward: false
           };
           if (filterParts.length > 0) params.FilterExpression = filterParts.join(' AND ');
-          if (limit) params.Limit = limit;
-          if (cursor) params.ExclusiveStartKey = cursor;
-          const result = await dynamodb.query(params).promise();
-          items = result.Items || [];
-          lastKey = result.LastEvaluatedKey;
+          if (limit) {
+            params.Limit = limit;
+            if (cursor) params.ExclusiveStartKey = cursor;
+            const result = await dynamodb.query(params).promise();
+            items = result.Items || [];
+            lastKey = result.LastEvaluatedKey;
+          } else {
+            // Sem limit: paginar automaticamente para buscar TODOS os resultados (saídas)
+            let queryKey = cursor || undefined;
+            do {
+              const result = await dynamodb.query({ ...params, ...(queryKey ? { ExclusiveStartKey: queryKey } : {}) }).promise();
+              items = items.concat(result.Items || []);
+              queryKey = result.LastEvaluatedKey;
+            } while (queryKey);
+            lastKey = null;
+          }
         } else {
           // Fallback to scan (backward compat)
           const filters = [];

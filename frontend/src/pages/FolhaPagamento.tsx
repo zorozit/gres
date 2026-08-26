@@ -4560,7 +4560,10 @@ export default function FolhaPagamento() {
                                                 (md as any).saldoEspecial = saldoEsp;
                                                 (md as any).saidasFrescas = saidasFrescas;
                                                 setModalDobras({ ...md, ...(md as any) });
-                                              } catch (e) { console.error('Erro ao buscar saídas:', e); }
+                                              } catch (e) {
+                                                console.error('Erro ao buscar saídas:', e);
+                                                alert('⚠️ Erro ao buscar saídas/consumos. Verifique sua conexão e tente novamente. Se confirmar sem isso, os descontos não serão aplicados.');
+                                              }
                                             } else {
                                               // Desfazer pagamento
                                               setSalvando(true);
