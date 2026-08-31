@@ -51,36 +51,55 @@ export const Dashboard: React.FC = () => {
     if (unitId) carregarDashboard();
   }, [unitId, dataInicio, dataFim]);
 
+  // Gera todos os YYYY-MM entre duas datas
+  const mesesNoRange = (ini: string, fim: string): string[] => {
+    const meses: string[] = [];
+    const [ay, am] = ini.substring(0, 7).split('-').map(Number);
+    const [by, bm] = fim.substring(0, 7).split('-').map(Number);
+    let y = ay, m = am;
+    while (y < by || (y === by && m <= bm)) {
+      meses.push(`${y}-${String(m).padStart(2, '0')}`);
+      m++; if (m > 12) { m = 1; y++; }
+    }
+    return meses;
+  };
+
   const carregarDashboard = async () => {
     setLoadingChart(true);
     try {
       const h = { Authorization: `Bearer ${token()}` };
-      // Para escalas, pega o mês de dataInicio
-      const mesAno = dataInicio.substring(0, 7);
-      // Meses tocados pelo range (pode ser 1 ou 2 meses)
-      const mesesAlvo = new Set<string>();
-      mesesAlvo.add(dataInicio.substring(0, 7));
-      mesesAlvo.add(dataFim.substring(0, 7));
-      const folhaFetches = [...mesesAlvo].map(mm =>
+      // Todos os meses tocados pelo range
+      const mesesAlvo = mesesNoRange(dataInicio, dataFim);
+      const folhaFetches = mesesAlvo.map(mm =>
         fetchAuth(`${apiUrl}/folha-pagamento?unitId=${unitId}&mes=${mm}`, { headers: h }).catch(() => null)
       );
+      const escalaFetches = mesesAlvo.map(mm =>
+        fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mm}`, { headers: h }).catch(() => null)
+      );
 
-      const [rC, rCol, rEsc, rMoto, rSaidas, ...foRs] = await Promise.all([
+      const [rC, rCol, rMoto, rSaidas, ...restos] = await Promise.all([
         fetchAuth(`${apiUrl}/caixa?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
         fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, { headers: h }).catch(() => null),
-        fetchAuth(`${apiUrl}/escalas?unitId=${unitId}&mes=${mesAno}`, { headers: h }).catch(() => null),
         fetchAuth(`${apiUrl}/motoboys?unitId=${unitId}`, { headers: h }).catch(() => null),
         fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers: h }).catch(() => null),
+        ...escalaFetches,
         ...folhaFetches,
       ]);
       if (rC?.ok)      { const d = await rC.json();      setCaixaData   (Array.isArray(d) ? d : []); }
       if (rCol?.ok)    { const d = await rCol.json();    setColaboradores(Array.isArray(d) ? d : []); }
-      if (rEsc?.ok)    { const d = await rEsc.json();    setEscalas     (Array.isArray(d) ? d : []); }
       if (rMoto?.ok)   { const d = await rMoto.json();   setMotoboys    (Array.isArray(d) ? d : []); }
       if (rSaidas?.ok) { const d = await rSaidas.json(); setSaidasMes   (Array.isArray(d) ? d : []); }
-      // Folhas reais: agrega todos os mêses
+      // Escalas: agrega todos os meses
+      const escAcc: any[] = [];
+      for (let i = 0; i < escalaFetches.length; i++) {
+        const r = restos[i];
+        if (r?.ok) { try { const d = await r.json(); if (Array.isArray(d)) escAcc.push(...d); } catch {} }
+      }
+      setEscalas(escAcc);
+      // Folhas reais: agrega todos os meses
       const folhasAcc: any[] = [];
-      for (const r of foRs) {
+      for (let i = 0; i < folhaFetches.length; i++) {
+        const r = restos[escalaFetches.length + i];
         if (r?.ok) { try { const d = await r.json(); if (Array.isArray(d)) folhasAcc.push(...d); } catch {} }
       }
       setFolhasDB(folhasAcc);
@@ -96,58 +115,62 @@ export const Dashboard: React.FC = () => {
     else   { setActiveUnit(null); window.dispatchEvent(new CustomEvent('unitChanged', { detail: null })); }
   };
 
-  // ── Custo real por dia: indexa registros pagos da folha por dataPagamento ──
-  const custoRealPorDia = useMemo(() => {
+  // ── Custo real por dia+turno: indexa registros pagos da folha ──
+  // Chave: "YYYY-MM-DD|Dia" ou "YYYY-MM-DD|Noite"
+  const custoRealPorDiaTurno = useMemo(() => {
     const motoboyIds = new Set(motoboys.map((m: any) => m.id));
     const map = new Map<string, { free: number; clt: number; moto: number }>();
+    const getEntry = (k: string) => { let e = map.get(k); if (!e) { e = { free: 0, clt: 0, moto: 0 }; map.set(k, e); } return e; };
 
     for (const reg of folhasDB) {
       // Granulares freelancer (1 por turno/dia)
-      // Usa reg.data (dia do serviço) para mapear o custo no dia correto do gráfico.
-      // dataPagamento é quando o dinheiro saiu (pode ser domingo, fora do range).
       if (reg.tipo === 'freelancer-dia' && reg.pago) {
         const dia = reg.data || reg.dataPagamento || '';
         if (!dia || dia < dataInicio || dia > dataFim) continue;
-        const entry = map.get(dia) || { free: 0, clt: 0, moto: 0 };
-        // 'valor' = valor do turno deste dia; totalFinal/valorBruto são legados
         const val = R(reg.valor) || R(reg.totalFinal) || R(reg.valorBruto) || 0;
+        // Distribui por turno real; transporte vai no turno Dia
+        const turnoReg = (reg.turno === 'Noite') ? 'Noite' : 'Dia';
+        const entry = getEntry(`${dia}|${turnoReg}`);
         if (motoboyIds.has(reg.colaboradorId)) entry.moto += val;
         else entry.free += val;
-        map.set(dia, entry);
       }
       // CLT: adiantamento dia 20
       if (reg.tipo === 'clt-mensal' && reg.pago && reg.dataPgtoAdiantamento) {
         const dia = reg.dataPgtoAdiantamento;
         if (dia >= dataInicio && dia <= dataFim) {
-          const entry = map.get(dia) || { free: 0, clt: 0, moto: 0 };
+          const entry = getEntry(`${dia}|Dia`);
           entry.clt += R(reg.adiantamentoValor) || 0;
-          map.set(dia, entry);
         }
       }
       // CLT: diferença dia 5
       if (reg.tipo === 'clt-mensal' && reg.pago && reg.dataPgtoVariavel) {
         const dia = reg.dataPgtoVariavel;
         if (dia >= dataInicio && dia <= dataFim) {
-          const entry = map.get(dia) || { free: 0, clt: 0, moto: 0 };
+          const entry = getEntry(`${dia}|Dia`);
           const val5 = (R(reg.valorBruto) || R(reg.totalLiquido) || 0) - (R(reg.adiantamentoValor) || 0);
           entry.clt += Math.max(0, val5);
-          map.set(dia, entry);
         }
       }
     }
     return map;
   }, [folhasDB, dataInicio, dataFim, motoboys]);
 
+  // Helper: checa se existe algum registro real de folha para um dia (qualquer turno)
+  const temFolhaReal = (data: string) =>
+    custoRealPorDiaTurno.has(`${data}|Dia`) || custoRealPorDiaTurno.has(`${data}|Noite`);
+
   // Calcula custo de mão de obra por dia e por turno
   // Prioriza dados reais da folha; cai em estimativa por escala se não houver
   const calcCustoPorTurno = (data: string, turno: 'Dia' | 'Noite') => {
     let custoCLT = 0, custoFree = 0, custoMotoboy = 0;
 
-    // ✔ Dados reais da folha: acumula tudo no turno Dia (evita duplicar no Noite)
-    const realDia = custoRealPorDia.get(data);
-    if (realDia) {
-      if (turno === 'Dia') return { custoCLT: realDia.clt, custoFree: realDia.free, custoMotoboy: realDia.moto, custo: realDia.clt + realDia.free + realDia.moto };
-      return { custoCLT: 0, custoFree: 0, custoMotoboy: 0, custo: 0 }; // Noite: já somado no Dia
+    // ✔ Dados reais da folha: distribui por turno real
+    const realTurno = custoRealPorDiaTurno.get(`${data}|${turno}`);
+    if (temFolhaReal(data)) {
+      if (realTurno) {
+        return { custoCLT: realTurno.clt, custoFree: realTurno.free, custoMotoboy: realTurno.moto, custo: realTurno.clt + realTurno.free + realTurno.moto };
+      }
+      return { custoCLT: 0, custoFree: 0, custoMotoboy: 0, custo: 0 };
     }
 
     // ⚠️ Fallback: estimativa por escala (dia sem pagamento real registrado)
@@ -241,7 +264,7 @@ export const Dashboard: React.FC = () => {
         func_noite: funcNoite,
       };
     });
-  }, [dataInicio, dataFim, caixaData, colaboradores, escalas, motoboys, saidasMes, custoRealPorDia]);
+  }, [dataInicio, dataFim, caixaData, colaboradores, escalas, motoboys, saidasMes, custoRealPorDiaTurno]);
 
   /* ─── Render ── */
   return (
