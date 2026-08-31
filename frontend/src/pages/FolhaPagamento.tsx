@@ -4524,12 +4524,14 @@ export default function FolhaPagamento() {
                                                 const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno'];
                                                 // Range expandido +2 dias para pegar saídas até dia do pagamento
                                                 const rangeFimExp = new Date(new Date(sem.fim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
+                                                // Usar segunda-feira real (não clipada) para não perder saídas do início da semana
+                                                const segRealDobras = sem.segReal || sem.inicio;
                                                 const saidasDesc = saidasCol.filter((ss: any) => {
                                                   const t = ss.tipo || ss.origem || '';
                                                   if (!TIPOS_DESC.includes(t)) return false;
                                                   if (ss.pagamentoIdLigado) return false; // já processado
                                                   const dt = ss.dataPagamento || ss.data || '';
-                                                  if (dt < sem.inicio || dt > rangeFimExp) return false;
+                                                  if (dt < segRealDobras || dt > rangeFimExp) return false;
                                                   return true;
                                                 });
                                                 // Pendentes anteriores: descontos de semanas passadas sem pagamentoIdLigado
@@ -4538,7 +4540,7 @@ export default function FolhaPagamento() {
                                                   if (!TIPOS_DESC.includes(t)) return false;
                                                   if (ss.pagamentoIdLigado) return false;
                                                   const dt = ss.dataPagamento || ss.data || '';
-                                                  if (dt >= sem.inicio) return false; // pertence à semana atual ou futura
+                                                  if (dt >= segRealDobras) return false; // pertence à semana atual ou futura
                                                   return true;
                                                 });
                                                 // Saldo adiantamento especial

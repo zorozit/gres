@@ -634,7 +634,13 @@ export default function FreelancerPagamento() {
       const TIPOS_DESC = ['A pagar','A receber','Consumo Interno','Desconto Adiantamento Especial'];
       const TIPOS_CAIX = ['Caixinha'];
       const saidaData = (s:any) => s.dataPagamento||s.data||'';
-      const rangeIni = fech.dataInicioBase;
+      // Usar segunda-feira real da semana (não clipada) para não perder saídas
+      // entre a seg e o início do período custom
+      const iniD = new Date(fech.dataInicioBase + 'T12:00:00');
+      const dowFP = iniD.getDay();
+      const segRealFP = new Date(iniD);
+      if (dowFP !== 1) segRealFP.setDate(segRealFP.getDate() - (dowFP === 0 ? 6 : dowFP - 1));
+      const rangeIni = segRealFP.toISOString().split('T')[0];
       const rangeFim = fech.dataFimEfetivo||fech.dataFechamentoBase;
       // Range expandido +2 dias para pegar descontos criados no dia do pagamento
       const rangeFimDescExp = new Date(new Date(rangeFim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
@@ -855,7 +861,12 @@ export default function FreelancerPagamento() {
 
       // 5) Marcar saídas/descontos da semana como pagas (consumo, a receber, caixinhas)
       {
-        const rangeIni = fr.periodoInicio || fech.dataInicioBase;
+        // Usar segunda-feira real para não perder saídas do início da semana
+        const iniMark = new Date((fr.periodoInicio || fech.dataInicioBase) + 'T12:00:00');
+        const dowMark = iniMark.getDay();
+        const segMark = new Date(iniMark);
+        if (dowMark !== 1) segMark.setDate(segMark.getDate() - (dowMark === 0 ? 6 : dowMark - 1));
+        const rangeIni = segMark.toISOString().split('T')[0];
         const rangeFim = fr.periodoFim || fech.dataFechamento;
         const TIPOS_MARCAR = new Set(['A pagar','A receber','Consumo Interno','Caixinha']);
         const saidasParaMarcar = saidasPeriodo.filter((s:any) => {
