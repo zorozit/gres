@@ -1791,9 +1791,14 @@ export default function FolhaPagamento() {
       const TIPOS_DESCONTO = ['A pagar', 'A receber', 'Consumo Interno', 'Desconto Adiantamento Especial'];
       const TIPOS_CAIXINHA = ['Caixinha'];
       const saidaData = (s: any) => s.dataPagamento || s.data || '';
-      // Usar os limites EFETIVOS (já clipados ao período custom global, se ativo)
-      // para buscar consumos/caixinha. Sem período custom = semana inteira.
-      const rangeIni = fech.dataInicioBase;  // início efetivo (clipado se período global)
+      // Para buscar consumos: usar a segunda-feira REAL da semana (não clipada)
+      // para não perder saídas entre seg e o início do período custom.
+      // Ex: semana 24/08(seg)-30/08(dom) com filtro 25-30 → rangeIni deve ser 24/08, não 25/08.
+      const iniDate = new Date(fech.dataInicioBase + 'T12:00:00');
+      const dow = iniDate.getDay(); // 0=dom, 1=seg, ...
+      const segReal = new Date(iniDate);
+      if (dow !== 1) segReal.setDate(segReal.getDate() - (dow === 0 ? 6 : dow - 1));
+      const rangeIni = segReal.toISOString().split('T')[0]; // segunda-feira real da semana
       const rangeFim = (fech as any).dataFimEfetivo || fech.dataFechamentoBase; // fim efetivo
 
       // Range expandido +2 dias para pegar saídas do dia do pagamento
