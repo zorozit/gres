@@ -4166,7 +4166,7 @@ export default function FolhaPagamento() {
             ultDia  = new Date(anoM, mesM, 0);
           }
 
-          interface SemanaInfo { label: string; inicio: string; fim: string; proxSeg: string; }
+          interface SemanaInfo { label: string; inicio: string; fim: string; proxSeg: string; segReal: string; }
           const semanas: SemanaInfo[] = [];
           let cur = new Date(primDia);
           // Start from Monday of first week
@@ -4179,7 +4179,8 @@ export default function FolhaPagamento() {
             const seg = new Date(cur);
             const dom = new Date(cur); dom.setDate(dom.getDate() + 6);
             const fimReal = dom > ultDia ? new Date(ultDia) : new Date(dom);
-            let inicioStr = seg.toISOString().split('T')[0];
+            const segRealStr = seg.toISOString().split('T')[0]; // segunda-feira real (nunca clipada)
+            let inicioStr = segRealStr;
             let fimStr = fimReal.toISOString().split('T')[0];
             // Clipping ao range custom: a semana exibida não ultrapassa o período selecionado
             if (rangeIniIso && inicioStr < rangeIniIso) inicioStr = rangeIniIso;
@@ -4197,6 +4198,7 @@ export default function FolhaPagamento() {
               label: labelClipado,
               inicio: inicioStr,
               fim: fimStr,
+              segReal: segRealStr,
               proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
             });
             cur.setDate(cur.getDate() + 7);
@@ -4425,7 +4427,7 @@ export default function FolhaPagamento() {
                                   const transpEditado = ed.valorTransporte !== undefined ? (parseFloat(ed.valorTransporte) || 0) : transpBase;
                                   const totalEdit = brutoEditado; // transporte removido para CLT (VT na folha contábil)
                                   // payment log from folhasDB or local state
-                                  const folhaSalva = folhasDB.find(f => f.colaboradorId === p.id && f.mes === mesAno && f.semana === sem.inicio);
+                                  const folhaSalva = folhasDB.find(f => f.colaboradorId === p.id && f.mes === mesAno && (f.semana === sem.segReal || f.semana === sem.inicio));
                                   const isPago = folhaSalva?.pago || false;
                                   const dataPgto = folhaSalva?.dataPagamento;
                                   const cod = l.codigos;
@@ -4569,7 +4571,7 @@ export default function FolhaPagamento() {
                                               setSalvando(true);
                                               try {
                                                 const payload = {
-                                                  colaboradorId: p.id, mes: mesAno, semana: sem.inicio, unitId,
+                                                  colaboradorId: p.id, mes: mesAno, semana: sem.segReal, unitId,
                                                   pago: false, dataPagamento: null,
                                                   valorBruto: brutoEditado, valorTransporte: transpEditado,
                                                   totalFinal: totalEdit, obs: ed.obs || '',
@@ -5583,7 +5585,7 @@ export default function FolhaPagamento() {
             // 1) Folha-pagamento (status pago)
             operacoes.push({
               tipo: 'folha-pagamento-upsert',
-              colaboradorId: md.pessoa.id, mes: mesAno, semana: md.semana.inicio,
+              colaboradorId: md.pessoa.id, mes: mesAno, semana: md.semana.segReal,
               pago: true, dataPagamento: dataConfirmada,
               valorBruto: md.bruto, valorTransporte: md.transporte,
               totalFinal: liquidoFinal, obs: md.obs || '',
@@ -5680,8 +5682,8 @@ export default function FolhaPagamento() {
             // 5) Payslip
             operacoes.push({
               tipo: 'payslip',
-              periodo: `${mesAno}-dobras-${md.semana.inicio}`,
-              periodoInicio: md.semana.inicio,
+              periodo: `${mesAno}-dobras-${md.semana.segReal}`,
+              periodoInicio: md.semana.segReal,
               periodoFim: md.semana.fim,
               bruto: psDobraResult.bruto,
               transporte: md.transporte,
@@ -5699,7 +5701,7 @@ export default function FolhaPagamento() {
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
               body: JSON.stringify({
                 colaboradorId: md.pessoa.id, unitId, mes: mesAno,
-                semana: md.semana.inicio,
+                semana: md.semana.segReal,
                 dataPagamento: dataConfirmada, formaPagamento: formaDobras,
                 valorBruto: psDobraResult.bruto, valorDescSaidas: totalDebito,
                 valorAbatEsp: vlAbatNum, valorLiquido: liquidoFinal,
