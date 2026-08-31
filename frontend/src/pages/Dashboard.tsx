@@ -33,6 +33,7 @@ export const Dashboard: React.FC = () => {
   const [motoboys,     setMotoboys]     = useState<any[]>([]);
   const [saidasMes,    setSaidasMes]    = useState<any[]>([]);  // saídas do mês (para variável motoboy)
   const [folhasDB,     setFolhasDB]     = useState<any[]>([]);  // registros reais de folha-pagamento
+  const [diasSemanaFiltro, setDiasSemanaFiltro] = useState<number[]>([]);  // 0=Dom..6=Sáb, vazio = todos
 
   const unitId = activeUnit?.id || '';
 
@@ -295,6 +296,37 @@ export const Dashboard: React.FC = () => {
               <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)}
                 style={{ padding:'7px 10px', border:'1px solid #ddd', borderRadius:'6px', fontSize:'14px' }} />
             </div>
+            <div>
+              <label style={{ fontSize:'12px', fontWeight:600, color:'#555', display:'block', marginBottom:'3px' }}>Dia da semana:</label>
+              <div style={{ display:'flex', gap:'4px' }}>
+                {(['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'] as const).map((nome, idx) => {
+                  const ativo = diasSemanaFiltro.includes(idx);
+                  return (
+                    <button key={idx}
+                      onClick={() => setDiasSemanaFiltro(prev =>
+                        prev.includes(idx) ? prev.filter(d => d !== idx) : [...prev, idx]
+                      )}
+                      style={{
+                        padding:'5px 8px', fontSize:'12px', fontWeight: ativo ? 700 : 500,
+                        border: ativo ? '2px solid #667eea' : '1px solid #ddd',
+                        borderRadius:'6px', cursor:'pointer',
+                        background: ativo ? '#667eea' : '#fff',
+                        color: ativo ? '#fff' : '#555',
+                        transition:'all .15s',
+                        minWidth:'36px', textAlign:'center' as const,
+                      }}>
+                      {nome}
+                    </button>
+                  );
+                })}
+                {diasSemanaFiltro.length > 0 && (
+                  <button onClick={() => setDiasSemanaFiltro([])}
+                    style={{ padding:'5px 8px', fontSize:'11px', border:'1px solid #ddd', borderRadius:'6px', cursor:'pointer', background:'#f5f5f5', color:'#999' }}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
             <button onClick={carregarDashboard}
               style={{ padding:'7px 14px', border:'none', borderRadius:'6px', background:'#667eea', color:'#fff', fontWeight:700, cursor:'pointer', fontSize:'13px' }}>
               🔄 Atualizar
@@ -324,7 +356,14 @@ export const Dashboard: React.FC = () => {
           </div>
         ) : (
           <DashboardPercentuais
-            dailyData={dailyData}
+            dailyData={diasSemanaFiltro.length > 0
+              ? dailyData.filter(d => {
+                  const [y, m, dd] = d.data.split('-');
+                  const dow = new Date(Number(y), Number(m) - 1, Number(dd)).getDay();
+                  return diasSemanaFiltro.includes(dow);
+                })
+              : dailyData
+            }
             colaboradores={colaboradores}
             escalas={escalas}
           />
