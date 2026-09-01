@@ -4432,7 +4432,16 @@ export default function FolhaPagamento() {
                                   const transpEditado = ed.valorTransporte !== undefined ? (parseFloat(ed.valorTransporte) || 0) : transpBase;
                                   const totalEdit = brutoEditado; // transporte removido para CLT (VT na folha contábil)
                                   // payment log from folhasDB or local state
-                                  const folhaSalva = folhasDB.find(f => f.colaboradorId === p.id && f.mes === mesAno && (f.semana === sem.segReal || f.semana === sem.inicio));
+                                  // Match flexível: segReal, inicio, ou ±1 dia (cobre legado que usava terça como início)
+                                  const folhaSalva = folhasDB.find(f => {
+                                    if (f.colaboradorId !== p.id || f.mes !== mesAno) return false;
+                                    if (!f.semana || f.semana === true) return false;
+                                    if (f.semana === sem.segReal || f.semana === sem.inicio) return true;
+                                    // Tolerância ±1 dia para registros legados
+                                    const fs = new Date(f.semana + 'T12:00:00').getTime();
+                                    const sr = new Date(sem.segReal + 'T12:00:00').getTime();
+                                    return Math.abs(fs - sr) <= 86400000;
+                                  });
                                   const isPago = folhaSalva?.pago || false;
                                   const dataPgto = folhaSalva?.dataPagamento;
                                   const cod = l.codigos;
@@ -4574,11 +4583,12 @@ export default function FolhaPagamento() {
                                                 alert('⚠️ Erro ao buscar saídas/consumos. Verifique sua conexão e tente novamente. Se confirmar sem isso, os descontos não serão aplicados.');
                                               }
                                             } else {
-                                              // Desfazer pagamento
+                                              // Desfazer pagamento — usa semana do registro salvo (cobre legado)
                                               setSalvando(true);
                                               try {
+                                                const semanaDesfazer = (folhaSalva?.semana && folhaSalva.semana !== true) ? folhaSalva.semana : sem.segReal;
                                                 const payload = {
-                                                  colaboradorId: p.id, mes: mesAno, semana: sem.segReal, unitId,
+                                                  colaboradorId: p.id, mes: mesAno, semana: semanaDesfazer, unitId,
                                                   pago: false, dataPagamento: null,
                                                   valorBruto: brutoEditado, valorTransporte: transpEditado,
                                                   totalFinal: totalEdit, obs: ed.obs || '',
