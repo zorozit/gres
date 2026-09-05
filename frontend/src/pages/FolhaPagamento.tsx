@@ -4343,12 +4343,28 @@ export default function FolhaPagamento() {
                     totalBruto = vd * dobrasCalc;
                   }
                   const diasTrab = codigos.filter(c => c !== '-').length;
-                  // Transporte CLT: NÃO incluir nas dobras — já é descontado na folha contábil
-                  // (Cód.109 Desc. Vale Transporte) e controlado nos pagamentos dia 20/05
-                  const totalTransporte = 0;
-                  const adtoTranspMes = 0;
-                  const adtoDisponivel = 0;
-                  const transporteSaldoCLT = 0;
+                  // Transporte: calcular pra CLT e Freelancer
+                  // O VT 6% do holerite é desconto contábil. O "Adiantamento Transporte"
+                  // em Saídas é dinheiro real pago ao colaborador — precisa abater das dobras.
+                  const vTranspDia = R(p.valorTransporte) || 0;
+                  const totalTransporte = diasTrab * vTranspDia;
+                  // Adiantamento de transporte do mês (Saídas)
+                  const saidasTranspCLT = (saidasPeriodo || []).filter((s: any) =>
+                    s.colaboradorId === p.id &&
+                    (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
+                  );
+                  const adtoTranspMes = parseFloat(
+                    saidasTranspCLT.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+                  );
+                  // Dias já pagos em semanas anteriores (granulares reais)
+                  const granAntCLT = folhasDB.filter((reg: any) =>
+                    reg.colaboradorId === p.id && reg.tipo === 'freelancer-dia' &&
+                    reg.pago === true && reg.data && reg.data < sem.inicio
+                  );
+                  const diasAntCLT = new Set<string>(granAntCLT.map((r: any) => r.data)).size;
+                  const transpSemAnt = diasAntCLT * vTranspDia;
+                  const adtoDisponivel = parseFloat(Math.max(0, adtoTranspMes - transpSemAnt).toFixed(2));
+                  const transporteSaldoCLT = parseFloat(Math.max(0, totalTransporte - adtoDisponivel).toFixed(2));
 
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte, transporteSaldoCLT, adtoTranspMes, adtoDisponivel };
                 }).filter(l => (l.dC + l.nC + l.dnC > 0) && l.totalBruto > 0);
