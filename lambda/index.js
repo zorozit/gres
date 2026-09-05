@@ -754,7 +754,8 @@ exports.handler = async (event) => {
         isMotoboy, tipoAcordo, acordo,
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
-        contribuicaoAssistencial,  // NOVO
+        contribuicaoAssistencial,
+        beneficioTransporte,  // { tipo, valorMensal, valorDiario, diaCredito }
         // Auditoria - obrigatoria a partir desta versao
         responsavelId, responsavelNome, responsavelEmail,
       } = body;
@@ -831,6 +832,13 @@ exports.handler = async (event) => {
           horarioSaida:     horarioSaida || '',
           // Contribuição Assistencial (cod 1000 / 1305 da folha)
           contribuicaoAssistencial: parseFloat(contribuicaoAssistencial) || 0,
+          // Benefício Transporte (CLT)
+          beneficioTransporte: beneficioTransporte ? {
+            tipo: beneficioTransporte.tipo || 'nenhum',
+            valorMensal: parseFloat(beneficioTransporte.valorMensal) || 0,
+            valorDiario: parseFloat(beneficioTransporte.valorDiario) || 0,
+            diaCredito: parseInt(beneficioTransporte.diaCredito) || 1,
+          } : { tipo: 'nenhum', valorMensal: 0, valorDiario: 0, diaCredito: 1 },
           // Auditoria
           criadoPor:        responsavelId || '',
           criadoPorNome:    responsavelNome || '',
@@ -878,7 +886,8 @@ exports.handler = async (event) => {
         isMotoboy, tipoAcordo, acordo,
         valorChegadaDia, valorChegadaNoite, valorEntrega,
         horarioEntrada, horarioSaida,
-        contribuicaoAssistencial,  // NOVO
+        contribuicaoAssistencial,
+        beneficioTransporte,  // { tipo, valorMensal, valorDiario, diaCredito }
         // Auditoria
         responsavelId, responsavelNome, responsavelEmail, observacaoAlteracao,
       } = body;
@@ -952,6 +961,13 @@ exports.handler = async (event) => {
           horarioSaida:     horarioSaida !== undefined ? horarioSaida : (original.Item.horarioSaida || ''),
           // Contribuição Assistencial (cod 1000 / 1305 da folha)
           contribuicaoAssistencial: contribuicaoAssistencial !== undefined ? (parseFloat(contribuicaoAssistencial) || 0) : (original.Item.contribuicaoAssistencial || 0),
+          // Benefício Transporte (CLT)
+          beneficioTransporte: beneficioTransporte !== undefined ? {
+            tipo: beneficioTransporte.tipo || 'nenhum',
+            valorMensal: parseFloat(beneficioTransporte.valorMensal) || 0,
+            valorDiario: parseFloat(beneficioTransporte.valorDiario) || 0,
+            diaCredito: parseInt(beneficioTransporte.diaCredito) || 1,
+          } : (original.Item.beneficioTransporte || { tipo: 'nenhum', valorMensal: 0, valorDiario: 0, diaCredito: 1 }),
           // Permite mudança de unidade (transferência)
           unitId:           unitId !== undefined ? resolveUnitId(unitId) : (original.Item.unitId || ''),
         };
@@ -968,7 +984,7 @@ exports.handler = async (event) => {
           let evento = 'alterado';
           if (diffs.ativo) evento = updated.ativo ? 'reativado' : 'desativado';
           else if (diffs.unitId) evento = 'transferido';
-          else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte || diffs.periculosidade || diffs.contribuicaoAssistencial || diffs.isMotoboy || diffs.tipoAcordo || diffs.acordo) evento = 'remuneracao_alterada';
+          else if (diffs.salario || diffs.valorDia || diffs.valorNoite || diffs.valorEntrega || diffs.valorChegadaDia || diffs.valorChegadaNoite || diffs.valorTransporte || diffs.periculosidade || diffs.contribuicaoAssistencial || diffs.isMotoboy || diffs.tipoAcordo || diffs.acordo || diffs.beneficioTransporte) evento = 'remuneracao_alterada';
           else if (diffs.cargo || diffs.tipo || diffs.funcao || diffs.area) evento = 'cargo_alterado';
           else if (diffs.tipoContrato) evento = 'contrato_alterado';
 
@@ -3880,6 +3896,236 @@ exports.handler = async (event) => {
         console.error('[desfazer-pagamento] Erro:', err);
         return errorResponse(500, ERROR_CODES.SERVER_ERROR, 'Erro ao desfazer pagamento: ' + err.message);
       }
+    }
+
+    // ─── BENEFÍCIOS ────────────────────────────────────────────────
+
+    // GET /beneficios?unitId=X&mes=YYYY-MM — listar benefícios do mês
+    // GET /beneficios?unitId=X&colaboradorId=Y — histórico de um colaborador
+    if ((rawPath === '/beneficios' || rawPath.includes('/beneficios')) && httpMethod === 'GET') {
+      const { unitId: qUnit, mes, colaboradorId } = qs;
+      if (!qUnit) return response(400, { error: 'unitId obrigatório' });
+      const uid = resolveUnitId(qUnit);
+
+      try {
+        let filterExpr = 'unitId = :u';
+        const exprVals = { ':u': uid };
+        if (mes) { filterExpr += ' AND mes = :m'; exprVals[':m'] = mes; }
+        if (colaboradorId) { filterExpr += ' AND colaboradorId = :c'; exprVals[':c'] = colaboradorId; }
+
+        const result = await dynamodb.scan({
+          TableName: 'gres-prod-beneficios',
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+        }).promise();
+
+        return response(200, result.Items || []);
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao listar benefícios' }); }
+    }
+
+    // POST /beneficios/creditar — creditar benefícios do mês para colaboradores configurados
+    if (rawPath === '/beneficios/creditar' && httpMethod === 'POST') {
+      const { unitId: bUnit, mes, colaboradorIds } = body;
+      if (!bUnit || !mes) return response(400, { error: 'unitId e mes obrigatórios' });
+      const uid = resolveUnitId(bUnit);
+      const now = new Date().toISOString();
+
+      try {
+        // Buscar colaboradores com benefício configurado
+        const colabs = await dynamodb.scan({
+          TableName: 'gres-prod-colaboradores',
+          FilterExpression: 'unitId = :u AND ativo <> :f',
+          ExpressionAttributeValues: { ':u': uid, ':f': false },
+        }).promise();
+
+        const alvo = (colabs.Items || []).filter(c => {
+          const bt = c.beneficioTransporte || {};
+          if (bt.tipo === 'nenhum' || !bt.tipo) return false;
+          if (colaboradorIds && !colaboradorIds.includes(c.id)) return false;
+          return true;
+        });
+
+        // Buscar escalas do mês para contar dias trabalhados
+        const escalas = await dynamodb.scan({
+          TableName: 'gres-prod-escalas',
+          FilterExpression: 'unitId = :u AND begins_with(#dt, :m)',
+          ExpressionAttributeNames: { '#dt': 'data' },
+          ExpressionAttributeValues: { ':u': uid, ':m': mes },
+        }).promise();
+        const escalaItems = escalas.Items || [];
+
+        const creditados = [];
+        const jaExistentes = [];
+
+        for (const c of alvo) {
+          const benId = `benef-${c.id}-${mes}`;
+          const bt = c.beneficioTransporte;
+
+          // Verificar se já existe
+          const existing = await dynamodb.get({
+            TableName: 'gres-prod-beneficios',
+            Key: { id: benId },
+          }).promise();
+
+          if (existing.Item) {
+            jaExistentes.push(benId);
+            continue;
+          }
+
+          // Contar dias trabalhados no mês
+          const diasColab = escalaItems.filter(e => {
+            if (!e.colaboradores || !Array.isArray(e.colaboradores)) return false;
+            return e.colaboradores.some(ec =>
+              (ec.id === c.id || ec.colaboradorId === c.id) &&
+              (ec.turno === 'Dia' || ec.turno === 'Noite' || ec.turno === 'DiaNoite')
+            );
+          });
+          const diasUnicos = new Set(diasColab.map(e => e.data)).size;
+
+          const valorCreditado = bt.tipo === 'mensal_fixo' ? (bt.valorMensal || 0) : 0;
+          const valorDiario = bt.valorDiario || (c.valorTransporte || 0);
+          const valorConsumido = parseFloat((diasUnicos * valorDiario).toFixed(2));
+
+          const item = {
+            id: benId,
+            colaboradorId: c.id,
+            unitId: uid,
+            mes,
+            tipo: 'transporte',
+            valorCreditado,
+            valorConsumido,
+            diasConsumidos: diasUnicos,
+            valorDiario,
+            saldo: parseFloat((valorCreditado - valorConsumido).toFixed(2)),
+            status: valorCreditado - valorConsumido > 0.01 ? 'ativo'
+                  : valorCreditado - valorConsumido < -0.01 ? 'excedido' : 'zerado',
+            colaboradorNome: c.nome,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          await dynamodb.put({
+            TableName: 'gres-prod-beneficios',
+            Item: item,
+          }).promise();
+
+          creditados.push(item);
+        }
+
+        return response(200, { creditados: creditados.length, jaExistentes: jaExistentes.length, itens: creditados });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao creditar benefícios: ' + e.message }); }
+    }
+
+    // POST /beneficios/recalcular — recalcular consumo do mês com base nas escalas
+    if (rawPath === '/beneficios/recalcular' && httpMethod === 'POST') {
+      const { unitId: rUnit, mes, colaboradorId } = body;
+      if (!rUnit || !mes) return response(400, { error: 'unitId e mes obrigatórios' });
+      const uid = resolveUnitId(rUnit);
+      const now = new Date().toISOString();
+
+      try {
+        // Buscar benefícios do mês
+        let filterExpr = 'unitId = :u AND mes = :m';
+        const exprVals = { ':u': uid, ':m': mes };
+        if (colaboradorId) { filterExpr += ' AND colaboradorId = :c'; exprVals[':c'] = colaboradorId; }
+
+        const benResult = await dynamodb.scan({
+          TableName: 'gres-prod-beneficios',
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+        }).promise();
+
+        const beneficios = benResult.Items || [];
+        if (beneficios.length === 0) return response(200, { recalculados: 0 });
+
+        // Buscar escalas do mês
+        const escalas = await dynamodb.scan({
+          TableName: 'gres-prod-escalas',
+          FilterExpression: 'unitId = :u AND begins_with(#dt, :m)',
+          ExpressionAttributeNames: { '#dt': 'data' },
+          ExpressionAttributeValues: { ':u': uid, ':m': mes },
+        }).promise();
+        const escalaItems = escalas.Items || [];
+
+        // Buscar colaboradores pra pegar valorDiario atualizado
+        const colabs = await dynamodb.scan({
+          TableName: 'gres-prod-colaboradores',
+          FilterExpression: 'unitId = :u',
+          ExpressionAttributeValues: { ':u': uid },
+        }).promise();
+        const colabMap = new Map((colabs.Items || []).map(c => [c.id, c]));
+
+        const atualizados = [];
+        for (const ben of beneficios) {
+          const colab = colabMap.get(ben.colaboradorId);
+          const bt = colab?.beneficioTransporte || {};
+          const valorDiario = bt.valorDiario || colab?.valorTransporte || ben.valorDiario || 0;
+
+          // Contar dias trabalhados
+          const diasColab = escalaItems.filter(e => {
+            if (!e.colaboradores || !Array.isArray(e.colaboradores)) return false;
+            return e.colaboradores.some(ec =>
+              (ec.id === ben.colaboradorId || ec.colaboradorId === ben.colaboradorId) &&
+              (ec.turno === 'Dia' || ec.turno === 'Noite' || ec.turno === 'DiaNoite')
+            );
+          });
+          const diasUnicos = new Set(diasColab.map(e => e.data)).size;
+          const valorConsumido = parseFloat((diasUnicos * valorDiario).toFixed(2));
+          const saldo = parseFloat((ben.valorCreditado - valorConsumido).toFixed(2));
+
+          await dynamodb.update({
+            TableName: 'gres-prod-beneficios',
+            Key: { id: ben.id },
+            UpdateExpression: 'SET valorConsumido = :vc, diasConsumidos = :dc, valorDiario = :vd, saldo = :s, #st = :st, updatedAt = :u',
+            ExpressionAttributeNames: { '#st': 'status' },
+            ExpressionAttributeValues: {
+              ':vc': valorConsumido,
+              ':dc': diasUnicos,
+              ':vd': valorDiario,
+              ':s': saldo,
+              ':st': saldo > 0.01 ? 'ativo' : saldo < -0.01 ? 'excedido' : 'zerado',
+              ':u': now,
+            },
+          }).promise();
+
+          atualizados.push({ id: ben.id, colaboradorId: ben.colaboradorId, diasConsumidos: diasUnicos, valorConsumido, saldo });
+        }
+
+        return response(200, { recalculados: atualizados.length, itens: atualizados });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao recalcular: ' + e.message }); }
+    }
+
+    // PUT /beneficios/:id — ajuste manual
+    if (rawPath.match(/\/beneficios\/.+/) && httpMethod === 'PUT') {
+      const benId = rawPath.split('/').pop();
+      const { valorCreditado, valorConsumido, diasConsumidos, obs } = body;
+      const now = new Date().toISOString();
+
+      try {
+        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
+        if (!existing.Item) return response(404, { error: 'Benefício não encontrado' });
+
+        const updated = { ...existing.Item };
+        if (valorCreditado !== undefined) updated.valorCreditado = parseFloat(valorCreditado) || 0;
+        if (valorConsumido !== undefined) updated.valorConsumido = parseFloat(valorConsumido) || 0;
+        if (diasConsumidos !== undefined) updated.diasConsumidos = parseInt(diasConsumidos) || 0;
+        if (obs !== undefined) updated.obs = obs;
+        updated.saldo = parseFloat((updated.valorCreditado - updated.valorConsumido).toFixed(2));
+        updated.status = updated.saldo > 0.01 ? 'ativo' : updated.saldo < -0.01 ? 'excedido' : 'zerado';
+        updated.updatedAt = now;
+
+        await dynamodb.put({ TableName: 'gres-prod-beneficios', Item: updated }).promise();
+        return response(200, { success: true, item: updated });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao atualizar benefício' }); }
+    }
+
+    // DELETE /beneficios/:id
+    if (rawPath.match(/\/beneficios\/.+/) && httpMethod === 'DELETE') {
+      const benId = rawPath.split('/').pop();
+      try {
+        await dynamodb.delete({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
+        return response(200, { success: true });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao excluir benefício' }); }
     }
 
     // Rota não encontrada

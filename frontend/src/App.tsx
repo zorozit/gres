@@ -23,6 +23,7 @@ import FreelancerPagamento from './pages/FreelancerPagamento';
 import MotoboyAuditoria from './pages/MotoboyAuditoria';
 import { Extrato } from './pages/Extrato';
 import AdiantamentosSaldos from './pages/AdiantamentosSaldos';
+import Beneficios from './pages/Beneficios';
 import ImportacoesContabeis from './pages/ImportacoesContabeis';
 import ConferenciaFolha from './pages/ConferenciaFolha';
 import FechamentoCaixaDinheiro from './pages/FechamentoCaixaDinheiro';
@@ -115,6 +116,9 @@ function App() {
 
               <Route path="/modulos/adiantamentos-saldos"
                 element={<Protected moduloId="adiantamentos-saldos"><AdiantamentosSaldos /></Protected>} />
+
+              <Route path="/modulos/beneficios"
+                element={<Protected moduloId="beneficios"><Beneficios /></Protected>} />
 
               <Route path="/modulos/fechamento-dinheiro"
                 element={<Protected moduloId="fechamento-dinheiro"><FechamentoCaixaDinheiro /></Protected>} />

@@ -46,6 +46,7 @@ const MODULE_GROUPS: ModuleGroup[] = [
       { id: 'conferencia-folha',    icon: '📋', title: 'Conferência Folha',    path: '/modulos/conferencia-folha' },
       { id: 'freelancer-pagamento', icon: '🎯', title: 'Freelancers',         path: '/modulos/freelancer-pagamento' },
       { id: 'adiantamentos-saldos', icon: '🧾', title: 'Adiantamentos',       path: '/modulos/adiantamentos-saldos' },
+      { id: 'beneficios',           icon: '🎁', title: 'Benefícios',           path: '/modulos/beneficios' },
       { id: 'fechamento-dinheiro',  icon: '💵', title: 'Fechamento Dinheiro', path: '/modulos/fechamento-dinheiro' },
       { id: 'payslips',             icon: '🧾', title: 'Payslips',            path: '/modulos/payslips' },
     ],

@@ -78,6 +78,13 @@ interface Colaborador {
   periculosidade?: number;
   // Contribuição Assistencial (cod 1000 / 1305 da folha)
   contribuicaoAssistencial?: number;
+  // Benefício Transporte (CLT)
+  beneficioTransporte?: {
+    tipo: 'mensal_fixo' | 'por_dia' | 'nenhum';
+    valorMensal: number;
+    valorDiario: number;
+    diaCredito: number;
+  };
   // Afastamento / Licença
   afastadoDesde?: string;
   afastadoAte?: string;
@@ -767,8 +774,81 @@ const CamposContratacao = ({ data, onChange, funcoesOpcoes, funcoes }: CamposCon
             onFocus={e => e.target.select()}
             onBlur={e => onChange({ valorTransporte: brParaNum(e.target.value) })}
           />
-          <small style={{ color:'#888', fontSize:'11px' }}>Multiplicado pelos dias trabalhados</small>
+          <small style={{ color:'#888', fontSize:'11px' }}>Valor diário de transporte (consumo por dia trabalhado)</small>
         </div>
+        {/* Benefício Transporte (CLT) */}
+        {!isFreelancer && (
+          <div style={{ ...styles.formGroup, gridColumn: '1 / -1', background: '#f0f7ff', padding: '12px', borderRadius: '8px', border: '1px solid #d0e3f7' }}>
+            <label style={{ ...styles.label, color: '#1565c0', marginBottom: '8px', display: 'block' }}>🎁 Benefício Transporte Mensal</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px' }}>
+              <div>
+                <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '3px' }}>Tipo</label>
+                <select
+                  value={(data as any).beneficioTransporte?.tipo || 'nenhum'}
+                  onChange={e => onChange({
+                    beneficioTransporte: {
+                      ...((data as any).beneficioTransporte || { valorMensal: 0, valorDiario: data.valorTransporte || 0, diaCredito: 1 }),
+                      tipo: e.target.value,
+                    }
+                  } as any)}
+                  style={styles.input}>
+                  <option value="nenhum">Sem benefício</option>
+                  <option value="mensal_fixo">Mensal fixo (R$/mês)</option>
+                  <option value="por_dia">Só por dia trabalhado</option>
+                </select>
+              </div>
+              {(data as any).beneficioTransporte?.tipo === 'mensal_fixo' && (
+                <div>
+                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '3px' }}>Valor mensal (R$)</label>
+                  <input type="text" inputMode="decimal" placeholder="450,00"
+                    defaultValue={numParaBR((data as any).beneficioTransporte?.valorMensal || 0)}
+                    style={styles.input}
+                    onFocus={e => e.target.select()}
+                    onBlur={e => onChange({
+                      beneficioTransporte: {
+                        ...((data as any).beneficioTransporte || {}),
+                        valorMensal: brParaNum(e.target.value),
+                      }
+                    } as any)}
+                  />
+                </div>
+              )}
+              {(data as any).beneficioTransporte?.tipo && (data as any).beneficioTransporte?.tipo !== 'nenhum' && (
+                <div>
+                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '3px' }}>Valor diário (R$)</label>
+                  <input type="text" inputMode="decimal" placeholder="17,31"
+                    defaultValue={numParaBR((data as any).beneficioTransporte?.valorDiario || data.valorTransporte || 0)}
+                    style={styles.input}
+                    onFocus={e => e.target.select()}
+                    onBlur={e => onChange({
+                      beneficioTransporte: {
+                        ...((data as any).beneficioTransporte || {}),
+                        valorDiario: brParaNum(e.target.value),
+                      }
+                    } as any)}
+                  />
+                  <small style={{ color: '#888', fontSize: '10px' }}>Consumido por dia de presença</small>
+                </div>
+              )}
+              {(data as any).beneficioTransporte?.tipo === 'mensal_fixo' && (
+                <div>
+                  <label style={{ fontSize: '11px', color: '#555', display: 'block', marginBottom: '3px' }}>Dia crédito</label>
+                  <input type="number" min="1" max="28" placeholder="1"
+                    value={(data as any).beneficioTransporte?.diaCredito || 1}
+                    style={styles.input}
+                    onChange={e => onChange({
+                      beneficioTransporte: {
+                        ...((data as any).beneficioTransporte || {}),
+                        diaCredito: parseInt(e.target.value) || 1,
+                      }
+                    } as any)}
+                  />
+                  <small style={{ color: '#888', fontSize: '10px' }}>Dia do mês para creditar</small>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {/* PIX */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Chave PIX</label>
