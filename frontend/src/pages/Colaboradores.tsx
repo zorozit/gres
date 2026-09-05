@@ -1018,7 +1018,7 @@ export default function Colaboradores() {
   // Filters
   const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [filtroArea, setFiltroArea]         = useState('');
-  const [filtroAtivo, setFiltroAtivo]       = useState(true);
+  const [filtroAtivo, setFiltroAtivo]       = useState<'ativo' | 'inativo' | 'todos'>('ativo');
   const [busca, setBusca]                   = useState('');
   const inputBuscaRef = useRef<HTMLInputElement>(null);
 
@@ -1285,7 +1285,7 @@ export default function Colaboradores() {
   const colaboradoresFiltrados: Colaborador[] = colaboradores.filter(c => {
     const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
     const matchArea     = !filtroArea || (c.area || '') === filtroArea;
-    const matchAtivo    = filtroAtivo ? c.ativo !== false : c.ativo === false;
+    const matchAtivo    = filtroAtivo === 'todos' ? true : filtroAtivo === 'ativo' ? c.ativo !== false : c.ativo === false;
     const qDigits = buscaAtual.replace(/\D/g,'');
     const matchBusca = !buscaAtual ||
       (c.nome || '').toLowerCase().includes(q) ||
@@ -1295,6 +1295,8 @@ export default function Colaboradores() {
       (c.funcao || '').toLowerCase().includes(q) ||
       (c.cargo  || '').toLowerCase().includes(q) ||
       (c.area   || '').toLowerCase().includes(q);
+    // Quando tem busca ativa, ignora filtro de status pra encontrar qualquer colaborador
+    if (buscaAtual && matchBusca) return matchContrato && matchArea;
     return matchContrato && matchArea && matchAtivo && matchBusca;
   });
 
@@ -1389,10 +1391,11 @@ export default function Colaboradores() {
                 {areasUnicas.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
 
-              <select value={filtroAtivo ? 'ativo' : 'inativo'}
-                onChange={e => setFiltroAtivo(e.target.value === 'ativo')} style={S.select}>
+              <select value={filtroAtivo}
+                onChange={e => setFiltroAtivo(e.target.value as 'ativo' | 'inativo' | 'todos')} style={S.select}>
                 <option value="ativo">● Ativos</option>
                 <option value="inativo">○ Desligados</option>
+                <option value="todos">◉ Todos</option>
               </select>
             </div>
 
