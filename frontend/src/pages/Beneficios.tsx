@@ -10,9 +10,10 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useUnit } from '../contexts/UnitContext';
 
-const R = (v: any) => parseFloat(v) || 0;
+const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
+const getToken = () => localStorage.getItem('auth_token') || '';
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 interface Beneficio {
@@ -47,7 +48,8 @@ interface Colaborador {
 }
 
 export default function Beneficios() {
-  const { token, unitId, apiUrl } = useAuth();
+  const { activeUnit } = useUnit();
+  const unitId = activeUnit?.id || localStorage.getItem('unit_id') || '';
 
   const hoje = new Date();
   const mesAtualDefault = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
@@ -61,8 +63,8 @@ export default function Beneficios() {
   const [msg, setMsg] = useState('');
 
   const fetchAuth = useCallback(async (url: string, opts: any = {}) => {
-    return fetch(url, { ...opts, headers: { ...opts.headers, Authorization: `Bearer ${token()}` } });
-  }, [token]);
+    return fetch(url, { ...opts, headers: { ...opts.headers, Authorization: `Bearer ${getToken()}` } });
+  }, []);
 
   const carregar = useCallback(async () => {
     if (!unitId) return;
