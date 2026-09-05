@@ -1044,7 +1044,7 @@ export default function Colaboradores() {
     if (!uid) return;
     setLoading(true);
     try {
-      const r = await fetchAuth(`${apiUrl}/colaboradores?unitId=${uid}`, {
+      const r = await fetchAuth(`${apiUrl}/colaboradores?unitId=${uid}&incluirInativos=true`, {
         headers: { Authorization: `Bearer ${token()}` },
       });
       if (r.ok) {
@@ -1273,8 +1273,11 @@ export default function Colaboradores() {
   };
 
   /* ── Derivados ───────────────────────────────────────────── */
-  const totalCLT = useMemo(() => colaboradores.filter(c => c.tipoContrato !== 'Freelancer').length, [colaboradores]);
-  const totalFreelancer = useMemo(() => colaboradores.filter(c => c.tipoContrato === 'Freelancer').length, [colaboradores]);
+  const colabAtivos = useMemo(() => colaboradores.filter(c => c.ativo !== false), [colaboradores]);
+  const colabInativos = useMemo(() => colaboradores.filter(c => c.ativo === false), [colaboradores]);
+  const colabBase = filtroAtivo === 'todos' ? colaboradores : filtroAtivo === 'ativo' ? colabAtivos : colabInativos;
+  const totalCLT = useMemo(() => colabBase.filter(c => c.tipoContrato !== 'Freelancer').length, [colabBase]);
+  const totalFreelancer = useMemo(() => colabBase.filter(c => c.tipoContrato === 'Freelancer').length, [colabBase]);
 
   /* ── Filtros ──────────────────────────────────────────────── */
   // Cálculo direto no render — sem useMemo nem useEffect.
@@ -1347,9 +1350,10 @@ export default function Colaboradores() {
             {/* Resumo */}
             <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
               {[
-                { label: 'Total', value: colaboradores.length, color: '#1565c0', bg: '#e3f2fd' },
+                { label: 'Total', value: colabBase.length, color: '#1565c0', bg: '#e3f2fd' },
                 { label: 'CLT', value: totalCLT, color: '#1b5e20', bg: '#e8f5e9' },
                 { label: 'Freelancer', value: totalFreelancer, color: '#e65100', bg: '#fff3e0' },
+                ...(filtroAtivo === 'todos' ? [{ label: 'Desligados', value: colabInativos.length, color: '#c62828', bg: '#ffebee' }] : []),
               ].map(({ label, value, color, bg }) => (
                 <div key={label} style={{ backgroundColor: bg, borderRadius: '8px', padding: '10px 18px', textAlign: 'center', minWidth: '80px' }}>
                   <div style={{ fontSize: '20px', fontWeight: 'bold', color }}>{value}</div>
@@ -1400,7 +1404,7 @@ export default function Colaboradores() {
             </div>
 
             <div style={{ fontSize: '12px', color: '#888', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-              Exibindo <strong>{colaboradoresFiltrados.length}</strong> de <strong>{colaboradores.length}</strong> colaborador(es)
+              Exibindo <strong>{colaboradoresFiltrados.length}</strong> de <strong>{colabBase.length}</strong> colaborador(es)
               {busca && (
                 <span style={{ color: '#1976d2' }}>
                   — buscando: <em>"{busca}"</em>
