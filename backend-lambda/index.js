@@ -2047,6 +2047,7 @@ exports.handler = async (event) => {
             inssValor: body.inssValor !== undefined ? parseFloat(body.inssValor) || 0 : origItemPreserve.inssValor,
             valeTransporteContabil: body.valeTransporte !== undefined ? parseFloat(body.valeTransporte) || 0 : origItemPreserve.valeTransporteContabil,
             feriadoContabil: body.feriado !== undefined ? parseFloat(body.feriado) || 0 : origItemPreserve.feriadoContabil,
+            conferido: true,
             obsEMS: obsEMS || origItemPreserve.obsEMS || '',
             // NAO sobrescrever: saldoFinal, totalFinal, pago, dataPagamento, logPagamentos, pagoAdiantamento, pagoVariavel
             updatedAt: now,
