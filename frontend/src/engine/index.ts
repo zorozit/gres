@@ -38,7 +38,7 @@ export { calcularFolhaCLT, montarChecklistCLT } from './folhaCLT';
 export type { FolhaCLTInput, FolhaCLTCalcResult, ColaboradorCLTInput, CheckItemCLT, CalcParaChecklist, SaidaParaChecklist, MontarChecklistCLTInput } from './folhaCLT';
 
 // Descontos operacionais
-export { calcularDescontos, encontrarAdiantamentoIdAlvo, distribuirAbatimento, TIPOS_EXCLUIDOS_DESCONTO, TIPOS_CREDITO } from './descontos';
+export { calcularDescontos, encontrarAdiantamentoIdAlvo, encontrarAdtoTransporteAlvo, distribuirAbatimento, TIPOS_EXCLUIDOS_DESCONTO, TIPOS_CREDITO } from './descontos';
 export type { DescontosInput, DescontosResult, ContratoSaldo, DistribuicaoAbatimento } from './descontos';
 
 // Transporte

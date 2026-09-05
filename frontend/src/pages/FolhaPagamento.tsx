@@ -15,6 +15,7 @@ import {
   calcularVariavelMotoboy,
   montarPayslipFreelancer,
   distribuirAbatimento,
+  encontrarAdtoTransporteAlvo,
   montarPayslipCLT,
   montarPayslipDobrasCLT,
   montarChecklistCLT,
@@ -2234,14 +2235,34 @@ export default function FolhaPagamento() {
                     operacoes.push({ tipo:'folha-transporte', data:fech.dataFechamento, valor:fr.transporteSaldo, obs:`Transporte sem. ${fech.semanaLabel} - ${fr.diasPagos?.length||0} dias - R$${fmt(fr.transporteSaldo)}` });
                   }
 
-                  // 3) Desconto Transporte por dia
+                  // 3) Desconto Transporte por dia — vincula ao contrato de adiantamento
                   const valorTransporteColab = R(fr.valorTransporte);
                   if (valorTransporteColab > 0 && inclDobras && fr.diasPagos && fr.diasPagos.length > 0) {
+                    // Buscar histórico completo de saídas pra encontrar contrato de adiantamento
+                    let saidasHistTransp: any[] = [];
+                    try {
+                      const rHistT = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${fr.id}`, {headers:{Authorization:`Bearer ${token()}`}});
+                      if (rHistT.ok) saidasHistTransp = await rHistT.json();
+                    } catch {}
+                    if (saidasHistTransp.length === 0) saidasHistTransp = saidasMesCompleto.length > 0 ? saidasMesCompleto : saidasPeriodo;
+                    const adtoTranspId = encontrarAdtoTransporteAlvo(
+                      saidasHistTransp.map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId })),
+                      fr.id,
+                    );
+
                     const diasUnicosSemana = Array.from(new Set(fr.diasPagos.map((dp: any) => dp.data))).sort() as string[];
                     let saldoDispAtual = R(fr.transporteAdiantado);
                     for (const data of diasUnicosSemana) {
                       const excede = saldoDispAtual < valorTransporteColab;
-                      operacoes.push({ tipo:'saida-criar', tipoSaida:'Desconto Transporte', descricao:`Transporte do dia ${data} (consumo do adto.)`, valor:valorTransporteColab, data, dataPagamento:data, pago:true, excedeAdto:excede, responsavel:responsavelEmail, responsavelId, obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}` });
+                      operacoes.push({
+                        tipo:'saida-criar', tipoSaida:'Desconto Transporte',
+                        descricao:`Transporte do dia ${data} (consumo do adto.)`,
+                        valor:valorTransporteColab, data, dataPagamento:data, pago:true,
+                        excedeAdto:excede,
+                        ...(adtoTranspId ? { adiantamentoId: adtoTranspId } : {}),
+                        responsavel:responsavelEmail, responsavelId,
+                        obs:`Auto-gerado ao confirmar pagamento sem. ${fech.semanaLabel}${excede?' [excede adto]':''}`
+                      });
                       saldoDispAtual = Math.max(0, saldoDispAtual - valorTransporteColab);
                     }
                   }

@@ -3569,6 +3569,7 @@ exports.handler = async (event) => {
                 obs: op.obs || '',
                 pagamentoIdLigado: pagamentoId,
                 ...(op.excedeAdto !== undefined ? { excedeAdto: !!op.excedeAdto } : {}),
+                ...(op.adiantamentoId ? { adiantamentoId: op.adiantamentoId } : {}),
                 unitId: normalizedUnitId,
                 timestamp: now,
                 createdAt: now,

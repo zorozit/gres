@@ -83,26 +83,28 @@ export interface DescontosResult {
  *
  * DEVE SER USADA por todos os fluxos de pagamento que abatam adiantamento especial.
  */
-export function encontrarAdiantamentoIdAlvo(
+/**
+ * Encontra o contrato de adiantamento em aberto mais adequado para vincular um desconto.
+ * Funciona para Especial e Transporte.
+ */
+function _encontrarContratoAlvo(
   saidas: SaidaCalc[],
   colaboradorId: string,
+  tipoAdto: string,
+  tipoDesc: string,
   valorAbatimento?: number,
 ): string | undefined {
-  // Adiantamentos Especiais do colaborador, mais antigo primeiro
-  const adtosEsp = saidas
-    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Adiantamento Especial')
+  const adtos = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === tipoAdto)
     .sort((a, b) => (a.data || '').localeCompare(b.data || ''));
 
-  // Descontos já abatidos (pago=true)
-  const descEsp = saidas
-    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === 'Desconto Adiantamento Especial' && s.pago);
+  const descontos = saidas
+    .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === tipoDesc && s.pago);
 
-  // Se valorAbatimento foi passado, preferir contrato com saldo >= valor
-  // (evita estourar contrato pequeno quando há outro com saldo suficiente)
   const contratosComSaldo: { cId: string; saldo: number }[] = [];
-  for (const ae of adtosEsp) {
+  for (const ae of adtos) {
     const cId = ae.adiantamentoId || ae.id;
-    const totalDesc = descEsp
+    const totalDesc = descontos
       .filter(d => d.adiantamentoId === cId)
       .reduce((sum, d) => sum + (d.valor || 0), 0);
     const saldo = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
@@ -111,14 +113,29 @@ export function encontrarAdiantamentoIdAlvo(
 
   if (contratosComSaldo.length === 0) return undefined;
 
-  // Se temos valor de abatimento, preferir o mais antigo com saldo suficiente
   if (valorAbatimento && valorAbatimento > 0) {
     const suficiente = contratosComSaldo.find(c => c.saldo >= valorAbatimento);
     if (suficiente) return suficiente.cId;
   }
 
-  // Fallback: mais antigo com qualquer saldo > 0
   return contratosComSaldo[0].cId;
+}
+
+export function encontrarAdiantamentoIdAlvo(
+  saidas: SaidaCalc[],
+  colaboradorId: string,
+  valorAbatimento?: number,
+): string | undefined {
+  return _encontrarContratoAlvo(saidas, colaboradorId, 'Adiantamento Especial', 'Desconto Adiantamento Especial', valorAbatimento);
+}
+
+/** Encontra o contrato de Adiantamento Transporte em aberto para vincular descontos diários */
+export function encontrarAdtoTransporteAlvo(
+  saidas: SaidaCalc[],
+  colaboradorId: string,
+  valorAbatimento?: number,
+): string | undefined {
+  return _encontrarContratoAlvo(saidas, colaboradorId, 'Adiantamento Transporte', 'Desconto Transporte', valorAbatimento);
 }
 
 /* ──────────────────────────────────────────────────────────
