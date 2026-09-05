@@ -1018,7 +1018,7 @@ export default function Colaboradores() {
   // Filters
   const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [filtroArea, setFiltroArea]         = useState('');
-  const [filtroAtivo, setFiltroAtivo]       = useState<'ativo' | 'inativo' | 'todos'>('ativo');
+  const [filtroStatus, setFiltroStatus]     = useState<string>('ativo');
   const [busca, setBusca]                   = useState('');
   const inputBuscaRef = useRef<HTMLInputElement>(null);
 
@@ -1273,11 +1273,18 @@ export default function Colaboradores() {
   };
 
   /* ── Derivados ───────────────────────────────────────────── */
-  const colabAtivos = useMemo(() => colaboradores.filter(c => c.ativo !== false), [colaboradores]);
-  const colabInativos = useMemo(() => colaboradores.filter(c => c.ativo === false), [colaboradores]);
-  const colabBase = filtroAtivo === 'todos' ? colaboradores : filtroAtivo === 'ativo' ? colabAtivos : colabInativos;
+  // Resolve o status efetivo de um colaborador
+  const statusDe = (c: Colaborador): string => {
+    if (c.ativo === false) return 'inativo';
+    return (c as any).statusAtual || 'ativo';
+  };
+  const colabBase = useMemo(() => {
+    if (filtroStatus === 'todos') return colaboradores;
+    return colaboradores.filter(c => statusDe(c) === filtroStatus);
+  }, [colaboradores, filtroStatus]);
   const totalCLT = useMemo(() => colabBase.filter(c => c.tipoContrato !== 'Freelancer').length, [colabBase]);
   const totalFreelancer = useMemo(() => colabBase.filter(c => c.tipoContrato === 'Freelancer').length, [colabBase]);
+  const colabInativos = useMemo(() => colaboradores.filter(c => c.ativo === false), [colaboradores]);
 
   /* ── Filtros ──────────────────────────────────────────────── */
   // Cálculo direto no render — sem useMemo nem useEffect.
@@ -1288,7 +1295,7 @@ export default function Colaboradores() {
   const colaboradoresFiltrados: Colaborador[] = colaboradores.filter(c => {
     const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
     const matchArea     = !filtroArea || (c.area || '') === filtroArea;
-    const matchAtivo    = filtroAtivo === 'todos' ? true : filtroAtivo === 'ativo' ? c.ativo !== false : c.ativo === false;
+    const matchStatus   = filtroStatus === 'todos' ? true : statusDe(c) === filtroStatus;
     const qDigits = buscaAtual.replace(/\D/g,'');
     const matchBusca = !buscaAtual ||
       (c.nome || '').toLowerCase().includes(q) ||
@@ -1300,7 +1307,7 @@ export default function Colaboradores() {
       (c.area   || '').toLowerCase().includes(q);
     // Quando tem busca ativa, ignora filtro de status pra encontrar qualquer colaborador
     if (buscaAtual && matchBusca) return matchContrato && matchArea;
-    return matchContrato && matchArea && matchAtivo && matchBusca;
+    return matchContrato && matchArea && matchStatus && matchBusca;
   });
 
   const areasUnicas = useMemo(() => {
@@ -1353,7 +1360,7 @@ export default function Colaboradores() {
                 { label: 'Total', value: colabBase.length, color: '#1565c0', bg: '#e3f2fd' },
                 { label: 'CLT', value: totalCLT, color: '#1b5e20', bg: '#e8f5e9' },
                 { label: 'Freelancer', value: totalFreelancer, color: '#e65100', bg: '#fff3e0' },
-                ...(filtroAtivo === 'todos' ? [{ label: 'Desligados', value: colabInativos.length, color: '#c62828', bg: '#ffebee' }] : []),
+                ...(filtroStatus === 'todos' ? [{ label: 'Desligados', value: colabInativos.length, color: '#c62828', bg: '#ffebee' }] : []),
               ].map(({ label, value, color, bg }) => (
                 <div key={label} style={{ backgroundColor: bg, borderRadius: '8px', padding: '10px 18px', textAlign: 'center', minWidth: '80px' }}>
                   <div style={{ fontSize: '20px', fontWeight: 'bold', color }}>{value}</div>
@@ -1395,11 +1402,18 @@ export default function Colaboradores() {
                 {areasUnicas.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
 
-              <select value={filtroAtivo}
-                onChange={e => setFiltroAtivo(e.target.value as 'ativo' | 'inativo' | 'todos')} style={S.select}>
-                <option value="ativo">● Ativos</option>
-                <option value="inativo">○ Desligados</option>
+              <select value={filtroStatus}
+                onChange={e => setFiltroStatus(e.target.value)} style={S.select}>
                 <option value="todos">◉ Todos</option>
+                <option value="ativo">✅ Ativos</option>
+                <option value="licenca_medica">🏥 Licença Médica</option>
+                <option value="licenca_maternidade">🤰 Licença Maternidade</option>
+                <option value="licenca_paternidade">👶 Licença Paternidade</option>
+                <option value="ferias">🏖️ Férias</option>
+                <option value="acidente_trabalho">⚠️ Acidente de Trabalho</option>
+                <option value="auxilio_doenca">📋 Auxílio-Doença</option>
+                <option value="suspensao">🚫 Suspensão</option>
+                <option value="inativo">🚪 Desligados</option>
               </select>
             </div>
 
