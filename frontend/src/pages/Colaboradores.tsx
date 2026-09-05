@@ -1286,10 +1286,11 @@ export default function Colaboradores() {
     const matchContrato = filtroContrato === 'todos' || c.tipoContrato === filtroContrato;
     const matchArea     = !filtroArea || (c.area || '') === filtroArea;
     const matchAtivo    = filtroAtivo ? c.ativo !== false : c.ativo === false;
+    const qDigits = buscaAtual.replace(/\D/g,'');
     const matchBusca = !buscaAtual ||
       (c.nome || '').toLowerCase().includes(q) ||
-      (c.cpf  || '').replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
-      celularDe(c).replace(/\D/g,'').includes(buscaAtual.replace(/\D/g,'')) ||
+      (qDigits && (c.cpf  || '').replace(/\D/g,'').includes(qDigits)) ||
+      (qDigits && celularDe(c).replace(/\D/g,'').includes(qDigits)) ||
       (c.email  || '').toLowerCase().includes(q) ||
       (c.funcao || '').toLowerCase().includes(q) ||
       (c.cargo  || '').toLowerCase().includes(q) ||
