@@ -3899,8 +3899,11 @@ exports.handler = async (event) => {
     }
 
     // ─── BENEFÍCIOS ────────────────────────────────────────────────
+    // Fluxo:
+    //   1. Pagar VT (início do mês) → POST /beneficios/pagar → gera registro + payslip
+    //   2. Apurar (ao longo/fim do mês) → GET /beneficios/apurar → conta dias via escalas
+    //   3. Fechar mês → POST /beneficios/fechar → concilia crédito vs consumo, gera saldo
     // Escalas são registros INDIVIDUAIS: { colaboradorId, data, turno, presenca, presencaNoite }
-    // Benefício é por colaborador por mês, controle individual.
 
     // GET /beneficios?unitId=X&mes=YYYY-MM — listar benefícios do mês
     // GET /beneficios?unitId=X&colaboradorId=Y — histórico de um colaborador
@@ -3908,211 +3911,188 @@ exports.handler = async (event) => {
       const { unitId: qUnit, mes, colaboradorId } = queryParams;
       if (!qUnit) return response(400, { error: 'unitId obrigatório' });
       const uid = resolveUnitId(qUnit);
-
       try {
         let filterExpr = 'unitId = :u';
         const exprVals = { ':u': uid };
         if (mes) { filterExpr += ' AND mes = :m'; exprVals[':m'] = mes; }
         if (colaboradorId) { filterExpr += ' AND colaboradorId = :c'; exprVals[':c'] = colaboradorId; }
-
-        const result = await dynamodb.scan({
-          TableName: 'gres-prod-beneficios',
-          FilterExpression: filterExpr,
-          ExpressionAttributeValues: exprVals,
-        }).promise();
-
+        const result = await dynamodb.scan({ TableName: 'gres-prod-beneficios', FilterExpression: filterExpr, ExpressionAttributeValues: exprVals }).promise();
         return response(200, result.Items || []);
       } catch (e) { console.error(e); return response(500, { error: 'Erro ao listar benefícios' }); }
     }
 
-    // GET /beneficios/apurar?unitId=X&mes=YYYY-MM&colaboradorId=Y — apurar dias de um colaborador
-    // Retorna detalhamento dia a dia da escala (presente/falta/folga/atestado) + totais
+    // GET /beneficios/apurar?unitId=X&mes=YYYY-MM&colaboradorId=Y — apurar dias
     if (rawPath === '/beneficios/apurar' && httpMethod === 'GET') {
       const { unitId: aUnit, mes, colaboradorId } = queryParams;
       if (!aUnit || !mes || !colaboradorId) return response(400, { error: 'unitId, mes e colaboradorId obrigatórios' });
       const uid = resolveUnitId(aUnit);
-
       try {
-        // Buscar colaborador
         const colabResult = await dynamodb.get({ TableName: 'gres-prod-colaboradores', Key: { id: colaboradorId } }).promise();
         const colab = colabResult.Item;
         if (!colab) return response(404, { error: 'Colaborador não encontrado' });
-
         const bt = colab.beneficioTransporte || {};
         const valorDiario = bt.valorDiario || colab.valorTransporte || 0;
-
-        // Buscar escalas do colaborador no mês
         const escalas = await dynamodb.scan({
           TableName: 'gres-prod-escalas',
           FilterExpression: 'unitId = :u AND colaboradorId = :c AND begins_with(#dt, :m)',
           ExpressionAttributeNames: { '#dt': 'data' },
           ExpressionAttributeValues: { ':u': uid, ':c': colaboradorId, ':m': mes },
         }).promise();
-
         const escalaItems = (escalas.Items || []).sort((a, b) => (a.data || '').localeCompare(b.data || ''));
-
-        // Montar detalhamento dia a dia
         const dias = escalaItems.map(e => {
-          const presencaDia = e.presenca || '';
-          const presencaNoite = e.presencaNoite || '';
-          const turno = e.turno || '';
-          // Presente se pelo menos um turno foi "presente"
-          const presente = presencaDia === 'presente' || presencaNoite === 'presente';
-          // Status resumido
+          const pDia = e.presenca || ''; const pNoite = e.presencaNoite || '';
+          const presente = pDia === 'presente' || pNoite === 'presente';
           let status = 'ausente';
           if (presente) status = 'presente';
-          else if (presencaDia === 'folga' || presencaNoite === 'folga') status = 'folga';
-          else if (presencaDia === 'falta' || presencaNoite === 'falta') status = 'falta';
-          else if (presencaDia === 'atestado' || presencaNoite === 'atestado') status = 'atestado';
-          else if (presencaDia === 'ferias' || presencaNoite === 'ferias') status = 'ferias';
-          else if (presencaDia === 'licenca' || presencaNoite === 'licenca') status = 'licenca';
-          return {
-            data: e.data,
-            turno,
-            presencaDia,
-            presencaNoite,
-            status,
-            valor: presente ? valorDiario : 0,
-          };
+          else if (pDia === 'folga' || pNoite === 'folga') status = 'folga';
+          else if (pDia === 'falta' || pNoite === 'falta') status = 'falta';
+          else if (pDia === 'atestado' || pNoite === 'atestado') status = 'atestado';
+          else if (pDia === 'ferias' || pNoite === 'ferias') status = 'ferias';
+          else if (pDia === 'licenca' || pNoite === 'licenca') status = 'licenca';
+          return { data: e.data, turno: e.turno || '', presencaDia: pDia, presencaNoite: pNoite, status, valor: presente ? valorDiario : 0 };
         });
-
         const diasPresentes = dias.filter(d => d.status === 'presente').length;
-        const diasFalta = dias.filter(d => d.status === 'falta').length;
-        const diasFolga = dias.filter(d => d.status === 'folga').length;
-        const diasAtestado = dias.filter(d => d.status === 'atestado').length;
-        const diasFerias = dias.filter(d => d.status === 'ferias').length;
         const valorApurado = parseFloat((diasPresentes * valorDiario).toFixed(2));
         const valorCreditado = bt.tipo === 'mensal_fixo' ? (bt.valorMensal || 0) : valorApurado;
-
-        // Buscar benefício existente (se já foi gerado)
-        const benId = `benef-${colaboradorId}-${mes}`;
-        const benExist = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
-
+        // Buscar saldo do mês anterior pra mostrar como referência
+        const [anoStr, mesStr] = mes.split('-');
+        const mesAnterior = parseInt(mesStr) === 1
+          ? `${parseInt(anoStr)-1}-12`
+          : `${anoStr}-${String(parseInt(mesStr)-1).padStart(2,'0')}`;
+        const benAnt = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: `benef-${colaboradorId}-${mesAnterior}` } }).promise();
+        const saldoAnterior = benAnt.Item ? (benAnt.Item.saldoFinal || benAnt.Item.saldo || 0) : 0;
+        const benExist = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: `benef-${colaboradorId}-${mes}` } }).promise();
         return response(200, {
-          colaboradorId,
-          colaboradorNome: colab.nome,
-          mes,
-          beneficioTransporte: bt,
-          valorDiario,
-          valorCreditado,
-          valorApurado,
+          colaboradorId, colaboradorNome: colab.nome, mes, beneficioTransporte: bt, valorDiario,
+          valorCreditado, valorApurado,
           saldo: parseFloat((valorCreditado - valorApurado).toFixed(2)),
+          saldoAnterior,
           diasPresentes,
-          diasFalta,
-          diasFolga,
-          diasAtestado,
-          diasFerias,
-          totalEscalados: dias.length,
-          dias,
+          diasFalta: dias.filter(d => d.status === 'falta').length,
+          diasFolga: dias.filter(d => d.status === 'folga').length,
+          diasAtestado: dias.filter(d => d.status === 'atestado').length,
+          diasFerias: dias.filter(d => d.status === 'ferias').length,
+          totalEscalados: dias.length, dias,
           beneficioExistente: benExist.Item || null,
         });
       } catch (e) { console.error(e); return response(500, { error: 'Erro ao apurar: ' + e.message }); }
     }
 
-    // POST /beneficios/fechar — fechar benefício individual (gera registro + payslip)
-    if (rawPath === '/beneficios/fechar' && httpMethod === 'POST') {
-      const {
-        unitId: fUnit, mes, colaboradorId,
-        valorCreditado, valorApurado, diasPresentes, valorDiario,
-        ajustes, // [{ descricao, valor }] — ajustes manuais (bônus, desconto diferença mês anterior, etc)
-        obs,
-        responsavelId, responsavelNome,
-      } = body;
-      if (!fUnit || !mes || !colaboradorId) return response(400, { error: 'unitId, mes e colaboradorId obrigatórios' });
-      const uid = resolveUnitId(fUnit);
+    // POST /beneficios/pagar — registrar pagamento do VT (início do mês) + gerar payslip
+    if (rawPath === '/beneficios/pagar' && httpMethod === 'POST') {
+      const { unitId: pUnit, mes, colaboradorId, valorPago, dataPagamento, formaPagamento, obs, responsavelId, responsavelNome } = body;
+      if (!pUnit || !mes || !colaboradorId) return response(400, { error: 'unitId, mes e colaboradorId obrigatórios' });
+      const uid = resolveUnitId(pUnit);
       const now = new Date().toISOString();
-
       try {
-        // Buscar colaborador
         const colabResult = await dynamodb.get({ TableName: 'gres-prod-colaboradores', Key: { id: colaboradorId } }).promise();
         const colab = colabResult.Item;
         if (!colab) return response(404, { error: 'Colaborador não encontrado' });
-
         const bt = colab.beneficioTransporte || {};
-        const vDiario = valorDiario || bt.valorDiario || colab.valorTransporte || 0;
-        const vCreditado = valorCreditado !== undefined ? parseFloat(valorCreditado) : (bt.tipo === 'mensal_fixo' ? (bt.valorMensal || 0) : 0);
-        const vApurado = valorApurado !== undefined ? parseFloat(valorApurado) : 0;
-        const dp = diasPresentes !== undefined ? parseInt(diasPresentes) : 0;
-
-        // Calcular ajustes
-        const ajustesList = Array.isArray(ajustes) ? ajustes : [];
-        const totalAjustes = ajustesList.reduce((s, a) => s + (parseFloat(a.valor) || 0), 0);
-
-        const saldo = parseFloat((vCreditado - vApurado + totalAjustes).toFixed(2));
-
+        const vPago = valorPago !== undefined ? parseFloat(valorPago) : (bt.valorMensal || 0);
         const benId = `benef-${colaboradorId}-${mes}`;
-
-        // Montar composição do payslip
+        // Buscar saldo anterior
+        const [anoStr, mesStr] = mes.split('-');
+        const mesAnterior = parseInt(mesStr) === 1 ? `${parseInt(anoStr)-1}-12` : `${anoStr}-${String(parseInt(mesStr)-1).padStart(2,'0')}`;
+        const benAnt = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: `benef-${colaboradorId}-${mesAnterior}` } }).promise();
+        const saldoAnterior = benAnt.Item ? (benAnt.Item.saldoFinal || 0) : 0;
+        // Se já existe, atualizar pagamento
+        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
         const composicao = [
-          { tipo: 'vencimento', descricao: `🎁 Benefício Transporte — ${dp} dias × R$ ${vDiario.toFixed(2)}`, valor: vApurado },
+          { tipo: 'credito', descricao: `🚌 Vale Transporte — ${mes}`, valor: vPago },
         ];
-        if (bt.tipo === 'mensal_fixo' && vCreditado > 0) {
-          composicao.unshift({ tipo: 'credito', descricao: `💳 Crédito mensal transporte`, valor: vCreditado });
+        if (saldoAnterior > 0.01) {
+          composicao.push({ tipo: 'ajuste-credito', descricao: `Saldo positivo mês anterior (${mesAnterior})`, valor: saldoAnterior });
+        } else if (saldoAnterior < -0.01) {
+          composicao.push({ tipo: 'ajuste-debito', descricao: `Desconto excedente mês anterior (${mesAnterior})`, valor: saldoAnterior });
         }
-        for (const aj of ajustesList) {
-          composicao.push({ tipo: aj.valor >= 0 ? 'ajuste-credito' : 'ajuste-debito', descricao: aj.descricao || 'Ajuste manual', valor: parseFloat(aj.valor) || 0 });
-        }
-
-        // Salvar benefício
         const benefItem = {
-          id: benId,
-          colaboradorId,
-          colaboradorNome: colab.nome,
-          unitId: uid,
-          mes,
-          tipo: 'transporte',
-          valorCreditado: vCreditado,
-          valorApurado: vApurado,
-          valorDiario: vDiario,
-          diasPresentes: dp,
-          ajustes: ajustesList,
-          totalAjustes,
-          saldo,
-          status: 'fechado',
-          obs: obs || '',
+          ...(existing.Item || {}),
+          id: benId, colaboradorId, colaboradorNome: colab.nome, unitId: uid, mes,
+          tipoBeneficio: 'vale-transporte',
+          valorPago: vPago, valorDiario: bt.valorDiario || colab.valorTransporte || 0,
+          dataPagamento: dataPagamento || now.split('T')[0],
+          formaPagamento: formaPagamento || 'PIX',
+          saldoAnterior,
+          // Consumo/fechamento serão preenchidos depois
+          valorApurado: existing.Item?.valorApurado || 0,
+          diasPresentes: existing.Item?.diasPresentes || 0,
+          saldoFinal: existing.Item?.saldoFinal || null,
+          status: existing.Item?.status === 'fechado' ? 'fechado' : 'pago',
           composicao,
-          fechadoPor: responsavelNome || '',
-          fechadoPorId: responsavelId || '',
-          fechadoEm: now,
-          createdAt: now,
-          updatedAt: now,
+          obs: obs || existing.Item?.obs || '',
+          pagoPor: responsavelNome || '', pagoPorId: responsavelId || '',
+          pagoEm: now,
+          createdAt: existing.Item?.createdAt || now, updatedAt: now,
         };
-
         await dynamodb.put({ TableName: 'gres-prod-beneficios', Item: benefItem }).promise();
-
-        // Gerar payslip
-        const psId = `ps-${colaboradorId}-${mes}-beneficio-transporte`;
+        // Gerar/atualizar payslip
+        const psId = `ps-${colaboradorId}-${mes}-vt`;
+        const lastDay = new Date(parseInt(anoStr), parseInt(mesStr), 0).getDate();
         const payslip = {
-          id: psId,
-          colaboradorId,
-          nomeColaborador: colab.nome,
-          cpf: colab.cpf || '',
-          cargo: colab.cargo || colab.tipo || '',
-          chavePix: colab.chavePix || '',
-          unitId: uid,
-          periodo: `${mes}-beneficio-transporte`,
-          periodoInicio: `${mes}-01`,
-          periodoFim: `${mes}-${new Date(parseInt(mes.split('-')[0]), parseInt(mes.split('-')[1]), 0).getDate()}`,
-          mes,
-          tipoContrato: colab.tipoContrato || 'CLT',
-          tipoPagamento: 'beneficio-transporte',
-          bruto: vCreditado,
-          transporte: vApurado,
-          descontos: vApurado,
+          id: psId, colaboradorId, nomeColaborador: colab.nome, cpf: colab.cpf || '',
+          cargo: colab.cargo || colab.tipo || '', chavePix: colab.chavePix || '',
+          unitId: uid, periodo: `${mes}-vt`,
+          periodoInicio: `${mes}-01`, periodoFim: `${mes}-${lastDay}`, mes,
+          tipoContrato: colab.tipoContrato || 'CLT', tipoPagamento: 'vale-transporte',
+          bruto: vPago + (saldoAnterior > 0 ? saldoAnterior : 0),
+          transporte: vPago, descontos: saldoAnterior < 0 ? Math.abs(saldoAnterior) : 0,
           adiantamentos: 0,
-          liquido: saldo,
+          liquido: parseFloat((vPago + saldoAnterior).toFixed(2)),
           composicao,
-          status: 'fechado',
-          pagamentos: [],
-          criadoEm: now,
-          atualizadoEm: now,
-          beneficioId: benId,
+          status: 'pago',
+          dataPagamento: dataPagamento || now.split('T')[0],
+          formaPagamento: formaPagamento || 'PIX',
+          pagamentos: [`pgto-vt-${colaboradorId}-${now}`],
+          criadoEm: now, atualizadoEm: now, beneficioId: benId,
         };
-
         await dynamodb.put({ TableName: 'gres-prod-payslips', Item: payslip }).promise();
-
         return response(200, { success: true, beneficio: benefItem, payslip });
-      } catch (e) { console.error(e); return response(500, { error: 'Erro ao fechar benefício: ' + e.message }); }
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao pagar VT: ' + e.message }); }
+    }
+
+    // POST /beneficios/fechar — fechar/conciliar o mês (apura consumo final e calcula saldo)
+    if (rawPath === '/beneficios/fechar' && httpMethod === 'POST') {
+      const { unitId: fUnit, mes, colaboradorId, ajustes, obs, responsavelId, responsavelNome } = body;
+      if (!fUnit || !mes || !colaboradorId) return response(400, { error: 'unitId, mes e colaboradorId obrigatórios' });
+      const uid = resolveUnitId(fUnit);
+      const now = new Date().toISOString();
+      try {
+        const benId = `benef-${colaboradorId}-${mes}`;
+        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
+        if (!existing.Item) return response(400, { error: 'Nenhum pagamento registrado para este mês. Pague o VT primeiro.' });
+        const ben = existing.Item;
+        // Apurar dias via escalas
+        const escalas = await dynamodb.scan({
+          TableName: 'gres-prod-escalas',
+          FilterExpression: 'unitId = :u AND colaboradorId = :c AND begins_with(#dt, :m)',
+          ExpressionAttributeNames: { '#dt': 'data' },
+          ExpressionAttributeValues: { ':u': uid, ':c': colaboradorId, ':m': mes },
+        }).promise();
+        const diasPresentes = (escalas.Items || []).filter(e =>
+          (e.presenca === 'presente' || e.presencaNoite === 'presente')
+        ).length;
+        const valorDiario = ben.valorDiario || 0;
+        const valorApurado = parseFloat((diasPresentes * valorDiario).toFixed(2));
+        const ajustesList = Array.isArray(ajustes) ? ajustes : (ben.ajustes || []);
+        const totalAjustes = ajustesList.reduce((s, a) => s + (parseFloat(a.valor) || 0), 0);
+        const saldoAnterior = ben.saldoAnterior || 0;
+        const valorPago = ben.valorPago || 0;
+        const saldoFinal = parseFloat((valorPago + saldoAnterior - valorApurado + totalAjustes).toFixed(2));
+        // Atualizar benefício
+        const updated = {
+          ...ben,
+          valorApurado, diasPresentes,
+          ajustes: ajustesList, totalAjustes,
+          saldoFinal,
+          status: 'fechado',
+          obs: obs || ben.obs || '',
+          fechadoPor: responsavelNome || '', fechadoPorId: responsavelId || '',
+          fechadoEm: now, updatedAt: now,
+        };
+        await dynamodb.put({ TableName: 'gres-prod-beneficios', Item: updated }).promise();
+        return response(200, { success: true, beneficio: updated });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao fechar: ' + e.message }); }
     }
 
     // POST /beneficios/reabrir — reabrir um benefício fechado
@@ -4120,65 +4100,27 @@ exports.handler = async (event) => {
       const { unitId: rUnit, mes, colaboradorId } = body;
       if (!rUnit || !mes || !colaboradorId) return response(400, { error: 'unitId, mes e colaboradorId obrigatórios' });
       const now = new Date().toISOString();
-
       try {
         const benId = `benef-${colaboradorId}-${mes}`;
         const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
         if (!existing.Item) return response(404, { error: 'Benefício não encontrado' });
-
-        // Reabrir
         await dynamodb.update({
-          TableName: 'gres-prod-beneficios',
-          Key: { id: benId },
-          UpdateExpression: 'SET #st = :s, updatedAt = :u',
+          TableName: 'gres-prod-beneficios', Key: { id: benId },
+          UpdateExpression: 'SET #st = :s, saldoFinal = :sf, updatedAt = :u',
           ExpressionAttributeNames: { '#st': 'status' },
-          ExpressionAttributeValues: { ':s': 'reaberto', ':u': now },
+          ExpressionAttributeValues: { ':s': 'pago', ':sf': null, ':u': now },
         }).promise();
-
-        // Remover payslip associado
-        const psId = `ps-${colaboradorId}-${mes}-beneficio-transporte`;
-        try { await dynamodb.delete({ TableName: 'gres-prod-payslips', Key: { id: psId } }).promise(); } catch (_) {}
-
         return response(200, { success: true, reaberto: benId });
       } catch (e) { console.error(e); return response(500, { error: 'Erro ao reabrir: ' + e.message }); }
     }
 
-    // PUT /beneficios/:id — ajuste manual de campos
-    if (rawPath.match(/\/beneficios\/.+/) && httpMethod === 'PUT') {
-      const benId = rawPath.split('/').pop();
-      const now = new Date().toISOString();
-
-      try {
-        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
-        if (!existing.Item) return response(404, { error: 'Benefício não encontrado' });
-
-        const updated = { ...existing.Item, ...body, updatedAt: now };
-        // Recalcular saldo se valores mudaram
-        if (body.valorCreditado !== undefined || body.valorApurado !== undefined || body.totalAjustes !== undefined) {
-          const vc = updated.valorCreditado || 0;
-          const va = updated.valorApurado || 0;
-          const ta = updated.totalAjustes || 0;
-          updated.saldo = parseFloat((vc - va + ta).toFixed(2));
-        }
-        // Não sobrescrever id/colaboradorId/unitId/mes
-        updated.id = existing.Item.id;
-        updated.colaboradorId = existing.Item.colaboradorId;
-        updated.unitId = existing.Item.unitId;
-        updated.mes = existing.Item.mes;
-
-        await dynamodb.put({ TableName: 'gres-prod-beneficios', Item: updated }).promise();
-        return response(200, { success: true, item: updated });
-      } catch (e) { console.error(e); return response(500, { error: 'Erro ao atualizar benefício' }); }
-    }
-
-    // DELETE /beneficios/:id
+    // DELETE /beneficios/:id — excluir registro e payslip associado
     if (rawPath.match(/\/beneficios\/.+/) && httpMethod === 'DELETE') {
       const benId = rawPath.split('/').pop();
       try {
-        // Também remove payslip associado se existir
         const ben = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
         if (ben.Item) {
-          const psId = `ps-${ben.Item.colaboradorId}-${ben.Item.mes}-beneficio-transporte`;
+          const psId = `ps-${ben.Item.colaboradorId}-${ben.Item.mes}-vt`;
           try { await dynamodb.delete({ TableName: 'gres-prod-payslips', Key: { id: psId } }).promise(); } catch (_) {}
         }
         await dynamodb.delete({ TableName: 'gres-prod-beneficios', Key: { id: benId } }).promise();
