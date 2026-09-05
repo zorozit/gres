@@ -1018,7 +1018,7 @@ export default function Colaboradores() {
   // Filters
   const [filtroContrato, setFiltroContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
   const [filtroArea, setFiltroArea]         = useState('');
-  const [filtroStatus, setFiltroStatus]     = useState<string>('ativo');
+  const [filtroStatus, setFiltroStatus]     = useState<string>('todos');
   const [busca, setBusca]                   = useState('');
   const inputBuscaRef = useRef<HTMLInputElement>(null);
 
@@ -1305,8 +1305,6 @@ export default function Colaboradores() {
       (c.funcao || '').toLowerCase().includes(q) ||
       (c.cargo  || '').toLowerCase().includes(q) ||
       (c.area   || '').toLowerCase().includes(q);
-    // Quando tem busca ativa, ignora filtro de status pra encontrar qualquer colaborador
-    if (buscaAtual && matchBusca) return matchContrato && matchArea;
     return matchContrato && matchArea && matchStatus && matchBusca;
   });
 
