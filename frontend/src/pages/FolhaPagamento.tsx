@@ -4220,13 +4220,26 @@ export default function FolhaPagamento() {
             const ps = new Date(fimReal);
             const pdow = ps.getDay();
             ps.setDate(ps.getDate() + (pdow === 1 ? 0 : pdow === 0 ? 1 : 8 - pdow));
-            semanas.push({
-              label: labelClipado,
-              inicio: inicioStr,
-              fim: fimStr,
-              segReal: segRealStr,
-              proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
-            });
+            // Se semana clipada ficou com só 1 dia e já tem semana anterior, juntar
+            const diasSemana = Math.round((new Date(fimStr+'T12:00:00').getTime() - new Date(inicioStr+'T12:00:00').getTime()) / 864e5) + 1;
+            if (diasSemana <= 1 && semanas.length > 0) {
+              // Estender a semana anterior até este fim
+              const prev = semanas[semanas.length - 1];
+              prev.fim = fimStr;
+              const [pY, pM, pD] = prev.inicio.split('-').map(Number);
+              const [fY2, fM2, fD2] = fimStr.split('-').map(Number);
+              void pY; void fY2;
+              prev.label = `${String(pD).padStart(2,'0')}/${String(pM).padStart(2,'0')} - ${String(fD2).padStart(2,'0')}/${String(fM2).padStart(2,'0')}`;
+              prev.proxSeg = `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`;
+            } else {
+              semanas.push({
+                label: labelClipado,
+                inicio: inicioStr,
+                fim: fimStr,
+                segReal: segRealStr,
+                proxSeg: `${ps.getDate().toString().padStart(2,'0')}/${(ps.getMonth()+1).toString().padStart(2,'0')}/${ps.getFullYear()}`,
+              });
+            }
             cur.setDate(cur.getDate() + 7);
           }
 
@@ -4365,27 +4378,33 @@ export default function FolhaPagamento() {
                   }
                   const diasTrab = codigos.filter(c => c !== '-').length;
                   // Transporte: calcular pra CLT e Freelancer
-                  // O VT 6% do holerite é desconto contábil. O "Adiantamento Transporte"
-                  // em Saídas é dinheiro real pago ao colaborador — precisa abater das dobras.
-                  const vTranspDia = R(p.valorTransporte) || 0;
+                  // Se CLT tem beneficioTransporte configurado, VT é pago via módulo Benefícios → zero aqui.
+                  const colabOriginal = colaboradores.find((c: any) => c.id === p.id);
+                  const temBeneficioVT = colabOriginal?.beneficioTransporte?.tipo && colabOriginal.beneficioTransporte.tipo !== 'nenhum';
+                  const vTranspDia = temBeneficioVT ? 0 : (R(p.valorTransporte) || 0);
                   const totalTransporte = diasTrab * vTranspDia;
-                  // Adiantamento de transporte do mês (Saídas)
-                  const saidasTranspCLT = (saidasPeriodo || []).filter((s: any) =>
-                    s.colaboradorId === p.id &&
-                    (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
-                  );
-                  const adtoTranspMes = parseFloat(
-                    saidasTranspCLT.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
-                  );
-                  // Dias já pagos em semanas anteriores (granulares reais)
-                  const granAntCLT = folhasDB.filter((reg: any) =>
-                    reg.colaboradorId === p.id && reg.tipo === 'freelancer-dia' &&
-                    reg.pago === true && reg.data && reg.data < sem.inicio
-                  );
-                  const diasAntCLT = new Set<string>(granAntCLT.map((r: any) => r.data)).size;
-                  const transpSemAnt = diasAntCLT * vTranspDia;
-                  const adtoDisponivel = parseFloat(Math.max(0, adtoTranspMes - transpSemAnt).toFixed(2));
-                  const transporteSaldoCLT = parseFloat(Math.max(0, totalTransporte - adtoDisponivel).toFixed(2));
+                  // Adiantamento de transporte do mês (Saídas) — só relevante se não tem benefício VT
+                  let adtoTranspMes = 0;
+                  let adtoDisponivel = 0;
+                  let transporteSaldoCLT = 0;
+                  if (!temBeneficioVT) {
+                    const saidasTranspCLT = (saidasPeriodo || []).filter((s: any) =>
+                      s.colaboradorId === p.id &&
+                      (s.tipo || s.origem || s.referencia || '') === 'Adiantamento Transporte'
+                    );
+                    adtoTranspMes = parseFloat(
+                      saidasTranspCLT.reduce((sum: number, s: any) => sum + R(s.valor), 0).toFixed(2)
+                    );
+                    // Dias já pagos em semanas anteriores (granulares reais)
+                    const granAntCLT = folhasDB.filter((reg: any) =>
+                      reg.colaboradorId === p.id && reg.tipo === 'freelancer-dia' &&
+                      reg.pago === true && reg.data && reg.data < sem.inicio
+                    );
+                    const diasAntCLT = new Set<string>(granAntCLT.map((r: any) => r.data)).size;
+                    const transpSemAnt = diasAntCLT * vTranspDia;
+                    adtoDisponivel = parseFloat(Math.max(0, adtoTranspMes - transpSemAnt).toFixed(2));
+                    transporteSaldoCLT = parseFloat(Math.max(0, totalTransporte - adtoDisponivel).toFixed(2));
+                  }
 
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte, transporteSaldoCLT, adtoTranspMes, adtoDisponivel };
                 }).filter(l => (l.dC + l.nC + l.dnC > 0) && l.totalBruto > 0);
@@ -4562,11 +4581,22 @@ export default function FolhaPagamento() {
                                               setFormaDobrasVlDin('');
                                               // Buscar saídas frescas e montar checklist
                                               try {
+                                                // 1) Saídas do mês (consumos, descontos) — rápido via GSI
                                                 const resSaidas = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesAno}-01&dataFim=${mesAno}-31`, {
                                                   headers: { Authorization: `Bearer ${token()}` }
                                                 });
-                                                const saidasFrescas = await resSaidas.json();
-                                                const saidasCol = saidasFrescas.filter((ss: any) => ss.colaboradorId === p.id);
+                                                const saidasMes = await resSaidas.json();
+                                                // 2) Histórico completo do colaborador pra adiantamentos especiais (podem ser de meses anteriores)
+                                                let saidasHistorico: any[] = [];
+                                                try {
+                                                  const resHist = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=2026-01-01&dataFim=2099-12-31&colaboradorId=${p.id}`, {
+                                                    headers: { Authorization: `Bearer ${token()}` }
+                                                  });
+                                                  if (resHist.ok) saidasHistorico = await resHist.json();
+                                                } catch {}
+                                                const saidasFrescas = saidasHistorico.length > 0 ? saidasHistorico : saidasMes;
+                                                const saidasCol = (Array.isArray(saidasMes) ? saidasMes : []).filter((ss: any) => ss.colaboradorId === p.id);
+                                                const saidasColHist = Array.isArray(saidasFrescas) ? saidasFrescas.filter((ss: any) => ss.colaboradorId === p.id) : saidasCol;
                                                 const TIPOS_DESC = ['A pagar', 'A receber', 'Consumo Interno'];
                                                 // Range expandido +2 dias para pegar saídas até dia do pagamento
                                                 const rangeFimExp = new Date(new Date(sem.fim+'T12:00:00').getTime()+2*864e5).toISOString().slice(0,10);
@@ -4589,9 +4619,9 @@ export default function FolhaPagamento() {
                                                   if (dt >= segRealDobras) return false; // pertence à semana atual ou futura
                                                   return true;
                                                 });
-                                                // Saldo adiantamento especial
-                                                const adtosEsp = saidasCol.filter((ss: any) => (ss.tipo || '') === 'Adiantamento Especial');
-                                                const descEsp = saidasCol.filter((ss: any) => (ss.tipo || '') === 'Desconto Adiantamento Especial');
+                                                // Saldo adiantamento especial — usa histórico completo (adtos podem ser de meses anteriores)
+                                                const adtosEsp = saidasColHist.filter((ss: any) => (ss.tipo || '') === 'Adiantamento Especial');
+                                                const descEsp = saidasColHist.filter((ss: any) => (ss.tipo || '') === 'Desconto Adiantamento Especial');
                                                 let saldoEsp = 0;
                                                 for (const ae of adtosEsp) {
                                                   const aid = ae.adiantamentoId || ae.id;
@@ -4614,6 +4644,7 @@ export default function FolhaPagamento() {
                                                 if (saldoEsp > 0) setAbaterEspDobras(false);
                                                 (md as any).saldoEspecial = saldoEsp;
                                                 (md as any).saidasFrescas = saidasFrescas;
+                                                (md as any).saidasHistorico = saidasColHist;
                                                 setModalDobras({ ...md, ...(md as any) });
                                               } catch (e) {
                                                 console.error('Erro ao buscar saídas:', e);
@@ -5659,7 +5690,7 @@ export default function FolhaPagamento() {
                 const rHistD = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${md.pessoa.id}`, {headers:{Authorization:`Bearer ${token()}`}});
                 if (rHistD.ok) saidasDistD = await rHistD.json();
               } catch {}
-              if (saidasDistD.length === 0) saidasDistD = md.saidasFrescas || saidasPeriodo;
+              if (saidasDistD.length === 0) saidasDistD = md.saidasHistorico || md.saidasFrescas || saidasPeriodo;
               const distD = distribuirAbatimento(
                 (Array.isArray(saidasDistD)?saidasDistD:[]).map((ss:any) => ({ id: ss.id, colaboradorId: ss.colaboradorId, tipo: ss.tipo||ss.origem||'', valor: parseFloat(ss.valor)||0, data: ss.data||'', pago: ss.pago, adiantamentoId: ss.adiantamentoId, pagamentoIdLigado: ss.pagamentoIdLigado, descricao: ss.descricao||ss.obs||'' })),
                 md.pessoa.id, vlAbatNum,
@@ -5678,9 +5709,11 @@ export default function FolhaPagamento() {
             }
 
             // 4) Baixar adiantamentos de transporte CLT (por dia de presença na semana)
+            // Se tem beneficioTransporte configurado, VT é pago via módulo Benefícios — pula essa lógica.
             try {
               const colabTObj = colaboradores.find(c => c.id === md.pessoa.id);
-              const vtDiaCLT = R(colabTObj?.valorTransporte || 0);
+              const colabTemBenVT = colabTObj?.beneficioTransporte?.tipo && colabTObj.beneficioTransporte.tipo !== 'nenhum';
+              const vtDiaCLT = colabTemBenVT ? 0 : R(colabTObj?.valorTransporte || 0);
               if (vtDiaCLT > 0) {
                 const rSaidasT = await fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&colaboradorId=${md.pessoa.id}`, {
                   headers: { Authorization: `Bearer ${token()}` },
