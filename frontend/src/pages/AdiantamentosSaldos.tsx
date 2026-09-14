@@ -100,18 +100,17 @@ export const AdiantamentosSaldos: React.FC = () => {
   const [mesesHistorico, setMesesHistorico] = useState('12');
   const [buscaColaborador, setBuscaColaborador] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'aberto' | 'quitado'>('aberto');
-  const [filtroTipo, setFiltroTipo] = useState<'todos' | 'especial' | 'transporte'>('todos');
   const [contratosFechados, setContratosFechados] = useState<Set<string>>(new Set()); // IDs dos contratos MANUALMENTE fechados (default: todos abertos)
 
-  // Modal novo adiantamento
+  // Modal novo adiantamento (somente Especial — Transporte VT foi para o módulo Benefícios)
   const [modalNovoAdto, setModalNovoAdto] = useState(false);
   const [formNovoAdto, setFormNovoAdto] = useState({
-    colaboradorId: '', tipo: 'especial' as 'especial' | 'transporte', valor: '', data: hoje(), formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', descricao: '',
+    colaboradorId: '', valor: '', data: hoje(), formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', descricao: '',
   });
 
   // Modal editar adiantamento
   const [modalEditarAdto, setModalEditarAdto] = useState<ContratoAdiantamento | null>(null);
-  const [formEditarAdto, setFormEditarAdto] = useState({ valor: '', data: '', descricao: '', formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto', tipo: 'especial' as 'especial' | 'transporte' });
+  const [formEditarAdto, setFormEditarAdto] = useState({ valor: '', data: '', descricao: '', formaPagamento: 'PIX' as 'PIX' | 'Dinheiro' | 'Misto' });
 
   // Modal nova parcela
   const [modalParcela, setModalParcela] = useState(false);
@@ -134,10 +133,11 @@ export const AdiantamentosSaldos: React.FC = () => {
       if (rColabs.ok) { const d = await rColabs.json(); setColaboradores(Array.isArray(d) ? d : []); }
       if (rSaidas.ok) {
         const d = await rSaidas.json();
+        // Módulo agora exibe SOMENTE Adiantamento Especial.
+        // Transporte migrou para o módulo Benefícios (VT).
         const lista = (Array.isArray(d) ? d : []).filter((item: SaidaItem) => {
           const t = item.tipo || item.origem || item.referencia || '';
-          return t === 'Adiantamento Especial' || t === 'Desconto Adiantamento Especial'
-              || t === 'Adiantamento Transporte' || t === 'Desconto Transporte';
+          return t === 'Adiantamento Especial' || t === 'Desconto Adiantamento Especial';
         });
         setSaidas(lista);
       }
@@ -154,7 +154,6 @@ export const AdiantamentosSaldos: React.FC = () => {
     // Tipos de adiantamento e seus descontos correspondentes
     const PARES: { adto: string; desc: string; tipo: 'especial' | 'transporte' }[] = [
       { adto: 'Adiantamento Especial',   desc: 'Desconto Adiantamento Especial', tipo: 'especial' },
-      { adto: 'Adiantamento Transporte', desc: 'Desconto Transporte',            tipo: 'transporte' },
     ];
 
     const contratoMap = new Map<string, ContratoAdiantamento>();
@@ -288,17 +287,16 @@ export const AdiantamentosSaldos: React.FC = () => {
       if (busca && !c.colaboradorNome.toLowerCase().includes(busca)) return false;
       if (filtroStatus === 'aberto'  && c.quitado)  return false;
       if (filtroStatus === 'quitado' && !c.quitado) return false;
-      if (filtroTipo === 'especial'   && c.tipoAdiantamento !== 'especial')   return false;
-      if (filtroTipo === 'transporte' && c.tipoAdiantamento !== 'transporte') return false;
       return true;
     });
-  }, [contratos, buscaColaborador, filtroStatus, filtroTipo]);
+  }, [contratos, buscaColaborador, filtroStatus]);
 
   const totaisResumo = useMemo(() => ({
-    totalEspecialAberto:   contratos.filter(c => !c.quitado && c.tipoAdiantamento === 'especial').reduce((s, c) => s + c.saldo, 0),
-    totalTransporteAberto: contratos.filter(c => !c.quitado && c.tipoAdiantamento === 'transporte').reduce((s, c) => s + c.saldo, 0),
+    totalEspecialAberto:   contratos.filter(c => !c.quitado).reduce((s, c) => s + c.saldo, 0),
+    totalEspecialQuitado:  contratos.filter(c =>  c.quitado).reduce((s, c) => s + c.valorTotal, 0),
     qtdAbertos:    contratos.filter(c => !c.quitado).length,
     qtdQuitados:   contratos.filter(c =>  c.quitado).length,
+    colaboradoresComSaldo: new Set(contratos.filter(c => !c.quitado).map(c => c.colaboradorId)).size,
   }), [contratos]);
 
   /* ── Salvar novo adiantamento ───────────────────────── */
@@ -310,7 +308,7 @@ export const AdiantamentosSaldos: React.FC = () => {
     setSalvando(true);
     const novoId = gerarAdiantamentoId();
     try {
-      const tipoLabel = formNovoAdto.tipo === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
+      const tipoLabel = 'Adiantamento Especial';
       const payload = {
         unitId, responsavel: responsavelEmail, responsavelId: userId,
         colaboradorId: formNovoAdto.colaboradorId,
@@ -331,7 +329,7 @@ export const AdiantamentosSaldos: React.FC = () => {
       });
       if (!res.ok) throw new Error(await res.text());
       setModalNovoAdto(false);
-      setFormNovoAdto({ colaboradorId: '', tipo: 'especial', valor: '', data: hoje(), formaPagamento: 'PIX', descricao: '' });
+      setFormNovoAdto({ colaboradorId: '', valor: '', data: hoje(), formaPagamento: 'PIX', descricao: '' });
       await carregarDados();
     } catch (e: any) { alert('Erro: ' + e.message); } finally { setSalvando(false); }
   };
@@ -346,7 +344,6 @@ export const AdiantamentosSaldos: React.FC = () => {
       data: contrato.dataAbertura,
       descricao: contrato.descricao,
       formaPagamento: (contrato.raw.formaPagamento as any) || 'PIX',
-      tipo: contrato.tipoAdiantamento,
     });
     setModalEditarAdto(contrato);
   };
@@ -357,7 +354,7 @@ export const AdiantamentosSaldos: React.FC = () => {
     if (isNaN(novoValor) || novoValor <= 0) { alert('Valor inválido.'); return; }
     setSalvando(true);
     const raw = modalEditarAdto.raw;
-    const tipoLabel = formEditarAdto.tipo === 'transporte' ? 'Adiantamento Transporte' : 'Adiantamento Especial';
+    const tipoLabel = 'Adiantamento Especial';
     try {
       const res = await fetchAuth(`${apiUrl}/saidas/${raw.id}`, {
         method: 'PUT',
@@ -461,27 +458,12 @@ export const AdiantamentosSaldos: React.FC = () => {
       <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '28px', maxWidth: '500px', width: '96%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h3 style={{ margin: 0 }}>{formNovoAdto.tipo === 'transporte' ? '🚗 Novo Adiantamento Transporte' : '💸 Novo Adiantamento Especial'}</h3>
+          <h3 style={{ margin: 0 }}>💸 Novo Adiantamento Especial</h3>
           <button onClick={() => setModalNovoAdto(false)} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer' }}>✕</button>
         </div>
         <div style={{ backgroundColor: '#ecfdf5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#065f46' }}>
           💡 Ao salvar, será criado um <strong>contrato individual</strong> com ID único. Todas as parcelas futuras serão vinculadas a este contrato.
-        </div>
-        {/* Tipo do adiantamento */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={s.label}>Tipo de adiantamento *</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {([{ v: 'especial', label: '💸 Adiantamento Especial', color: '#7c3aed', bg: '#faf5ff' },
-               { v: 'transporte', label: '🚗 Adiantamento Transporte', color: '#c2410c', bg: '#fff7ed' }] as const).map(opt => (
-              <button key={opt.v} onClick={() => setFormNovoAdto(f => ({ ...f, tipo: opt.v }))}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
-                  border: `2px solid ${formNovoAdto.tipo === opt.v ? opt.color : '#cbd5e1'}`,
-                  background: formNovoAdto.tipo === opt.v ? opt.bg : 'white',
-                  color: formNovoAdto.tipo === opt.v ? opt.color : '#475569' }}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <br /><small style={{ color: '#047857' }}>Vale Transporte agora fica no módulo <strong>Benefícios</strong>.</small>
         </div>
         <div style={{ marginBottom: 14 }}>
           <label style={s.label}>Colaborador *</label>
@@ -525,7 +507,7 @@ export const AdiantamentosSaldos: React.FC = () => {
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={() => setModalNovoAdto(false)} style={s.btn('#94a3b8')}>Cancelar</button>
           <button onClick={salvarNovoAdiantamento} disabled={salvando} style={s.btn('#059669')}>
-            {salvando ? '⏳ Salvando...' : `✅ Criar ${formNovoAdto.tipo === 'transporte' ? 'Adto Transporte' : 'Adto Especial'}`}
+            {salvando ? '⏳ Salvando...' : '✅ Criar Adto Especial'}
           </button>
         </div>
       </div>
@@ -584,9 +566,6 @@ export const AdiantamentosSaldos: React.FC = () => {
                       style={{ marginTop: 2 }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={badge(c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff', c.tipoAdiantamento === 'transporte' ? '#c2410c' : '#7c3aed', { fontSize: 10, padding: '2px 7px' })}>
-                        {c.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}
-                      </span>
                       <span style={{ fontWeight: 700, fontSize: 13 }}>{c.descricao || 'Adiantamento s/ descrição'}</span>
                     </div>
                       <div style={{ fontSize: 12, color: '#64748b' }}>
@@ -684,27 +663,7 @@ export const AdiantamentosSaldos: React.FC = () => {
               <span style={{ fontSize: 11 }}>ID: {modalEditarAdto.adiantamentoId}</span>
             </div>
 
-            {/* Tipo do adiantamento — editável */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={s.label}>Tipo do adiantamento</label>
-              {modalEditarAdto.parcelas.length > 0 && (
-                <div style={{ fontSize: 11, color: '#92400e', backgroundColor: '#fff7ed', borderRadius: 6, padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #f59e0b' }}>
-                  ⚠️ Existem {modalEditarAdto.parcelas.length} parcela(s) vinculada(s). Alterar o tipo não reprocessa as parcelas já registradas.
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: 8 }}>
-                {([{ v: 'especial', label: '💸 Adiantamento Especial', color: '#7c3aed', bg: '#faf5ff' },
-                   { v: 'transporte', label: '🚗 Adiantamento Transporte', color: '#c2410c', bg: '#fff7ed' }] as const).map(opt => (
-                  <button key={opt.v} onClick={() => setFormEditarAdto(f => ({ ...f, tipo: opt.v }))}
-                    style={{ flex: 1, padding: '9px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
-                      border: `2px solid ${formEditarAdto.tipo === opt.v ? opt.color : '#cbd5e1'}`,
-                      background: formEditarAdto.tipo === opt.v ? opt.bg : 'white',
-                      color: formEditarAdto.tipo === opt.v ? opt.color : '#475569' }}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+
 
             {modalEditarAdto.totalAbatido > 0 && (
               <div style={{ fontSize: 12, color: '#92400e', backgroundColor: '#fff7ed', borderRadius: 8, padding: '8px 14px', marginBottom: 14, borderLeft: '4px solid #f59e0b' }}>
@@ -783,60 +742,53 @@ export const AdiantamentosSaldos: React.FC = () => {
       <div style={s.wrap}>
 
         {/* Cabeçalho */}
-        <div style={{ ...s.card, padding: '18px 22px', marginBottom: 16 }}>
+        <div style={{ padding: '4px 4px 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <h2 style={{ margin: '0 0 6px', color: '#0f172a' }}>Adiantamentos e Saldos</h2>
-              <div style={{ fontSize: 13, color: '#64748b', maxWidth: 700 }}>
-                Cada adiantamento especial tem um <strong>contrato individual</strong> com ID único — acompanhe o saldo, as parcelas e o histórico de cada empréstimo separadamente.
+              <h2 style={{ margin: '0 0 6px', color: '#0f172a', fontSize: 24, fontWeight: 800 }}>💸 Adiantamentos e Saldos</h2>
+              <div style={{ fontSize: 13, color: '#64748b', maxWidth: 720 }}>
+                Empréstimos especiais aos colaboradores — cada adiantamento tem <strong>contrato individual</strong> com saldo, parcelas e histórico. Vale Transporte agora está no módulo <em>Benefícios</em>.
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button style={s.btn('#059669')} onClick={() => setModalNovoAdto(true)}>➕ Novo Adiantamento</button>
               <button style={s.btn('#7c3aed')} onClick={() => { setFormParcela(f => ({ ...f, colaboradorId: '', adiantamentoId: '' })); setModalParcela(true); }}>➖ Registrar Parcela</button>
-              <button style={s.btn('#0f766e')} onClick={() => navigate('/modulos/extrato')}>Ver Extrato</button>
-              <button style={s.btn('#475569')} onClick={carregarDados}>🔄 Atualizar</button>
+              <button style={s.btn('#0f766e')} onClick={() => navigate('/modulos/extrato')}>📄 Ver Extrato</button>
+              <button style={s.btn('#f1f5f9', '#334155')} onClick={carregarDados}>🔄 Atualizar</button>
             </div>
           </div>
         </div>
 
         {/* KPIs */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
           {[
-            { label: 'Saldo especial em aberto', value: fmtMoeda(totaisResumo.totalEspecialAberto), color: '#7c3aed', bg: '#faf5ff' },
-            { label: 'Saldo transporte em aberto', value: fmtMoeda(totaisResumo.totalTransporteAberto), color: '#c2410c', bg: '#fff7ed' },
-            { label: 'Contratos em aberto', value: String(totaisResumo.qtdAbertos), color: '#dc2626', bg: '#fef2f2' },
-            { label: 'Contratos quitados', value: String(totaisResumo.qtdQuitados), color: '#059669', bg: '#ecfdf5' },
+            { label: 'Saldo em aberto', value: fmtMoeda(totaisResumo.totalEspecialAberto), color: '#7c3aed', bg: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)', icon: '💸', accent: '#7c3aed' },
+            { label: 'Contratos em aberto', value: String(totaisResumo.qtdAbertos), color: '#dc2626', bg: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', icon: '🔴', accent: '#dc2626' },
+            { label: 'Colaboradores devedores', value: String(totaisResumo.colaboradoresComSaldo), color: '#0284c7', bg: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', icon: '👥', accent: '#0284c7' },
+            { label: 'Contratos quitados', value: String(totaisResumo.qtdQuitados), color: '#059669', bg: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', icon: '✅', accent: '#059669' },
           ].map(k => (
-            <div key={k.label} style={{ ...s.card, padding: '14px 16px', backgroundColor: k.bg }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: k.color, marginBottom: 6 }}>{k.label}</div>
+            <div key={k.label} style={{ borderRadius: 14, padding: '16px 18px', background: k.bg, border: `1px solid ${k.accent}20`, boxShadow: '0 2px 6px rgba(15,23,42,0.04)', position: 'relative' as const, overflow: 'hidden' as const }}>
+              <div style={{ position: 'absolute' as const, top: 10, right: 12, fontSize: 22, opacity: 0.45 }}>{k.icon}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: k.color, marginBottom: 6, letterSpacing: 0.3, textTransform: 'uppercase' as const }}>{k.label}</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#0f172a' }}>{k.value}</div>
             </div>
           ))}
         </div>
 
         {/* Filtros */}
-        <div style={{ ...s.card, padding: '14px 18px', marginBottom: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+        <div style={{ ...s.card, padding: '16px 20px', marginBottom: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
             <div>
-              <label style={s.label}>Buscar colaborador</label>
+              <label style={s.label}>🔍 Buscar colaborador</label>
               <input value={buscaColaborador} onChange={e => setBuscaColaborador(e.target.value)}
-                placeholder="Nome..." style={s.input} />
+                placeholder="Digite o nome..." style={s.input} />
             </div>
             <div>
               <label style={s.label}>Status</label>
               <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value as any)} style={s.input}>
+                <option value="aberto">🔴 Em aberto</option>
+                <option value="quitado">✅ Quitados</option>
                 <option value="todos">Todos</option>
-                <option value="aberto">Em aberto</option>
-                <option value="quitado">Quitados</option>
-              </select>
-            </div>
-            <div>
-              <label style={s.label}>Tipo</label>
-              <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value as any)} style={s.input}>
-                <option value="todos">Todos</option>
-                <option value="especial">💸 Adiantamento Especial</option>
-                <option value="transporte">🚗 Adiantamento Transporte</option>
               </select>
             </div>
             <div>
@@ -848,11 +800,10 @@ export const AdiantamentosSaldos: React.FC = () => {
                 <option value="24">24 meses</option>
               </select>
             </div>
-            <button style={s.btn('#111827')} onClick={() => { setBuscaColaborador(''); setFiltroStatus('aberto'); }}>Limpar</button>
+            <button style={s.btn('#f1f5f9', '#334155')} onClick={() => { setBuscaColaborador(''); setFiltroStatus('aberto'); }}>Limpar</button>
             <button
-              style={s.btn('#475569')}
+              style={s.btn('#e0e7ff', '#4338ca')}
               onClick={() => {
-                // Se algum está fechado, abre todos. Senão, fecha todos.
                 if (contratosFechados.size > 0) setContratosFechados(new Set());
                 else setContratosFechados(new Set(contratosFiltrados.map(c => c.adiantamentoId)));
               }}>
@@ -880,15 +831,11 @@ export const AdiantamentosSaldos: React.FC = () => {
               });
               const progresso = c.valorTotal > 0 ? Math.min(100, (c.totalAbatido / c.valorTotal) * 100) : 0;
               return (
-                <div key={c.adiantamentoId} style={{ ...s.card, overflow: 'hidden', borderLeft: `4px solid ${c.quitado ? '#10b981' : c.tipoAdiantamento === 'transporte' ? '#ef6c00' : '#7c3aed'}` }}>
+                <div key={c.adiantamentoId} style={{ ...s.card, overflow: 'hidden', borderLeft: `4px solid ${c.quitado ? '#10b981' : '#7c3aed'}`, transition: 'transform .15s, box-shadow .15s' }}>
                   {/* Cabeçalho do contrato */}
-                  <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-                    cursor: 'pointer', backgroundColor: aberto ? (c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff') : 'white' }}
+                  <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                    cursor: 'pointer', backgroundColor: aberto ? '#faf5ff' : 'white' }}
                     onClick={toggleAberto}>
-                    {/* Tipo + Status */}
-                    <span style={badge(c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff', c.tipoAdiantamento === 'transporte' ? '#c2410c' : '#7c3aed')}>
-                      {c.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}
-                    </span>
                     <span style={badge(c.quitado ? '#dcfce7' : '#fef3c7', c.quitado ? '#166534' : '#92400e')}>
                       {c.quitado ? '✅ Quitado' : '🔴 Em aberto'}
                     </span>

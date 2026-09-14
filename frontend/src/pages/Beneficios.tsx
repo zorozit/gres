@@ -9,6 +9,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUnit } from '../contexts/UnitContext';
+import { Header } from '../components/Header';
+import { Footer } from '../components/Footer';
 
 const API = import.meta.env.VITE_API_ENDPOINT || '';
 const tk = () => localStorage.getItem('auth_token') || '';
@@ -222,28 +224,56 @@ export default function Beneficios() {
   const totalAjustesNum = ajustes.reduce((s, a) => s + (parseFloat(a.valor.replace(',', '.')) || 0), 0);
   const totalPago = beneficios.reduce((s, b) => s + (b.valorPago || 0), 0);
 
+  const totalPendente = pendentes.reduce((s, c) => s + (c.beneficioTransporte?.valorMensal || 0), 0);
+  const totalFechados = beneficios.filter(b => b.status === 'fechado').length;
+
   return (
-    <div style={{ padding: '20px', maxWidth: '1300px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '22px' }}>🚌 Vale Transporte</h1>
-          <p style={{ margin: '2px 0 0', color: '#666', fontSize: '13px' }}>
-            {mesLabel(mes)} — {beneficios.length}/{colabsBeneficio.length} pagos
-            {totalPago > 0 && ` • ${fmt(totalPago)}`}
-            {pendentes.length > 0 && <span style={{ color: '#e65100', fontWeight: 600 }}> • {pendentes.length} pendente(s)</span>}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input type="month" value={mes} onChange={e => { setMes(e.target.value); setSelectedColab(null); setApuracao(null); setModeLote(false); setSelecionadosLote(new Set()); }}
-            style={{ padding: '7px 10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px' }} />
-          {pendentes.length > 0 && !modeLote && (
-            <button onClick={() => { setModeLote(true); setSelectedColab(null); setApuracao(null); selecionarTodosPendentes(); }}
-              style={{ padding: '8px 16px', border: 'none', borderRadius: '6px', background: '#1976d2', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '13px' }}>
-              💳 Pagar em lote ({pendentes.length})
+    <div style={{ minHeight: '100vh', backgroundColor: '#f5f7fb' }}>
+      <Header title="Vale Transporte" />
+      <div style={{ maxWidth: '1300px', margin: '0 auto', padding: '0 20px 40px' }}>
+
+      {/* Cabeçalho */}
+      <div style={{ padding: '4px 4px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h2 style={{ margin: '0 0 6px', color: '#0f172a', fontSize: 24, fontWeight: 800 }}>🚌 Vale Transporte</h2>
+            <div style={{ fontSize: 13, color: '#64748b', maxWidth: 720 }}>
+              Crédito mensal por colaborador com apuração automática a partir das escalas.
+              Fluxo: <strong>Pagar VT</strong> → <strong>Apurar consumo</strong> → <strong>Fechar mês</strong>.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="month" value={mes} onChange={e => { setMes(e.target.value); setSelectedColab(null); setApuracao(null); setModeLote(false); setSelecionadosLote(new Set()); }}
+              style={{ padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, background: 'white' }} />
+            {pendentes.length > 0 && !modeLote && (
+              <button onClick={() => { setModeLote(true); setSelectedColab(null); setApuracao(null); selecionarTodosPendentes(); }}
+                style={{ padding: '9px 14px', border: 'none', borderRadius: 8, background: '#059669', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+                💳 Pagar em lote ({pendentes.length})
+              </button>
+            )}
+            <button onClick={carregar}
+              style={{ padding: '9px 12px', border: 'none', borderRadius: 8, background: '#f1f5f9', color: '#334155', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+              🔄 Atualizar
             </button>
-          )}
+          </div>
         </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
+        {[
+          { label: 'Colaboradores com VT', value: String(colabsBeneficio.length), color: '#0284c7', bg: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', icon: '👥', accent: '#0284c7' },
+          { label: 'Total pago no mês', value: fmt(totalPago), color: '#7c3aed', bg: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)', icon: '💰', accent: '#7c3aed' },
+          { label: 'Pendentes', value: `${pendentes.length}${totalPendente > 0 ? ` • ${fmt(totalPendente)}` : ''}`, color: '#dc2626', bg: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', icon: '⏳', accent: '#dc2626' },
+          { label: 'Fechados', value: String(totalFechados), color: '#059669', bg: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', icon: '✅', accent: '#059669' },
+        ].map(k => (
+          <div key={k.label} style={{ borderRadius: 14, padding: '16px 18px', background: k.bg, border: `1px solid ${k.accent}20`, boxShadow: '0 2px 6px rgba(15,23,42,0.04)', position: 'relative' as const, overflow: 'hidden' as const }}>
+            <div style={{ position: 'absolute' as const, top: 10, right: 12, fontSize: 22, opacity: 0.45 }}>{k.icon}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: k.color, marginBottom: 6, letterSpacing: 0.3, textTransform: 'uppercase' as const }}>{k.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>{k.value}</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{mesLabel(mes)}</div>
+          </div>
+        ))}
       </div>
 
       {msg && (
@@ -478,6 +508,8 @@ export default function Beneficios() {
           )}
         </div>
       )}
+      </div>
+      <Footer />
     </div>
   );
 }
