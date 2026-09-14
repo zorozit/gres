@@ -344,6 +344,7 @@ export default function FolhaPagamento() {
   const [controlesMap, setControlesMap] = useState<Record<string, ControleDia[]>>({});
   const [escalas, setEscalas] = useState<EscalaItem[]>([]);
   const [folhasDB, setFolhasDB] = useState<any[]>([]);
+  const [payslipsCLTDobras, setPayslipsCLTDobras] = useState<any[]>([]);
   const [folhasLocais, setFolhasLocais] = useState<FolhaMensal[]>([]);
   const [fechamentosFreelancer, setFechamentosFreelancer] = useState<FechamentoSemanalFreelancer[]>([]);
   // Saídas do período para cruzamento com motoboys
@@ -477,7 +478,7 @@ export default function FolhaPagamento() {
         ? fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${mesalMesAnoInicio}&dataFim=${mesalMesAnoFim}`, auth).catch(() => null)
         : null;
 
-      const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult] = await Promise.all([
+      const [rC, foRs, esRs, rS, rSPend, rSHist, rSMesResult, rPS] = await Promise.all([
         fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, auth),
         Promise.all(folhaFetches),
         Promise.all(escalaFetches),
@@ -488,6 +489,10 @@ export default function FolhaPagamento() {
         fetchAuth(`${apiUrl}/saidas?unitId=${unitId}&dataInicio=${histLongoIni}&dataFim=${dataFim}`, auth).catch(() => null),
         // Saídas do mês completo (usado para adiantamento transporte quando período custom ativo)
         rSMes || Promise.resolve(null),
+        // Payslips (para detectar dias já pagos em fechamentos com período custom) — union dos meses tocados
+        Promise.all(mesesAlvo.map(mm =>
+          fetchAuth(`${apiUrl}/payslips?unitId=${unitId}&mes=${mm}`, auth).catch(() => null)
+        )),
       ]);
 
 
@@ -576,6 +581,26 @@ export default function FolhaPagamento() {
         }
         setFolhasDB(folhasAcc);
       }
+
+      // Carregar payslips CLT do tipo dobras (para detectar dias já pagos em pagamentos com período custom)
+      try {
+        const psAcc: any[] = [];
+        for (const r of (rPS || [])) {
+          if (!r?.ok) continue;
+          try {
+            const dPS = await r.json();
+            if (Array.isArray(dPS)) psAcc.push(...dPS);
+          } catch { /* ignore */ }
+        }
+        const dobrasCLTArr = psAcc.filter((p: any) =>
+          p?.tipoPagamento === 'dobras' && p?.tipoContrato === 'CLT'
+          && p?.periodoInicio && p?.periodoFim && p?.status === 'pago'
+        );
+        // Dedup por id
+        const dedupMap = new Map<string, any>();
+        for (const p of dobrasCLTArr) if (p?.id) dedupMap.set(p.id, p);
+        setPayslipsCLTDobras(Array.from(dedupMap.values()));
+      } catch { setPayslipsCLTDobras([]); }
 
       // Carregar saídas do período
       if (rS?.ok) {
@@ -4342,6 +4367,13 @@ export default function FolhaPagamento() {
                 const linhas: LinhaCalc[] = pessoas.map(p => {
                   let dC=0, nC=0, dnC=0;
                   const codigos: string[] = [];
+                  // Dias já pagos anteriormente para este colaborador (via payslips com período)
+                  // Cobre pagamento com período custom que possa ter incluido dia(s) fora da
+                  // semana canônica seg-dom (ex: feriado 07/09 pago com a semana anterior).
+                  const psDoColab = (payslipsCLTDobras || []).filter((ps: any) => ps.colaboradorId === p.id);
+                  const isDiaJaPago = (ds: string) => psDoColab.some((ps: any) =>
+                    ps.periodoInicio <= ds && ds <= ps.periodoFim
+                  );
                   // Get days in this week
                   const d1 = new Date(sem.inicio + 'T12:00:00');
                   const d2 = new Date(sem.fim + 'T12:00:00');
@@ -4357,6 +4389,8 @@ export default function FolhaPagamento() {
                       // undefined/null = sem confirmação (aguardando)
                       codigos.push(ds > ISO_HOJE_FP ? '...' : '?'); continue;
                     }
+                    // Detecção de dias já pagos por payslip anterior (período custom): pula do cálculo
+                    if (isDiaJaPago(ds)) { codigos.push('✓'); continue; }
                     // DiaNoite parcial: pagar apenas o turno presente
                     const efTurno = (esc.turno === 'DiaNoite' && presStatus === 'presente_parcial')
                       ? (esc.presenca === 'presente' ? 'Dia' : 'Noite') : esc.turno;
@@ -4528,8 +4562,9 @@ export default function FolhaPagamento() {
                                         else if (c==='F') { bg='#ffebee'; tc='#c62828'; }
                                         else if (c==='FJ') { bg='#fce4ec'; tc='#880e4f'; }
                                         else if (c==='...') { bg='#f5f5f5'; tc='#9e9e9e'; } // futuro sem presença
+                                        else if (c==='✓') { bg='#e0f2f1'; tc='#00695c'; } // dia já pago em pgto anterior
                                         return <td key={ds} style={{ ...s.td, textAlign: 'center', padding: '4px 2px', opacity: c==='...' ? 0.6 : 1 }}>
-                                          <span title={c==='...' ? 'Turno agendado - aguardando confirmação de presença' : undefined}
+                                          <span title={c==='...' ? 'Turno agendado - aguardando confirmação de presença' : c==='✓' ? 'Dia já pago em pagamento anterior (período custom)' : undefined}
                                             style={{ backgroundColor: bg, color: tc, padding: '1px 4px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', minWidth: '22px', display: 'inline-block' }}>{c}</span>
                                         </td>;
                                       })}

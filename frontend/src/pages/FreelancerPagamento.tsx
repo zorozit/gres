@@ -289,6 +289,29 @@ export default function FreelancerPagamento() {
         }
       }
     }
+    // Complemento: payslips com periodoInicio/periodoFim (pagamentos com período custom) também marcam dias como pagos.
+    // Cobre casos como CLT/dobras onde o registro folha-pagamento é agrupado (sem data/turno específicos).
+    for (const cid of Object.keys(payslipsMap)) {
+      const psArr = payslipsMap[cid] || [];
+      for (const ps of psArr) {
+        if (!ps?.periodoInicio || !ps?.periodoFim || ps?.status === 'cancelado') continue;
+        if (!diasPagosPorColab[cid]) diasPagosPorColab[cid] = new Set();
+        if (!turnosPagosPorColab[cid]) turnosPagosPorColab[cid] = new Map();
+        // Marcar cada dia do range como pago (para ambos os turnos)
+        const d1 = new Date(ps.periodoInicio + 'T12:00:00');
+        const d2 = new Date(ps.periodoFim + 'T12:00:00');
+        for (let d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+          const ds = d.toISOString().split('T')[0];
+          diasPagosPorColab[cid].add(ds);
+          for (const t of ['Dia', 'Noite']) {
+            const chave = `${ds}-${t}`;
+            if (!turnosPagosPorColab[cid].has(chave)) {
+              turnosPagosPorColab[cid].set(chave, { valor: 0, dataPagamento: ps.dataPagamento || '', forma: ps.formaPagamento || 'PIX' });
+            }
+          }
+        }
+      }
+    }
 
     /* adiantamentos de transporte por colab */
     const calcTransporteAdiantado = (frId: string, isoIni: string, isoFim: string, saidasUsadas: any[]): number => {
