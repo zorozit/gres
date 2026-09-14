@@ -101,7 +101,7 @@ export const AdiantamentosSaldos: React.FC = () => {
   const [buscaColaborador, setBuscaColaborador] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'aberto' | 'quitado'>('aberto');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'especial' | 'transporte'>('todos');
-  const [contratoAberto, setContratoAberto] = useState<string | null>(null); // ID do contrato expandido
+  const [contratosFechados, setContratosFechados] = useState<Set<string>>(new Set()); // IDs dos contratos MANUALMENTE fechados (default: todos abertos)
 
   // Modal novo adiantamento
   const [modalNovoAdto, setModalNovoAdto] = useState(false);
@@ -849,6 +849,15 @@ export const AdiantamentosSaldos: React.FC = () => {
               </select>
             </div>
             <button style={s.btn('#111827')} onClick={() => { setBuscaColaborador(''); setFiltroStatus('aberto'); }}>Limpar</button>
+            <button
+              style={s.btn('#475569')}
+              onClick={() => {
+                // Se algum está fechado, abre todos. Senão, fecha todos.
+                if (contratosFechados.size > 0) setContratosFechados(new Set());
+                else setContratosFechados(new Set(contratosFiltrados.map(c => c.adiantamentoId)));
+              }}>
+              {contratosFechados.size > 0 ? '▼ Expandir todos' : '▲ Recolher todos'}
+            </button>
           </div>
         </div>
 
@@ -862,14 +871,20 @@ export const AdiantamentosSaldos: React.FC = () => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {contratosFiltrados.map(c => {
-              const aberto = contratoAberto === c.adiantamentoId;
+              const aberto = !contratosFechados.has(c.adiantamentoId);
+              const toggleAberto = () => setContratosFechados(prev => {
+                const next = new Set(prev);
+                if (next.has(c.adiantamentoId)) next.delete(c.adiantamentoId);
+                else next.add(c.adiantamentoId);
+                return next;
+              });
               const progresso = c.valorTotal > 0 ? Math.min(100, (c.totalAbatido / c.valorTotal) * 100) : 0;
               return (
                 <div key={c.adiantamentoId} style={{ ...s.card, overflow: 'hidden', borderLeft: `4px solid ${c.quitado ? '#10b981' : c.tipoAdiantamento === 'transporte' ? '#ef6c00' : '#7c3aed'}` }}>
                   {/* Cabeçalho do contrato */}
                   <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
                     cursor: 'pointer', backgroundColor: aberto ? (c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff') : 'white' }}
-                    onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}>
+                    onClick={toggleAberto}>
                     {/* Tipo + Status */}
                     <span style={badge(c.tipoAdiantamento === 'transporte' ? '#fff7ed' : '#faf5ff', c.tipoAdiantamento === 'transporte' ? '#c2410c' : '#7c3aed')}>
                       {c.tipoAdiantamento === 'transporte' ? '🚗 Transporte' : '💸 Especial'}
@@ -936,7 +951,7 @@ export const AdiantamentosSaldos: React.FC = () => {
                           🗑️
                         </button>
                       )}
-                      <button onClick={() => setContratoAberto(aberto ? null : c.adiantamentoId)}
+                      <button onClick={toggleAberto}
                         style={{ ...s.btn('#475569'), padding: '6px 12px', fontSize: 12 }}>
                         {aberto ? '▲ Fechar' : '▼ Detalhes'}
                       </button>
