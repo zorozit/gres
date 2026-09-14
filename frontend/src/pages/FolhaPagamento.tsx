@@ -4441,7 +4441,13 @@ export default function FolhaPagamento() {
                   }
 
                   return { pessoa: p, dC, nC, dnC, codigos, totalBruto, totalTransporte, transporteSaldoCLT, adtoTranspMes, adtoDisponivel };
-                }).filter(l => (l.dC + l.nC + l.dnC > 0) && l.totalBruto > 0);
+                }).filter(l => {
+                  // Manter linha se tem dias a pagar OU se tem dias marcados como já pagos (✓),
+                  // pra o usuário conseguir auditar semanas onde tudo já está fechado.
+                  const temPago = (l.dC + l.nC + l.dnC > 0) && l.totalBruto > 0;
+                  const temJaPago = l.codigos.includes('✓');
+                  return temPago || temJaPago;
+                });
 
                 if (linhas.length === 0) return null;
 
