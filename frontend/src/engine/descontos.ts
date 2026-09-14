@@ -101,13 +101,25 @@ function _encontrarContratoAlvo(
   const descontos = saidas
     .filter(s => s.colaboradorId === colaboradorId && (s.tipo || '') === tipoDesc && s.pago);
 
+  // Descontos legados sem adiantamentoId: alinhado com AdiantamentosSaldos.tsx,
+  // abatem do contrato mais antigo em aberto (cascata de excesso).
+  const semVinculo = descontos.filter(d => !d.adiantamentoId);
+  const totalSemVinculo = semVinculo.reduce((sum, d) => sum + (d.valor || 0), 0);
+
   const contratosComSaldo: { cId: string; saldo: number }[] = [];
+  let restanteSemVinculo = totalSemVinculo;
   for (const ae of adtos) {
     const cId = ae.adiantamentoId || ae.id;
-    const totalDesc = descontos
+    const totalDescComAdto = descontos
       .filter(d => d.adiantamentoId === cId)
       .reduce((sum, d) => sum + (d.valor || 0), 0);
-    const saldo = parseFloat(((ae.valor || 0) - totalDesc).toFixed(2));
+    let saldo = parseFloat(((ae.valor || 0) - totalDescComAdto).toFixed(2));
+    // Aplica cascata do legado no contrato mais antigo primeiro
+    if (saldo > 0 && restanteSemVinculo > 0) {
+      const abater = Math.min(saldo, restanteSemVinculo);
+      saldo = parseFloat((saldo - abater).toFixed(2));
+      restanteSemVinculo = parseFloat((restanteSemVinculo - abater).toFixed(2));
+    }
     if (saldo > 0) contratosComSaldo.push({ cId, saldo });
   }
 
