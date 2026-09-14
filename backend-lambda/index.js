@@ -4120,6 +4120,33 @@ exports.handler = async (event) => {
       } catch (e) { console.error(e); return response(500, { error: 'Erro ao reabrir: ' + e.message }); }
     }
 
+    // POST /beneficios/ajustar — registrar ajuste manual (crédito/débito) no benefício
+    if (rawPath === '/beneficios/ajustar' && httpMethod === 'POST') {
+      const { id, ajuste } = body; // id do benefício, ajuste = { descricao, valor, criadoEm }
+      if (!id || !ajuste || !ajuste.descricao || typeof ajuste.valor !== 'number') {
+        return response(400, { error: 'id e ajuste { descricao, valor } obrigatórios' });
+      }
+      const now = new Date().toISOString();
+      try {
+        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id } }).promise();
+        if (!existing.Item) return response(404, { error: 'Benefício não encontrado' });
+        const listaAjustes = [...(existing.Item.ajustes || []), { ...ajuste, criadoEm: ajuste.criadoEm || now }];
+        const totalAjustes = listaAjustes.reduce((s, a) => s + (a.valor || 0), 0);
+        // Se já está fechado, recalcula saldoFinal
+        let saldoFinal = existing.Item.saldoFinal;
+        if (existing.Item.status === 'fechado') {
+          const base = (existing.Item.valorPago || 0) + (existing.Item.saldoAnterior || 0) - (existing.Item.valorApurado || 0);
+          saldoFinal = parseFloat((base + totalAjustes).toFixed(2));
+        }
+        await dynamodb.update({
+          TableName: 'gres-prod-beneficios', Key: { id },
+          UpdateExpression: 'SET ajustes = :a, totalAjustes = :t, saldoFinal = :sf, updatedAt = :u',
+          ExpressionAttributeValues: { ':a': listaAjustes, ':t': parseFloat(totalAjustes.toFixed(2)), ':sf': saldoFinal, ':u': now },
+        }).promise();
+        return response(200, { success: true, totalAjustes, saldoFinal });
+      } catch (e) { console.error(e); return response(500, { error: 'Erro ao registrar ajuste: ' + e.message }); }
+    }
+
     // DELETE /beneficios/:id — excluir registro e payslip associado
     if (rawPath.match(/\/beneficios\/.+/) && httpMethod === 'DELETE') {
       const benId = rawPath.split('/').pop();

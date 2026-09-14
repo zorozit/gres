@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { useUnit } from '../contexts/UnitContext';
 import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
@@ -69,6 +70,13 @@ export default function Beneficios() {
   // Lote
   const [selecionadosLote, setSelecionadosLote] = useState<Set<string>>(new Set());
   const [modeLote, setModeLote] = useState(false);
+  // Filtros
+  const [filtroTipoContrato, setFiltroTipoContrato] = useState<'todos' | 'CLT' | 'Freelancer'>('todos');
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'pendente' | 'pago' | 'fechado'>('todos');
+  const [busca, setBusca] = useState('');
+  // Modal ajuste manual de saldo
+  const [modalAjuste, setModalAjuste] = useState<Beneficio | null>(null);
+  const [formAjuste, setFormAjuste] = useState({ descricao: '', valor: '', tipo: 'credito' as 'credito' | 'debito' });
 
   const authFetch = useCallback(async (url: string, opts: any = {}) => {
     return fetch(url, { ...opts, headers: { ...opts.headers, Authorization: `Bearer ${tk()}`, 'Content-Type': 'application/json' } });
@@ -95,6 +103,45 @@ export default function Beneficios() {
       .sort((a, b) => a.nome.localeCompare(b.nome)),
     [colabs]
   );
+
+  // Filtrados (busca + tipo contrato + status)
+  const colabsFiltrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return colabsBeneficio.filter(c => {
+      if (filtroTipoContrato !== 'todos' && c.tipoContrato !== filtroTipoContrato) return false;
+      if (q && !c.nome.toLowerCase().includes(q)) return false;
+      if (filtroStatus !== 'todos') {
+        const b = beneficios.find(x => x.colaboradorId === c.id);
+        if (filtroStatus === 'pendente' && b) return false;
+        if (filtroStatus === 'pago' && b?.status !== 'pago') return false;
+        if (filtroStatus === 'fechado' && b?.status !== 'fechado') return false;
+      }
+      return true;
+    });
+  }, [colabsBeneficio, busca, filtroTipoContrato, filtroStatus, beneficios]);
+
+  // Alerta de VT vencendo (colaboradores com diaCredito nos próximos 3 dias e ainda não pagos)
+  const alertasVencendo = useMemo(() => {
+    const hj = new Date();
+    const hoje_dia = hj.getDate();
+    const [ano, mm] = mes.split('-').map(Number);
+    const noMesCorrente = ano === hj.getFullYear() && mm === hj.getMonth() + 1;
+    if (!noMesCorrente) return [];
+    const ultimoDia = new Date(ano, mm, 0).getDate();
+    return colabsBeneficio.filter(c => {
+      const dc = c.beneficioTransporte?.diaCredito || 1;
+      const b = beneficios.find(x => x.colaboradorId === c.id);
+      if (b) return false; // já pago
+      // dias até o crédito (com wrap se já passou)
+      const diff = dc - hoje_dia;
+      // Considera vencendo: até 3 dias antes até 5 dias depois (atrasado)
+      return diff >= -5 && diff <= 3 && dc <= ultimoDia;
+    }).map(c => {
+      const dc = c.beneficioTransporte!.diaCredito || 1;
+      const diff = dc - hoje_dia;
+      return { colab: c, diaCredito: dc, diasParaVencer: diff, atrasado: diff < 0 };
+    }).sort((a, b) => a.diasParaVencer - b.diasParaVencer);
+  }, [colabsBeneficio, beneficios, mes]);
 
   const benMap = useMemo(() => {
     const m = new Map<string, Beneficio>();
@@ -227,6 +274,98 @@ export default function Beneficios() {
   const totalPendente = pendentes.reduce((s, c) => s + (c.beneficioTransporte?.valorMensal || 0), 0);
   const totalFechados = beneficios.filter(b => b.status === 'fechado').length;
 
+  /* Exportação (CSV / XLSX) do relatório mensal */
+  const linhasRelatorio = useMemo(() => {
+    return colabsBeneficio.map(c => {
+      const b = beneficios.find(x => x.colaboradorId === c.id);
+      const bt = c.beneficioTransporte!;
+      const status = b?.status === 'fechado' ? 'Fechado' : b?.status === 'pago' ? 'Pago' : 'Pendente';
+      return {
+        Colaborador: c.nome,
+        'Tipo Contrato': c.tipoContrato || '',
+        'Tipo VT': bt.tipo,
+        'Valor Mensal': bt.valorMensal || 0,
+        'Valor Diário': bt.valorDiario || c.valorTransporte || 0,
+        'Dia Crédito': bt.diaCredito || 1,
+        Status: status,
+        'Valor Pago': b?.valorPago || 0,
+        'Dias Presentes': b?.diasPresentes || 0,
+        'Valor Apurado': b?.valorApurado || 0,
+        'Saldo Anterior': b?.saldoAnterior || 0,
+        'Total Ajustes': b?.totalAjustes || 0,
+        'Saldo Final': b?.saldoFinal ?? '',
+        'Data Pagamento': b?.dataPagamento || '',
+        'Forma Pgto': b?.formaPagamento || '',
+        Obs: b?.obs || '',
+      };
+    });
+  }, [colabsBeneficio, beneficios]);
+
+  const exportarCSV = () => {
+    if (linhasRelatorio.length === 0) { setMsg('❌ Sem dados para exportar.'); return; }
+    const headers = Object.keys(linhasRelatorio[0]);
+    const escape = (v: any) => {
+      const s = String(v ?? '').replace(/"/g, '""');
+      return /[";\n]/.test(s) ? `"${s}"` : s;
+    };
+    const linhas = [
+      headers.join(';'),
+      ...linhasRelatorio.map(r => headers.map(h => escape((r as any)[h])).join(';')),
+    ];
+    const bom = '\uFEFF'; // UTF-8 BOM para o Excel abrir com acentos
+    const blob = new Blob([bom + linhas.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `vale-transporte-${mes}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const exportarXLSX = () => {
+    if (linhasRelatorio.length === 0) { setMsg('❌ Sem dados para exportar.'); return; }
+    const ws = XLSX.utils.json_to_sheet(linhasRelatorio);
+    // Auto-width simples
+    const colWidths = Object.keys(linhasRelatorio[0]).map(k => ({
+      wch: Math.max(k.length, ...linhasRelatorio.map(r => String((r as any)[k] ?? '').length)) + 2,
+    }));
+    (ws as any)['!cols'] = colWidths;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `VT ${mes}`);
+    XLSX.writeFile(wb, `vale-transporte-${mes}.xlsx`);
+  };
+
+  /* Ajuste manual de saldo (registrado na coluna 'ajustes' do benefício) */
+  const abrirAjuste = (b: Beneficio) => {
+    setFormAjuste({ descricao: '', valor: '', tipo: 'credito' });
+    setModalAjuste(b);
+  };
+
+  const salvarAjuste = async () => {
+    if (!modalAjuste) return;
+    const valorNum = parseFloat(formAjuste.valor.replace(',', '.'));
+    if (!formAjuste.descricao.trim() || !Number.isFinite(valorNum) || valorNum <= 0) {
+      setMsg('❌ Descreva o motivo e informe um valor válido.'); return;
+    }
+    setProcessando(true);
+    try {
+      const sinal = formAjuste.tipo === 'credito' ? 1 : -1;
+      const ajusteNovo = { descricao: formAjuste.descricao.trim(), valor: sinal * valorNum, criadoEm: new Date().toISOString() };
+      const r = await authFetch(`${API}/beneficios/ajustar`, {
+        method: 'POST',
+        body: JSON.stringify({ id: modalAjuste.id, ajuste: ajusteNovo }),
+      });
+      if (r.ok) {
+        setMsg('✅ Ajuste registrado.');
+        setModalAjuste(null);
+        await carregar();
+        if (selectedColab === modalAjuste.colaboradorId) await selecionarColab(modalAjuste.colaboradorId);
+      } else {
+        const err = await r.text();
+        setMsg('❌ ' + (err || 'Erro ao salvar ajuste'));
+      }
+    } catch (e) { setMsg('❌ Erro de rede'); }
+    finally { setProcessando(false); }
+  };
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f7fb' }}>
       <Header title="Vale Transporte" />
@@ -282,6 +421,146 @@ export default function Beneficios() {
           color: msg.startsWith('✅') || msg.startsWith('🔓') ? '#2e7d32' : '#c62828', fontSize: '13px' }}>{msg}</div>
       )}
 
+      {/* Alertas de VT vencendo */}
+      {alertasVencendo.length > 0 && (
+        <div style={{ background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)', border: '1px solid #f59e0b40', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 20 }}>⏰</span>
+            <strong style={{ color: '#92400e', fontSize: 14 }}>
+              {alertasVencendo.filter(a => a.atrasado).length > 0
+                ? `${alertasVencendo.filter(a => a.atrasado).length} VT(s) atrasado(s) e ${alertasVencendo.filter(a => !a.atrasado).length} vencendo`
+                : `${alertasVencendo.length} VT(s) vencendo em breve`}
+            </strong>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {alertasVencendo.slice(0, 8).map(a => (
+              <span key={a.colab.id} onClick={() => selecionarColab(a.colab.id)}
+                style={{ padding: '4px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  background: a.atrasado ? '#fee2e2' : 'white',
+                  color: a.atrasado ? '#991b1b' : '#78350f',
+                  border: `1px solid ${a.atrasado ? '#fca5a5' : '#fcd34d'}` }}>
+                {a.colab.nome} · {a.atrasado ? `${Math.abs(a.diasParaVencer)}d atrasado` : a.diasParaVencer === 0 ? 'hoje' : `${a.diasParaVencer}d`}
+              </span>
+            ))}
+            {alertasVencendo.length > 8 && (
+              <span style={{ padding: '4px 10px', fontSize: 11, color: '#92400e', fontWeight: 700 }}>+{alertasVencendo.length - 8}</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Filtros + ações (busca, tipo contrato, status, exportar) */}
+      <div style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: 12, padding: '14px 18px', marginBottom: 18, boxShadow: '0 2px 6px rgba(15,23,42,0.04)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto auto auto', gap: 12, alignItems: 'end' }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>🔍 Buscar</label>
+            <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Nome do colaborador..."
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>Tipo Contrato</label>
+            <select value={filtroTipoContrato} onChange={e => setFiltroTipoContrato(e.target.value as any)}
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13 }}>
+              <option value="todos">Todos</option>
+              <option value="CLT">CLT</option>
+              <option value="Freelancer">Freelancer</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>Status</label>
+            <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value as any)}
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13 }}>
+              <option value="todos">Todos</option>
+              <option value="pendente">⏳ Pendentes</option>
+              <option value="pago">💰 Pagos</option>
+              <option value="fechado">✅ Fechados</option>
+            </select>
+          </div>
+          <button onClick={() => { setBusca(''); setFiltroTipoContrato('todos'); setFiltroStatus('todos'); }}
+            style={{ padding: '9px 14px', border: 'none', borderRadius: 8, background: '#f1f5f9', color: '#334155', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+            Limpar
+          </button>
+          <button onClick={exportarCSV} title="Exportar CSV"
+            style={{ padding: '9px 14px', border: 'none', borderRadius: 8, background: '#0f766e', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+            📄 CSV
+          </button>
+          <button onClick={exportarXLSX} title="Exportar XLSX (Excel)"
+            style={{ padding: '9px 14px', border: 'none', borderRadius: 8, background: '#166534', color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+            📊 XLSX
+          </button>
+        </div>
+      </div>
+
+      {/* Modal ajuste manual */}
+      {modalAjuste && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setModalAjuste(null)}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 28, maxWidth: 520, width: '96%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h3 style={{ margin: 0 }}>⚖️ Ajuste Manual de Saldo</h3>
+              <button onClick={() => setModalAjuste(null)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ background: '#f0f9ff', padding: '10px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13, borderLeft: '4px solid #0284c7' }}>
+              <strong>{modalAjuste.colaboradorNome}</strong> · {mesLabel(modalAjuste.mes)}<br/>
+              <span style={{ fontSize: 11, color: '#475569' }}>Ajustes atuais: {modalAjuste.ajustes?.length || 0} · Total: {fmt(modalAjuste.totalAjustes || 0)}</span>
+            </div>
+
+            {/* Histórico de ajustes */}
+            {modalAjuste.ajustes && modalAjuste.ajustes.length > 0 && (
+              <div style={{ marginBottom: 14, maxHeight: 160, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <thead style={{ background: '#f8fafc' }}>
+                    <tr><th style={{ padding: 8, textAlign: 'left' }}>Motivo</th><th style={{ padding: 8, textAlign: 'right' }}>Valor</th><th style={{ padding: 8, textAlign: 'left' }}>Quando</th></tr>
+                  </thead>
+                  <tbody>
+                    {modalAjuste.ajustes.map((a: any, i: number) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: 8 }}>{a.descricao}</td>
+                        <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: a.valor >= 0 ? '#059669' : '#dc2626' }}>{a.valor >= 0 ? '+' : ''}{fmt(a.valor)}</td>
+                        <td style={{ padding: 8, color: '#64748b', fontSize: 11 }}>{a.criadoEm ? new Date(a.criadoEm).toLocaleString('pt-BR') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>Tipo</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([{ v: 'credito', label: '➕ Crédito', color: '#059669' }, { v: 'debito', label: '➖ Débito', color: '#dc2626' }] as const).map(opt => (
+                  <button key={opt.v} onClick={() => setFormAjuste(f => ({ ...f, tipo: opt.v }))}
+                    style={{ flex: 1, padding: 10, borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+                      border: `2px solid ${formAjuste.tipo === opt.v ? opt.color : '#cbd5e1'}`,
+                      background: formAjuste.tipo === opt.v ? `${opt.color}15` : 'white',
+                      color: formAjuste.tipo === opt.v ? opt.color : '#475569' }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>Motivo *</label>
+              <input value={formAjuste.descricao} onChange={e => setFormAjuste(f => ({ ...f, descricao: e.target.value }))}
+                placeholder="Ex: reajuste de tarifa, correção de falta indevida..."
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5, display: 'block' }}>Valor (R$) *</label>
+              <input type="number" step="0.01" min="0.01" value={formAjuste.valor}
+                onChange={e => setFormAjuste(f => ({ ...f, valor: e.target.value }))}
+                placeholder="0,00"
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setModalAjuste(null)} style={{ padding: '9px 18px', border: 'none', borderRadius: 8, background: '#94a3b8', color: 'white', fontWeight: 700, cursor: 'pointer' }}>Cancelar</button>
+              <button onClick={salvarAjuste} disabled={processando} style={{ padding: '9px 18px', border: 'none', borderRadius: 8, background: '#059669', color: 'white', fontWeight: 700, cursor: 'pointer', opacity: processando ? 0.6 : 1 }}>
+                {processando ? '⏳ Salvando...' : '✅ Registrar Ajuste'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>⏳</div> : (
         <div style={{ display: 'grid', gridTemplateColumns: (selectedColab && apuracao) ? '300px 1fr' : '1fr', gap: '16px' }}>
           {/* Lista */}
@@ -313,11 +592,11 @@ export default function Beneficios() {
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {colabsBeneficio.length === 0 ? (
+              {colabsFiltrados.length === 0 ? (
                 <div style={{ padding: '20px', textAlign: 'center', color: '#999', fontSize: '13px' }}>
-                  Nenhum CLT com VT configurado.<br/>Configure em Colaboradores → Editar.
+                  {colabsBeneficio.length === 0 ? <>Nenhum colaborador com VT configurado.<br/>Configure em Colaboradores → Editar.</> : 'Nenhum resultado com os filtros selecionados.'}
                 </div>
-              ) : colabsBeneficio.map(c => {
+              ) : colabsFiltrados.map(c => {
                 const b = benMap.get(c.id);
                 const isSelected = selectedColab === c.id;
                 const isLoteSel = selecionadosLote.has(c.id);
@@ -494,12 +773,18 @@ export default function Beneficios() {
                     </div>
                   )}
 
-                  {isFechado && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: '10px' }}>
-                      <button onClick={reabrir} disabled={processando}
-                        style={{ padding: '7px 14px', border: 'none', borderRadius: '6px', background: '#ff9800', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '12px' }}>
-                        🔓 Reabrir
+                  {(isPago || isFechado) && ben && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid #eee', paddingTop: '10px' }}>
+                      <button onClick={() => abrirAjuste(ben)} disabled={processando}
+                        style={{ padding: '7px 14px', border: 'none', borderRadius: '6px', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '12px' }}>
+                        ⚖️ Ajuste manual{ben.ajustes?.length ? ` (${ben.ajustes.length})` : ''}
                       </button>
+                      {isFechado && (
+                        <button onClick={reabrir} disabled={processando}
+                          style={{ padding: '7px 14px', border: 'none', borderRadius: '6px', background: '#ff9800', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '12px' }}>
+                          🔓 Reabrir
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
