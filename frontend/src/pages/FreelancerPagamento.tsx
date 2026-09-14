@@ -196,7 +196,7 @@ export default function FreelancerPagamento() {
       let saidasPendAnt: any[] = [];
       if (rS?.ok) { const d = await rS.json(); saidasPer = Array.isArray(d)?d:[]; setSaidasPeriodo(saidasPer); } else setSaidasPeriodo([]);
       if (rSMesResult?.ok) { const d = await rSMesResult.json(); saidasMesComp = Array.isArray(d)?d:[]; setSaidasMesCompleto(saidasMesComp); } else setSaidasMesCompleto([]);
-      if (rSPend?.ok) { const d = await rSPend.json(); saidasPendAnt = (Array.isArray(d)?d:[]).filter((s:any)=>s.pago===false); setSaidasPendentesAnt(saidasPendAnt); } else setSaidasPendentesAnt([]);
+      if (rSPend?.ok) { const d = await rSPend.json(); saidasPendAnt = (Array.isArray(d)?d:[]).filter((s:any)=>s.pago===false && !s.pagamentoIdLigado); setSaidasPendentesAnt(saidasPendAnt); } else setSaidasPendentesAnt([]);
 
       /* payslips — buscar para usar como fonte de verdade quando pago */
       let psMapLocal: Record<string, any[]> = {};
