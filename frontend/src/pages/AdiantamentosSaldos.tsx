@@ -230,6 +230,11 @@ export const AdiantamentosSaldos: React.FC = () => {
         const candidatos = todosContratos
           .filter(c2 => c2.colaboradorId === c.colaboradorId && c2.tipoAdiantamento === c.tipoAdiantamento && !c2.quitado && c2.adiantamentoId !== c.adiantamentoId)
           .sort((a, b) => a.dataAbertura.localeCompare(b.dataAbertura));
+        // As parcelas mais recentes do contrato quitado são as que geraram o excesso;
+        // vamos consumi-las (do mais novo pro mais antigo) para reatribuir ao(s) próximo(s).
+        const parcelasCandidatas = [...c.parcelas].sort((a, b) =>
+          (b.dataPagamento || b.data || '').localeCompare(a.dataPagamento || a.data || '')
+        );
         let restante = excesso;
         for (const alvo of candidatos) {
           if (restante <= 0.01) break;
@@ -237,6 +242,26 @@ export const AdiantamentosSaldos: React.FC = () => {
           alvo.totalAbatido = parseFloat((alvo.totalAbatido + abater).toFixed(2));
           alvo.saldo = parseFloat((alvo.valorTotal - alvo.totalAbatido).toFixed(2));
           alvo.quitado = alvo.saldo <= 0.01;
+          // Reatribuir parcelas ao contrato de destino (visualização apenas — não muda dados)
+          let aReatribuir = abater;
+          while (aReatribuir > 0.01 && parcelasCandidatas.length > 0) {
+            const p = parcelasCandidatas[0];
+            const vp = R(p.valor);
+            if (vp <= aReatribuir + 0.01) {
+              // Move a parcela inteira
+              alvo.parcelas.push({ ...p, __redistribuidoDe: c.descricao || c.raw?.obs || c.adiantamentoId });
+              c.parcelas = c.parcelas.filter(x => x.id !== p.id);
+              parcelasCandidatas.shift();
+              aReatribuir = parseFloat((aReatribuir - vp).toFixed(2));
+            } else {
+              // Precisa fatiar: mantém parte na origem e cria clone com valor abatido
+              const clone = { ...p, id: `${p.id}#split`, valor: aReatribuir, __redistribuidoDe: c.descricao || c.raw?.obs || c.adiantamentoId };
+              alvo.parcelas.push(clone);
+              // Ajusta a parcela original (reduz o valor)
+              p.valor = parseFloat((vp - aReatribuir).toFixed(2));
+              aReatribuir = 0;
+            }
+          }
           restante = parseFloat((restante - abater).toFixed(2));
         }
       });
@@ -955,7 +980,14 @@ export const AdiantamentosSaldos: React.FC = () => {
                                     {fmtMoeda(Math.max(0, saldoApos))}
                                   </td>
                                   <td style={s.td}>{p.formaPagamento || '—'}</td>
-                                  <td style={{ ...s.td, color: '#64748b', fontStyle: 'italic' }}>{p.obs || p.observacao || '—'}</td>
+                                  <td style={{ ...s.td, color: '#64748b', fontStyle: 'italic' }}>
+                                    {(p as any).__redistribuidoDe && (
+                                      <span style={{ display: 'inline-block', padding: '2px 6px', marginRight: 6, borderRadius: 4, fontSize: 10, background: '#fef3c7', color: '#92400e', fontStyle: 'normal', fontWeight: 600 }}>
+                                        ↻ excedente de: {(p as any).__redistribuidoDe}
+                                      </span>
+                                    )}
+                                    {p.obs || p.observacao || '—'}
+                                  </td>
                                 </tr>
                               );
                             })}
