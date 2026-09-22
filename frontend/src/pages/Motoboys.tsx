@@ -187,7 +187,18 @@ function preencherControleComSaidas(
 
   const colabId = motoboy?.colaboradorId;
   const idSet = new Set([motoboyId, colabId].filter(Boolean) as string[]);
-  const saidasMoto = saidas.filter(s => idSet.has(s.colaboradorId));
+  // CRÍTICO: excluir saídas auto-geradas ("Desconto Transporte" e "Desconto Adiantamento
+  // Especial") — elas são criadas ao confirmar pagamento com viagens=0 e turno="",
+  // e se incluídas aqui, o modo merge sobrescreve entDia/entNoite/caixinha com 0.
+  // Ver: RegrasSistema.tsx:62 ("Ao confirmar pagamento: gera automaticamente 1 saída
+  // 'Desconto Transporte' por dia") e MotoboyAuditoria.tsx:149 (EXCLUIR_DO_DESC).
+  const SAIDAS_AUTOGERADAS = new Set(['Desconto Transporte', 'Desconto Adiantamento Especial']);
+  const saidasMoto = saidas.filter(s => {
+    if (!idSet.has(s.colaboradorId)) return false;
+    const tipo = (s as any).tipo || (s as any).origem || '';
+    if (SAIDAS_AUTOGERADAS.has(tipo)) return false;
+    return true;
+  });
   const escalasMoto = escalas || [];
 
   return linhasBase.map(linha => {
