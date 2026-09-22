@@ -70,3 +70,4 @@ Thumbs.db
 .AppleDouble
 .AppleDB
 backend-lambda/lambda-deploy.zip
+backups/
