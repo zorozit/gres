@@ -187,7 +187,16 @@ function preencherControleComSaidas(
 
   const colabId = motoboy?.colaboradorId;
   const idSet = new Set([motoboyId, colabId].filter(Boolean) as string[]);
-  const saidasMoto = saidas.filter(s => idSet.has(s.colaboradorId));
+  // IMPORTANTE: filtrar apenas saídas operacionais (entregas/caixinha/pagamento).
+  // Saídas auto-geradas de "Desconto Transporte" ao confirmar pagamento têm
+  // viagens=0 e turno="" — se incluídas, o modo merge sobrescreve entDia/entNoite
+  // com 0, zerando as entregas manuais já lançadas.
+  const saidasMoto = saidas.filter(s => {
+    if (!idSet.has(s.colaboradorId)) return false;
+    const tipo = (s as any).tipo || (s as any).origem || '';
+    if (typeof tipo === 'string' && tipo.toLowerCase().includes('desconto transporte')) return false;
+    return true;
+  });
   const escalasMoto = escalas || [];
 
   return linhasBase.map(linha => {
