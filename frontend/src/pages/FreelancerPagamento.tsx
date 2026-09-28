@@ -389,49 +389,89 @@ export default function FreelancerPagamento() {
 
         if (isMotoboy && (vDia > 0 || vNoite > 0 || vEntrega > 0)) {
           /* ── Cálculo baseado em controle-motoboy (mesma lógica da FolhaPagamento) ── */
+          /* IMPORTANTE: granularidade POR TURNO (não só por dia).
+             Antes usava `diasJaPagos.has(data)`, o que fazia com que um turno de noite
+             adicionado depois do pagamento fosse marcado como já pago se o dia já tinha
+             sido pago. Agora usa isTurnoPago(data, 'Dia'|'Noite') separadamente. */
           const linhasSemana = ctrlLinhas.filter((l:any) => l.data >= isoInicio && l.data <= isoFim2);
           for (const linha of linhasSemana) {
-            const jaPago = diasJaPagos.has(linha.data);
             const chegD = R(linha.chegadaDia)   > 0 ? R(linha.chegadaDia)   : (R(linha.entDia)   > 0 ? vDia   : 0);
             const chegN = R(linha.chegadaNoite) > 0 ? R(linha.chegadaNoite) : (R(linha.entNoite) > 0 ? vNoite : 0);
             const temDia   = chegD > 0 || R(linha.entDia)   > 0;
             const temNoite = chegN > 0 || R(linha.entNoite) > 0;
-            const totalEntregas = (R(linha.entDia) + R(linha.entNoite)) * vEntrega;
+            const totalEntregasDia   = R(linha.entDia)   * vEntrega;
+            const totalEntregasNoite = R(linha.entNoite) * vEntrega;
             const caixinhaLinha = R(linha.caixinhaDia) + R(linha.caixinhaNoite);
-            const vlLinha = parseFloat((chegD + chegN + totalEntregas).toFixed(2));
-            const turno = (temDia && temNoite) ? 'DiaNoite' : temDia ? 'Dia' : temNoite ? 'Noite' : 'Dia';
 
-            if (jaPago) {
-              totalJaPago += vlLinha;
-              diasJaPagosDetalhe.push({data: linha.data, turno, valor: vlLinha});
-              // Guardar detalhe para o modal (pago — exibição de auditoria)
-              if (vlLinha > 0) ctrlLinhasDetalhe.push({
-                data: linha.data, turno,
-                chegada: parseFloat((chegD + chegN).toFixed(2)),
-                qtdEntregas: R(linha.entDia) + R(linha.entNoite),
-                vlEntrega: vEntrega,
-                totalEntregas: parseFloat(totalEntregas.toFixed(2)),
-                vlLinha, pago: true,
-              });
-            } else if (vlLinha > 0) {
-              total += vlLinha;
-              diasPagosList.push({data: linha.data, turno, valor: vlLinha});
-              dobras += (temDia && temNoite) ? 2 : 1;
-              diasTrabalhados++;
-              // Guardar detalhe para o modal (pendente)
-              ctrlLinhasDetalhe.push({
-                data: linha.data,
-                turno,
-                chegada: parseFloat((chegD + chegN).toFixed(2)),
-                qtdEntregas: R(linha.entDia) + R(linha.entNoite),
-                vlEntrega: vEntrega,
-                totalEntregas: parseFloat(totalEntregas.toFixed(2)),
-                vlLinha, pago: false,
-              });
+            const vlDia   = temDia   ? parseFloat((chegD + totalEntregasDia).toFixed(2))   : 0;
+            const vlNoite = temNoite ? parseFloat((chegN + totalEntregasNoite).toFixed(2)) : 0;
+
+            // Turno dia: separadamente pago/pendente
+            if (temDia && vlDia > 0) {
+              const diaPago = isTurnoPago(linha.data, 'Dia');
+              if (diaPago) {
+                totalJaPago += vlDia;
+                diasJaPagosDetalhe.push({ data: linha.data, turno: 'Dia', valor: vlDia });
+                ctrlLinhasDetalhe.push({
+                  data: linha.data, turno: 'Dia',
+                  chegada: parseFloat(chegD.toFixed(2)),
+                  qtdEntregas: R(linha.entDia), vlEntrega: vEntrega,
+                  totalEntregas: parseFloat(totalEntregasDia.toFixed(2)),
+                  vlLinha: vlDia, pago: true,
+                });
+              } else {
+                total += vlDia;
+                diasPagosList.push({ data: linha.data, turno: 'Dia', valor: vlDia });
+                dobras += 1;
+                ctrlLinhasDetalhe.push({
+                  data: linha.data, turno: 'Dia',
+                  chegada: parseFloat(chegD.toFixed(2)),
+                  qtdEntregas: R(linha.entDia), vlEntrega: vEntrega,
+                  totalEntregas: parseFloat(totalEntregasDia.toFixed(2)),
+                  vlLinha: vlDia, pago: false,
+                });
+              }
             }
+
+            // Turno noite: separadamente pago/pendente
+            if (temNoite && vlNoite > 0) {
+              const noitePago = isTurnoPago(linha.data, 'Noite');
+              if (noitePago) {
+                totalJaPago += vlNoite;
+                diasJaPagosDetalhe.push({ data: linha.data, turno: 'Noite', valor: vlNoite });
+                ctrlLinhasDetalhe.push({
+                  data: linha.data, turno: 'Noite',
+                  chegada: parseFloat(chegN.toFixed(2)),
+                  qtdEntregas: R(linha.entNoite), vlEntrega: vEntrega,
+                  totalEntregas: parseFloat(totalEntregasNoite.toFixed(2)),
+                  vlLinha: vlNoite, pago: true,
+                });
+              } else {
+                total += vlNoite;
+                diasPagosList.push({ data: linha.data, turno: 'Noite', valor: vlNoite });
+                dobras += 1;
+                ctrlLinhasDetalhe.push({
+                  data: linha.data, turno: 'Noite',
+                  chegada: parseFloat(chegN.toFixed(2)),
+                  qtdEntregas: R(linha.entNoite), vlEntrega: vEntrega,
+                  totalEntregas: parseFloat(totalEntregasNoite.toFixed(2)),
+                  vlLinha: vlNoite, pago: false,
+                });
+              }
+            }
+
+            // diasTrabalhados: dias com pelo menos um turno pendente
+            if ((temDia && vlDia > 0 && !isTurnoPago(linha.data, 'Dia')) ||
+                (temNoite && vlNoite > 0 && !isTurnoPago(linha.data, 'Noite'))) {
+              diasTrabalhados++;
+            }
+
             if (caixinhaLinha > 0) {
               caixinhaCtrlMotoboyPeriodo += caixinhaLinha;
-              if (!jaPago) {
+              // Caixinha considerada pendente se qualquer turno do dia estiver pendente
+              const algumPendente = (temDia && vlDia > 0 && !isTurnoPago(linha.data, 'Dia')) ||
+                                    (temNoite && vlNoite > 0 && !isTurnoPago(linha.data, 'Noite'));
+              if (algumPendente) {
                 caixinhaCtrlMotoboy += caixinhaLinha;
                 caixinhaCtrlDetalhe.push({
                   descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
@@ -569,33 +609,36 @@ export default function FreelancerPagamento() {
         // Encontrar TODOS os payslips que cobrem este período (original + complementos)
         const psMatches = psArr.filter((ps: any) => ps.periodoInicio <= isoFimBase && ps.periodoFim >= isoInicio);
         const psMatch = psMatches[0] || null;
-        /* INTEGRIDADE: detectar diferença entre valor pago (payslip) e valor recalculado */
+        /* INTEGRIDADE: detectar diferença entre valor pago (payslip) e valor recalculado
+           IMPORTANTE: rodar SEMPRE que existir payslip do período, mesmo que a flag `pago`
+           esteja false. Isso captura casos em que um novo turno foi lançado depois do pagamento,
+           quando os dias/turnos já estavam marcados como pagos via payslip agrupado. */
         let diferencaPendente = 0;
         let valorPagoPayslip = 0; // valor que foi efetivamente pago (soma de todos payslips)
-        if (pago && psMatch) {
-          // Somar bruto/líquido/descontos de TODOS os payslips do período
+        if (psMatch) {
           const brutoPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.bruto), 0).toFixed(2));
           const liquidoPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.liquido), 0).toFixed(2));
           const descontosPayslipVal = parseFloat(psMatches.reduce((s: number, ps: any) => s + R(ps.descontos), 0).toFixed(2));
           const brutoAtual = totalBrutoPeriodo + transp_saldo + caixinhaTotalPeriodo;
-          // Se bruto atual difere da soma de payslips, há pendência
           diferencaPendente = R(brutoAtual - brutoPayslipVal);
+
           if (Math.abs(diferencaPendente) > 1) {
-            // Turno editado pós-pagamento: marcar como parcial
+            // Divergência detectada → pagamento parcial (há complemento a pagar)
             pago = false;
             pagoParcial = true;
-            valorPagoPayslip = brutoPayslipVal; // quanto FOI pago de fato (soma payslips)
-            // brutoFinal = valor RECALCULADO completo do período (turnos + caixinha + transporte)
+            valorPagoPayslip = brutoPayslipVal;
             brutoFinal = brutoAtual;
             liquidoFinal = R(brutoAtual - descontosFinal);
-            // diferencaPendente já calculada acima
-          } else {
-            // Sem divergência: usar payslip como fonte de verdade
+          } else if (pago) {
+            // Sem divergência + tudo já pago: usar payslip como fonte de verdade
             liquidoFinal = liquidoPayslipVal;
             descontosFinal = descontosPayslipVal;
             brutoFinal = brutoPayslipVal;
-            valorPagoPayslip = brutoPayslipVal; // mostrar valor real pago nos badges
+            valorPagoPayslip = brutoPayslipVal;
             diferencaPendente = 0;
+          } else {
+            // Sem divergência + parcialmente pago (raro): manter recalculo
+            valorPagoPayslip = brutoPayslipVal;
           }
         }
 
