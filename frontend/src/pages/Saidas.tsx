@@ -174,6 +174,7 @@ export const Saidas: React.FC = () => {
   const [movColaborador, setMovColaborador] = useState('');
   const [movTipo, setMovTipo] = useState('');
   const [movGrupo, setMovGrupo] = useState<'todos' | 'colaborador' | 'caixa'>('todos');
+  const [movStatus, setMovStatus] = useState<'todos' | 'aberto' | 'processado'>('todos');
 
   const apiUrl = import.meta.env.VITE_API_ENDPOINT || '';
 
@@ -380,8 +381,9 @@ export const Saidas: React.FC = () => {
   };
 
   const exportarXLSX = () => {
-    const dados = movRegistros.map(r => {
+    const dados = movRegistrosFiltrado.map(r => {
       const cat = getCat(r.tipo || r.origem || r.referencia || '');
+      const processado = (r.pago === true || r.pago === 'true') || !!r.pagamentoIdLigado;
       return {
         'Data Lançamento': r.data || '-',
         'Data Pagamento': r.dataPagamento || r.data || '-',
@@ -391,6 +393,8 @@ export const Saidas: React.FC = () => {
         'Grupo': cat.grupo === 'colaborador' ? 'Colaborador' : 'Caixa',
         'Regra Folha': cat.regraFolha || '—',
         'Valor': toNum(r.valor),
+        'Status': processado ? 'Processado' : 'Em aberto',
+        'Pagamento Vinculado': r.pagamentoIdLigado || '',
         'Responsável': r.responsavelNome || r.responsavel || '-',
         'Observação': r.observacao || '-',
       };
@@ -402,15 +406,24 @@ export const Saidas: React.FC = () => {
   };
 
   // Totais por categoria
-  const totaisPorCat = movRegistros.reduce((acc, r) => {
+  // Filtro de status aplicado localmente (não precisa refazer fetch)
+  const isProcessado = (r: any) => (r.pago === true || r.pago === 'true') || !!r.pagamentoIdLigado;
+  const movRegistrosFiltrado = movRegistros.filter((r: any) => {
+    if (movStatus === 'todos') return true;
+    if (movStatus === 'processado') return isProcessado(r);
+    return !isProcessado(r); // aberto
+  });
+  const totaisPorCat = movRegistrosFiltrado.reduce((acc, r) => {
     const tipo = r.tipo || r.origem || r.referencia || '—';
     acc[tipo] = (acc[tipo] || 0) + toNum(r.valor);
     return acc;
   }, {} as Record<string, number>);
 
-  const totalMovimentos = movRegistros.reduce((a, r) => a + toNum(r.valor), 0);
-  const totalAPagar = movRegistros.filter(r => (r.tipo || r.origem || r.referencia) !== 'A receber').reduce((a, r) => a + toNum(r.valor), 0);
-  const totalAReceber = movRegistros.filter(r => (r.tipo || r.origem || r.referencia) === 'A receber').reduce((a, r) => a + toNum(r.valor), 0);
+  const totalMovimentos = movRegistrosFiltrado.reduce((a, r) => a + toNum(r.valor), 0);
+  const totalAPagar = movRegistrosFiltrado.filter(r => (r.tipo || r.origem || r.referencia) !== 'A receber').reduce((a, r) => a + toNum(r.valor), 0);
+  const totalAReceber = movRegistrosFiltrado.filter(r => (r.tipo || r.origem || r.referencia) === 'A receber').reduce((a, r) => a + toNum(r.valor), 0);
+  const totalEmAberto = movRegistros.filter(r => !isProcessado(r)).reduce((a, r) => a + toNum(r.valor), 0);
+  const totalProcessado = movRegistros.filter(r => isProcessado(r)).reduce((a, r) => a + toNum(r.valor), 0);
 
   // ── Styles ─────────────────────────────────────────────────────────────
   const s = {
@@ -679,6 +692,14 @@ export const Saidas: React.FC = () => {
                   {CATEGORIAS.map(c => <option key={c.value} value={c.value}>{c.emoji} {c.label}</option>)}
                 </select>
               </div>
+              <div style={{ minWidth: '150px' }}>
+                <label style={s.label}>Status:</label>
+                <select value={movStatus} onChange={e => setMovStatus(e.target.value as any)} style={s.select}>
+                  <option value="todos">Todos</option>
+                  <option value="aberto">⏳ Em aberto</option>
+                  <option value="processado">✅ Processado / Pago</option>
+                </select>
+              </div>
               <button style={s.btn('#1976d2')} onClick={handleFiltrar} disabled={movLoading}>
                 {movLoading ? '⏳ Carregando...' : '🔍 Filtrar'}
               </button>
@@ -690,11 +711,19 @@ export const Saidas: React.FC = () => {
               <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
                 <div style={{ ...s.card, borderLeft: '4px solid #1565c0', minWidth: '120px' }}>
                   <div style={{ fontSize: '11px', color: '#666' }}>Total registros</div>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{movRegistros.length}</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1565c0' }}>{movRegistrosFiltrado.length}{movStatus !== 'todos' && <span style={{fontSize:'11px',color:'#999',fontWeight:'normal'}}> / {movRegistros.length}</span>}</div>
                 </div>
                 <div style={{ ...s.card, borderLeft: '4px solid #c62828', minWidth: '140px' }}>
                   <div style={{ fontSize: '11px', color: '#666' }}>Total saídas (−)</div>
                   <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#c62828' }}>R$ {totalAPagar.toFixed(2)}</div>
+                </div>
+                <div style={{ ...s.card, borderLeft: '4px solid #e65100', minWidth: '140px', cursor: 'pointer' }} onClick={() => setMovStatus(movStatus === 'aberto' ? 'todos' : 'aberto')} title="Clique para filtrar">
+                  <div style={{ fontSize: '11px', color: '#666' }}>⏳ Em aberto</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#e65100' }}>R$ {totalEmAberto.toFixed(2)}</div>
+                </div>
+                <div style={{ ...s.card, borderLeft: '4px solid #2e7d32', minWidth: '140px', cursor: 'pointer' }} onClick={() => setMovStatus(movStatus === 'processado' ? 'todos' : 'processado')} title="Clique para filtrar">
+                  <div style={{ fontSize: '11px', color: '#666' }}>✅ Processado / Pago</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#2e7d32' }}>R$ {totalProcessado.toFixed(2)}</div>
                 </div>
                 {totalAReceber > 0 && (
                   <div style={{ ...s.card, borderLeft: '4px solid #2e7d32', minWidth: '140px' }}>
@@ -717,24 +746,25 @@ export const Saidas: React.FC = () => {
 
             {/* Tabela */}
             <div style={{ ...s.card, overflowX: 'auto' }}>
-              <h3 style={{ marginTop: 0, color: '#1565c0' }}>📋 {movRegistros.length} registro(s)</h3>
-              {movRegistros.length === 0 ? (
+              <h3 style={{ marginTop: 0, color: '#1565c0' }}>📋 {movRegistrosFiltrado.length} registro(s){movStatus !== 'todos' && <span style={{fontSize:'12px',color:'#999',fontWeight:'normal'}}> (filtrado de {movRegistros.length})</span>}</h3>
+              {movRegistrosFiltrado.length === 0 ? (
                 <p style={{ color: '#999', textAlign: 'center', padding: '30px' }}>
-                  {movLoading ? 'Carregando...' : 'Use os filtros acima e clique em "🔍 Filtrar" para carregar os registros.'}
+                  {movLoading ? 'Carregando...' : (movRegistros.length > 0 ? 'Nenhum registro com o status selecionado.' : 'Use os filtros acima e clique em "🔍 Filtrar" para carregar os registros.')}
                 </p>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead>
                     <tr>
-                      {['Data', 'Dt. Pgto', 'Colaborador', 'Categoria', 'Descrição', 'Valor', 'Responsável', 'Obs', 'Ações'].map(h => (
+                      {['Data', 'Dt. Pgto', 'Colaborador', 'Categoria', 'Descrição', 'Valor', 'Status', 'Responsável', 'Obs', 'Ações'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {movRegistros.map((r, idx) => {
+                    {movRegistrosFiltrado.map((r, idx) => {
                       const tipo = r.tipo || r.origem || r.referencia || '-';
                       const cat = getCat(tipo);
+                      const processado = isProcessado(r);
                       return (
                         <tr key={r.id || idx}
                           style={{ backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}
@@ -764,6 +794,22 @@ export const Saidas: React.FC = () => {
                           <td style={{ ...s.td, maxWidth: '160px', color: '#444' }}>{r.descricao || '-'}</td>
                           <td style={{ ...s.td, textAlign: 'right', fontWeight: 'bold', color: cat.dir === 'entrada' ? '#2e7d32' : '#c62828' }}>
                             {cat.dir === 'entrada' ? '+' : '−'} R$ {toNum(r.valor).toFixed(2)}
+                          </td>
+                          <td style={{ ...s.td, whiteSpace: 'nowrap' }}>
+                            <span title={processado ? (r.pagamentoIdLigado ? `Vinculado ao pagamento: ${r.pagamentoIdLigado}` : 'Pago') : 'Em aberto — será processado no próximo pagamento'}
+                              style={{
+                                display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold',
+                                backgroundColor: processado ? '#e8f5e9' : '#fff3e0',
+                                color: processado ? '#2e7d32' : '#e65100',
+                                border: `1px solid ${processado ? '#66bb6a' : '#ffb74d'}`,
+                              }}>
+                              {processado ? '✅ Processado' : '⏳ Em aberto'}
+                            </span>
+                            {r.pagamentoIdLigado && (
+                              <div style={{ fontSize: '9px', color: '#888', marginTop: '2px', fontFamily: 'monospace', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.pagamentoIdLigado}>
+                                {String(r.pagamentoIdLigado).slice(0, 20)}{String(r.pagamentoIdLigado).length > 20 ? '…' : ''}
+                              </div>
+                            )}
                           </td>
                           <td style={{ ...s.td, fontSize: '11px', color: '#666' }}>{r.responsavelNome || r.responsavel || '-'}</td>
                           <td style={{ ...s.td, fontSize: '10px', color: '#888', maxWidth: '100px' }}>{r.observacao || '—'}</td>
@@ -798,9 +844,9 @@ export const Saidas: React.FC = () => {
                   </tbody>
                   <tfoot>
                     <tr style={{ backgroundColor: '#1565c0', color: 'white', fontWeight: 'bold' }}>
-                      <td colSpan={5} style={{ padding: '8px 10px' }}>TOTAL ({movRegistros.length} registros)</td>
+                      <td colSpan={5} style={{ padding: '8px 10px' }}>TOTAL ({movRegistrosFiltrado.length} registros)</td>
                       <td style={{ padding: '8px 10px', textAlign: 'right', fontSize: '13px' }}>R$ {totalMovimentos.toFixed(2)}</td>
-                      <td colSpan={3} />
+                      <td colSpan={4} />
                     </tr>
                   </tfoot>
                 </table>
