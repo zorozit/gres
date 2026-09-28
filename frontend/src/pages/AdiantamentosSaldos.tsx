@@ -101,6 +101,9 @@ export const AdiantamentosSaldos: React.FC = () => {
   const [buscaColaborador, setBuscaColaborador] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'aberto' | 'quitado'>('aberto');
   const [contratosFechados, setContratosFechados] = useState<Set<string>>(new Set()); // IDs dos contratos MANUALMENTE fechados (default: todos abertos)
+  const [agruparPorColab, setAgruparPorColab] = useState(true);
+  const [gruposFechados, setGruposFechados] = useState<Set<string>>(new Set()); // colaboradorIds recolhidos
+  const [gruposInicializados, setGruposInicializados] = useState(false);
 
   // Modal novo adiantamento (somente Especial — Transporte VT foi para o módulo Benefícios)
   const [modalNovoAdto, setModalNovoAdto] = useState(false);
@@ -290,6 +293,47 @@ export const AdiantamentosSaldos: React.FC = () => {
       return true;
     });
   }, [contratos, buscaColaborador, filtroStatus]);
+
+  /* Agrupamento por colaborador com totais consolidados */
+  type Grupo = {
+    colaboradorId: string;
+    colaboradorNome: string;
+    contratos: typeof contratos;
+    totalEmprestado: number;
+    totalAbatido: number;
+    totalSaldo: number;
+    qtdAbertos: number;
+    qtdQuitados: number;
+  };
+  const gruposPorColaborador = useMemo<Grupo[]>(() => {
+    const map = new Map<string, Grupo>();
+    for (const c of contratosFiltrados) {
+      if (!map.has(c.colaboradorId)) {
+        map.set(c.colaboradorId, {
+          colaboradorId: c.colaboradorId,
+          colaboradorNome: c.colaboradorNome,
+          contratos: [], totalEmprestado: 0, totalAbatido: 0, totalSaldo: 0,
+          qtdAbertos: 0, qtdQuitados: 0,
+        });
+      }
+      const g = map.get(c.colaboradorId)!;
+      g.contratos.push(c);
+      g.totalEmprestado += c.valorTotal;
+      g.totalAbatido    += c.totalAbatido;
+      g.totalSaldo      += c.saldo;
+      if (c.quitado) g.qtdQuitados++; else g.qtdAbertos++;
+    }
+    // ordenar: quem tem maior saldo aberto primeiro
+    return [...map.values()].sort((a, b) => b.totalSaldo - a.totalSaldo);
+  }, [contratosFiltrados]);
+
+  /* Inicialização: fecha todos os grupos por default (mostra só headers com totais) */
+  useEffect(() => {
+    if (!gruposInicializados && gruposPorColaborador.length > 0) {
+      setGruposFechados(new Set(gruposPorColaborador.map(g => g.colaboradorId)));
+      setGruposInicializados(true);
+    }
+  }, [gruposPorColaborador, gruposInicializados]);
 
   const totaisResumo = useMemo(() => ({
     totalEspecialAberto:   contratos.filter(c => !c.quitado).reduce((s, c) => s + c.saldo, 0),
@@ -802,12 +846,25 @@ export const AdiantamentosSaldos: React.FC = () => {
             </div>
             <button style={s.btn('#f1f5f9', '#334155')} onClick={() => { setBuscaColaborador(''); setFiltroStatus('aberto'); }}>Limpar</button>
             <button
+              style={s.btn(agruparPorColab ? '#7c3aed' : '#e0e7ff', agruparPorColab ? 'white' : '#4338ca')}
+              onClick={() => setAgruparPorColab(v => !v)}
+              title={agruparPorColab ? 'Ver contratos individuais (achatado)' : 'Agrupar por colaborador com totais consolidados'}>
+              {agruparPorColab ? '👥 Agrupado' : '📄 Achatado'}
+            </button>
+            <button
               style={s.btn('#e0e7ff', '#4338ca')}
               onClick={() => {
-                if (contratosFechados.size > 0) setContratosFechados(new Set());
-                else setContratosFechados(new Set(contratosFiltrados.map(c => c.adiantamentoId)));
+                if (agruparPorColab) {
+                  if (gruposFechados.size > 0) setGruposFechados(new Set());
+                  else setGruposFechados(new Set(gruposPorColaborador.map(g => g.colaboradorId)));
+                } else {
+                  if (contratosFechados.size > 0) setContratosFechados(new Set());
+                  else setContratosFechados(new Set(contratosFiltrados.map(c => c.adiantamentoId)));
+                }
               }}>
-              {contratosFechados.size > 0 ? '▼ Expandir todos' : '▲ Recolher todos'}
+              {agruparPorColab
+                ? (gruposFechados.size > 0 ? '▼ Expandir todos' : '▲ Recolher todos')
+                : (contratosFechados.size > 0 ? '▼ Expandir todos' : '▲ Recolher todos')}
             </button>
           </div>
         </div>
@@ -821,7 +878,9 @@ export const AdiantamentosSaldos: React.FC = () => {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {contratosFiltrados.map(c => {
+            {(() => {
+              /* helper: renderiza um card de contrato (é uma IIFE pra manter closure em setContratosFechados etc.) */
+              const renderCardContrato = (c: typeof contratos[number]) => {
               const aberto = !contratosFechados.has(c.adiantamentoId);
               const toggleAberto = () => setContratosFechados(prev => {
                 const next = new Set(prev);
@@ -968,7 +1027,68 @@ export const AdiantamentosSaldos: React.FC = () => {
                   )}
                 </div>
               );
-            })}
+              }; /* fim renderCardContrato */
+
+              if (agruparPorColab) {
+                return gruposPorColaborador.map(g => {
+                  const grupoAberto = !gruposFechados.has(g.colaboradorId);
+                  const toggleGrupo = () => setGruposFechados(prev => {
+                    const next = new Set(prev);
+                    if (next.has(g.colaboradorId)) next.delete(g.colaboradorId);
+                    else next.add(g.colaboradorId);
+                    return next;
+                  });
+                  const progressoGrupo = g.totalEmprestado > 0 ? Math.min(100, (g.totalAbatido / g.totalEmprestado) * 100) : 0;
+                  return (
+                    <div key={g.colaboradorId} style={{ ...s.card, overflow: 'hidden', borderLeft: `5px solid ${g.totalSaldo <= 0.01 ? '#10b981' : '#dc2626'}` }}>
+                      <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                        cursor: 'pointer', backgroundColor: g.totalSaldo > 0.01 ? '#fef2f2' : '#f0fdf4' }}
+                        onClick={toggleGrupo}>
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                          <div style={{ fontWeight: 800, fontSize: 16, color: '#0f172a' }}>👤 {g.colaboradorNome}</div>
+                          <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                            {g.contratos.length} contrato(s) · {g.qtdAbertos > 0 && <span style={{ color: '#dc2626', fontWeight: 600 }}>{g.qtdAbertos} em aberto</span>}{g.qtdAbertos > 0 && g.qtdQuitados > 0 && ' · '}{g.qtdQuitados > 0 && <span style={{ color: '#059669' }}>{g.qtdQuitados} quitado(s)</span>}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>Emprestado</div>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{fmtMoeda(g.totalEmprestado)}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>Abatido</div>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: '#059669' }}>{fmtMoeda(g.totalAbatido)}</div>
+                          </div>
+                          <div style={{ textAlign: 'right', minWidth: 110 }}>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>Saldo em aberto</div>
+                            <div style={{ fontWeight: 800, fontSize: 22, color: g.totalSaldo <= 0.01 ? '#059669' : '#dc2626' }}>
+                              {fmtMoeda(Math.max(0, g.totalSaldo))}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ width: 100, height: 8, backgroundColor: '#e5e7eb', borderRadius: 4 }}>
+                              <div style={{ width: `${progressoGrupo}%`, height: '100%', backgroundColor: g.totalSaldo <= 0.01 ? '#10b981' : '#7c3aed', borderRadius: 4, transition: 'width .3s' }} />
+                            </div>
+                            <div style={{ fontSize: 10, color: '#64748b', textAlign: 'right', marginTop: 2 }}>{progressoGrupo.toFixed(0)}% pago</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
+                          <button onClick={toggleGrupo} style={{ ...s.btn('#475569'), padding: '6px 12px', fontSize: 12 }}>
+                            {grupoAberto ? '▲ Recolher' : '▼ Ver contratos'}
+                          </button>
+                        </div>
+                      </div>
+                      {grupoAberto && (
+                        <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#fafafa', padding: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {g.contratos.map(c => renderCardContrato(c))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              }
+              return contratosFiltrados.map(c => renderCardContrato(c));
+            })()}
           </div>
         )}
 
