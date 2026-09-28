@@ -466,16 +466,45 @@ export default function FreelancerPagamento() {
               diasTrabalhados++;
             }
 
-            if (caixinhaLinha > 0) {
-              caixinhaCtrlMotoboyPeriodo += caixinhaLinha;
-              // Caixinha considerada pendente se qualquer turno do dia estiver pendente
-              const algumPendente = (temDia && vlDia > 0 && !isTurnoPago(linha.data, 'Dia')) ||
-                                    (temNoite && vlNoite > 0 && !isTurnoPago(linha.data, 'Noite'));
-              if (algumPendente) {
-                caixinhaCtrlMotoboy += caixinhaLinha;
+            // Caixinha granularizada por turno (dia/noite) para nao pagar duplicado
+            // quando um turno ja foi pago mas o outro nao
+            const caixDia   = R(linha.caixinhaDia);
+            const caixNoite = R(linha.caixinhaNoite);
+            if (caixDia + caixNoite > 0) {
+              caixinhaCtrlMotoboyPeriodo += (caixDia + caixNoite);
+
+              // Caixinha do turno DIA: só entra se o turno dia for pendente
+              if (caixDia > 0 && temDia && !isTurnoPago(linha.data, 'Dia')) {
+                caixinhaCtrlMotoboy += caixDia;
                 caixinhaCtrlDetalhe.push({
-                  descricao: `🪙 Caixinha ${linha.data.split('-').reverse().join('/')}`,
-                  valor: caixinhaLinha,
+                  descricao: `🪙 Caixinha ☀️ ${linha.data.split('-').reverse().join('/')}`,
+                  valor: caixDia,
+                  data: linha.data,
+                });
+              }
+              // Caixinha do turno NOITE: só entra se o turno noite for pendente
+              if (caixNoite > 0 && temNoite && !isTurnoPago(linha.data, 'Noite')) {
+                caixinhaCtrlMotoboy += caixNoite;
+                caixinhaCtrlDetalhe.push({
+                  descricao: `🪙 Caixinha 🌙 ${linha.data.split('-').reverse().join('/')}`,
+                  valor: caixNoite,
+                  data: linha.data,
+                });
+              }
+              // Se um turno não tem viagem/chegada mas tem caixinha (raro), entra por default
+              if (caixDia > 0 && !temDia) {
+                caixinhaCtrlMotoboy += caixDia;
+                caixinhaCtrlDetalhe.push({
+                  descricao: `🪙 Caixinha ☀️ ${linha.data.split('-').reverse().join('/')}`,
+                  valor: caixDia,
+                  data: linha.data,
+                });
+              }
+              if (caixNoite > 0 && !temNoite) {
+                caixinhaCtrlMotoboy += caixNoite;
+                caixinhaCtrlDetalhe.push({
+                  descricao: `🪙 Caixinha 🌙 ${linha.data.split('-').reverse().join('/')}`,
+                  valor: caixNoite,
                   data: linha.data,
                 });
               }
@@ -754,15 +783,18 @@ export default function FreelancerPagamento() {
           checked: true,
         }));
 
-      // Label do item principal: motoboy usa chegada + entregas, freelancer usa dobras
-      const ctrlDet: {chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number}[] = fr.ctrlLinhasDetalhe || [];
+      // Label do item principal: motoboy usa chegada + entregas (SÓ turnos pendentes), freelancer usa dobras
+      const ctrlDet: {data?:string;turno?:string;chegada:number;qtdEntregas:number;vlEntrega:number;totalEntregas:number;pago?:boolean}[] = fr.ctrlLinhasDetalhe || [];
       const isMotoboy = fr.isMotoboy === true && ctrlDet.length > 0;
       const labelPrincipal = (() => {
         if (isMotoboy) {
-          const totalChegada  = parseFloat(ctrlDet.reduce((s,l)=>s+l.chegada,0).toFixed(2));
-          const totalQtdEnt   = ctrlDet.reduce((s,l)=>s+l.qtdEntregas,0);
-          const vlEnt         = ctrlDet[0]?.vlEntrega || 0;
-          const totalEnt      = parseFloat(ctrlDet.reduce((s,l)=>s+l.totalEntregas,0).toFixed(2));
+          // Considera APENAS linhas não pagas para o label do item principal
+          // (o item principal representa 'fr.total', que é só o pendente)
+          const linhasPend = ctrlDet.filter(l => !l.pago);
+          const totalChegada  = parseFloat(linhasPend.reduce((s,l)=>s+l.chegada,0).toFixed(2));
+          const totalQtdEnt   = linhasPend.reduce((s,l)=>s+l.qtdEntregas,0);
+          const vlEnt         = linhasPend[0]?.vlEntrega || ctrlDet[0]?.vlEntrega || 0;
+          const totalEnt      = parseFloat(linhasPend.reduce((s,l)=>s+l.totalEntregas,0).toFixed(2));
           const partes: string[] = [];
           if (totalChegada > 0) partes.push(`🏍️ Chegada: R$${fmt(totalChegada)}`);
           if (totalQtdEnt > 0)  partes.push(`📦 ${totalQtdEnt}× R$${fmt(vlEnt)} = R$${fmt(totalEnt)}`);
