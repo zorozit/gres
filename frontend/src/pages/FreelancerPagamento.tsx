@@ -741,13 +741,14 @@ export default function FreelancerPagamento() {
         ...caixCtrlItems,
         // Caixinha de saídas (para não-motoboys, ou complementar)
         ...(caixCtrlItems.length === 0
-          ? caixFr.map((d:any,i:number)=>({key:`caix_${i}`,label:`🪙 Caixinha: ${d.descricao||'Gorjeta'} (${saidaData(d)})`,valor:R(d.valor),tipo:'credito',checked:true}))
+          ? caixFr.map((d:any,i:number)=>({key:`caix_${i}`,label:`🪙 Caixinha: ${d.descricao||'Gorjeta'} (${saidaData(d)})`,valor:R(d.valor),tipo:'credito',checked:true,saidaId:d.id}))
           : []),
-        ...descFr.map((d:any,i:number)=>({key:`desc_${i}`,label:`🔴 Desconto: ${d.descricao||d.tipo||'Desconto'} (${saidaData(d)})`,valor:R(d.valor),tipo:'debito',checked:true})),
+        ...descFr.map((d:any,i:number)=>({key:`desc_${i}`,label:`🔴 Desconto: ${d.descricao||d.tipo||'Desconto'} (${saidaData(d)})`,valor:R(d.valor),tipo:'debito',checked:true,saidaId:d.id})),
         ...(fr.pendentesAnteriores||[]).map((p:any,i:number)=>({
           key:`pend_${i}`,
           label:`⏳ Pendente anterior: [${p.tipo||p.origem}] ${p.descricao||''} (${(p.dataPagamento||p.data||'').substring(0,10)})`,
           valor:R(p.valor),tipo:'debito',checked:false,
+          saidaId:p.id,
         })),
       ];
       setCheckItems(items);
@@ -898,8 +899,24 @@ export default function FreelancerPagamento() {
           return s.colaboradorId===fr.id && TIPOS_MARCAR.has(t) && dt>=rangeIni && dt<=rangeFim
             && s.pago !== true && s.pago !== 'true' && !s.pagamentoIdLigado;
         });
+        const jaMarcados = new Set<string>();
         for (const sc of saidasParaMarcar) {
           operacoes.push({ tipo:'saida-atualizar', id:sc.id, obs:`${sc.obs||''} [Pago no lote sem. ${fech.semanaLabel}]`.trim() });
+          jaMarcados.add(sc.id);
+        }
+
+        // 5b) Marcar também os itens do checklist que foram selecionados manualmente
+        //     (descontos desta semana + pendentes anteriores marcados pelo operador)
+        //     Evita que reapareçam no checklist de semanas futuras.
+        for (const it of checkItems) {
+          if (!it.checked) continue;
+          const sid = (it as any).saidaId;
+          if (!sid) continue;
+          if (jaMarcados.has(sid)) continue;
+          if (it.key.startsWith('desc_') || it.key.startsWith('pend_')) {
+            operacoes.push({ tipo:'saida-marcar-processada', saidaId: sid });
+            jaMarcados.add(sid);
+          }
         }
       }
 
