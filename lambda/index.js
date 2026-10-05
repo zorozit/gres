@@ -3639,17 +3639,21 @@ exports.handler = async (event) => {
               break;
             }
 
-            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, registro único por semana) ────
+            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, férias, etc.) ─────────
             case 'folha-pagamento-upsert': {
               const fpColabId = op.colaboradorId || colaboradorId;
-              const fpSemana = op.semana || semana || '';
-              const fpId = `folha-${fpColabId}-dobras-${fpSemana}`;
+              const fpMes = op.mes || mes;
+              const isFerias = op.tipoFerias === 'ferias';
+              // ID: férias usa competência; dobras usa semana
+              const fpId = isFerias
+                ? `folha-${fpColabId}-ferias-${fpMes}`
+                : `folha-${fpColabId}-dobras-${op.semana || semana || ''}`;
               const fpItem = {
                 id: fpId,
-                tipo: 'dobras-clt',
+                tipo: isFerias ? 'ferias-clt' : 'dobras-clt',
                 colaboradorId: fpColabId,
-                mes: op.mes || mes,
-                semana: fpSemana,
+                mes: fpMes,
+                semana: isFerias ? null : (op.semana || semana || null),
                 unitId: normalizedUnitId,
                 pago: op.pago !== undefined ? !!op.pago : true,
                 dataPagamento: op.dataPagamento || body.dataPagamento || now.split('T')[0],
@@ -3658,6 +3662,15 @@ exports.handler = async (event) => {
                 valorBruto: parseFloat(op.valorBruto) || 0,
                 valorTransporte: parseFloat(op.valorTransporte) || 0,
                 totalFinal: parseFloat(op.totalFinal) || 0,
+                // Campos específicos de férias
+                ...(isFerias ? {
+                  diasFerias: op.diasFerias || 0,
+                  valorInss: parseFloat(op.valorInss) || 0,
+                  valorIrrf: parseFloat(op.valorIrrf) || 0,
+                  valorFgts: parseFloat(op.valorFgts) || 0,
+                  periodoGozo: op.periodoGozo || '',
+                  periodoAquisitivo: op.periodoAquisitivo || '',
+                } : {}),
                 obs: op.obs || '',
                 updatedAt: now,
               };

@@ -34,6 +34,7 @@ import Despesas from './pages/Despesas';
 import Fornecedores from './pages/Fornecedores';
 import Payslips from './pages/Payslips';
 import HistoricoRemuneracoes from './pages/HistoricoRemuneracoes';
+import Ferias from './pages/Ferias';
 import { UpdateBanner } from './components/UpdateBanner';
 import LandingPage from './pages/LandingPage';
 import React from 'react';
@@ -110,6 +111,9 @@ function App() {
               {/* Folha & Pagamento */}
               <Route path="/modulos/folha-pagamento"
                 element={<Protected moduloId="folha-pagamento"><FolhaPagamento /></Protected>} />
+
+              <Route path="/modulos/ferias"
+                element={<Protected moduloId="ferias"><Ferias /></Protected>} />
 
               <Route path="/modulos/freelancer-pagamento"
                 element={<Protected moduloId="freelancer-pagamento"><FreelancerPagamento /></Protected>} />
