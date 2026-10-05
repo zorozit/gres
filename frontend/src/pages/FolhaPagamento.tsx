@@ -2855,7 +2855,7 @@ export default function FolhaPagamento() {
     const buildChecklistCLT = (saidasFrescas: any[], tipo: 'Adiantamento' | 'Variável') => {
       const saidasCol = saidasFrescas
         .filter((s: any) => s.colaboradorId === f.colaboradorId)
-        .map((s: any) => ({ tipo: s.tipo || s.origem || '', descricao: s.descricao || '', valor: R(s.valor), data: s.data || '', pagamentoIdLigado: s.pagamentoIdLigado }));
+        .map((s: any) => ({ id: s.id, tipo: s.tipo || s.origem || '', descricao: s.descricao || '', valor: R(s.valor), data: s.data || '', pagamentoIdLigado: s.pagamentoIdLigado }));
 
       const items = montarChecklistCLT({
         calc: f,
@@ -3170,7 +3170,7 @@ export default function FolhaPagamento() {
         });
 
         const rubricasPs = mp.rubricas || [];
-        const psOps = [{
+        const psOps: any[] = [{
           tipo: 'payslip' as const,
           periodo: `${mesAno}-clt-${tipoPs}`,
           periodoInicio: `${mesAno}-01`,
@@ -3192,6 +3192,16 @@ export default function FolhaPagamento() {
           ...psResultCLT.extra,
           fonteHolerite: mp.conferido ? 'contabil' : 'calculado',
         }];
+
+        // ── Marcar saídas de débito do checklist como processadas (pagamentoIdLigado) ──
+        // Evita que o mesmo desconto apareça de novo em pagamentos futuros (dobras, próxima folha, etc.)
+        for (const it of checkItemsCLT) {
+          if (!it.checked) continue;
+          if (it.tipo !== 'debito') continue;
+          const sid = (it as any).saidaId;
+          if (!sid) continue;
+          psOps.push({ tipo: 'saida-marcar-processada', saidaId: sid });
+        }
 
         await fetchAuth(`${apiUrl}/pagamento-batch`, {
           method: 'POST',

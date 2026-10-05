@@ -220,9 +220,12 @@ export interface CheckItemCLT {
   valor: number;
   tipo: 'credito' | 'debito' | 'info';
   checked: boolean;
+  /** ID da saída de origem (quando o item vem de uma saída operacional) — usado para marcar como processada no pagamento */
+  saidaId?: string;
 }
 
 export interface SaidaParaChecklist {
+  id?: string;
   tipo: string;
   descricao?: string;
   valor: number;
@@ -311,7 +314,7 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
     }
     for (let i = 0; i < saidasDesc.length; i++) {
       const s = saidasDesc[i];
-      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
   } else if (calc.fonteContabil && calc.valorLiquidoContabil) {
     // --- DIA 5 MODO CONTABILIDADE ---
@@ -325,15 +328,15 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
     // Adiantamentos extras de salário (fora do holerite — feitos após contabilidade)
     for (let i = 0; i < adtoSalarioExtras.length; i++) {
       const s = adtoSalarioExtras[i];
-      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
     for (let i = 0; i < adtoEspecialSaidas.length; i++) {
       const s = adtoEspecialSaidas[i];
-      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
     for (let i = 0; i < saidasDesc.length; i++) {
       const s = saidasDesc[i];
-      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
   } else {
     // --- DIA 5 MODO CÁLCULO INTERNO ---
@@ -367,15 +370,15 @@ export function montarChecklistCLT(input: MontarChecklistCLTInput): CheckItemCLT
     // Adiantamentos extras de salário (fora do holerite)
     for (let i = 0; i < adtoSalarioExtras.length; i++) {
       const s = adtoSalarioExtras[i];
-      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `adto_sal_${i}`, label: `💵 Adiantamento Salário: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
     for (let i = 0; i < adtoEspecialSaidas.length; i++) {
       const s = adtoEspecialSaidas[i];
-      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `adto_esp_${i}`, label: `🔴 Adiantamento Especial: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
     for (let i = 0; i < saidasDesc.length; i++) {
       const s = saidasDesc[i];
-      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true });
+      items.push({ key: `desc_${i}`, label: `🔴 ${s.tipo}: ${s.descricao || ''} (${(s.data || '').slice(5)})`, valor: s.valor, tipo: 'debito', checked: true, saidaId: s.id });
     }
   }
 
