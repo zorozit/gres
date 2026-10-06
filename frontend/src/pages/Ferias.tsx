@@ -183,7 +183,15 @@ export default function Ferias() {
     setErro('');
     setApenasSimular(false);
 
-    const pa = periodoAquisitivoPadrao(colab.dataAdmissao);
+    // Pré-preenche aquisitivo com o PENDENTE MAIS ANTIGO (do engine de status),
+    // não com admissao+1ano. Isso evita escolher o aquisitivo errado quando
+    // o colab tem múltiplos aquisitivos acumulados.
+    const status = statusMap[colab.id];
+    const pendentes = status?.aquisitivos.filter(a => a.status !== 'pago') || [];
+    const alvo = pendentes[0]; // mais antigo pendente (array ordenado por ordem crescente)
+    const pa = alvo
+      ? { inicio: alvo.inicio, fim: alvo.fim }
+      : periodoAquisitivoPadrao(colab.dataAdmissao);
     const gz = periodoGozoPadrao();
     setPaInicio(pa.inicio);
     setPaFim(pa.fim);
@@ -574,6 +582,37 @@ export default function Ferias() {
               </div>
             </div>
 
+            {/* ── Aquisitivos pendentes (seletor rápido) ── */}
+            {(() => {
+              const sMateus = statusMap[modalColab.id];
+              const pendentes = sMateus?.aquisitivos.filter(a => a.status !== 'pago') || [];
+              if (pendentes.length === 0) return null;
+              return (
+                <div style={{ ...secaoStyle, background: '#fff8e1', border: '1px solid #ffd54f' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e65100', marginBottom: 8 }}>
+                    ⚠️ {pendentes.length} aquisitivo(s) pendente(s) — escolha qual pagar:
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {pendentes.map(a => {
+                      const ativo = paInicio === a.inicio && paFim === a.fim;
+                      const emoji = a.status === 'vencido' ? '🔴' : a.status === 'vencendo' ? '🟡' : a.status === 'parcial' ? '🟠' : '🟢';
+                      return (
+                        <button key={a.ordem} onClick={() => { setPaInicio(a.inicio); setPaFim(a.fim); }}
+                          style={{
+                            padding: '6px 12px', border: `2px solid ${ativo ? '#1565c0' : '#ddd'}`,
+                            background: ativo ? '#e3f2fd' : '#fff', borderRadius: 6, cursor: 'pointer',
+                            fontSize: 12, fontWeight: ativo ? 700 : 500,
+                          }}>
+                          {emoji} {a.inicio.split('-').reverse().join('/')} → {a.fim.split('-').reverse().join('/')}
+                          {a.status === 'parcial' && <span style={{ color: '#e65100', marginLeft: 4 }}>({a.diasRestantes}d restantes)</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* ── Período aquisitivo ── */}
             <div style={secaoStyle}>
               <h3 style={subTituloStyle}>
@@ -663,6 +702,24 @@ export default function Ferias() {
             {/* ── Resultado calculado ── */}
             {calculado && resAtualizado && (
               <>
+                {/* Aviso divergência contabil vs calculado */}
+                {modoContabil && resultado && (() => {
+                  const diff = Math.abs(resultado.totais.liquido - resAtualizado.totais.liquido);
+                  if (diff < 0.5) return null;
+                  return (
+                    <div style={{ background: '#fff3e0', border: '1px solid #ffb74d', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12 }}>
+                      <div style={{ fontWeight: 600, color: '#e65100', marginBottom: 4 }}>
+                        ⚠️ Divergência de R$ {fmt(diff)} entre cálculo automático e valor da contabilidade
+                      </div>
+                      <div style={{ color: '#666', lineHeight: 1.5 }}>
+                        • Sistema calcula: <strong>R$ {fmt(resultado.totais.liquido)}</strong><br/>
+                        • Você informou:  <strong>R$ {fmt(resAtualizado.totais.liquido)}</strong><br/>
+                        • Diferença comum porque sistemas contábeis (Senior/EMS) aplicam proporcionalidade diferente quando o gozo cruza meses. Prevalecerão os valores informados.
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Resumo */}
                 <div style={{ background: '#f0f7f0', border: '1px solid #c8e6c9', borderRadius: 8, padding: 16, marginBottom: 16 }}>
                   <h3 style={{ margin: '0 0 12px', color: '#2e7d32' }}>Resultado</h3>
