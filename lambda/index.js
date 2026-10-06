@@ -1127,6 +1127,41 @@ exports.handler = async (event) => {
       }
     }
 
+    // ── AFASTAMENTOS (licenças médicas, maternidade, etc) ────────────
+    // GET /afastamentos?unitId=xxx&colaboradorId=xxx(opcional)
+    if (rawPath === '/afastamentos' && httpMethod === 'GET') {
+      try {
+        const afUnitId = queryParams.unitId ? resolveUnitId(queryParams.unitId) : null;
+        const afColabId = queryParams.colaboradorId;
+        if (!afUnitId && !afColabId) {
+          return response(400, { error: 'unitId ou colaboradorId obrigatório' });
+        }
+        let items = [];
+        if (afColabId) {
+          const r = await dynamodb.query({
+            TableName: 'gres-prod-afastamentos',
+            IndexName: 'colaboradorId-dataInicio-index',
+            KeyConditionExpression: 'colaboradorId = :c',
+            ExpressionAttributeValues: { ':c': afColabId },
+          }).promise();
+          items = r.Items || [];
+          if (afUnitId) items = items.filter(i => i.unitId === afUnitId);
+        } else {
+          const r = await dynamodb.scan({
+            TableName: 'gres-prod-afastamentos',
+            FilterExpression: 'unitId = :u',
+            ExpressionAttributeValues: { ':u': afUnitId },
+          }).promise();
+          items = r.Items || [];
+        }
+        items.sort((a, b) => (b.dataInicio || '').localeCompare(a.dataInicio || ''));
+        return response(200, items);
+      } catch (err) {
+        console.error('afastamentos GET error:', err);
+        return response(500, { error: 'Erro ao buscar afastamentos: ' + err.message });
+      }
+    }
+
     // ── FUNÇÕES DE ESCALA (regras por função/área) ─────────────────────────────
     // POST /funcoes-escala — salva regra de função
     if (rawPath === '/funcoes-escala' && httpMethod === 'POST') {

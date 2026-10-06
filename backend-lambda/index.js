@@ -3639,17 +3639,32 @@ exports.handler = async (event) => {
               break;
             }
 
-            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, registro único por semana) ────
+            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, férias, acerto avulso) ─────
             case 'folha-pagamento-upsert': {
               const fpColabId = op.colaboradorId || colaboradorId;
-              const fpSemana = op.semana || semana || '';
-              const fpId = `folha-${fpColabId}-dobras-${fpSemana}`;
+              const fpMes = op.mes || mes;
+              // Discriminador: 'ferias' | 'acerto-avulso' | (default: dobras)
+              const subTipo = op.tipoFerias === 'ferias' ? 'ferias'
+                            : op.subTipo === 'acerto-avulso' ? 'acerto-avulso'
+                            : 'dobras';
+              let fpId, fpTipoCampo;
+              if (subTipo === 'ferias') {
+                fpId = `folha-${fpColabId}-ferias-${fpMes}`;
+                fpTipoCampo = 'ferias-clt';
+              } else if (subTipo === 'acerto-avulso') {
+                const slug = (op.periodoInicio || '').replace(/-/g,'') + '-' + (op.periodoFim || '').replace(/-/g,'');
+                fpId = `folha-${fpColabId}-acerto-${slug || Date.now()}`;
+                fpTipoCampo = 'acerto-avulso';
+              } else {
+                fpId = `folha-${fpColabId}-dobras-${op.semana || semana || ''}`;
+                fpTipoCampo = 'dobras-clt';
+              }
               const fpItem = {
                 id: fpId,
-                tipo: 'dobras-clt',
+                tipo: fpTipoCampo,
                 colaboradorId: fpColabId,
-                mes: op.mes || mes,
-                semana: fpSemana,
+                mes: fpMes,
+                semana: subTipo === 'dobras' ? (op.semana || semana || null) : null,
                 unitId: normalizedUnitId,
                 pago: op.pago !== undefined ? !!op.pago : true,
                 dataPagamento: op.dataPagamento || body.dataPagamento || now.split('T')[0],
@@ -3658,6 +3673,23 @@ exports.handler = async (event) => {
                 valorBruto: parseFloat(op.valorBruto) || 0,
                 valorTransporte: parseFloat(op.valorTransporte) || 0,
                 totalFinal: parseFloat(op.totalFinal) || 0,
+                // Campos específicos de férias
+                ...(subTipo === 'ferias' ? {
+                  diasFerias: op.diasFerias || 0,
+                  valorInss: parseFloat(op.valorInss) || 0,
+                  valorIrrf: parseFloat(op.valorIrrf) || 0,
+                  valorFgts: parseFloat(op.valorFgts) || 0,
+                  periodoGozo: op.periodoGozo || '',
+                  periodoAquisitivo: op.periodoAquisitivo || '',
+                } : {}),
+                // Campos específicos de acerto avulso
+                ...(subTipo === 'acerto-avulso' ? {
+                  periodoInicio: op.periodoInicio || '',
+                  periodoFim: op.periodoFim || '',
+                  totalCreditos: parseFloat(op.totalCreditos) || 0,
+                  totalDebitos: parseFloat(op.totalDebitos) || 0,
+                  bloqueiaColab: !!op.bloqueiaColab,
+                } : {}),
                 obs: op.obs || '',
                 updatedAt: now,
               };
@@ -3705,6 +3737,29 @@ exports.handler = async (event) => {
                 },
               });
               savedIds.push(psId);
+              break;
+            }
+
+            // ── COLABORADOR — bloquear (desativar) ao final de acerto avulso ──────
+            case 'colaborador-bloquear': {
+              const cbId = op.colaboradorId || colaboradorId;
+              if (!cbId) break;
+              // Usa tabela colaboradores OU motoboys conforme campo
+              const cbTable = op.tabela === 'motoboys' ? 'gres-prod-motoboys' : 'gres-prod-colaboradores';
+              transactItems.push({
+                Update: {
+                  TableName: cbTable,
+                  Key: { id: cbId },
+                  UpdateExpression: 'SET ativo = :false, bloqueado = :true, bloqueadoEm = :now, bloqueioMotivo = :motivo, updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':false': false,
+                    ':true': true,
+                    ':now': now,
+                    ':motivo': op.motivo || `Acerto avulso em ${now.split('T')[0]}`,
+                  },
+                },
+              });
+              savedIds.push(cbId);
               break;
             }
 
@@ -4118,33 +4173,6 @@ exports.handler = async (event) => {
         }).promise();
         return response(200, { success: true, reaberto: benId });
       } catch (e) { console.error(e); return response(500, { error: 'Erro ao reabrir: ' + e.message }); }
-    }
-
-    // POST /beneficios/ajustar — registrar ajuste manual (crédito/débito) no benefício
-    if (rawPath === '/beneficios/ajustar' && httpMethod === 'POST') {
-      const { id, ajuste } = body; // id do benefício, ajuste = { descricao, valor, criadoEm }
-      if (!id || !ajuste || !ajuste.descricao || typeof ajuste.valor !== 'number') {
-        return response(400, { error: 'id e ajuste { descricao, valor } obrigatórios' });
-      }
-      const now = new Date().toISOString();
-      try {
-        const existing = await dynamodb.get({ TableName: 'gres-prod-beneficios', Key: { id } }).promise();
-        if (!existing.Item) return response(404, { error: 'Benefício não encontrado' });
-        const listaAjustes = [...(existing.Item.ajustes || []), { ...ajuste, criadoEm: ajuste.criadoEm || now }];
-        const totalAjustes = listaAjustes.reduce((s, a) => s + (a.valor || 0), 0);
-        // Se já está fechado, recalcula saldoFinal
-        let saldoFinal = existing.Item.saldoFinal;
-        if (existing.Item.status === 'fechado') {
-          const base = (existing.Item.valorPago || 0) + (existing.Item.saldoAnterior || 0) - (existing.Item.valorApurado || 0);
-          saldoFinal = parseFloat((base + totalAjustes).toFixed(2));
-        }
-        await dynamodb.update({
-          TableName: 'gres-prod-beneficios', Key: { id },
-          UpdateExpression: 'SET ajustes = :a, totalAjustes = :t, saldoFinal = :sf, updatedAt = :u',
-          ExpressionAttributeValues: { ':a': listaAjustes, ':t': parseFloat(totalAjustes.toFixed(2)), ':sf': saldoFinal, ':u': now },
-        }).promise();
-        return response(200, { success: true, totalAjustes, saldoFinal });
-      } catch (e) { console.error(e); return response(500, { error: 'Erro ao registrar ajuste: ' + e.message }); }
     }
 
     // DELETE /beneficios/:id — excluir registro e payslip associado

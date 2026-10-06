@@ -78,12 +78,34 @@ export interface FeriasStatusResult {
   pendentes: number;
   /** Flag: 2+ aquisitivos pendentes (urgência máxima) */
   temDuplicado: boolean;
+  /** Afastamentos relevantes (impactaram aquisitivos ou são informativos) */
+  afastamentos: AfastamentoResumo[];
+}
+
+export interface AfastamentoResumo {
+  tipo: string;
+  dataInicio: string;
+  dataFim: string;
+  diasTotal: number;
+  motivo?: string;
+  /** Esse afastamento zera o aquisitivo? (art. 133 II/IV) */
+  perdeAquisitivo: boolean;
+  /** Observação explicativa */
+  obs: string;
+}
+
+export interface AfastamentoInput {
+  tipo: string;        // 'licenca_medica' | 'licenca_maternidade' | 'auxilio_doenca' | etc
+  dataInicio: string;  // YYYY-MM-DD
+  dataFim?: string;    // YYYY-MM-DD (null = ainda ativo)
+  motivo?: string;
 }
 
 export interface CalcularFeriasStatusInput {
   nome: string;
   dataAdmissao: string;
   historico?: HistoricoFeriasItem[];
+  afastamentos?: AfastamentoInput[];
   /** Hoje (default: new Date()) — permite testar com datas fixas */
   hoje?: string;
 }
@@ -133,10 +155,49 @@ function mesesCompletos(a: string, b: string): number {
  *  FUNÇÃO PRINCIPAL
  * ══════════════════════════════════════════════════════════════ */
 
+/** Avalia um afastamento à luz do art. 133 CLT */
+function avaliarAfastamento(af: AfastamentoInput, hoje: string): AfastamentoResumo {
+  const fim = af.dataFim || hoje;
+  const dias = diffDias(af.dataInicio, fim) + 1;
+  let perde = false;
+  let obs = '';
+
+  // Licença com salário (empresa paga) > 30 dias → perde (art. 133 II)
+  // Licença maternidade: não perde (equivalente a trabalho)
+  // Auxílio-doença INSS > 180 dias (6 meses) → perde (art. 133 IV)
+  const tipoLower = (af.tipo || '').toLowerCase();
+  const isMaternidade = tipoLower.includes('maternidade');
+  const isMedica      = tipoLower.includes('medica') || tipoLower.includes('médica') || tipoLower.includes('doenca') || tipoLower.includes('doença');
+
+  if (isMaternidade) {
+    obs = 'Licença maternidade não afeta o período aquisitivo (equivale a trabalho).';
+  } else if (isMedica) {
+    if (dias > 180) {
+      perde = true;
+      obs = `Auxílio-doença INSS > 6 meses (${dias} dias) — CLT art. 133 IV: perde o aquisitivo em curso, novo começa no retorno.`;
+    } else if (dias > 15) {
+      obs = `Auxílio-doença ${dias} dias (do 16º em diante pago pelo INSS). NÃO afeta aquisitivo (abaixo de 6 meses).`;
+    } else {
+      obs = `Licença médica ${dias} dias (empresa paga). NÃO afeta aquisitivo (abaixo de 30 dias).`;
+    }
+  } else {
+    if (dias > 30) {
+      perde = true;
+      obs = `${af.tipo || 'Afastamento'} > 30 dias (${dias} dias) — CLT art. 133 II: perde o aquisitivo em curso.`;
+    } else {
+      obs = `${af.tipo || 'Afastamento'} ${dias} dias. NÃO afeta aquisitivo.`;
+    }
+  }
+
+  return { tipo: af.tipo, dataInicio: af.dataInicio, dataFim: fim, diasTotal: dias, motivo: af.motivo, perdeAquisitivo: perde, obs };
+}
+
 export function calcularFeriasStatus(input: CalcularFeriasStatusInput): FeriasStatusResult {
   const admissao = input.dataAdmissao;
   const hoje = input.hoje || new Date().toISOString().split('T')[0];
   const historico = (input.historico || []).slice().sort((a, b) => a.aquisitivoInicio.localeCompare(b.aquisitivoInicio));
+  const afastamentosRaw = input.afastamentos || [];
+  const afastamentos = afastamentosRaw.map(a => avaliarAfastamento(a, hoje));
 
   const aquisitivos: AquisitivoCalculado[] = [];
 
@@ -161,14 +222,26 @@ export function calcularFeriasStatus(input: CalcularFeriasStatusInput): FeriasSt
     })();
     const diasAteVencimento = diffDias(hoje, limiteGozoPratico);
 
-    // Verifica se há histórico pago cobrindo esse aquisitivo
-    const pago = historico.some(h =>
+    // Verifica histórico cobrindo esse aquisitivo (match por aquisitivoInicio ou intervalo)
+    const historicoDesse = historico.filter(h =>
       h.aquisitivoInicio === inicio ||
       (h.aquisitivoInicio <= inicio && (h.aquisitivoFim || '') >= fim)
     );
+    const pago = historicoDesse.length > 0;
+    // Soma dias de gozo registrados (fracionamento)
+    let diasGozados = 0;
+    for (const h of historicoDesse) {
+      if (h.gozoInicio && h.gozoFim) {
+        diasGozados += diffDias(h.gozoInicio, h.gozoFim) + 1;
+      }
+      if (h.diasAbono) diasGozados += h.diasAbono;
+    }
+    const diasDireito = 30;
+    const diasRestantes = Math.max(0, diasDireito - diasGozados);
 
     let status: AquisitivoCalculado['status'];
-    if (pago) status = 'pago';
+    if (pago && diasRestantes === 0) status = 'pago';
+    else if (pago && diasRestantes > 0) status = 'parcial';
     else if (diasAteVencimento < 0) status = 'vencido';
     else if (diasAteVencimento <= 180) status = 'vencendo';
     else status = 'em_dia';
@@ -179,8 +252,10 @@ export function calcularFeriasStatus(input: CalcularFeriasStatusInput): FeriasSt
       fim,
       limiteGozo,
       limiteGozoPratico,
-      diasDireito: 30, // simplificado — faltas aplicadas no momento do lançamento
+      diasDireito,
       pago,
+      diasGozados,
+      diasRestantes,
       diasAteVencimento,
       status,
     });
@@ -202,14 +277,15 @@ export function calcularFeriasStatus(input: CalcularFeriasStatusInput): FeriasSt
   }
 
   // ── Alertas ─────────────────────────────────────────────────────
-  const pendentesList = aquisitivos.filter(a => !a.pago);
+  // "Pendente" = não pago OU pago parcialmente (ainda tem dias a gozar)
+  const pendentesList = aquisitivos.filter(a => a.status !== 'pago');
   const pendentes = pendentesList.length;
   const temDuplicado = pendentes >= 2;
 
   let alerta: FeriasStatusResult['alerta'] = 'em_dia';
   if (temDuplicado) alerta = 'duplicado';
   else if (pendentesList.some(a => a.status === 'vencido')) alerta = 'vencido';
-  else if (pendentesList.some(a => a.status === 'vencendo')) alerta = 'vencendo';
+  else if (pendentesList.some(a => a.status === 'vencendo' || a.status === 'parcial')) alerta = 'vencendo';
 
   return {
     nome: input.nome,
@@ -219,5 +295,6 @@ export function calcularFeriasStatus(input: CalcularFeriasStatusInput): FeriasSt
     alerta,
     pendentes,
     temDuplicado,
+    afastamentos,
   };
 }

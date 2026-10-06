@@ -132,18 +132,28 @@ export default function Ferias() {
   const [apenasSimular, setApenasSimular] = useState(false);
   const [erro, setErro]                   = useState('');
 
-  /* ── Carregar colaboradores CLT ──────────────────────────────────── */
+  /* ── Carregar colaboradores CLT + afastamentos ──────────────── */
   const carregarColaboradores = useCallback(async () => {
     if (!unitId) return;
     setLoading(true);
     try {
-      const r = await fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
-        headers: { Authorization: `Bearer ${token()}` },
-      });
-      if (r?.ok) {
-        const data = await r.json();
+      const [rColab, rAfast] = await Promise.all([
+        fetchAuth(`${apiUrl}/colaboradores?unitId=${unitId}`, {
+          headers: { Authorization: `Bearer ${token()}` },
+        }),
+        fetchAuth(`${apiUrl}/afastamentos?unitId=${unitId}`, {
+          headers: { Authorization: `Bearer ${token()}` },
+        }).catch(() => null),
+      ]);
+      if (rColab?.ok) {
+        const data = await rColab.json();
         const lista = Array.isArray(data) ? data : (data.colaboradores || []);
         setColaboradores(lista.filter((c: ColaboradorCLT) => c.tipoContrato === 'CLT' && c.ativo !== false));
+      }
+      if (rAfast?.ok) {
+        const data = await rAfast.json();
+        const lista = Array.isArray(data) ? data : (data.afastamentos || []);
+        setAfastamentos(lista);
       }
     } finally {
       setLoading(false);
@@ -375,10 +385,19 @@ export default function Ferias() {
   const statusMap: Record<string, FeriasStatusResult> = {};
   for (const c of colaboradores) {
     if (!c.dataAdmissao) continue;
+    const afastColab = afastamentos
+      .filter(a => a.colaboradorId === c.id)
+      .map(a => ({
+        tipo: a.tipo,
+        dataInicio: a.dataInicio,
+        dataFim: a.dataFimReal || a.dataFimPrevista,
+        motivo: a.motivo,
+      }));
     statusMap[c.id] = calcularFeriasStatus({
       nome: c.nome,
       dataAdmissao: c.dataAdmissao,
       historico: c.historicoFerias || [],
+      afastamentos: afastColab,
     });
   }
 
@@ -416,6 +435,7 @@ export default function Ferias() {
             const s = statusMap[c.id];
             const vencidos = s.aquisitivos.filter(a => a.status === 'vencido');
             const vencendo = s.aquisitivos.filter(a => a.status === 'vencendo');
+            const parciais = s.aquisitivos.filter(a => a.status === 'parcial');
             const borderColor = s.alerta === 'duplicado' || s.alerta === 'vencido' ? '#c62828' : '#e65100';
             const bgColor     = s.alerta === 'duplicado' || s.alerta === 'vencido' ? '#ffebee' : '#fff3e0';
             return (
@@ -434,8 +454,18 @@ export default function Ferias() {
                   {vencendo.map(a => (
                     <div key={a.ordem}>🟡 Aquisitivo {a.inicio.slice(0,10)} a {a.fim.slice(0,10)} — limite para iniciar: <strong>{a.limiteGozoPratico}</strong> ({a.diasAteVencimento} dias)</div>
                   ))}
+                  {parciais.map(a => (
+                    <div key={a.ordem}>🟠 Aquisitivo {a.inicio.slice(0,10)} a {a.fim.slice(0,10)} — <strong>PARCIAL</strong>: já gozou {a.diasGozados}/{a.diasDireito} dias, restam <strong>{a.diasRestantes} dias</strong></div>
+                  ))}
                   {s.proporcional && s.proporcional.diasAcumulados > 0 && (
                     <div style={{ color: '#888', fontStyle: 'italic', marginTop: 2 }}>📊 Próximo aquisitivo em curso: {s.proporcional.mesesTrabalhados} meses → {s.proporcional.diasAcumulados} dias acumulados</div>
+                  )}
+                  {s.afastamentos && s.afastamentos.length > 0 && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#1565c0' }}>
+                      {s.afastamentos.map((af, idx) => (
+                        <div key={idx}>🏥 {af.tipo} {af.motivo ? `(${af.motivo}) ` : ''}{af.dataInicio} → {af.dataFim} ({af.diasTotal} dias) — {af.obs}</div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
