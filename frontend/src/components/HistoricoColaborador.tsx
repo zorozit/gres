@@ -270,31 +270,42 @@ export const HistoricoPagamentos: React.FC<PropsComUnit> = ({ colaboradorId, uni
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ backgroundColor: '#f5f5f5' }}>
+            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Tipo</th>
             <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mês/Semana</th>
             <th style={{ padding: '6px 8px', textAlign: 'left' }}>Pago em</th>
             <th style={{ padding: '6px 8px', textAlign: 'right' }}>Bruto</th>
             <th style={{ padding: '6px 8px', textAlign: 'right' }}>Líquido</th>
             <th style={{ padding: '6px 8px', textAlign: 'left' }}>Forma</th>
             <th style={{ padding: '6px 8px', textAlign: 'left' }}>Status</th>
-            <th style={{ padding: '6px 8px', textAlign: 'left' }}>Obs</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((p: any) => (
-            <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={{ padding: '6px 8px' }}>{p.mes}{p.semana ? ` / ${p.semana}` : ''}</td>
-              <td style={{ padding: '6px 8px' }}>{p.dataPagamento || '—'}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtMoeda(parseFloat(p.totalBruto || p.valorBruto || 0))}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.valorLiquidoContabil || p.totalLiquido || p.saldoFinal || p.totalFinal || 0))}</td>
-              <td style={{ padding: '6px 8px' }}>{p.formaPagamento || '—'}</td>
-              <td style={{ padding: '6px 8px' }}>
-                {p.pago
-                  ? <span style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Pago</span>
-                  : <span style={{ color: '#e65100' }}>⏳ Pendente</span>}
-              </td>
-              <td style={{ padding: '6px 8px', fontSize: 11, color: '#666' }}>{p.obs || p.observacao || '—'}</td>
-            </tr>
-          ))}
+          {items.map((p: any) => {
+            // Discriminador: campo tipo agora tem 'ferias-clt' | 'dobras-clt' | undefined (folha mensal)
+            const tipoLabel = p.tipo === 'ferias-clt'      ? { icon: '🏖️', nome: 'Férias',   cor: '#1565c0', bg: '#e3f2fd' }
+                            : p.tipo === 'dobras-clt'      ? { icon: '💪', nome: 'Dobras',   cor: '#e65100', bg: '#fff3e0' }
+                            : p.tipo === 'acerto-avulso'   ? { icon: '🧮', nome: 'Acerto',   cor: '#6a1b9a', bg: '#f3e5f5' }
+                            :                                  { icon: '💳', nome: 'Folha Mês', cor: '#2e7d32', bg: '#e8f5e9' };
+            return (
+              <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                <td style={{ padding: '6px 8px' }}>
+                  <span style={{ background: tipoLabel.bg, color: tipoLabel.cor, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>
+                    {tipoLabel.icon} {tipoLabel.nome}
+                  </span>
+                </td>
+                <td style={{ padding: '6px 8px' }}>{p.mes}{p.semana ? ` / ${p.semana}` : ''}{p.periodoGozo ? <div style={{ fontSize: 10, color: '#888' }}>Gozo: {p.periodoGozo}</div> : null}</td>
+                <td style={{ padding: '6px 8px' }}>{p.dataPagamento || '—'}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtMoeda(parseFloat(p.totalBruto || p.valorBruto || 0))}</td>
+                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.valorLiquidoContabil || p.totalLiquido || p.saldoFinal || p.totalFinal || 0))}</td>
+                <td style={{ padding: '6px 8px' }}>{p.formaPagamento || '—'}</td>
+                <td style={{ padding: '6px 8px' }}>
+                  {p.pago
+                    ? <span style={{ color: '#2e7d32', fontWeight: 600 }}>✅ Pago</span>
+                    : <span style={{ color: '#e65100' }}>⏳ Pendente</span>}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

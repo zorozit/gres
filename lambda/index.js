@@ -3405,19 +3405,19 @@ exports.handler = async (event) => {
       try {
         let items = [];
         if (unitId && mes) {
-          const periodoPrefix = mes; // 2026-06
-          const result = await dynamodb.query({
+          // Scan filtrando por unitId + (periodo begins_with mes OR mes == mes)
+          // Isso captura: dobras (periodo=2026-06-xxx), férias (periodo=ferias-2026-06 + mes=2026-06), CLT normal
+          const result = await dynamodb.scan({
             TableName: 'gres-prod-payslips',
-            IndexName: 'unidade-periodo-index',
-            KeyConditionExpression: 'unitId = :uid AND begins_with(periodo, :p)',
-            ExpressionAttributeValues: { ':uid': toCnpj(unitId), ':p': periodoPrefix }
+            FilterExpression: 'unitId = :uid AND (begins_with(periodo, :p) OR mes = :m)',
+            ExpressionAttributeValues: { ':uid': toCnpj(unitId), ':p': mes, ':m': mes }
           }).promise();
           items = result.Items || [];
         } else {
           const filters = [];
           const exprVals = {};
           if (unitId) { filters.push('unitId = :uid'); exprVals[':uid'] = toCnpj(unitId); }
-          if (mes) { filters.push('begins_with(periodo, :m)'); exprVals[':m'] = mes; }
+          if (mes) { filters.push('(begins_with(periodo, :m) OR mes = :m)'); exprVals[':m'] = mes; }
           if (colaboradorId) { filters.push('colaboradorId = :cid'); exprVals[':cid'] = colaboradorId; }
           const result = await dynamodb.scan({
             TableName: 'gres-prod-payslips',
