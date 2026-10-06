@@ -352,6 +352,22 @@ export default function Ferias() {
         }
       }
 
+      // Grava histórico de férias no cadastro do colaborador (atualiza o painel)
+      const historicoItem = {
+        aquisitivoInicio: paInicio,
+        aquisitivoFim: paFim,
+        gozoInicio,
+        gozoFim,
+        dataPagamento: dataPgto,
+        diasAbono: diasAbono || 0,
+        obs: `Pago via módulo Férias CLT. Líquido R$ ${fmt(resAtual.totais.liquido)}.`,
+      };
+      operacoes.push({
+        tipo: 'colaborador-add-ferias-historico',
+        colaboradorId: modalColab.id,
+        item: historicoItem,
+      });
+
       if (!apenasSimular) {
         const resp = await fetchAuth(`${apiUrl}/pagamento-batch`, {
           method: 'POST',
