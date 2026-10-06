@@ -39,6 +39,16 @@ interface ColaboradorCLT {
   historicoFerias?: HistoricoFeriasItem[];
 }
 
+interface AfastamentoDB {
+  colaboradorId: string;
+  tipo: string;
+  dataInicio: string;
+  dataFimReal?: string;
+  dataFimPrevista?: string;
+  motivo?: string;
+  ativo?: boolean;
+}
+
 interface ValorContabilComp {
   diasFerias: number;
   valorFerias: string;
@@ -102,6 +112,7 @@ export default function Ferias() {
   const token = () => localStorage.getItem('auth_token');
 
   const [colaboradores, setColaboradores] = useState<ColaboradorCLT[]>([]);
+  const [afastamentos, setAfastamentos] = useState<AfastamentoDB[]>([]);
   const [loading, setLoading]             = useState(false);
   const [busca, setBusca]                 = useState('');
 

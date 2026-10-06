@@ -52,10 +52,14 @@ export interface AquisitivoCalculado {
   diasDireito: number;
   /** Já foi pago? (há histórico ligado a esse aquisitivo) */
   pago: boolean;
+  /** Dias já gozados (soma de todos os períodos pagos para esse aquisitivo) */
+  diasGozados: number;
+  /** Dias ainda a gozar (diasDireito - diasGozados) */
+  diasRestantes: number;
   /** Dias que faltam até limiteGozoPratico (negativo = atrasado) */
   diasAteVencimento: number;
   /** Status do aquisitivo */
-  status: 'em_dia' | 'vencendo' | 'vencido' | 'pago';
+  status: 'em_dia' | 'vencendo' | 'vencido' | 'pago' | 'parcial';
 }
 
 export interface FeriasStatusResult {
