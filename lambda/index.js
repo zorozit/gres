@@ -3639,21 +3639,32 @@ exports.handler = async (event) => {
               break;
             }
 
-            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, férias, etc.) ─────────
+            // ── FOLHA-PAGAMENTO (upsert — dobras CLT, férias, acerto avulso) ─────
             case 'folha-pagamento-upsert': {
               const fpColabId = op.colaboradorId || colaboradorId;
               const fpMes = op.mes || mes;
-              const isFerias = op.tipoFerias === 'ferias';
-              // ID: férias usa competência; dobras usa semana
-              const fpId = isFerias
-                ? `folha-${fpColabId}-ferias-${fpMes}`
-                : `folha-${fpColabId}-dobras-${op.semana || semana || ''}`;
+              // Discriminador: 'ferias' | 'acerto-avulso' | (default: dobras)
+              const subTipo = op.tipoFerias === 'ferias' ? 'ferias'
+                            : op.subTipo === 'acerto-avulso' ? 'acerto-avulso'
+                            : 'dobras';
+              let fpId, fpTipoCampo;
+              if (subTipo === 'ferias') {
+                fpId = `folha-${fpColabId}-ferias-${fpMes}`;
+                fpTipoCampo = 'ferias-clt';
+              } else if (subTipo === 'acerto-avulso') {
+                const slug = (op.periodoInicio || '').replace(/-/g,'') + '-' + (op.periodoFim || '').replace(/-/g,'');
+                fpId = `folha-${fpColabId}-acerto-${slug || Date.now()}`;
+                fpTipoCampo = 'acerto-avulso';
+              } else {
+                fpId = `folha-${fpColabId}-dobras-${op.semana || semana || ''}`;
+                fpTipoCampo = 'dobras-clt';
+              }
               const fpItem = {
                 id: fpId,
-                tipo: isFerias ? 'ferias-clt' : 'dobras-clt',
+                tipo: fpTipoCampo,
                 colaboradorId: fpColabId,
                 mes: fpMes,
-                semana: isFerias ? null : (op.semana || semana || null),
+                semana: subTipo === 'dobras' ? (op.semana || semana || null) : null,
                 unitId: normalizedUnitId,
                 pago: op.pago !== undefined ? !!op.pago : true,
                 dataPagamento: op.dataPagamento || body.dataPagamento || now.split('T')[0],
@@ -3663,13 +3674,21 @@ exports.handler = async (event) => {
                 valorTransporte: parseFloat(op.valorTransporte) || 0,
                 totalFinal: parseFloat(op.totalFinal) || 0,
                 // Campos específicos de férias
-                ...(isFerias ? {
+                ...(subTipo === 'ferias' ? {
                   diasFerias: op.diasFerias || 0,
                   valorInss: parseFloat(op.valorInss) || 0,
                   valorIrrf: parseFloat(op.valorIrrf) || 0,
                   valorFgts: parseFloat(op.valorFgts) || 0,
                   periodoGozo: op.periodoGozo || '',
                   periodoAquisitivo: op.periodoAquisitivo || '',
+                } : {}),
+                // Campos específicos de acerto avulso
+                ...(subTipo === 'acerto-avulso' ? {
+                  periodoInicio: op.periodoInicio || '',
+                  periodoFim: op.periodoFim || '',
+                  totalCreditos: parseFloat(op.totalCreditos) || 0,
+                  totalDebitos: parseFloat(op.totalDebitos) || 0,
+                  bloqueiaColab: !!op.bloqueiaColab,
                 } : {}),
                 obs: op.obs || '',
                 updatedAt: now,
@@ -3718,6 +3737,29 @@ exports.handler = async (event) => {
                 },
               });
               savedIds.push(psId);
+              break;
+            }
+
+            // ── COLABORADOR — bloquear (desativar) ao final de acerto avulso ──────
+            case 'colaborador-bloquear': {
+              const cbId = op.colaboradorId || colaboradorId;
+              if (!cbId) break;
+              // Usa tabela colaboradores OU motoboys conforme campo
+              const cbTable = op.tabela === 'motoboys' ? 'gres-prod-motoboys' : 'gres-prod-colaboradores';
+              transactItems.push({
+                Update: {
+                  TableName: cbTable,
+                  Key: { id: cbId },
+                  UpdateExpression: 'SET ativo = :false, bloqueado = :true, bloqueadoEm = :now, bloqueioMotivo = :motivo, updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':false': false,
+                    ':true': true,
+                    ':now': now,
+                    ':motivo': op.motivo || `Acerto avulso em ${now.split('T')[0]}`,
+                  },
+                },
+              });
+              savedIds.push(cbId);
               break;
             }
 

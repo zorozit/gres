@@ -16,7 +16,9 @@ import { Header } from '../components/Header';
 import { fetchAuth } from '../utils/fetchAuth';
 import { calcularFerias, calcDiasDireito } from '../engine/ferias';
 import { montarPayslipFerias } from '../engine/payslipFerias';
+import { calcularFeriasStatus } from '../engine/feriasStatus';
 import type { FeriasResult, FeriasCompetencia } from '../engine/ferias';
+import type { FeriasStatusResult, HistoricoFeriasItem } from '../engine/feriasStatus';
 
 const apiUrl = import.meta.env.VITE_API_ENDPOINT || 'https://2blzw4pn7b.execute-api.us-east-2.amazonaws.com/prod';
 
@@ -33,6 +35,8 @@ interface ColaboradorCLT {
   salario?: number;
   dataAdmissao?: string;
   cargo?: string;
+  ativo?: boolean;
+  historicoFerias?: HistoricoFeriasItem[];
 }
 
 interface ValorContabilComp {
@@ -139,7 +143,7 @@ export default function Ferias() {
       if (r?.ok) {
         const data = await r.json();
         const lista = Array.isArray(data) ? data : (data.colaboradores || []);
-        setColaboradores(lista.filter((c: ColaboradorCLT) => c.tipoContrato === 'CLT'));
+        setColaboradores(lista.filter((c: ColaboradorCLT) => c.tipoContrato === 'CLT' && c.ativo !== false));
       }
     } finally {
       setLoading(false);
@@ -367,6 +371,23 @@ export default function Ferias() {
     c.nome.toLowerCase().includes(busca.toLowerCase())
   );
 
+  /* ── Calcular status de cada colaborador ── */
+  const statusMap: Record<string, FeriasStatusResult> = {};
+  for (const c of colaboradores) {
+    if (!c.dataAdmissao) continue;
+    statusMap[c.id] = calcularFeriasStatus({
+      nome: c.nome,
+      dataAdmissao: c.dataAdmissao,
+      historico: c.historicoFerias || [],
+    });
+  }
+
+  const totais = {
+    vencidos:   Object.values(statusMap).filter(s => s.alerta === 'vencido' || s.alerta === 'duplicado').length,
+    vencendo:   Object.values(statusMap).filter(s => s.alerta === 'vencendo').length,
+    em_dia:     Object.values(statusMap).filter(s => s.alerta === 'em_dia').length,
+  };
+
   const resAtualizado = calculado ? (modoContabil ? resultadoContabil() : resultado) : null;
 
   /* ══════════════════════════════════════════════════════════════════
@@ -375,6 +396,53 @@ export default function Ferias() {
   return (
     <div style={{ padding: '24px', maxWidth: 900, margin: '0 auto' }}>
       <Header title="Férias CLT" />
+
+      {/* ── Painel de Status ── */}
+      {!loading && colaboradores.length > 0 && (
+        <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 10, padding: 16, marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ margin: 0, fontSize: 15, color: '#333' }}>
+              🏖️ Status de Férias — Resumo da Unidade
+            </h3>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <StatusBadge count={totais.vencidos}  label="Vencidas"  color="#c62828" bg="#ffebee" />
+              <StatusBadge count={totais.vencendo}  label="Vencendo"  color="#e65100" bg="#fff3e0" />
+              <StatusBadge count={totais.em_dia}    label="Em dia"    color="#2e7d32" bg="#e8f5e9" />
+            </div>
+          </div>
+
+          {/* Alertas detalhados dos pendentes */}
+          {colaboradores.filter(c => statusMap[c.id] && (statusMap[c.id].alerta === 'vencido' || statusMap[c.id].alerta === 'vencendo' || statusMap[c.id].alerta === 'duplicado')).map(c => {
+            const s = statusMap[c.id];
+            const vencidos = s.aquisitivos.filter(a => a.status === 'vencido');
+            const vencendo = s.aquisitivos.filter(a => a.status === 'vencendo');
+            const borderColor = s.alerta === 'duplicado' || s.alerta === 'vencido' ? '#c62828' : '#e65100';
+            const bgColor     = s.alerta === 'duplicado' || s.alerta === 'vencido' ? '#ffebee' : '#fff3e0';
+            return (
+              <div key={c.id} style={{ background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 6, padding: '8px 12px', marginBottom: 6, fontSize: 13 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong>{c.nome}</strong> <span style={{ color: '#666' }}>— {c.cargo}</span>
+                    {s.temDuplicado && <span style={{ marginLeft: 8, background: '#c62828', color: '#fff', padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 700 }}>⚠️ DUPLICADO ({s.pendentes} aquisitivos pendentes)</span>}
+                  </div>
+                  <button onClick={() => abrirModal(c)} style={{ ...btnPrimario, background: borderColor, padding: '5px 12px', fontSize: 12 }}>Lançar Férias</button>
+                </div>
+                <div style={{ marginTop: 4, color: '#555', fontSize: 12 }}>
+                  {vencidos.map(a => (
+                    <div key={a.ordem}>🔴 Aquisitivo {a.inicio.slice(0,10)} a {a.fim.slice(0,10)} — <strong>VENCIDO há {Math.abs(a.diasAteVencimento)} dias</strong> (pagamento em DOBRO)</div>
+                  ))}
+                  {vencendo.map(a => (
+                    <div key={a.ordem}>🟡 Aquisitivo {a.inicio.slice(0,10)} a {a.fim.slice(0,10)} — limite para iniciar: <strong>{a.limiteGozoPratico}</strong> ({a.diasAteVencimento} dias)</div>
+                  ))}
+                  {s.proporcional && s.proporcional.diasAcumulados > 0 && (
+                    <div style={{ color: '#888', fontStyle: 'italic', marginTop: 2 }}>📊 Próximo aquisitivo em curso: {s.proporcional.mesesTrabalhados} meses → {s.proporcional.diasAcumulados} dias acumulados</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Barra de busca */}
       <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
@@ -451,7 +519,12 @@ export default function Ferias() {
 
             {/* ── Período aquisitivo ── */}
             <div style={secaoStyle}>
-              <h3 style={subTituloStyle}>Período Aquisitivo</h3>
+              <h3 style={subTituloStyle}>
+                Período Aquisitivo
+                <span style={{ marginLeft: 6, display: 'inline-block', verticalAlign: 'middle' }}>
+                  <InfoTooltip texto={`12 meses em que o colaborador TRABALHOU para ganhar o direito a 30 dias de férias.\n\n• Começa na admissão (ou dia seguinte ao fim do último aquisitivo).\n• Faltas injustificadas reduzem o direito:\n   0-5 faltas = 30 dias\n   6-14 = 24 dias\n   15-23 = 18 dias\n   24-32 = 12 dias\n   >32 = perde o direito`} />
+                </span>
+              </h3>
               <div style={gridStyle}>
                 <div>
                   <label style={labelStyle}>Início</label>
@@ -491,22 +564,30 @@ export default function Ferias() {
               <h3 style={subTituloStyle}>Parâmetros</h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
                 <div>
-                  <label style={labelStyle}>Faltas</label>
+                  <label style={labelStyle}>
+                    Faltas <InfoTooltip texto={`Faltas INJUSTIFICADAS no período aquisitivo.\n\nCLT art. 130:\n0-5 = 30 dias\n6-14 = 24 dias\n15-23 = 18 dias\n24-32 = 12 dias\n>32 = perde o direito`} />
+                  </label>
                   <input type="number" min={0} value={faltas} onChange={e => setFaltas(parseInt(e.target.value) || 0)} style={inputStyle} />
                   <span style={{ fontSize: 11, color: '#888' }}>
                     Direito: {calcDiasDireito(faltas)} dias
                   </span>
                 </div>
                 <div>
-                  <label style={labelStyle}>Abono (dias)</label>
+                  <label style={labelStyle}>
+                    Abono (dias) <InfoTooltip texto={`Abono Pecuniário = venda de até 10 dias de férias (CLT art. 143).\n\n• Pode vender até 1/3 do direito (10 dias se tiver direito a 30).\n• Precisa ser requerido 15 dias antes do fim do aquisitivo.\n• Valor do abono = (base ÷ 30) × dias vendidos + 1/3.\n• Abono NÃO sofre INSS nem IRRF.`} />
+                  </label>
                   <input type="number" min={0} max={10} value={diasAbono} onChange={e => setDiasAbono(Math.min(10, parseInt(e.target.value) || 0))} style={inputStyle} />
                 </div>
                 <div>
-                  <label style={labelStyle}>Salário + Variável</label>
+                  <label style={labelStyle}>
+                    Salário + Variável <InfoTooltip texto={`Remuneração base para o cálculo das férias.\n\nUse: salário contratual + média das verbas variáveis dos últimos 12 meses (horas extras, comissões, caixinhas quando houver vencimento em folha).\n\nDiário de férias = (salário+variável) ÷ 30.`} />
+                  </label>
                   <input type="number" min={0} step={0.01} value={remuneracao} onChange={e => setRemuneracao(e.target.value)} style={inputStyle} />
                 </div>
                 <div>
-                  <label style={labelStyle}>Variável médio</label>
+                  <label style={labelStyle}>
+                    Variável médio <InfoTooltip texto={`Última média dos ganhos variáveis dos 12 meses do aquisitivo.\n\nIncluir: horas extras habituais, DSR sobre variável, comissões, bonificações.\n\nEste campo é informativo — some ao salário base no campo acima.`} />
+                  </label>
                   <input type="number" min={0} step={0.01} value={variavelMedio} onChange={e => setVariavelMedio(e.target.value)} style={inputStyle} placeholder="0,00" />
                 </div>
               </div>
@@ -596,10 +677,14 @@ export default function Ferias() {
                     ) : (
                       /* Exibição calculada */
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-                        <InfoItem label="Férias (cód 43)" valor={comp.valorFerias} />
-                        <InfoItem label="1/3 (cód 50)" valor={comp.valorTerco} />
-                        <InfoItem label="INSS (cód 45)" valor={comp.valorInss} desconto />
-                        <InfoItem label="IRRF (cód 46)" valor={comp.valorIrrf} desconto />
+                        <InfoItem label="Férias (cód 43)" valor={comp.valorFerias}
+                          info={`Fórmula: (remuneração base ÷ 30) × dias\n\nBase: R$ ${fmt(resAtualizado.remuneracaoBase)}\nDiário: R$ ${fmt(resAtualizado.valorDiario)}\nDias: ${comp.diasFerias}\n\n= R$ ${fmt(comp.valorFerias)}`} />
+                        <InfoItem label="1/3 (cód 50)" valor={comp.valorTerco}
+                          info={`1/3 Constitucional (Constituição Federal art. 7º XVII)\n\nFórmula: férias ÷ 3\n\n= R$ ${fmt(comp.valorFerias)} ÷ 3 = R$ ${fmt(comp.valorTerco)}`} />
+                        <InfoItem label="INSS (cód 45)" valor={comp.valorInss} desconto
+                          info={`INSS progressivo 2026 sobre férias + 1/3\n\nBase: R$ ${fmt(comp.baseInss)}\n\nFaixas 2026:\n  até 1518,00: 7,5%\n  1518,01 – 2793,88: 9%\n  2793,89 – 4190,83: 12%\n  4190,84 – 8157,41: 14%\n\nNa base ${fmt(comp.baseInss)} = R$ ${fmt(comp.valorInss)}`} />
+                        <InfoItem label="IRRF (cód 46)" valor={comp.valorIrrf} desconto
+                          info={`IRRF 2026 sobre (férias + 1/3 − INSS)\n\nBase: R$ ${fmt(comp.baseIrrf)}\n\nFaixas mensais 2026:\n  até 2.428,80: isento\n  2.428,81 – 2.826,65: 7,5% (ded. 182,16)\n  2.826,66 – 3.751,05: 15% (ded. 394,16)\n  3.751,06 – 4.664,68: 22,5% (ded. 675,49)\n  acima: 27,5% (ded. 908,73)\n\nResultado: R$ ${fmt(comp.valorIrrf)}`} />
                       </div>
                     )}
                     <div style={{ marginTop: 8, fontSize: 12, color: '#555' }}>
@@ -677,13 +762,52 @@ export default function Ferias() {
  *  SUBCOMPONENTES
  * ══════════════════════════════════════════════════════════════ */
 
-function InfoItem({ label, valor, desconto }: { label: string; valor: number; desconto?: boolean }) {
+function InfoItem({ label, valor, desconto, info }: { label: string; valor: number; desconto?: boolean; info?: string }) {
   return (
     <div>
-      <div style={{ fontSize: 11, color: '#666' }}>{label}</div>
+      <div style={{ fontSize: 11, color: '#666', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {label}
+        {info && <InfoTooltip texto={info} />}
+      </div>
       <div style={{ fontWeight: 600, color: desconto ? '#c62828' : undefined }}>
         R$ {valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </div>
+    </div>
+  );
+}
+
+/** Tooltip de informação (?) que mostra regra ao passar o mouse */
+function InfoTooltip({ texto }: { texto: string }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}>
+      <span
+        onMouseEnter={() => setAberto(true)}
+        onMouseLeave={() => setAberto(false)}
+        onClick={() => setAberto(a => !a)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 14, height: 14, borderRadius: '50%', background: '#1976d2', color: '#fff',
+          fontSize: 10, fontWeight: 700, cursor: 'help', lineHeight: 1,
+        }}>i</span>
+      {aberto && (
+        <span style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)',
+          background: '#263238', color: '#fff', padding: '8px 12px', borderRadius: 6,
+          fontSize: 11, lineHeight: 1.4, whiteSpace: 'pre-wrap', width: 240, zIndex: 10000,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)', textAlign: 'left', fontWeight: 400,
+        }}>{texto}</span>
+      )}
+    </span>
+  );
+}
+
+/** Badge numérico de status (vencidos / vencendo / em dia) */
+function StatusBadge({ count, label, color, bg }: { count: number; label: string; color: string; bg: string }) {
+  return (
+    <div style={{ background: bg, color, padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontSize: 16, fontWeight: 800 }}>{count}</span>
+      <span>{label}</span>
     </div>
   );
 }
