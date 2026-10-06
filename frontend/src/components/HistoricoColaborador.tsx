@@ -72,17 +72,29 @@ const CAMPO_LABEL: Record<string, string> = {
   observacao: 'Observação',
 };
 
+/* Mapa CNPJ → Nome da unidade (para log antigo que grava só CNPJ) */
+const UNIDADE_LABEL: Record<string, string> = {
+  '38093265000154': 'Restaurante da Porta',
+  '28609674000107': 'Deck73 / City Castelo',
+};
+
 /* ─────────── HISTÓRICO DE CADASTRO (logs de alteração) ─────────── */
 export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, token }) => {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mostrarVazios, setMostrarVazios] = useState(false);
 
   useEffect(() => {
     if (!colaboradorId) return;
     setLoading(true);
     fetchAuth(`${apiUrl}/colaboradores-log/${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : [])
-      .then(d => setLogs(Array.isArray(d) ? d : []))
+      .then(d => {
+        const lista = Array.isArray(d) ? d : [];
+        // Ordenar por data (mais recente primeiro); logs sem timestamp vão pro final
+        lista.sort((a: any, b: any) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        setLogs(lista);
+      })
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
   }, [colaboradorId, apiUrl, token]);
@@ -97,46 +109,60 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
     );
   }
 
+  // Pré-processa cada log calculando diffs (p/ decidir se tem conteúdo relevante)
+  const unwrapDDB = (obj: any): any => {
+    if (!obj || typeof obj !== 'object') return obj;
+    if ('M' in obj && typeof obj.M === 'object') {
+      const result: any = {};
+      for (const [k, v] of Object.entries(obj.M)) result[k] = unwrapDDB(v);
+      return result;
+    }
+    if ('S' in obj) return obj.S;
+    if ('N' in obj) return parseFloat(obj.N);
+    if ('BOOL' in obj) return obj.BOOL;
+    if ('NULL' in obj) return null;
+    if ('L' in obj && Array.isArray(obj.L)) return obj.L.map(unwrapDDB);
+    return obj;
+  };
+
+  const logsProcessados = logs.map(log => {
+    const antes = unwrapDDB(log.valoresAntes || {}) || {};
+    const depois = unwrapDDB(log.valoresDepois || {}) || {};
+    const campos = new Set([...Object.keys(antes), ...Object.keys(depois)]);
+    const diffs: any[] = [];
+    for (const c of campos) {
+      if (CAMPOS_IGNORAR.has(c)) continue;
+      const a = antes[c] ?? null;
+      const d = depois[c] ?? null;
+      if (JSON.stringify(a) === JSON.stringify(d)) continue;
+      diffs.push({ campo: c, label: CAMPO_LABEL[c] || c, antes: a, depois: d });
+    }
+    // Relevante = tem diff OU é evento especial (criado/desligado/reativado/transferido)
+    const relevante = diffs.length > 0 || ['criado', 'desativado', 'reativado', 'transferido', 'deletado'].includes(log.evento);
+    return { log, diffs, relevante };
+  });
+
+  const relevantes = logsProcessados.filter(l => l.relevante);
+  const vazios     = logsProcessados.filter(l => !l.relevante);
+  const paraMostrar = mostrarVazios ? logsProcessados : relevantes;
+
   return (
     <div style={{ maxHeight: 480, overflowY: 'auto' }}>
-      <div style={{ marginBottom: 10, fontSize: 12, color: '#666' }}>
-        📋 {logs.length} {logs.length === 1 ? 'alteração registrada' : 'alterações registradas'}
+      <div style={{ marginBottom: 10, fontSize: 12, color: '#666', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          📋 <strong>{relevantes.length}</strong> alterações relevantes
+          {vazios.length > 0 && <span style={{ color: '#999' }}> · {vazios.length} salvamento(s) sem mudança oculto(s)</span>}
+        </div>
+        {vazios.length > 0 && (
+          <button onClick={() => setMostrarVazios(v => !v)} style={{ background: '#f5f5f5', border: '1px solid #ddd', borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer', color: '#555' }}>
+            {mostrarVazios ? '🙈 Ocultar salvamentos vazios' : '👁️ Mostrar tudo (' + logs.length + ')'}
+          </button>
+        )}
       </div>
-      {logs.map(log => {
+      {paraMostrar.map(({ log, diffs }) => {
         const meta = EVENTO_LABEL[log.evento] || EVENTO_LABEL.alterado;
-
-        // Calcular diff: ignora campos técnicos, mostra todos os campos conhecidos que mudaram
-        // DynamoDB Document Client já deserializa Maps, mas API Gateway pode retornar formato DDB raw
-        const rawAntes = log.valoresAntes || {};
-        const rawDepois = log.valoresDepois || {};
-        // Normalizar: se vier no formato DDB {"M": {...}} ou {"S": "..."}, extrair
-        const unwrapDDB = (obj: any): any => {
-          if (!obj || typeof obj !== 'object') return obj;
-          if ('M' in obj && typeof obj.M === 'object') {
-            const result: any = {};
-            for (const [k, v] of Object.entries(obj.M)) result[k] = unwrapDDB(v);
-            return result;
-          }
-          if ('S' in obj) return obj.S;
-          if ('N' in obj) return parseFloat(obj.N);
-          if ('BOOL' in obj) return obj.BOOL;
-          if ('NULL' in obj) return null;
-          if ('L' in obj && Array.isArray(obj.L)) return obj.L.map(unwrapDDB);
-          return obj;
-        };
-        const antes = unwrapDDB(rawAntes) || {};
-        const depois = unwrapDDB(rawDepois) || {};
         const temDados = log.valoresAntes !== null || log.valoresDepois !== null;
-        const campos = new Set([...Object.keys(antes), ...Object.keys(depois)]);
-        const diffs: Array<{ campo: string; label: string; antes: any; depois: any }> = [];
-        for (const c of campos) {
-          if (CAMPOS_IGNORAR.has(c)) continue;
-          const a = antes[c] ?? null;
-          const d = depois[c] ?? null;
-          if (JSON.stringify(a) === JSON.stringify(d)) continue;
-          // Exibe tanto campos conhecidos (com label) quanto desconhecidos (com nome técnico)
-          diffs.push({ campo: c, label: CAMPO_LABEL[c] || c, antes: a, depois: d });
-        }
+        const unidadeNome = log.unitId ? (UNIDADE_LABEL[log.unitId] || log.unitId) : '';
 
         // Ordenar: campos de remuneração primeiro, depois restantes
         const ORDEM_PRIO = ['valorTransporte','salario','valorDia','valorNoite','valorEntrega','valorChegadaDia','valorChegadaNoite','isMotoboy','tipoAcordo','acordo','cargo','funcao','tipoContrato','ativo'];
@@ -167,7 +193,7 @@ export const HistoricoColaborador: React.FC<Props> = ({ colaboradorId, apiUrl, t
                   ? <div>🕒 {fmtDataHora(log.timestamp)}</div>
                   : <div style={{ color: '#bbb' }}>🕒 data não registrada</div>}
                 <div>👤 {log.usuarioNome || log.usuarioEmail || log.usuarioId || 'desconhecido'}</div>
-                {log.unitId && <div>🏢 {log.unitId}</div>}
+                {unidadeNome && <div>🏢 {unidadeNome}</div>}
               </div>
             </div>
 
@@ -463,149 +489,3 @@ export const HistoricoMotoboy: React.FC<PropsComUnit> = ({ colaboradorId, apiUrl
   );
 };
 
-/* ─────────── HISTÓRICO DE FÉRIAS ─────────── */
-export const HistoricoFerias: React.FC<{ colaboradorId: string; apiUrl: string; token: string }> = ({ colaboradorId, apiUrl, token }) => {
-  const [historico, setHistorico] = useState<any[]>([]);
-  const [afastamentos, setAfastamentos] = useState<any[]>([]);
-  const [payslips, setPayslips] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      // Lista cadastros, filtra pelo ID (lambda não tem GET por id)
-      fetch(`${apiUrl}/colaboradores?incluirInativos=true`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : []).catch(() => []),
-      // Afastamentos do colab
-      fetch(`${apiUrl}/afastamentos?colaboradorId=${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : []).catch(() => []),
-      // Payslips (filtra por colab + tipo ferias)
-      fetch(`${apiUrl}/payslips`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : []).catch(() => []),
-    ]).then(([colabList, afast, ps]: any) => {
-      const colab = Array.isArray(colabList) ? colabList.find((c: any) => c.id === colaboradorId) : null;
-      const h = colab?.historicoFerias || [];
-      setHistorico(Array.isArray(h) ? h : []);
-      setAfastamentos(Array.isArray(afast) ? afast : []);
-      const psList = Array.isArray(ps) ? ps : [];
-      setPayslips(psList.filter((p: any) =>
-        p.colaboradorId === colaboradorId &&
-        (p.tipoPagamento === 'ferias' || (p.periodo || '').startsWith('ferias-'))
-      ));
-    }).finally(() => setLoading(false));
-  }, [colaboradorId, apiUrl, token]);
-
-  if (loading) return <div style={{ padding: 20, color: '#666' }}>Carregando férias…</div>;
-
-  const total = historico.length;
-
-  return (
-    <div style={{ maxHeight: 520, overflowY: 'auto' }}>
-      <div style={{ marginBottom: 12, fontSize: 13, color: '#555' }}>
-        🏖️ <strong>{total}</strong> período(s) de férias registrado(s)
-      </div>
-
-      {total === 0 ? (
-        <div style={{ padding: 20, color: '#888', textAlign: 'center', background: '#f9f9f9', borderRadius: 8 }}>
-          Nenhuma férias registrada ainda. Use o módulo "Férias CLT" para lançar.
-        </div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 20 }}>
-          <thead>
-            <tr style={{ backgroundColor: '#e3f2fd' }}>
-              <th style={{ padding: '8px', textAlign: 'left' }}>Período Aquisitivo</th>
-              <th style={{ padding: '8px', textAlign: 'left' }}>Gozo</th>
-              <th style={{ padding: '8px', textAlign: 'center' }}>Dias</th>
-              <th style={{ padding: '8px', textAlign: 'center' }}>Abono</th>
-              <th style={{ padding: '8px', textAlign: 'left' }}>Data Pgto</th>
-              <th style={{ padding: '8px', textAlign: 'left' }}>Observação</th>
-            </tr>
-          </thead>
-          <tbody>
-            {historico.map((h: any, i: number) => {
-              const diasGozo = h.gozoInicio && h.gozoFim
-                ? Math.round((new Date(h.gozoFim + 'T12:00:00').getTime() - new Date(h.gozoInicio + 'T12:00:00').getTime()) / 86400000) + 1
-                : 0;
-              return (
-                <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '8px' }}>{(h.aquisitivoInicio || '').split('-').reverse().join('/')} → {(h.aquisitivoFim || '').split('-').reverse().join('/')}</td>
-                  <td style={{ padding: '8px' }}>{(h.gozoInicio || '').split('-').reverse().join('/')} → {(h.gozoFim || '').split('-').reverse().join('/')}</td>
-                  <td style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>{diasGozo}</td>
-                  <td style={{ padding: '8px', textAlign: 'center' }}>{h.diasAbono || 0}</td>
-                  <td style={{ padding: '8px' }}>{(h.dataPagamento || '').split('-').reverse().join('/')}</td>
-                  <td style={{ padding: '8px', fontSize: 11, color: '#666' }}>{h.obs || '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {/* Payslips de férias */}
-      {payslips.length > 0 && (
-        <>
-          <div style={{ margin: '16px 0 8px', fontSize: 13, color: '#555' }}>
-            🧾 <strong>{payslips.length}</strong> payslip(s) de férias
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 20 }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f5f5f5' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Competência</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Bruto</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Descontos</th>
-                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Líquido</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Data Pgto</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payslips.map((p: any) => (
-                <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '6px 8px' }}>{p.mes || p.periodo}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtMoeda(parseFloat(p.bruto || 0))}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(parseFloat(p.descontos || 0))}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.liquido || 0))}</td>
-                  <td style={{ padding: '6px 8px' }}>{(p.dataPagamento || '').split('-').reverse().join('/')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-
-      {/* Afastamentos (contexto para férias) */}
-      {afastamentos.length > 0 && (
-        <>
-          <div style={{ margin: '16px 0 8px', fontSize: 13, color: '#555' }}>
-            🏥 <strong>{afastamentos.length}</strong> afastamento(s) registrado(s)
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f5f5f5' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Tipo</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Início</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Fim</th>
-                <th style={{ padding: '6px 8px', textAlign: 'center' }}>Dias</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Motivo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {afastamentos.map((a: any) => {
-                const fim = a.dataFimReal || a.dataFimPrevista || '';
-                const dias = a.dataInicio && fim ? Math.round((new Date(fim + 'T12:00:00').getTime() - new Date(a.dataInicio + 'T12:00:00').getTime()) / 86400000) + 1 : 0;
-                return (
-                  <tr key={a.id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '6px 8px' }}>{a.tipo}</td>
-                    <td style={{ padding: '6px 8px' }}>{(a.dataInicio || '').split('-').reverse().join('/')}</td>
-                    <td style={{ padding: '6px 8px' }}>{fim.split('-').reverse().join('/')}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>{dias}</td>
-                    <td style={{ padding: '6px 8px', fontSize: 11, color: '#666' }}>{a.motivo || '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </>
-      )}
-    </div>
-  );
-};

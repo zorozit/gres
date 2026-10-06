@@ -7,13 +7,14 @@ import { fetchAuth } from '../utils/fetchAuth';
 import {
 
   HistoricoColaborador,
-  HistoricoFerias,
+  // HistoricoFerias movido pra HistoricoFeriasView.tsx
   HistoricoPagamentos,
   HistoricoEscalas,
   HistoricoSaidas,
   HistoricoMotoboy,
   type AbaModal,
 } from '../components/HistoricoColaborador';
+import { HistoricoFeriasView } from '../components/HistoricoFeriasView';
 import { AfastamentosColaborador } from '../components/AfastamentosColaborador';
 
 /* ─── Interfaces ──────────────────────────────────────────────────────────── */
@@ -1834,7 +1835,7 @@ export default function Colaboradores() {
             )}
 
             {abaModal === 'ferias' && (
-              <HistoricoFerias colaboradorId={colaboradorEditando.id} apiUrl={apiUrl} token={token()} />
+              <HistoricoFeriasView colaboradorId={colaboradorEditando.id} apiUrl={apiUrl} token={token()} />
             )}
 
             {abaModal === 'afastamentos' && (
