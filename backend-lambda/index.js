@@ -3798,6 +3798,26 @@ exports.handler = async (event) => {
               break;
             }
 
+            // ── COLABORADOR — adicionar item ao histórico de férias ──────────
+            case 'colaborador-add-ferias-historico': {
+              const cbId = op.colaboradorId || colaboradorId;
+              if (!cbId || !op.item) break;
+              transactItems.push({
+                Update: {
+                  TableName: 'gres-prod-colaboradores',
+                  Key: { id: cbId },
+                  UpdateExpression: 'SET historicoFerias = list_append(if_not_exists(historicoFerias, :empty), :novo), updatedAt = :now',
+                  ExpressionAttributeValues: {
+                    ':empty': [],
+                    ':novo': [op.item],
+                    ':now': now,
+                  },
+                },
+              });
+              savedIds.push(cbId);
+              break;
+            }
+
             default:
               console.warn(`[pagamento-batch] tipo de operação desconhecido: ${op.tipo}`);
           }

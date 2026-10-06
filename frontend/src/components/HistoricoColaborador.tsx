@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchAuth } from '../utils/fetchAuth';
 
 
-export type AbaModal = 'cadastro' | 'historico' | 'pagamentos' | 'escalas' | 'saidas' | 'motoboy' | 'afastamentos';
+export type AbaModal = 'cadastro' | 'historico' | 'pagamentos' | 'escalas' | 'saidas' | 'motoboy' | 'afastamentos' | 'ferias';
 
 interface Props {
   colaboradorId: string;
@@ -259,7 +259,7 @@ export const HistoricoPagamentos: React.FC<PropsComUnit> = ({ colaboradorId, uni
               <td style={{ padding: '6px 8px' }}>{p.mes}{p.semana ? ` / ${p.semana}` : ''}</td>
               <td style={{ padding: '6px 8px' }}>{p.dataPagamento || '—'}</td>
               <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtMoeda(parseFloat(p.totalBruto || p.valorBruto || 0))}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.totalLiquido || p.totalFinal || 0))}</td>
+              <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.valorLiquidoContabil || p.totalLiquido || p.saldoFinal || p.totalFinal || 0))}</td>
               <td style={{ padding: '6px 8px' }}>{p.formaPagamento || '—'}</td>
               <td style={{ padding: '6px 8px' }}>
                 {p.pago
@@ -459,6 +459,153 @@ export const HistoricoMotoboy: React.FC<PropsComUnit> = ({ colaboradorId, apiUrl
           ))}
         </tbody>
       </table>
+    </div>
+  );
+};
+
+/* ─────────── HISTÓRICO DE FÉRIAS ─────────── */
+export const HistoricoFerias: React.FC<{ colaboradorId: string; apiUrl: string; token: string }> = ({ colaboradorId, apiUrl, token }) => {
+  const [historico, setHistorico] = useState<any[]>([]);
+  const [afastamentos, setAfastamentos] = useState<any[]>([]);
+  const [payslips, setPayslips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      // Lista cadastros, filtra pelo ID (lambda não tem GET por id)
+      fetch(`${apiUrl}/colaboradores?incluirInativos=true`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : []).catch(() => []),
+      // Afastamentos do colab
+      fetch(`${apiUrl}/afastamentos?colaboradorId=${colaboradorId}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : []).catch(() => []),
+      // Payslips (filtra por colab + tipo ferias)
+      fetch(`${apiUrl}/payslips`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : []).catch(() => []),
+    ]).then(([colabList, afast, ps]: any) => {
+      const colab = Array.isArray(colabList) ? colabList.find((c: any) => c.id === colaboradorId) : null;
+      const h = colab?.historicoFerias || [];
+      setHistorico(Array.isArray(h) ? h : []);
+      setAfastamentos(Array.isArray(afast) ? afast : []);
+      const psList = Array.isArray(ps) ? ps : [];
+      setPayslips(psList.filter((p: any) =>
+        p.colaboradorId === colaboradorId &&
+        (p.tipoPagamento === 'ferias' || (p.periodo || '').startsWith('ferias-'))
+      ));
+    }).finally(() => setLoading(false));
+  }, [colaboradorId, apiUrl, token]);
+
+  if (loading) return <div style={{ padding: 20, color: '#666' }}>Carregando férias…</div>;
+
+  const total = historico.length;
+
+  return (
+    <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+      <div style={{ marginBottom: 12, fontSize: 13, color: '#555' }}>
+        🏖️ <strong>{total}</strong> período(s) de férias registrado(s)
+      </div>
+
+      {total === 0 ? (
+        <div style={{ padding: 20, color: '#888', textAlign: 'center', background: '#f9f9f9', borderRadius: 8 }}>
+          Nenhuma férias registrada ainda. Use o módulo "Férias CLT" para lançar.
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 20 }}>
+          <thead>
+            <tr style={{ backgroundColor: '#e3f2fd' }}>
+              <th style={{ padding: '8px', textAlign: 'left' }}>Período Aquisitivo</th>
+              <th style={{ padding: '8px', textAlign: 'left' }}>Gozo</th>
+              <th style={{ padding: '8px', textAlign: 'center' }}>Dias</th>
+              <th style={{ padding: '8px', textAlign: 'center' }}>Abono</th>
+              <th style={{ padding: '8px', textAlign: 'left' }}>Data Pgto</th>
+              <th style={{ padding: '8px', textAlign: 'left' }}>Observação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {historico.map((h: any, i: number) => {
+              const diasGozo = h.gozoInicio && h.gozoFim
+                ? Math.round((new Date(h.gozoFim + 'T12:00:00').getTime() - new Date(h.gozoInicio + 'T12:00:00').getTime()) / 86400000) + 1
+                : 0;
+              return (
+                <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '8px' }}>{(h.aquisitivoInicio || '').split('-').reverse().join('/')} → {(h.aquisitivoFim || '').split('-').reverse().join('/')}</td>
+                  <td style={{ padding: '8px' }}>{(h.gozoInicio || '').split('-').reverse().join('/')} → {(h.gozoFim || '').split('-').reverse().join('/')}</td>
+                  <td style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>{diasGozo}</td>
+                  <td style={{ padding: '8px', textAlign: 'center' }}>{h.diasAbono || 0}</td>
+                  <td style={{ padding: '8px' }}>{(h.dataPagamento || '').split('-').reverse().join('/')}</td>
+                  <td style={{ padding: '8px', fontSize: 11, color: '#666' }}>{h.obs || '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {/* Payslips de férias */}
+      {payslips.length > 0 && (
+        <>
+          <div style={{ margin: '16px 0 8px', fontSize: 13, color: '#555' }}>
+            🧾 <strong>{payslips.length}</strong> payslip(s) de férias
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 20 }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f5f5f5' }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Competência</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Bruto</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Descontos</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Líquido</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Data Pgto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payslips.map((p: any) => (
+                <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '6px 8px' }}>{p.mes || p.periodo}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtMoeda(parseFloat(p.bruto || 0))}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#c62828' }}>{fmtMoeda(parseFloat(p.descontos || 0))}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#1b5e20', fontWeight: 600 }}>{fmtMoeda(parseFloat(p.liquido || 0))}</td>
+                  <td style={{ padding: '6px 8px' }}>{(p.dataPagamento || '').split('-').reverse().join('/')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {/* Afastamentos (contexto para férias) */}
+      {afastamentos.length > 0 && (
+        <>
+          <div style={{ margin: '16px 0 8px', fontSize: 13, color: '#555' }}>
+            🏥 <strong>{afastamentos.length}</strong> afastamento(s) registrado(s)
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ backgroundColor: '#f5f5f5' }}>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Tipo</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Início</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Fim</th>
+                <th style={{ padding: '6px 8px', textAlign: 'center' }}>Dias</th>
+                <th style={{ padding: '6px 8px', textAlign: 'left' }}>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {afastamentos.map((a: any) => {
+                const fim = a.dataFimReal || a.dataFimPrevista || '';
+                const dias = a.dataInicio && fim ? Math.round((new Date(fim + 'T12:00:00').getTime() - new Date(a.dataInicio + 'T12:00:00').getTime()) / 86400000) + 1 : 0;
+                return (
+                  <tr key={a.id} style={{ borderBottom: '1px solid #eee' }}>
+                    <td style={{ padding: '6px 8px' }}>{a.tipo}</td>
+                    <td style={{ padding: '6px 8px' }}>{(a.dataInicio || '').split('-').reverse().join('/')}</td>
+                    <td style={{ padding: '6px 8px' }}>{fim.split('-').reverse().join('/')}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>{dias}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: '#666' }}>{a.motivo || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 };

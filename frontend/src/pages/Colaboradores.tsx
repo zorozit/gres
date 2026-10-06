@@ -7,6 +7,7 @@ import { fetchAuth } from '../utils/fetchAuth';
 import {
 
   HistoricoColaborador,
+  HistoricoFerias,
   HistoricoPagamentos,
   HistoricoEscalas,
   HistoricoSaidas,
@@ -1771,6 +1772,7 @@ export default function Colaboradores() {
                 { id:'pagamentos', label:'💰 Pagamentos' },
                 { id:'escalas',    label:'📅 Escalas' },
                 { id:'saidas',     label:'💸 Saídas' },
+                { id:'ferias',     label:'🏖️ Férias' },
                 { id:'afastamentos', label:'🏥 Afastamentos' },
                 ...((colaboradorEditando.isMotoboy || (colaboradorEditando.cargo || '').toLowerCase()==='motoboy') ? [{ id:'motoboy', label:'🛥️ Motoboy' }] : []),
               ] as { id: AbaModal; label: string }[]).map(t => (
@@ -1829,6 +1831,10 @@ export default function Colaboradores() {
 
             {abaModal === 'motoboy' && (
               <HistoricoMotoboy colaboradorId={colaboradorEditando.id} unitId={unitId} apiUrl={apiUrl} token={token()} />
+            )}
+
+            {abaModal === 'ferias' && (
+              <HistoricoFerias colaboradorId={colaboradorEditando.id} apiUrl={apiUrl} token={token()} />
             )}
 
             {abaModal === 'afastamentos' && (
